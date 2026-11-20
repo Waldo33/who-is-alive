@@ -1,6 +1,7 @@
 import { PAL, PLAYER_COLORS } from '@kto/assets';
 import { TICK_MS, fmt, makeReplay, worldOf } from '@kto/game-core';
-import type { ArenaDef, Dict, Moment, RoundRecording, World } from '@kto/game-core';
+import type { ArenaDef, Dict, Moment, RoundRecording, World, WorldEvent } from '@kto/game-core';
+import type { ClipSound } from './audio';
 import { fitSize, frame, getArt, scaledCanvas, text } from './art';
 import { canvas } from './pixels';
 import type { Art } from './art';
@@ -51,10 +52,15 @@ export interface ClipResult {
   mime: string;
 }
 
-export function pickClipMime(): string | null {
+/** Формат записи; withAudio — сначала форматы со звуком (AAC в mp4, Opus в webm). */
+export function pickClipMime(withAudio = false): string | null {
   if (typeof MediaRecorder === 'undefined' || typeof HTMLCanvasElement === 'undefined') return null;
   if (!('captureStream' in HTMLCanvasElement.prototype)) return null;
+  const audio = withAudio
+    ? ['video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4;codecs=avc1,mp4a.40.2', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus']
+    : [];
   const list = [
+    ...audio,
     'video/mp4;codecs=avc1.42E01E',
     'video/mp4;codecs=avc1',
     'video/mp4',
@@ -113,6 +119,10 @@ export class ClipPlayerScene {
   private trails = new Map<number, { x: number; y: number }[]>();
   private colors = new Map<number, number>();
   private cam = { x: -1, y: 0 };
+  /** Звук клипа (музыка темы и эффекты момента); без него клип немой. */
+  sound: ClipSound | null = null;
+  private musicResumeAt = 0;
+  private faded = false;
 
   constructor(private inp: ClipInput) {
     const { c, g } = scaledCanvas(LW, LH, CLIP_SCALE);
@@ -177,6 +187,19 @@ export class ClipPlayerScene {
       this.part = part;
       this.trails.clear();
       this.replay = part < 3 ? makeReplay(worldOf(this.inp.rec), this.inp.moment.from, this.inp.moment.to) : null;
+      const r = this.replay;
+      if (r && this.sound) {
+        if (this.musicResumeAt) this.sound.resume();
+        this.musicResumeAt = 0;
+        if (part === 1) this.sound.start(this.inp.rec.theme, r.twist);
+        else this.sound.setTwist(r.twist);
+        r.listeners.push((ev) => this.onEvent(ev));
+      }
+    }
+    if (part === 3 && this.sound && !this.faded) {
+      // заставка в конце: музыка плавно уходит к концу клипа
+      this.faded = true;
+      this.sound.fadeOut(Math.max(0.3, (this.duration - ms) / 1000));
     }
     if (part === 3) {
       this.drawOutro(ms - this.part1Dur - this.part2Dur);
@@ -188,6 +211,10 @@ export class ClipPlayerScene {
     while (w.time + TICK_MS <= target && w.time < this.inp.moment.to) {
       w.step();
       if (part === 2) this.recordTrails(w);
+    }
+    if (this.musicResumeAt && w.time >= this.musicResumeAt) {
+      this.musicResumeAt = 0;
+      this.sound?.resume();
     }
     const alpha = Math.max(0, Math.min(1, (target - w.time) / TICK_MS));
     const zoomed = part === 2 && local >= this.cutAt;
@@ -207,6 +234,35 @@ export class ClipPlayerScene {
       g.globalAlpha = 0.6 * (1 - sinceHit / 140);
       g.fillRect(0, AY, LW, PANEL_Y - AY);
       g.globalAlpha = 1;
+    }
+  }
+
+  /** Звук того, что случилось в повторе: удары, звёзды, «Море волнуется» (музыка на паузе), свет. */
+  private onEvent(ev: WorldEvent): void {
+    const s = this.sound;
+    if (!s) return;
+    switch (ev.t) {
+      case 'hit':
+        s.play(ev.result === 'player' ? 'hitPlayer' : 'hitBot');
+        s.play('poof');
+        break;
+      case 'star_taken':
+        s.play('starTake');
+        break;
+      case 'crowd':
+        s.play('crowd');
+        s.pause();
+        this.musicResumeAt = ev.resumeAt;
+        break;
+      case 'twist':
+        s.play('flicker');
+        s.setTwist(ev.on);
+        break;
+      case 'zone':
+        s.play('hedge');
+        break;
+      default:
+        break;
     }
   }
 
@@ -489,7 +545,22 @@ export async function recordClip(
   onFrame?: (progress: number) => void,
 ): Promise<ClipResult> {
   const stream = scene.c.captureStream(FPS);
-  const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 6_000_000 });
+  // звук клипа — дорожкой в тот же поток; если браузер не примет запись со звуком — пишем без него
+  const sound = scene.sound;
+  let rec: MediaRecorder;
+  if (sound) {
+    const withAudio = pickClipMime(true) ?? mime;
+    try {
+      for (const tr of sound.stream.getAudioTracks()) stream.addTrack(tr);
+      rec = new MediaRecorder(stream, { mimeType: withAudio, videoBitsPerSecond: 6_000_000, audioBitsPerSecond: 128_000 });
+      mime = withAudio;
+    } catch {
+      for (const tr of stream.getAudioTracks()) stream.removeTrack(tr);
+      sound.stop();
+      scene.sound = null;
+      rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 6_000_000 });
+    }
+  } else rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 6_000_000 });
   const chunks: Blob[] = [];
   rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
   const stopped = new Promise<void>((res) => (rec.onstop = () => res()));
@@ -510,6 +581,7 @@ export async function recordClip(
   rec.stop();
   await stopped;
   for (const tr of stream.getTracks()) tr.stop();
+  scene.sound?.stop();
   const type = mime.split(';')[0];
   return { blob: new Blob(chunks, { type }), ext: type === 'video/mp4' ? 'mp4' : 'webm', mime: type };
 }

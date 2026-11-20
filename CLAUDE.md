@@ -41,6 +41,7 @@ pnpm --filter web og-bg               # фоны превью ссылок по 
 pnpm --filter web clip-preview <папка> 11,12 [тема]   # кадры клипа «Лучший момент» по зернам — проверить глазами
 pnpm --filter web theme-sheet 4 out.png          # лист темы ×8: костюм, свои позы, иконки команд
 pnpm --filter web theme-video 4 out.mp4          # видео дубля в теме со звуком (нужен запущенный сайт на :3124 и ffmpeg)
+pnpm --filter web clip-video 12 out.webm 4       # клип «Лучший момент» со звуком — как его выгрузит игрок
 pnpm --filter web standalone          # песочница одним HTML-файлом: apps/web/dist/sandbox.html
 ```
 

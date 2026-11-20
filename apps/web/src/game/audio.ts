@@ -29,6 +29,21 @@ function store(key: string, v: string): void {
   }
 }
 
+/** Подъём громкости звука клипа после компрессора. */
+const CLIP_GAIN = 2.5;
+
+/** Звук клипа: музыка темы и эффекты в отдельный поток для записи (Audio.clipSound). */
+export interface ClipSound {
+  stream: MediaStream;
+  start(theme: number, twist: boolean): void;
+  setTwist(on: boolean): void;
+  pause(): void;
+  resume(): void;
+  play(name: Sfx): void;
+  fadeOut(sec: number): void;
+  stop(): void;
+}
+
 let shared: Audio | null = null;
 /** Один звук на всё приложение: музыка меню не обрывается при переходе между экранами. */
 export function getAudio(): Audio {
@@ -44,6 +59,8 @@ export class Audio {
   private noiseBuf: AudioBuffer | null = null;
   private music: Music | null = null;
   private twist = false;
+  /** Куда идут эффекты при записи клипа (иначе — в обычный канал эффектов). */
+  private route: AudioNode | null = null;
   /** Звуки игры (эффекты). */
   enabled = true;
   /** Музыка. */
@@ -199,7 +216,7 @@ export class Audio {
     g.gain.setValueAtTime(0.0001, t);
     g.gain.exponentialRampToValueAtTime(vol, t + 0.005);
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    o.connect(g).connect(out ?? this.sfx!);
+    o.connect(g).connect(out ?? this.route ?? this.sfx!);
     o.start(t);
     o.stop(t + dur + 0.02);
   }
@@ -216,7 +233,7 @@ export class Audio {
     const g = ctx.createGain();
     g.gain.setValueAtTime(vol, t);
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    s.connect(f).connect(g).connect(out ?? this.sfx!);
+    s.connect(f).connect(g).connect(out ?? this.route ?? this.sfx!);
     s.start(t, Math.random() * 0.5);
     s.stop(t + dur + 0.02);
   }
@@ -224,6 +241,11 @@ export class Audio {
   play(name: Sfx): void {
     if (!this.ctx || !this.enabled) return;
     if (name === 'hitPlayer' || name === 'hitBot' || name === 'starTake' || name === 'accuseRight' || name === 'accuseWrong') this.duckMusic();
+    this.sfxNow(name);
+  }
+
+  /** Сыграть эффект в текущий канал (обычный или канал клипа — `route`). */
+  private sfxNow(name: Sfx): void {
     switch (name) {
       case 'step': this.noise(0.03, 0.05, 1800); break;
       case 'hitPlayer': this.noise(0.18, 0.5, 900); this.tone('square', 420, 60, 0.25, 0.25); break;
@@ -268,11 +290,83 @@ export class Audio {
     g.gain.setValueAtTime(0.0001, t);
     g.gain.exponentialRampToValueAtTime(0.12, t + 0.03);
     g.gain.exponentialRampToValueAtTime(0.0001, t + 1.1);
-    o.connect(g).connect(this.sfx);
+    o.connect(g).connect(this.route ?? this.sfx);
     o.start(t);
     lfo.start(t);
     o.stop(t + 1.15);
     lfo.stop(t + 1.15);
+  }
+
+  /**
+   * Звук для записи клипа: своя музыка темы и эффекты момента — в отдельный поток (MediaStream),
+   * не в динамики, поэтому клип можно писать в фоне, пока идёт игра. null — звук ещё не
+   * разблокирован (iOS) или браузер не умеет: тогда клип будет без звука.
+   */
+  clipSound(): ClipSound | null {
+    const ctx = this.ctx;
+    if (!ctx || !this.noiseBuf || typeof ctx.createMediaStreamDestination !== 'function') return null;
+    const dest = ctx.createMediaStreamDestination();
+    // видео смотрят в ленте с телефона: громче и ровнее, чем игра, — сжать и поднять (как на радио)
+    const comp = ctx.createDynamicsCompressor();
+    comp.threshold.value = -26;
+    comp.knee.value = 8;
+    comp.ratio.value = 6;
+    comp.attack.value = 0.004;
+    comp.release.value = 0.2;
+    const makeup = ctx.createGain();
+    makeup.gain.value = CLIP_GAIN;
+    const master = ctx.createGain();
+    master.gain.value = 1;
+    // мягкий ограничитель: редкие пики после подъёма скругляются, а не хрипят
+    const soft = ctx.createWaveShaper();
+    const curve = new Float32Array(1024);
+    for (let i = 0; i < curve.length; i++) {
+      const x = (i / (curve.length - 1)) * 2 - 1;
+      curve[i] = Math.tanh(x); // тихое — как есть, громкое — скругляется к 0,76
+    }
+    soft.curve = curve;
+    master.connect(comp).connect(makeup).connect(soft).connect(dest);
+    const duck = ctx.createGain();
+    duck.connect(master);
+    const sfx = ctx.createGain();
+    sfx.connect(master);
+    const music = new Music(ctx, duck, this.noiseBuf);
+    return {
+      stream: dest.stream,
+      start: (theme, twist) => {
+        music.start('play', themePack(theme).music);
+        music.setTwist(twist);
+      },
+      setTwist: (on) => music.setTwist(on),
+      pause: () => music.tapeStop(),
+      resume: () => music.resume(),
+      play: (name) => {
+        if (name === 'hitPlayer' || name === 'hitBot' || name === 'starTake') {
+          const t = ctx.currentTime;
+          duck.gain.cancelScheduledValues(t);
+          duck.gain.setValueAtTime(0.4, t);
+          duck.gain.linearRampToValueAtTime(1, t + 0.5);
+        }
+        const prev = this.route;
+        this.route = sfx;
+        try {
+          this.sfxNow(name);
+        } finally {
+          this.route = prev;
+        }
+      },
+      fadeOut: (sec) => {
+        const t = ctx.currentTime;
+        master.gain.cancelScheduledValues(t);
+        master.gain.setValueAtTime(master.gain.value, t);
+        master.gain.linearRampToValueAtTime(0.0001, t + sec);
+      },
+      stop: () => {
+        music.stop();
+        master.disconnect();
+        for (const tr of dest.stream.getTracks()) tr.stop();
+      },
+    };
   }
 
   // ───────────── совместимость со старыми вызовами ─────────────

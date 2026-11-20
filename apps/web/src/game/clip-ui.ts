@@ -2,6 +2,7 @@ import { fmt } from '@kto/game-core';
 import type { Dict } from '@kto/game-core';
 import { ClipPlayerScene, pickClipMime, recordClip } from './clip';
 import { loadTheme } from './themes';
+import { getAudio } from './audio';
 import type { ClipInput, ClipResult } from './clip';
 
 /**
@@ -49,6 +50,7 @@ export function openClipOverlay(
     return close;
   }
   const scene = new ClipPlayerScene(input);
+  scene.sound = getAudio().clipSound(); // музыка темы и звуки момента — в видео (не в динамики)
   root.querySelector('.clip-frame')!.appendChild(scene.c);
   status.textContent = fmt(t.clip.making, { n: 0 });
 
@@ -99,6 +101,7 @@ export async function recordClipInBackground(input: ClipInput, onProgress?: (p: 
   holder.setAttribute('aria-hidden', 'true');
   holder.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;overflow:hidden;opacity:0;pointer-events:none;z-index:-1';
   const scene = new ClipPlayerScene(input);
+  scene.sound = getAudio().clipSound();
   scene.c.style.width = '1px';
   scene.c.style.height = '1px';
   holder.appendChild(scene.c);
