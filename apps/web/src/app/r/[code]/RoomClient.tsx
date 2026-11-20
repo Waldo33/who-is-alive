@@ -167,7 +167,8 @@ function GameView({
         lang,
         createSession: () => session,
         onShare: async (text: string, files?: File[]) => {
-          await shareContent({ text, url: withLang(`${location.origin}/r/${room.state.code}`), files });
+          // клипы и карточки уходят в соцсети: ведём на главную — комната занята матчем и через полчаса исчезнет
+          await shareContent({ text, url: withLang(`${location.origin}/`), files });
         },
         onSave: (file: File) => download(file),
         onSettings: () => settingsRef.current(),

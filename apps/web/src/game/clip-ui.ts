@@ -80,3 +80,33 @@ export function openClipOverlay(
     });
   return close;
 }
+
+/** Можно ли записать клип в этом браузере. */
+export function clipSupported(): boolean {
+  return !!pickClipMime();
+}
+
+/**
+ * Записать клип в фоне, не закрывая игру: холст прячется в невидимый блок (часть браузеров
+ * пишет видео только с холста, который есть в документе). Возвращает файл или null.
+ */
+export async function recordClipInBackground(input: ClipInput, onProgress?: (p: number) => void): Promise<File | null> {
+  const mime = pickClipMime();
+  if (!mime) return null;
+  const holder = document.createElement('div');
+  holder.setAttribute('aria-hidden', 'true');
+  holder.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;overflow:hidden;opacity:0;pointer-events:none;z-index:-1';
+  const scene = new ClipPlayerScene(input);
+  scene.c.style.width = '1px';
+  scene.c.style.height = '1px';
+  holder.appendChild(scene.c);
+  document.body.appendChild(holder);
+  try {
+    const res = await recordClip(scene, mime, onProgress);
+    return new File([res.blob], `kto-tut-zhivoy.${res.ext}`, { type: res.mime });
+  } catch {
+    return null;
+  } finally {
+    holder.remove();
+  }
+}

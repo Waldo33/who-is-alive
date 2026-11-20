@@ -170,7 +170,7 @@ export function mountSandbox(root: HTMLElement, opts: ShellOptions): () => void 
   };
 
   const onShare = async (text: string, files?: File[]) => {
-    const res = await shareContent({ text, url: withLang(location.origin + location.pathname), files });
+    const res = await shareContent({ text, url: withLang(location.origin + '/'), files });
     if (res === 'copied') toast(t.start.copied);
     if (res === 'failed') toast(text);
   };

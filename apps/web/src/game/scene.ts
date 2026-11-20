@@ -12,7 +12,7 @@ import {
 } from '@kto/game-core';
 import type { AwardId, ClientSession, CrowdKind, Dict, Entity, GameConfig, Lang, Moment, Notice, RoundRecording, World, WorldEvent } from '@kto/game-core';
 import { resultCardFile } from './card';
-import { openClipOverlay } from './clip-ui';
+import { clipSupported, openClipOverlay, recordClipInBackground } from './clip-ui';
 import type { ClipPlayer } from './clip';
 import { Audio } from './audio';
 import { frameFor } from './frames';
@@ -73,6 +73,8 @@ interface Button {
   onUp?: () => void;
   pressed?: boolean;
   accent?: string;
+  /** Не удалять вместе с кнопками экранов фаз (clearOverlay). */
+  keep?: boolean;
 }
 
 interface Pigeon {
@@ -144,6 +146,8 @@ export class GameScene extends Phaser.Scene {
   private best: { rec: RoundRecording; moment: Moment; players: ClipPlayer[] } | null = null;
   private cardFile: File | null = null;
   private closeClip: (() => void) | null = null;
+  /** Клип выбывшего: последние секунды перед выбиванием, монтируется в фоне — призрак смотрит игру дальше. */
+  private deathClip: { eid: number; at: number; status: 'offer' | 'rendering' | 'ready'; progress: number; file: File | null } | null = null;
 
   constructor() {
     super('game');
@@ -176,6 +180,7 @@ export class GameScene extends Phaser.Scene {
     this.starPos = new Map();
     this.best = null;
     this.cardFile = null;
+    this.deathClip = null;
   }
 
   create(): void {
@@ -236,6 +241,7 @@ export class GameScene extends Phaser.Scene {
       this.txt(30, PANEL_Y + 19, this.t.game.ghostHint, 'sand').setDepth(1101),
     ];
     for (const o of this.ghostUi) (o as Phaser.GameObjects.Image).setVisible(false);
+    this.buildDeathClipButton();
 
     this.input.addPointer(2);
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => this.onDown(p));
@@ -571,7 +577,10 @@ export class GameScene extends Phaser.Scene {
         this.cameras.main.shake(120, 0.008);
         this.hitStop = 60;
         if (ev.target === myEid || this.sim.world.time - this.lastAttackAt < 200) navigator.vibrate?.(40);
-        if (ev.target === myEid) this.showDeath();
+        if (ev.target === myEid) {
+          this.showDeath();
+          if (ev.result === 'player' && myEid !== undefined) this.offerDeathClip(myEid, ev.at);
+        }
         break;
       case 'star_taken':
         this.audio.play('starTake');
@@ -611,6 +620,7 @@ export class GameScene extends Phaser.Scene {
       this.applyTheme();
       this.ghostMarks.clear();
       this.replay = null;
+      this.deathClip = null;
       if (n.round === 1) {
         // реванш: новый матч — новые лучший момент и карточка
         this.best = null;
@@ -664,6 +674,104 @@ export class GameScene extends Phaser.Scene {
     this.time.delayedCall(2800, () => {
       if (this.deathObjs !== objs) return;
       this.tweens.add({ targets: objs, alpha: 0, duration: 450, onComplete: () => this.clearDeath() });
+    });
+  }
+
+  // ───────────── клип выбывшего ─────────────
+
+  /** Кнопка в углу поля: появляется после баннера выбывания (анимацию не трогаем). */
+  private buildDeathClipButton(): void {
+    const b: Button = {
+      id: 'deathclip',
+      x: 96,
+      y: PANEL_Y - 26,
+      w: 80,
+      h: 22,
+      label: this.t.clip.deathBtn,
+      accent: PAL.amber,
+      keep: true,
+      // на экране итогов кнопка перекрыла бы его кнопки — там уже есть «Поделиться» и клип матча
+      visible: () => !!this.deathClip && (this.sim.phase === 'play' || this.sim.phase === 'accuse' || this.sim.phase === 'reveal'),
+      // отпускание пальца: «Отправить» открывает системное меню, а ему нужен свежий жест
+      onUp: () => this.onDeathClipTap(),
+    };
+    this.buttons.push(b);
+    const text = this.txt(b.x + b.w / 2, b.y + 6, b.label!, 'yellow').setOrigin(0.5, 0).setDepth(2100).setVisible(false);
+    this.btnObjs.set(b.id, { text });
+  }
+
+  private offerDeathClip(eid: number, at: number): void {
+    if (!clipSupported()) return;
+    const round = this.sim.round;
+    // после баннера «Ты выбит!» (он гаснет через ~3,3 с)
+    this.time.delayedCall(3400, () => {
+      if (this.sim.round !== round || this.me()?.alive) return;
+      this.deathClip = { eid, at, status: 'offer', progress: 0, file: null };
+      this.updateDeathClipLabel();
+      this.audio.play('ready');
+    });
+  }
+
+  private updateDeathClipLabel(): void {
+    const dc = this.deathClip;
+    const text = this.btnObjs.get('deathclip')?.text;
+    if (!dc || !text) return;
+    const label = dc.status === 'offer' ? this.t.clip.deathBtn : dc.status === 'rendering' ? `${Math.round(dc.progress * 100)}%` : this.t.clip.send;
+    if (text.text !== label) {
+      // origin 0.5: центр по кнопке, целый пиксель для нечётной ширины
+      text.setText(label);
+      text.x = 136 - (text.width % 2) / 2;
+    }
+  }
+
+  private onDeathClipTap(): void {
+    const dc = this.deathClip;
+    if (!dc) return;
+    if (dc.status === 'ready' && dc.file) {
+      void this.init0.onShare?.(this.t.clip.deathText, [dc.file]);
+      return;
+    }
+    if (dc.status !== 'offer') return;
+    const w = this.sim.world;
+    const start = w.keyframes[0]?.time ?? 0;
+    const to = Math.min(w.time, dc.at + 1500);
+    const from = Math.max(start, to - 6000);
+    const me = this.sim.info(this.sim.selfPid);
+    if (!me || to - from < 1500) return;
+    dc.status = 'rendering';
+    this.updateDeathClipLabel();
+    // посреди раунда других живых не раскрываем (гость их и не знает): подсвечен только ты
+    const rec = recordRound(w, { round: this.sim.round, theme: this.sim.theme, players: [], playEnd: to });
+    const moment: Moment = { from, to, score: 0, kind: 'knockout', at: dc.at };
+    const c = this.t.clip;
+    void recordClipInBackground(
+      {
+        rec,
+        moment,
+        arena: this.sim.arena,
+        players: [{ eid: dc.eid, name: me.name, color: me.color }],
+        t: this.t,
+        font: this.init0.fontFamily,
+        site: location.host,
+        captions: { find: c.findMe, reveal: c.thatWasMe, kind: c.gotMe },
+      },
+      (p) => {
+        if (this.deathClip !== dc) return;
+        dc.progress = p;
+        this.updateDeathClipLabel();
+      },
+    ).then((file) => {
+      if (this.deathClip !== dc) return;
+      if (!file) {
+        this.deathClip = null;
+        this.showToast(c.failed, 2000);
+        return;
+      }
+      dc.file = file;
+      dc.status = 'ready';
+      // подсказка-тост легла бы прямо на кнопку — хватает новой надписи и звука
+      this.updateDeathClipLabel();
+      this.audio.play('starTake');
     });
   }
 
@@ -1070,8 +1178,9 @@ export class GameScene extends Phaser.Scene {
     for (const o of this.ovObjs) o.destroy();
     this.ovObjs = [];
     this.ovDyn = {};
-    this.buttons = this.buttons.filter((b) => !b.label);
-    for (const [id, o] of this.btnObjs) if (o.text) this.btnObjs.delete(id);
+    const keep = new Set(this.buttons.filter((b) => b.keep).map((b) => b.id));
+    this.buttons = this.buttons.filter((b) => !b.label || b.keep);
+    for (const [id, o] of this.btnObjs) if (o.text && !keep.has(id)) this.btnObjs.delete(id);
   }
 
   private ovText(x: number, y: number, s: string, color: FontColor = 'white', center = true): Phaser.GameObjects.BitmapText {

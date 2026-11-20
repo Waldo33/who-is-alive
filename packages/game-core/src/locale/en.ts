@@ -157,6 +157,11 @@ export const en: Dict = {
       end: 'Round finale',
     },
     cta: 'Play with friends',
+    deathBtn: 'Clip',
+    findMe: 'Can you spot me?',
+    thatWasMe: 'That was me!',
+    gotMe: 'They got me!',
+    deathText: 'I got spotted in Who’s Alive? 😅 Can you find me?',
   },
   card: {
     winner: 'Winner',

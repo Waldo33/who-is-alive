@@ -40,6 +40,8 @@ export interface ClipInput {
   t: Dict;
   font: string;
   site: string;
+  /** Подписи вместо стандартных (клип выбывшего посреди раунда: «Найдёшь меня?» → «Это был я!»). */
+  captions?: { find: string; findSub?: string; reveal: string; kind: string };
 }
 
 export interface ClipResult {
@@ -242,13 +244,14 @@ export class ClipPlayerScene {
     g.fillRect(0, 0, LW, AY);
     g.fillRect(0, PANEL_Y, LW, LH - PANEL_Y);
     text(g, t.meta.title, LW / 2, 8, PAL.yellow, font, { outline: null });
+    const cap = this.inp.captions;
     if (part === 1) {
-      text(g, t.clip.find, LW / 2, PANEL_Y + 8, PAL.white, font, { outline: null });
-      text(g, fmt(t.clip.round, { n: this.inp.rec.round }), LW / 2, PANEL_Y + 21, PAL.mist, font, { outline: null });
+      text(g, cap?.find ?? t.clip.find, LW / 2, PANEL_Y + 8, PAL.white, font, { outline: null });
+      text(g, cap?.findSub ?? fmt(t.clip.round, { n: this.inp.rec.round }), LW / 2, PANEL_Y + 21, PAL.mist, font, { outline: null });
     } else {
       const blink = Math.floor(local / 400) % 2 === 0;
-      text(g, t.clip.reveal, LW / 2, PANEL_Y + 8, PAL.white, font, { outline: null });
-      text(g, t.clip.kinds[this.inp.moment.kind], LW / 2, PANEL_Y + 21, blink ? PAL.yellow : PAL.amber, font, { outline: null });
+      text(g, cap?.reveal ?? t.clip.reveal, LW / 2, PANEL_Y + 8, PAL.white, font, { outline: null });
+      text(g, cap?.kind ?? t.clip.kinds[this.inp.moment.kind], LW / 2, PANEL_Y + 21, blink ? PAL.yellow : PAL.amber, font, { outline: null });
       // «повтор» в углу — как в спортивной трансляции
       g.fillStyle = PAL.red;
       if (blink) g.fillRect(LW - 9, AY + 4, 4, 4);
