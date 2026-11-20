@@ -321,10 +321,27 @@ export class MatchSim {
     this.nextTwistAt = tw ? this.playStart + this.rng.range(tw.firstSec[0], tw.firstSec[1]) * 1000 : Infinity;
   }
 
-  /** Включить или выключить изнанку темы, когда подошло время (не в стоп-кадре и не во время сужения). */
+  /**
+   * Толпа выполняет команду «Море волнуется»: от стоп-кадра до конца последней позы
+   * (опоздавшие жмут до windowEnd, поза длится crowdActDur). Ограничено сверху на случай
+   * совпавших с командой эмоций того же вида.
+   */
+  crowdBusy(t = this.world.time): boolean {
+    const c = this.world.crowd;
+    if (!c || t < c.showAt) return false;
+    if (t <= c.windowEnd) return true;
+    if (t > c.windowEnd + crowdActDur(this.cfg, c.kind) + 1500) return false;
+    const act = CROWD_ACT[c.kind];
+    return this.world.entities.some((e) => e.alive && e.act === act && e.actEnd > t);
+  }
+
+  /**
+   * Включить или выключить изнанку темы, когда подошло время: не в стоп-кадре и не посреди
+   * позы команды (тогда — сразу после неё), новых включений нет во время сужения.
+   */
   private twistTick(t: number): void {
     const tw = themeRules(this.theme).twist;
-    if (!tw || t < this.nextTwistAt || this.world.isFrozen(t)) return;
+    if (!tw || t < this.nextTwistAt || this.crowdBusy(t)) return;
     const on = !this.world.twist;
     if (on && (this.twistLeft <= 0 || this.zoneStarted)) {
       this.nextTwistAt = Infinity;

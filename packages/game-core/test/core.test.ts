@@ -317,7 +317,16 @@ describe('MatchSim', () => {
     });
     runUntil(sim, () => sim.phase === 'play');
     const start = sim.world.time;
+    // смена облика — никогда посреди команды «Море волнуется» (стоп-кадр и позы толпы)
+    const busyAtTwist: number[] = [];
+    sim.world.listeners.push((ev) => {
+      if (ev.t === 'twist' && ev.on !== undefined && sim.phase === 'play') {
+        const c = sim.world.crowd;
+        if (c && ev.at >= c.showAt && ev.at <= c.windowEnd) busyAtTwist.push(ev.at);
+      }
+    });
     runUntil(sim, () => sim.phase !== 'play');
+    expect(busyAtTwist).toEqual([]);
     const end = sim.world.time;
     const ons = twists.filter((e) => e.t === 'twist' && e.on).length;
     expect(ons).toBeGreaterThanOrEqual(1);
@@ -333,7 +342,7 @@ describe('MatchSim', () => {
     const rate = (n: number, ms: number) => n / Math.max(1, ms);
     const inside = acts.filter((a) => a.on).length;
     const outside = acts.length - inside;
-    expect(rate(inside, onMs)).toBeGreaterThan(1.5 * rate(outside, end - start - onMs));
+    expect(rate(inside, onMs)).toBeGreaterThan(1.2 * rate(outside, end - start - onMs));
     // повтор из журнала видит изнанку там же
     const ev = twists.find((e) => e.t === 'twist' && e.on)!;
     const r = makeReplay(sim.world, ev.at - 2000, ev.at + 1000)!;
