@@ -23,12 +23,14 @@ import type { FontColor } from './font';
 import { registerFonts } from './font';
 import {
   CH_H, CH_W, OL_H, OL_W,
-  makeArenaBackground, makeArrow, makeCharacterSheets, makeHedge, makeIcons, makeMark, makePigeon,
+  makeArenaBackground, makeArrow, makeCharacterSheets, makeHedge, makeIconSheet, makeIcons, makeMark, makePigeon,
   makePoof, makeProp, makeRing, makeShadow, makeStar, makeStarFlash, makeStunStars, makeVignette,
 } from './sprites';
 import { isThemeLoaded, loadTheme, lookCount, preloadThemes, themeLook, themePack } from './themes';
+import type { Look } from './themes';
 
 const AY = 24; // верх арены на экране
+const CROWD_KINDS: CrowdKind[] = ['freeze', 'jump', 'dance'];
 const PANEL_Y = 284;
 const ME = 'me';
 const COLOR_FONT: FontColor[] = ['red', 'blue', 'yellow', 'green'];
@@ -116,6 +118,9 @@ export class GameScene extends Phaser.Scene {
   /** Тема, под которую сейчас одеты земля, предметы, стенка зоны и зверьки. */
   /** Текущий облик на поле: «тема_облик» (облик 1 — изнанка темы). */
   private lookKey = '';
+  /** Свои действия текущего облика темы (эмоции и команды толпы) и его иконки команд. */
+  private lookActs: Look['acts'];
+  private lookIcons: Look['icons'];
   /** «25-й кадр»: сущность, которая на миг показана в облике изнанки, и до какого времени. */
   private flash25: { eid: number; until: number } | null = null;
   private next25 = 0;
@@ -378,7 +383,7 @@ export class GameScene extends Phaser.Scene {
     if (this.textures.exists('arena' + key)) return key;
     const [t, l] = key.split('_').map(Number);
     const look = themeLook(t, l);
-    const s = makeCharacterSheets(look.chars);
+    const s = makeCharacterSheets(look.chars, look.poses);
     this.addSheet('ch' + key, s.body, CH_W, CH_H);
     this.addSheet('ol' + key, s.outline, OL_W, OL_H);
     this.textures.addCanvas('arena' + key, makeArenaBackground(this.sim.arena, look));
@@ -388,6 +393,8 @@ export class GameScene extends Phaser.Scene {
       const [c, fw, fh] = makeProp(kind, look);
       this.addSheet(`prop-${kind}-${key}`, c, fw, fh);
     }
+    const ic = look.icons;
+    if (ic) this.addSheet('icons' + key, makeIconSheet(CROWD_KINDS.map((k) => ic[k] ?? ['........'])), 8, 8);
     return key;
   }
 
@@ -905,6 +912,19 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
+  /** Иконка команды толпы: своя у облика темы или общая (рука, прыжок, танец). */
+  private crowdIconOf(kind: CrowdKind): [string, number] {
+    if (this.lookIcons?.[kind]) return ['icons' + this.lookKey, CROWD_KINDS.indexOf(kind)];
+    return ['icons', this.icon(kind === 'freeze' ? 'hand' : kind)];
+  }
+
+  /** Название команды толпы: своё у темы (в изнанке — своё у изнанки) или общее. */
+  private crowdLabel(kind: CrowdKind): string {
+    const tt = this.themeText();
+    const own = this.lookKey.endsWith('_1') ? tt?.twistCrowd : tt?.crowd;
+    return own?.[kind] ?? this.t.game.crowd[kind];
+  }
+
   /** Свои текстовки темы раунда (словарь › themeText), если есть. */
   private themeText(): ThemeText | undefined {
     const id = THEME_RULES[this.sim.theme]?.id;
@@ -974,6 +994,14 @@ export class GameScene extends Phaser.Scene {
     const key = this.ensureLook(th, lk);
     if (key === this.lookKey) return;
     this.lookKey = key;
+    const [kt, kl] = key.split('_').map(Number);
+    const look = themeLook(kt, kl);
+    this.lookActs = key === '0_0' ? undefined : look.acts;
+    this.lookIcons = key === '0_0' ? undefined : look.icons;
+    for (const k of CROWD_KINDS) {
+      const [tex, fr] = this.crowdIconOf(k);
+      this.btnObjs.get('crowd-' + k)?.icon?.setTexture(tex, fr);
+    }
     for (const v of this.views) {
       v.spr.setTexture('ch' + key, 0);
       v.ol.setTexture('ol' + key, 0);
@@ -1033,7 +1061,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private frameFor(e: Entity, t: number): CharFrame {
-    return frameFor(e, t);
+    return frameFor(e, t, this.lookActs);
   }
 
   private renderWorld(
@@ -1083,7 +1111,7 @@ export class GameScene extends Phaser.Scene {
           ly = Math.round(this.lunge.dy * Math.sin(k * Math.PI));
         }
       }
-      const flashKey = mode === 'live' ? this.subliminalKey(e.eid) : null;
+      const flashKey = mode === 'live' && !(e.act && t < e.actEnd) ? this.subliminalKey(e.eid) : null;
       const chKey = 'ch' + (flashKey ?? this.lookKey);
       if (v.spr.texture.key !== chKey) v.spr.setTexture(chKey, frame);
       v.spr.setVisible(true).setFrame(frame).setFlipX(flip).setPosition(x + lx, sy + jumpOff + ly).setDepth(sy);
@@ -1350,11 +1378,11 @@ export class GameScene extends Phaser.Scene {
     this.crowdIcon.setVisible(!!showCrowd);
     this.crowdText.setVisible(!!showCrowd);
     if (showCrowd && cr) {
-      const icon = cr.kind === 'freeze' ? 'hand' : cr.kind === 'jump' ? 'jump' : 'dance';
-      this.crowdIcon.setFrame(this.icon(icon));
+      const [tex, fr] = this.crowdIconOf(cr.kind);
+      if (this.crowdIcon.texture.key !== tex || this.crowdIcon.frame.name !== String(fr)) this.crowdIcon.setTexture(tex, fr);
       const answered = this.me()?.crowdAnswered === cr.warnAt;
       if (frozen) {
-        this.crowdText.setText(this.t.game.crowd[cr.kind]).setFont('px-yellow');
+        this.crowdText.setText(this.crowdLabel(cr.kind)).setFont('px-yellow');
         // полоска оставшегося времени стоп-кадра
         const k = Math.max(0, (cr.resumeAt - wt - this.acc) / (cr.resumeAt - cr.showAt));
         const bw = 64;

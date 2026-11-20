@@ -3,7 +3,7 @@ import type { ArenaDef } from '@kto/game-core';
 import type { Song, SongApi, SongStep } from '../music';
 import { canvas, ellipse, grid, px } from '../pixels';
 import { BASE_MAP } from './base';
-import type { CharStyle, PropSet, ThemePack, View } from './types';
+import type { CharStyle, Look, Pose, PropSet, ThemePack, View } from './types';
 import { centerDist, critterSheet, hash, line, tile } from './util';
 
 /**
@@ -24,6 +24,8 @@ const CLERK: CharStyle = {
     s: PAL.peach, S: PAL.fawn, a: PAL.mist, m: PAL.fawn, c: PAL.peach,
     b: PAL.white, B: PAL.mist, v: PAL.white, l: PAL.steel, L: PAL.ink,
     t: PAL.wine, n: PAL.blue,
+    // ноутбук, кружка с кофе, сигарета, дым, телефон
+    Q: PAL.slate, U: PAL.red, u: PAL.umber, C: PAL.white, E: PAL.orange, F: PAL.mist, P: PAL.night,
   },
   patch: (m, view) => {
     if (view === 'D') {
@@ -46,6 +48,8 @@ const FIGHTER: CharStyle = {
     s: PAL.peach, S: PAL.fawn, a: PAL.peach, m: PAL.fawn, c: PAL.coral,
     b: PAL.peach, B: PAL.fawn, v: PAL.tan, l: PAL.navy, L: PAL.ink,
     x: PAL.grape,
+    Q: PAL.red, // скакалка
+    T: PAL.white, // бинты на кулаках
   },
   patch: (m: string[][], view: View) => {
     if (view === 'D') {
@@ -56,6 +60,154 @@ const FIGHTER: CharStyle = {
     // ёжик на макушке: без блика, короче
     m[1] = m[1].map((ch) => (ch === 'k' ? 'h' : ch));
   },
+};
+
+// ═════════════ действия ═════════════
+// Механика у всех тем одна (game-core: freeze, jump, dance, wave — и у ботов, и у игроков),
+// здесь — только как это выглядит. m[строка][столбец]; голова — строки 0–8, тело 9–12, ноги 13–15.
+
+const set = (m: string[][], x: number, y: number, ch: string) => {
+  if (y >= 0 && y < m.length && x >= 0 && x < m[y].length) m[y][x] = ch;
+};
+/** Убрать опущенную правую (на экране) руку — она поднята. */
+const rightArmUp = (m: string[][]) => {
+  set(m, 9, 10, 'b');
+  set(m, 9, 11, 'B');
+};
+
+/** Офис: делают вид, что работают; кофе; перекур; звонок. */
+const OFFICE_POSES: Pose[] = [
+  // 0–1 ноутбук в руках, пальцы стучат
+  ...[3, 4].map((f): Pose => ({
+    view: 'D',
+    patch: (m) => {
+      // тёмная крышка с бликом по краю, светлая клавиатура, пальцы стучат
+      for (let x = 3; x <= 8; x++) {
+        set(m, x, 9, 'Q');
+        set(m, x, 10, 'P');
+        set(m, x, 11, 'Q');
+      }
+      set(m, 2, 9, 'o'); set(m, 9, 9, 'o'); set(m, 2, 10, 'o'); set(m, 9, 10, 'o');
+      set(m, f, 11, 's'); set(m, 11 - f, 11, 's');
+    },
+  })),
+  // 2 кружка у груди, пар
+  {
+    view: 'D',
+    patch: (m) => {
+      set(m, 8, 10, 'u'); set(m, 9, 10, 'U'); set(m, 8, 11, 'U'); set(m, 9, 11, 'U'); set(m, 10, 11, 'o');
+      set(m, 11, 7, 'F'); set(m, 10, 8, 'F');
+    },
+  },
+  // 3 глоток: кружка у рта, глаза прикрыты
+  {
+    view: 'D',
+    patch: (m) => {
+      rightArmUp(m);
+      set(m, 6, 7, 'U'); set(m, 7, 7, 'U'); set(m, 6, 8, 'U'); set(m, 7, 8, 'U');
+      set(m, 8, 8, 's'); set(m, 8, 9, 'a'); set(m, 9, 9, 'a');
+      set(m, 3, 5, 's'); set(m, 8, 5, 's');
+    },
+  },
+  // 4 затяжка: сигарета у рта, рука у лица
+  {
+    view: 'D',
+    patch: (m) => {
+      rightArmUp(m);
+      set(m, 9, 7, 'C'); set(m, 10, 7, 'C'); set(m, 11, 7, 'E');
+      set(m, 10, 8, 's'); set(m, 10, 9, 'a'); set(m, 9, 9, 'a');
+    },
+  },
+  // 5 выдох: рука с сигаретой внизу, дымок над головой
+  {
+    view: 'D',
+    patch: (m) => {
+      set(m, 10, 11, 'C'); set(m, 11, 11, 'E');
+      set(m, 5, 7, 'o'); set(m, 6, 7, 'o');
+      set(m, 10, 1, 'F'); set(m, 9, 0, 'F'); set(m, 11, 0, 'F');
+    },
+  },
+  // 6–7 по телефону: трубка у уха, рот то закрыт, то открыт
+  ...[false, true].map((talk): Pose => ({
+    view: 'D',
+    patch: (m) => {
+      rightArmUp(m);
+      set(m, 10, 4, 'P'); set(m, 10, 5, 'P'); set(m, 10, 6, 'P');
+      set(m, 11, 6, 's'); set(m, 11, 7, 'a'); set(m, 11, 8, 'a'); set(m, 10, 9, 'a');
+      if (talk) { set(m, 5, 7, 'o'); set(m, 6, 7, 'o'); }
+    },
+  })),
+];
+
+const OFFICE_ACTS: Look['acts'] = {
+  freeze: { poses: [0], ms: 1000 }, // «Шеф идёт!» — все уткнулись в ноутбуки
+  jump: { poses: [2, 3, 3, 2], ms: 260 }, // кофе
+  dance: { poses: [4, 4, 5, 5], ms: 300 }, // перекур
+  wave: { poses: [6, 7], ms: 200 }, // звонок
+};
+
+/** Подвал: стойка, скакалка, бой с тенью, бицепс. */
+const BASEMENT_POSES: Pose[] = [
+  // 0 стойка: кулаки у подбородка
+  {
+    view: 'D',
+    patch: (m) => {
+      set(m, 3, 8, 'T'); set(m, 8, 8, 'T'); set(m, 2, 9, 'a'); set(m, 9, 9, 'a');
+    },
+  },
+  // 1 скакалка над головой (руки в стороны)
+  {
+    view: 'D',
+    patch: (m) => {
+      for (let y = 1; y <= 11; y++) { set(m, 0, y, 'Q'); set(m, 11, y, 'Q'); }
+      set(m, 1, 0, 'Q'); set(m, 2, 0, 'Q'); set(m, 9, 0, 'Q'); set(m, 10, 0, 'Q');
+      set(m, 0, 11, 'a'); set(m, 11, 11, 'a'); set(m, 1, 11, 'a'); set(m, 10, 11, 'a');
+    },
+  },
+  // 2 скакалка под ногами, прыжок
+  {
+    view: 'D',
+    legs: 'idle',
+    patch: (m) => {
+      for (let x = 0; x < 12; x++) if (m[15][x] === '.') set(m, x, 15, 'Q');
+      set(m, 0, 12, 'Q'); set(m, 11, 12, 'Q'); set(m, 0, 13, 'Q'); set(m, 11, 13, 'Q'); set(m, 0, 14, 'Q'); set(m, 11, 14, 'Q');
+      set(m, 0, 11, 'a'); set(m, 11, 11, 'a'); set(m, 1, 11, 'a'); set(m, 10, 11, 'a');
+    },
+  },
+  // 3–4 бой с тенью: стойка — удар (вид сбоку)
+  { view: 'S', arms: 'guard', legs: 'liftL' },
+  { view: 'S', arms: 'jab', legs: 'liftR' },
+  // 5–6 бицепс: обе руки согнуты, во втором кадре «играет» мышцей и ухмыляется
+  ...[false, true].map((pump): Pose => ({
+    view: 'D',
+    face: pump ? 'happy' : 'normal',
+    patch: (m) => {
+      set(m, 2, 10, 'b'); set(m, 2, 11, 'B'); set(m, 9, 10, 'b'); set(m, 9, 11, 'B');
+      set(m, 0, 9, 'a'); set(m, 1, 9, 'a'); set(m, 10, 9, 'a'); set(m, 11, 9, 'a');
+      set(m, 0, 8, 'a'); set(m, 0, 7, 'a'); set(m, 11, 8, 'a'); set(m, 11, 7, 'a');
+      if (pump) { set(m, 1, 8, 'a'); set(m, 10, 8, 'a'); }
+    },
+  })),
+];
+
+const BASEMENT_ACTS: Look['acts'] = {
+  freeze: { poses: [0], ms: 1000 }, // «В стойку!»
+  jump: { poses: [1, 2], ms: 180, yoff: [0, -3] }, // скакалка
+  dance: { poses: [3, 4], ms: 115, flip: true }, // бой с тенью
+  jab: { poses: [3, 4], ms: 115, flip: true },
+  wave: { poses: [5, 6], ms: 260 }, // бицепс
+};
+
+const OFFICE_ICONS = {
+  freeze: ['........', '.oooooo.', '.obbbbo.', '.obbbbo.', '.oooooo.', 'oddddddo', 'oooooooo', '........'],
+  jump: ['..m.m...', '...m.m..', 'oooooo..', 'owwwwooo', 'owwwwo.o', 'owwwwooo', '.owwo...', '..oo....'],
+  dance: ['.....m..', '....m.m.', '.....m..', '........', 'oooooooo', 'owwwwwro', 'oooooooo', '........'],
+};
+
+const BASEMENT_ICONS = {
+  freeze: ['.oooooo.', 'orrrrrro', 'orwrrrro', 'orrrrrro', 'oorrrrro', '.orrrro.', '.owwwwo.', '..oooo..'],
+  jump: ['.uuuuuu.', 'u......u', 'u......u', 'u......u', 'u......u', 'oo....oo', 'oo....oo', '........'],
+  dance: ['........', 'm..oooo.', '..orrrro', 'mmorwrro', '..orrrro', 'm..oooo.', '........', '........'],
 };
 
 // ═════════════ офис: земля ═════════════
@@ -473,9 +625,12 @@ const BASEMENT: PropSet = {
 // ═════════════ музыка ═════════════
 
 /**
- * Своя песня темы: Em — C — G — D, 132 BPM. В офисе — тихий куплет: бас восьмыми, чистая
- * гитара перебором с эхом, щёточки; в подвале — громкий припев: перегруженные квинты,
- * бочка и малый на всю, тарелка на смене. Вой «у-у» сверху — ни у кого не взятая мелодия.
+ * Своя песня темы, инструментальный рок: Em — C — G — D, 132 BPM, мелодия своя.
+ * Офис — тихо: бас восьмыми, чистая гитара перебором с эхом, римшот; со второго круга
+ * та же мелодия, что потом в подвале, — чистым звуком, вполголоса.
+ * Подвал — громко, по частям (счёт тактов от смены света, круг 14 тактов):
+ *   риф (перегруженные квинты с акцентами) → риф + соло → стоп-тайм со сбивкой → риф октавой выше,
+ *   сбивки малым и томами в конце каждой четвёрки, тарелка на смене и в начале частей.
  */
 const ROOTS = [40, 36, 43, 38]; // E2 C2 G2 D2
 const TRIADS = [
@@ -484,8 +639,29 @@ const TRIADS = [
   [0, 4, 7], // G
   [0, 4, 7], // D
 ];
-const OOH = [71, 72, 74, 69, 67, 67, 66, 66];
 const PICK = [0, 2, 1, 3, 2, 1, 3, 1];
+/** Мелодия: по 5 нот на такт на шестнадцатых 0, 3, 6, 10, 12 (синкопы). */
+const MEL_AT = [0, 3, 6, 10, 12];
+const MELODY = [
+  [76, 79, 81, 79, 76],
+  [76, 74, 72, 74, 76],
+  [74, 76, 79, 81, 79],
+  [78, 76, 74, 71, 74],
+];
+
+/** Нота мелодии на этой шестнадцатой (и её длина в шестнадцатых) или null. */
+function melodyAt(ch: number, s: number): [number, number] | null {
+  const k = MEL_AT.indexOf(s);
+  if (k < 0) return null;
+  return [MELODY[ch][k], (MEL_AT[k + 1] ?? 16) - s];
+}
+
+/** Сбивка в конце такта: малый шестнадцатыми и томы вниз. */
+function fill(a: SongApi, s: number, t: number): void {
+  if (s < 12) return;
+  a.hit(0.07, 0.12 + (s - 12) * 0.03, 1400, t);
+  a.kick(t, 0.22, [240, 200, 165, 130][s - 12]);
+}
 
 const song: Song = {
   step(a: SongApi, st: SongStep) {
@@ -494,33 +670,63 @@ const song: Song = {
     const root = ROOTS[ch];
     const tri = TRIADS[ch];
     if (!twist) {
-      // ── куплет: тихо ──
+      // ── офис: тихо ──
       if (s % 2 === 0) a.voice('triangle', root + (s === 14 ? 12 : 0), t, dt * 1.6, 0.13);
       if (s % 2 === 0) {
         const n = PICK[s / 2];
-        const midi = root + 24 + (n === 3 ? 12 : tri[n]);
-        a.voice('pulse', midi, t, dt * 1.8, 0.045);
+        a.voice('pulse', root + 24 + (n === 3 ? 12 : tri[n]), t, dt * 1.8, 0.04);
       }
       if (s % 4 === 2) a.hit(0.03, 0.035, 7000, t);
-      if (s === 4 || s === 12) a.hit(0.05, 0.06, 1800, t);
-      if (s === 0 || (I >= 1 && s === 8)) a.kick(t, 0.18, 110);
+      if (s === 4 || s === 12) a.hit(0.03, 0.07, 2600, t); // римшот
+      if (s === 0 || s === 10 || (I >= 1 && s === 8)) a.kick(t, 0.17, 110);
       if (I >= 2 && s % 2 === 1) a.hit(0.02, 0.025, 8000, t);
-      // «у-у» на второй половине круга
-      if (bar % 8 >= 4 && s === 0) a.voice('sine', OOH[(bar % 4) * 2], t, dt * 7, 0.035);
-      if (bar % 8 >= 4 && s === 8) a.voice('sine', OOH[(bar % 4) * 2 + 1], t, dt * 7, 0.035);
+      // со второго круга — мелодия чистым звуком (намёк на подвал)
+      const m = bar % 16 >= 8 ? melodyAt(ch, s) : null;
+      if (m) a.voice('square', m[0] - 12, t, dt * m[1] * 0.9, 0.03);
+      if (bar % 4 === 3 && s >= 14) a.hit(0.04, 0.05, 2600, t);
       return;
     }
-    // ── припев: громко ──
+    // ── подвал: громко, по частям ──
+    const b = st.barsSinceTwist % 14;
+    const part = b < 4 ? 'riff' : b < 8 ? 'solo' : b < 10 ? 'stop' : 'high';
+    const lastOfFour = part === 'stop' ? b === 9 : b % 4 === 3;
+    const crash = s === 0 && (b === 0 || b === 4 || b === 10 || (part === 'high' && b % 2 === 0));
+    if (crash) a.hit(0.9, 0.16, 4500, t);
+
+    if (part === 'stop') {
+      // стоп-тайм: удары на «раз» и «и» второй доли, между ними тишина; второй такт — сбивка
+      if (b === 8 && (s === 0 || s === 6)) {
+        a.power(root + 12, t, dt * 3, 0.12);
+        a.voice('square', root, t, dt * 3, 0.14);
+        a.kick(t, 0.36, 160);
+        a.hit(0.12, 0.2, 1500, t);
+      }
+      if (b === 9) {
+        if (s === 0) a.power(root + 12, t, dt * 6, 0.1);
+        if (s % 2 === 0 && s >= 4) a.hit(0.06, 0.08 + s * 0.008, 1400, t);
+        if (s >= 8) a.kick(t, 0.25, 260 - s * 8);
+      }
+      return;
+    }
+
+    // риф — как был: перегруз восьмыми, акценты на 1, «и» 2-й, 3, «и» 4-й
+    const up = part === 'high' ? 12 : 0;
     const accent = s === 0 || s === 6 || s === 8 || s === 14;
-    if (s % 2 === 0) a.power(root + 12, t, accent ? dt * 1.9 : dt * 0.9, accent ? 0.11 : 0.07);
+    if (s % 2 === 0) a.power(root + 12 + up, t, accent ? dt * 1.9 : dt * 0.9, accent ? 0.11 : 0.07);
     if (s % 2 === 0) a.voice('square', root, t, dt * 1.7, 0.12);
-    if (s === 0 || s === 6 || s === 10 || (I >= 2 && s % 4 === 0)) a.kick(t, 0.34, 160);
-    if (s === 4 || s === 12) a.hit(0.14, 0.22, 1500, t);
-    if (s % 2 === 0) a.hit(0.06, 0.06, 6500, t);
-    if (I >= 1 && s % 2 === 1) a.hit(0.03, 0.03, 8000, t);
-    if (st.barsSinceTwist === 0 && s === 0) a.hit(0.9, 0.16, 4500, t); // тарелка на смене
-    if (s === 0) a.voice('sine', OOH[ch * 2] + 12, t, dt * 7, 0.04);
-    if (s === 8) a.voice('sine', OOH[ch * 2 + 1] + 12, t, dt * 7, 0.04);
+    // ударные: рок-бит, в «октаве» — бочка восьмыми и хэт шестнадцатыми
+    if (lastOfFour) fill(a, s, t);
+    if (!(lastOfFour && s >= 12)) {
+      const kick = part === 'high' ? s % 4 === 0 || s === 6 || s === 14 : s === 0 || s === 6 || s === 10;
+      if (kick || (I >= 2 && s % 4 === 0)) a.kick(t, 0.34, 160);
+      if (s === 4 || s === 12) a.hit(0.14, 0.22, 1500, t);
+      if (part === 'high' || I >= 1 ? true : s % 2 === 0) a.hit(s % 2 ? 0.03 : 0.06, s % 2 ? 0.035 : 0.06, 6500, t);
+    }
+    // соло: та же мелодия, перегруженная, октавой с дублем
+    if (part === 'solo') {
+      const m = melodyAt(ch, s);
+      if (m) a.power(m[0] - 12, t, dt * m[1] * 0.95, 0.06, [0, 12]);
+    }
   },
 };
 
@@ -530,6 +736,9 @@ const pack: ThemePack = {
   looks: [
     {
       chars: CLERK,
+      poses: OFFICE_POSES,
+      acts: OFFICE_ACTS,
+      icons: OFFICE_ICONS,
       ground: officeGround,
       prop: (kind) => OFFICE[kind]?.() ?? null,
       // перегородка опенспейса
@@ -550,6 +759,9 @@ const pack: ThemePack = {
     },
     {
       chars: FIGHTER,
+      poses: BASEMENT_POSES,
+      acts: BASEMENT_ACTS,
+      icons: BASEMENT_ICONS,
       ground: basementGround,
       prop: (kind) => BASEMENT[kind]?.() ?? null,
       // грязный кирпич

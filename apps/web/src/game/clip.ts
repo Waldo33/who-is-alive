@@ -274,7 +274,7 @@ export class ClipPlayerScene {
         if (since >= 0 && since < 360) list.push({ y: y + 1, draw: () => frame(g, a.poof, 24, 24, Math.min(5, Math.floor(since / 60)), x - 12, y - 20) });
         continue;
       }
-      const fr = frameFor(e, t);
+      const fr = frameFor(e, t, ch.acts);
       const col = this.colors.get(e.eid);
       const lit = reveal && col !== undefined;
       // на разборе тусклые все, кроме участников события и живых игроков

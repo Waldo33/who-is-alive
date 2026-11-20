@@ -42,7 +42,7 @@ export const THEME_RULES: readonly ThemeRules[] = [
   { id: 'cosmonauts' },
   {
     id: 'office',
-    twist: { firstSec: [14, 26], onSec: [14, 20], gapSec: [10, 16], max: 2, emote: 'jab', emoteMul: 4 },
+    twist: { firstSec: [14, 26], onSec: [14, 20], gapSec: [10, 16], max: 2, emoteMul: 3 },
   },
 ];
 

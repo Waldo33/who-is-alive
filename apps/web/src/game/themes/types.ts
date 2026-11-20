@@ -1,4 +1,4 @@
-import type { ArenaDef } from '@kto/game-core';
+import type { ActKind, ArenaDef, CrowdKind } from '@kto/game-core';
 import type { Flavor, Song } from '../music';
 
 /**
@@ -14,6 +14,30 @@ import type { Flavor, Song } from '../music';
  */
 
 export type View = 'D' | 'U' | 'S';
+export type Legs = 'idle' | 'liftL' | 'liftR';
+export type Arms = 'down' | 'up' | 'waveA' | 'waveB' | 'leftUp' | 'rightUp' | 'guard' | 'jab';
+export type Face = 'normal' | 'blink' | 'wide' | 'dizzy' | 'happy';
+
+/**
+ * Своя поза персонажа темы (кадр 12×16 поверх шаблона): база (вид, ноги, руки, лицо) и правки
+ * `patch(m)` — `m[строка][столбец] = 'буква'`, буквы и цвета — из `chars.map` облика.
+ * Позы дописываются в ленту персонажа после общих кадров (`F.COUNT + индекс`).
+ */
+export interface Pose {
+  view: View;
+  legs?: Legs;
+  arms?: Arms;
+  face?: Face;
+  patch?: (m: string[][]) => void;
+}
+
+/** Анимация действия: позы по кругу через `ms`; `flip` — разворот каждые 4 кадра; `yoff` — подскок по кадрам. */
+export interface ActAnim {
+  poses: number[];
+  ms: number;
+  flip?: boolean;
+  yoff?: number[];
+}
 
 /** [холст, ширина кадра, высота кадра, число кадров] */
 export type PropArt = [HTMLCanvasElement, number, number, number];
@@ -36,6 +60,15 @@ export interface Look {
   wall?: () => HTMLCanvasElement;
   /** Зверёк: 6 кадров 6×6 (0–1 стоит, 2–5 убегает). Получает кадры голубя — можно перекрасить их. */
   critter?: (pigeonFrames: string[][]) => HTMLCanvasElement;
+  /**
+   * Свои действия: как в этом облике выглядят эмоции и команды «Море волнуется». Механика та же
+   * (game-core: wave/dance/jump/freeze…), меняется только анимация — в офисе «танец» — это
+   * перекур, в подвале — бой с тенью. Не заданное — общий кадр (sprites.ts › F).
+   */
+  poses?: Pose[];
+  acts?: Partial<Record<ActKind, ActAnim>>;
+  /** Иконки команд «Море волнуется» 8×8 (буквы: o контур, w белый, m светлый, d сталь, n сумрак, y жёлтый, r красный, b синий, g зелёный, u бурый, f оранжевый). */
+  icons?: Partial<Record<CrowdKind, string[]>>;
 }
 
 export interface ThemePack {

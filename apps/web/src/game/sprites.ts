@@ -3,7 +3,7 @@ import type { ArenaDef } from '@kto/game-core';
 import { canvas, dither, ellipse, grid, outlineOf, px } from './pixels';
 import type { Ctx } from './pixels';
 import { BASE_MAP } from './themes/base';
-import type { CharStyle, Look, View } from './themes/types';
+import type { Arms, CharStyle, Face, Legs, Look, Pose, View } from './themes/types';
 
 /**
  * Процедурные заглушки ассетов (раздел 9). Размеры и имена кадров совпадают с таблицей ассетов,
@@ -31,9 +31,6 @@ export const F = {
   COUNT: 32,
 } as const;
 
-type Legs = 'idle' | 'liftL' | 'liftR';
-type Arms = 'down' | 'up' | 'waveA' | 'waveB' | 'leftUp' | 'rightUp' | 'guard' | 'jab';
-type Face = 'normal' | 'blink' | 'wide' | 'dizzy' | 'happy';
 
 interface FrameSpec {
   view: View;
@@ -191,12 +188,15 @@ export interface CharSheets {
   outline: HTMLCanvasElement;
 }
 
-export function makeCharacterSheets(theme: CharStyle): CharSheets {
-  const body = canvas(CH_W * F.COUNT, CH_H);
-  const outline = canvas(OL_W * F.COUNT, OL_H);
-  FRAMES.forEach((spec, i) => {
+/** Лента персонажа: общие кадры F, затем свои позы темы (F.COUNT + i) — их правки поверх костюма. */
+export function makeCharacterSheets(theme: CharStyle, poses: Pose[] = []): CharSheets {
+  const all: (FrameSpec & { pose?: Pose['patch'] })[] = [...FRAMES, ...poses.map((p) => ({ ...p, pose: p.patch }))];
+  const body = canvas(CH_W * all.length, CH_H);
+  const outline = canvas(OL_W * all.length, OL_H);
+  all.forEach((spec, i) => {
     const m = buildMatrix(spec);
     theme.patch?.(m, spec.view);
+    spec.pose?.(m);
     if (spec.shift) applyShift(m, spec.shift);
     const one = canvas(CH_W, CH_H);
     grid(one.g, 0, 0, m.map((r) => r.join('')), theme.map);
@@ -570,3 +570,16 @@ export function makeProp(kind: string, look?: Look): [HTMLCanvasElement, number,
 }
 
 export type { Ctx };
+
+/** Цвета букв иконок 8×8 (общие и иконки тем). */
+export const ICON_MAP: Record<string, string> = {
+  o: PAL.ink, w: PAL.white, m: PAL.mist, d: PAL.steel, n: PAL.dusk, y: PAL.yellow, r: PAL.red,
+  b: PAL.blue, g: PAL.green, u: PAL.umber, f: PAL.orange, a: PAL.amber, s: PAL.peach,
+};
+
+/** Лист иконок 8×8 из строк (иконки команд темы). */
+export function makeIconSheet(list: string[][]): HTMLCanvasElement {
+  const { c, g } = canvas(list.length * 8, 8);
+  list.forEach((rows, i) => grid(g, i * 8, 0, rows.map((r) => (r + '........').slice(0, 8)), ICON_MAP));
+  return c;
+}

@@ -36,7 +36,9 @@ describe('i18n', () => {
         g.accuseChange, g.reveal, g.revealReplay, g.revealFinal, g.guessed, g.missed, g.caught, g.killedBy, g.noAccuse,
         tp(lang, g.resultsTitle, 5), ...Object.values(g.endReason), g.noAwards, tp(lang, g.nextIn, 10),
         g.youWon, g.winner, g.tooAlive, tp(lang, g.roundTheme, 5, { theme: t.themes.reduce((a, b) => (a.length > b.length ? a : b)) }),
-        ...Object.values(t.themeText).flatMap((x) => Object.values(x ?? {}) as string[]),
+        ...Object.values(t.themeText).flatMap((x) =>
+          Object.values(x ?? {}).flatMap((v) => (typeof v === 'string' ? [v] : (Object.values(v ?? {}) as string[]))),
+        ),
       ];
       // у каждой темы есть название
       expect(t.themes.length).toBe(THEME_COUNT);

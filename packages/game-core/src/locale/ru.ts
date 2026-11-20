@@ -12,6 +12,9 @@ export interface ThemeText {
   /** Изнанка включилась / выключилась (themes.ts › twist). */
   twistOn?: string;
   twistOff?: string;
+  /** Свои названия команд «Море волнуется» (в изнанке — twistCrowd), как их показывает облик темы. */
+  crowd?: Partial<Record<'freeze' | 'jump' | 'dance', string>>;
+  twistCrowd?: Partial<Record<'freeze' | 'jump' | 'dance', string>>;
 }
 
 /** Формы множественного числа по Intl.PluralRules: one / few / many / other. */
@@ -50,7 +53,13 @@ export const ru = {
   themes: ['Кепки', 'Повара', 'Пингвины', 'Космонавты', 'Клерки'],
   /** Свои текстовки тем (по id из themes.ts) — необязательно. */
   themeText: {
-    office: { intro: 'Правило 1: не светись', twistOn: 'Свет мигнул… подвал!', twistOff: 'Обратно в офис' },
+    office: {
+      intro: 'Правило 1: не светись',
+      twistOn: 'Свет мигнул… подвал!',
+      twistOff: 'Обратно в офис',
+      crowd: { freeze: 'Шеф идёт!', jump: 'Кофе-брейк!', dance: 'Перекур!' },
+      twistCrowd: { freeze: 'В стойку!', jump: 'Скакалка!', dance: 'Бой с тенью!' },
+    },
   } as Partial<Record<ThemeId, ThemeText>>,
   start: {
     aria: 'Начало',

@@ -1,5 +1,6 @@
 import type { Entity } from '@kto/game-core';
 import { F } from './sprites';
+import type { Look } from './themes/types';
 
 export interface CharFrame {
   frame: number;
@@ -7,12 +8,21 @@ export interface CharFrame {
   yoff: number;
 }
 
-/** Кадр персонажа по состоянию сущности — общий для игры, повтора и клипа. */
-export function frameFor(e: Entity, t: number): CharFrame {
+/**
+ * Кадр персонажа по состоянию сущности — общий для игры, повтора и клипа.
+ * acts — свои действия облика темы (themes/types.ts › Look.acts): поза F.COUNT + i.
+ */
+export function frameFor(e: Entity, t: number, acts?: Look['acts']): CharFrame {
   const base = e.dir === 0 ? F.D : e.dir === 1 ? F.U : F.S;
   const flip = e.dir === 2;
   if (e.act && t < e.actEnd) {
     const dt = t - e.actStart;
+    const anim = acts?.[e.act];
+    if (anim && anim.poses.length) {
+      const n = Math.floor(dt / anim.ms);
+      const i = n % anim.poses.length;
+      return { frame: F.COUNT + anim.poses[i], flip: !!anim.flip && Math.floor(n / 4) % 2 === 1, yoff: anim.yoff?.[i] ?? 0 };
+    }
     switch (e.act) {
       case 'freeze':
         return { frame: F.FREEZE, flip: false, yoff: 0 };

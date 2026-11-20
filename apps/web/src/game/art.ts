@@ -15,6 +15,7 @@ import {
   makeVignette,
 } from './sprites';
 import { isThemeLoaded, themeLook } from './themes';
+import type { Look } from './themes';
 
 /**
  * Те же процедурные спрайты, что в игре, но как обычные canvas — для рисования клипа
@@ -28,6 +29,8 @@ export interface LocArt {
 }
 
 export interface CharArt {
+  /** Свои действия облика (для frameFor). */
+  acts: Look['acts'];
   body: HTMLCanvasElement;
   /** Контуры: [0 — белый, 1..4 — цвета игроков]. */
   outline: HTMLCanvasElement[];
@@ -76,8 +79,8 @@ export function getArt(arena: ArenaDef): Art {
     let a = sheets.get(k);
     if (!a) {
       const lk = k === '0:0' ? themeLook(0, 0) : themeLook(theme, look);
-      const s = makeCharacterSheets(lk.chars);
-      a = { body: s.body, outline: [s.outline, ...PLAYER_COLORS.map((col) => tint(s.outline, col))] };
+      const s = makeCharacterSheets(lk.chars, lk.poses);
+      a = { acts: lk.acts, body: s.body, outline: [s.outline, ...PLAYER_COLORS.map((col) => tint(s.outline, col))] };
       sheets.set(k, a);
     }
     return a;

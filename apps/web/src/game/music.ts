@@ -45,8 +45,8 @@ export interface SongApi {
   kick(when: number, vol?: number, from?: number): void;
   /** Шум через полосовой фильтр: хэт, малый, тарелка. */
   hit(dur: number, vol: number, freq: number, when: number): void;
-  /** Перегруженный квинтаккорд («пауэр-корд» гитары). */
-  power(midi: number, when: number, dur: number, vol: number): void;
+  /** Перегруженная гитара: по умолчанию квинтаккорд [0, 7, 12]; [0] или [0, 12] — соло одной нотой. */
+  power(midi: number, when: number, dur: number, vol: number, iv?: readonly number[]): void;
   rng(): number;
 }
 
@@ -130,7 +130,7 @@ export class Music {
     voice: (type, midi, when, dur, vol) => this.voice(type, midi, when, dur, vol),
     kick: (when, vol, from) => this.kick(when, vol, from),
     hit: (dur, vol, freq, when) => this.hit(dur, vol, freq, when),
-    power: (midi, when, dur, vol) => this.power(midi, when, dur, vol),
+    power: (midi, when, dur, vol, iv) => this.power(midi, when, dur, vol, iv),
     rng: () => this.rng(),
   };
   private intensity = 0;
@@ -482,7 +482,7 @@ export class Music {
   }
 
   /** Перегруз: квинта + октава пилой через «овердрайв» и фильтр — гитара 90-х из синтезатора. */
-  private power(midi: number, when: number, dur: number, vol: number): void {
+  private power(midi: number, when: number, dur: number, vol: number, iv: readonly number[] = [0, 7, 12]): void {
     const bus = this.bus;
     if (!bus) return;
     const ctx = this.ctx;
@@ -509,16 +509,16 @@ export class Music {
     g.gain.setValueAtTime(vol, when + dur * 0.7);
     g.gain.exponentialRampToValueAtTime(0.0001, when + dur);
     g.connect(this.drive);
-    for (const [iv, det] of [[0, -6], [7, 5], [12, 0]] as const) {
+    iv.forEach((step, k) => {
       const o = ctx.createOscillator();
       o.type = 'sawtooth';
-      o.frequency.setValueAtTime(mtf(midi + iv + this.flavor.transpose), when);
-      o.detune.value = det;
+      o.frequency.setValueAtTime(mtf(midi + step + this.flavor.transpose), when);
+      o.detune.value = [-6, 5, 0, 3][k % 4];
       o.connect(g);
       o.start(when);
       o.stop(when + dur + 0.02);
       this.live.push({ src: o, until: when + dur });
-    }
+    });
   }
 
   private kick(when: number, vol = 0.3, from = 150): void {

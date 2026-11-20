@@ -26,7 +26,13 @@ export const en: Dict = {
   colors: ['Red', 'Blue', 'Yellow', 'Green'],
   themes: ['Caps', 'Chefs', 'Penguins', 'Astronauts', 'Clerks'],
   themeText: {
-    office: { intro: 'Rule 1: blend in', twistOn: 'Lights out. Basement!', twistOff: 'Back to the office' },
+    office: {
+      intro: 'Rule 1: blend in',
+      twistOn: 'Lights out. Basement!',
+      twistOff: 'Back to the office',
+      crowd: { freeze: 'Boss is coming!', jump: 'Coffee break!', dance: 'Smoke break!' },
+      twistCrowd: { freeze: 'Guard up!', jump: 'Jump rope!', dance: 'Shadowbox!' },
+    },
   } as Partial<Record<ThemeId, ThemeText>>,
   start: {
     aria: 'Start',
