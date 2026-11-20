@@ -8,4 +8,5 @@ export * from './bots';
 export * from './awards';
 export * from './match';
 export * from './ai';
+export * from './session';
 export * from './locale';

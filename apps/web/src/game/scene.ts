@@ -1,15 +1,14 @@
 import * as Phaser from 'phaser';
 import { PAL, PLAYER_COLORS, hexToInt } from '@kto/assets';
 import {
-  AiPlayer,
-  MatchSim,
+  createLocalSession,
   TICK_MS,
   makeConfig,
   makeReplay,
   tp,
   DICTS,
 } from '@kto/game-core';
-import type { AwardId, CrowdKind, Dict, Entity, GameConfig, Lang, Notice, World, WorldEvent } from '@kto/game-core';
+import type { AwardId, ClientSession, CrowdKind, Dict, Entity, GameConfig, Lang, Notice, World, WorldEvent } from '@kto/game-core';
 import { Audio } from './audio';
 import type { FontColor } from './font';
 import { registerFonts } from './font';
@@ -33,6 +32,8 @@ export interface SceneInit {
   onExit?: () => void;
   onShare?: (text: string) => void;
   lang?: Lang;
+  /** Источник игры; по умолчанию — песочница с ИИ. Сеть подставляет сюда хост или гостя. */
+  createSession?: (cfg: GameConfig, players: { pid: string; name: string; color: number }[], seed: number) => ClientSession;
   /** Только для отладки (?dev&speed=4): ускорение времени. */
   timeScale?: number;
 }
@@ -76,7 +77,8 @@ export class GameScene extends Phaser.Scene {
   private init0!: SceneInit;
   private lang: Lang = 'ru';
   private t: Dict = DICTS.ru;
-  sim!: MatchSim;
+  /** Единственный источник состояния игры для экрана: локальная симуляция, хост или гость. */
+  sim!: ClientSession;
   private cfg!: GameConfig;
   private audio!: Audio;
   private views: EntityView[] = [];
@@ -163,9 +165,9 @@ export class GameScene extends Phaser.Scene {
     const names = [this.init0.playerName || this.t.game.you, ...this.botNames()];
     const players = names.map((name, i) => ({ pid: i === 0 ? ME : `ai${i}`, name, color: i }));
     const seed = this.init0.seed ?? (Date.now() & 0x7fffffff);
-    this.sim = new MatchSim(this.cfg, players, seed, ME);
-    players.slice(1).forEach((p, i) => this.sim.addAgent(new AiPlayer(p.pid, seed + i * 7919 + 1)));
-    this.sim.world.listeners.push((ev) => this.onWorldEvent(ev));
+    this.sim = this.init0.createSession?.(this.cfg, players, seed) ?? createLocalSession(this.cfg, players, seed, ME);
+    this.sim.onWorldEvent((ev) => this.onWorldEvent(ev));
+    this.events.once('shutdown', () => this.sim.dispose());
     registerFonts(this, this.init0.fontFamily);
     this.makeTextures();
 
@@ -337,10 +339,10 @@ export class GameScene extends Phaser.Scene {
     this.buttons.push(
       {
         id: 'autopilot', x: 3, y: PANEL_Y + 3, w: 38, h: 30, icon: 'robot', visible: play,
-        onDown: () => this.sim.intent(ME, { k: 'autopilot', on: true }),
-        onUp: () => this.sim.intent(ME, { k: 'autopilot', on: false }),
+        onDown: () => this.sim.intent({ k: 'autopilot', on: true }),
+        onUp: () => this.sim.intent({ k: 'autopilot', on: false }),
       },
-      { id: 'emote', x: 139, y: PANEL_Y + 3, w: 38, h: 30, icon: 'smile', visible: play, onDown: () => this.sim.intent(ME, { k: 'emote' }) },
+      { id: 'emote', x: 139, y: PANEL_Y + 3, w: 38, h: 30, icon: 'smile', visible: play, onDown: () => this.sim.intent({ k: 'emote' }) },
     );
     const kinds: [CrowdKind, string][] = [['freeze', 'hand'], ['jump', 'jump'], ['dance', 'dance']];
     kinds.forEach(([kind, icon], i) => {
@@ -350,7 +352,7 @@ export class GameScene extends Phaser.Scene {
           const c = this.sim.world.crowd;
           if (c && this.me()?.crowdAnswered === c.warnAt) return;
           this.crowdChoice = kind;
-          this.sim.intent(ME, { k: 'crowd', kind });
+          this.sim.intent({ k: 'crowd', kind });
         },
       });
     });
@@ -429,7 +431,7 @@ export class GameScene extends Phaser.Scene {
   // ───────────── ввод ─────────────
 
   private me() {
-    return this.sim.playerRound(ME);
+    return this.sim.me();
   }
 
   private hitButton(x: number, y: number): Button | undefined {
@@ -488,7 +490,7 @@ export class GameScene extends Phaser.Scene {
     if (sim.phase === 'accuse') {
       const c = this.candidates(x, y)[0];
       if (c) {
-        sim.intent(ME, { k: 'accuse', eid: c.eid });
+        sim.intent({ k: 'accuse', eid: c.eid });
         this.audio.play('tick');
       }
       return;
@@ -506,7 +508,7 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     if (Math.hypot(mine.x - x, mine.y - 8 - y) <= 7) {
-      sim.intent(ME, { k: 'stop' });
+      sim.intent({ k: 'stop' });
       return;
     }
     const inRange = this.candidates(x, y).filter((e) => Math.hypot(e.x - mine.x, e.y - mine.y) <= this.cfg.attackRange);
@@ -515,12 +517,12 @@ export class GameScene extends Phaser.Scene {
       else this.doAttack(inRange[0].eid);
       return;
     }
-    sim.intent(ME, { k: 'move', x: Math.round(x), y: Math.round(y) });
+    sim.intent({ k: 'move', x: Math.round(x), y: Math.round(y) });
   }
 
   private doAttack(eid: number): void {
     this.lastAttackAt = this.sim.world.time;
-    this.sim.intent(ME, { k: 'attack', eid });
+    this.sim.intent({ k: 'attack', eid });
   }
 
   // ───────────── события ─────────────
@@ -564,8 +566,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private handleNotices(): void {
-    const list = this.sim.notices;
-    this.sim.notices = [];
+    const list = this.sim.drainNotices();
     for (const n of list) this.onNotice(n);
   }
 
@@ -1032,10 +1033,7 @@ export class GameScene extends Phaser.Scene {
     const me = this.me();
     this.hudIcons.forEach((ic, i) => ic.setFrame(this.icon(me && i < me.attacksLeft ? 'fist' : 'fistOff')));
     this.hud.starsMe?.setText(String(me?.stars ?? 0));
-    const others = sim.players
-      .filter((p) => p.pid !== ME)
-      .map((p) => sim.playerRound(p.pid)?.stars ?? 0)
-      .sort((a, b) => b - a);
+    const others = sim.otherStars();
     others.forEach((n, i) => this.hud['starsOther' + (i + 1)]?.setText(String(n)).setFont(n >= this.cfg.starsToWin - 1 ? 'px-amber' : 'px-mist'));
   }
 
@@ -1144,7 +1142,7 @@ export class GameScene extends Phaser.Scene {
     s.awards.forEach((a, i) => this.awardCard(16, AY + 112 + i * 42, a.id, a.pids, a.value));
     if (!s.awards.length) this.ovText(90, AY + 130, this.t.game.noAwards, 'mist');
     this.addOverlayButton('share', 9, AY + 214, 81, 30, this.t.game.share, () => this.share());
-    this.addOverlayButton('next', 91, AY + 214, 80, 30, this.t.game.next, () => sim.intent(ME, { k: 'next' }), PAL.amber);
+    this.addOverlayButton('next', 91, AY + 214, 80, 30, this.t.game.next, () => sim.intent({ k: 'next' }), PAL.amber);
     this.ovDyn.auto = this.ovText(90, AY + 200, '', 'mist');
   }
 
@@ -1185,7 +1183,7 @@ export class GameScene extends Phaser.Scene {
     m.awards.forEach((a, i) => this.awardCard(16, AY + 124 + i * 42, a.id, a.pids, a.value));
     this.addOverlayButton('rematch', 9, AY + 214, 81, 30, this.t.game.rematch, () => {
       this.confetti = [];
-      sim.intent(ME, { k: 'rematch' });
+      sim.intent({ k: 'rematch' });
     }, PAL.amber);
     this.addOverlayButton('share2', 91, AY + 214, 80, 30, this.t.game.share, () => this.share());
   }
@@ -1290,7 +1288,7 @@ export class GameScene extends Phaser.Scene {
     const sim = this.sim;
     const me = sim.info(ME)!;
     const score = sim.scores[ME];
-    const kills = sim.matchKills[ME];
+    const kills = sim.myMatchKills;
     const squares = sim.roundAwards.map((_, i) => (i < sim.round ? '🟩' : '⬛')).join('');
     const sh = this.t.share;
     const text = tp(this.lang, sh.text, 0, {
