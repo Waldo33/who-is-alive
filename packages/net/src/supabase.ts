@@ -3,11 +3,12 @@ import type { Channel, PresenceMember, Transport } from './transport';
 
 /**
  * Транспорт на Supabase Realtime: Broadcast + Presence, приватные каналы с RLS (раздел 13).
- *   room:CODE        — все читают, пишет хост; Presence всех участников
- *   room:CODE:host   — пишут участники, читает хост
- *   room:CODE:p:UID  — пишет хост, читает UID
- * Права проверяются политиками на realtime.messages при подключении к каналу,
- * поэтому при смене хоста каналы переподключаются (setRole).
+ *   room:CODE        — все читают, Broadcast пишет только хост; Presence всех участников
+ *   room:CODE:p:UID  — двусторонний личный канал: читают и пишут только UID и хост.
+ *                      Гость шлёт сюда намерения (логический канал 'host'), хост — личные данные ('private').
+ * Подписаться можно лишь на канал, который разрешено читать, поэтому отдельного канала
+ * «только для записи» нет. Права проверяются при подключении — при смене хоста каналы переподключаются.
+ * Отправитель сообщения в личном канале определяется самим каналом, а не подписью в конверте.
  */
 interface Envelope {
   d: unknown;
@@ -16,7 +17,6 @@ interface Envelope {
 
 export class SupabaseTransport implements Transport {
   private room: RealtimeChannel | null = null;
-  private hostCh: RealtimeChannel | null = null;
   private privCh = new Map<string, RealtimeChannel>();
   private handlers = new Set<(c: Channel, m: unknown, f: string) => void>();
   private presenceHandlers = new Set<(m: PresenceMember[]) => void>();
@@ -36,7 +36,7 @@ export class SupabaseTransport implements Transport {
     return `room:${this.code}${suffix}`;
   }
 
-  private open(topic: string, opts: { presence?: boolean; receive?: Channel }): Promise<RealtimeChannel> {
+  private open(topic: string, opts: { presence?: boolean; receive?: Channel; from?: string }): Promise<RealtimeChannel> {
     const ch = this.sb.channel(topic, {
       config: { private: true, broadcast: { self: false, ack: false }, presence: opts.presence ? { key: this.selfId } : undefined },
     });
@@ -44,7 +44,8 @@ export class SupabaseTransport implements Transport {
       const kind = opts.receive;
       ch.on('broadcast', { event: 'm' }, ({ payload }) => {
         const env = payload as Envelope;
-        for (const h of this.handlers) h(kind, env.d, env.f);
+        const from = opts.from ?? env.f;
+        for (const h of this.handlers) h(kind, env.d, from);
       });
     }
     if (opts.presence) {
@@ -87,18 +88,15 @@ export class SupabaseTransport implements Transport {
     if (!force && isHost === this.isHost && (!isHost || playerIds.every((id) => id === this.selfId || this.privCh.has(id)))) return;
     this.isHost = isHost;
     await this.sb.realtime.setAuth();
-    if (this.hostCh) await this.sb.removeChannel(this.hostCh);
-    // хост читает канал намерений, гости в него только пишут
-    this.hostCh = await this.open(this.topic(':host'), { receive: isHost ? 'host' : undefined });
     for (const [id, ch] of this.privCh) {
       await this.sb.removeChannel(ch);
       this.privCh.delete(id);
     }
     if (isHost) {
-      for (const id of playerIds) {
-        if (id === this.selfId) continue;
-        this.privCh.set(id, await this.open(this.topic(`:p:${id}`), {}));
-      }
+      // хост слушает намерения каждого игрока в его личном канале; отправитель — владелец канала
+      const ids = playerIds.filter((id) => id !== this.selfId);
+      const chans = await Promise.all(ids.map((id) => this.open(this.topic(`:p:${id}`), { receive: 'host', from: id })));
+      ids.forEach((id, i) => this.privCh.set(id, chans[i]));
     } else {
       this.privCh.set(this.selfId, await this.open(this.topic(`:p:${this.selfId}`), { receive: 'private' }));
     }
@@ -111,7 +109,7 @@ export class SupabaseTransport implements Transport {
   }
 
   async send(channel: Channel, msg: unknown, to?: string): Promise<void> {
-    const ch = channel === 'room' ? this.room : channel === 'host' ? this.hostCh : to ? this.privCh.get(to) : undefined;
+    const ch = channel === 'room' ? this.room : channel === 'host' ? this.privCh.get(this.selfId) : to ? this.privCh.get(to) : undefined;
     if (!ch) return;
     this.sent++;
     await ch.send({ type: 'broadcast', event: 'm', payload: { d: msg, f: this.selfId } satisfies Envelope });
@@ -137,9 +135,8 @@ export class SupabaseTransport implements Transport {
   }
 
   async close(): Promise<void> {
-    for (const ch of [this.room, this.hostCh, ...this.privCh.values()]) if (ch) await this.sb.removeChannel(ch);
+    for (const ch of [this.room, ...this.privCh.values()]) if (ch) await this.sb.removeChannel(ch);
     this.room = null;
-    this.hostCh = null;
     this.privCh.clear();
     this.handlers.clear();
     this.presenceHandlers.clear();
