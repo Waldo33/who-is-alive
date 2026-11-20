@@ -5,6 +5,7 @@ import { canvas, ellipse, grid, px } from '../pixels';
 import { BASE_MAP } from './base';
 import type { CharStyle, Look, Pose, PropSet, ThemePack, View } from './types';
 import { centerDist, critterSheet, hash, line, tile } from './util';
+import { face } from './people';
 
 /**
  * Клерки в офисе — и бойцы в подвале. Днём ковролин, жалюзи и переговорка; посреди дубля
@@ -15,26 +16,6 @@ import { centerDist, critterSheet, hash, line, tile } from './util';
  */
 
 // ═════════════ костюмы ═════════════
-
-/**
- * Люди толпы: кожа и волосы. Фигура с номером i — один и тот же человек и в офисе, и в подвале
- * (клерк i ↔ боец i), меняется только одежда. Порядок совпадает с CLERKS/FIGHTERS.
- */
-const PEOPLE: { skin: [string, string]; hair: [string, string, string] | null }[] = [
-  { skin: [PAL.peach, PAL.fawn], hair: [PAL.umber, PAL.plum, PAL.brick] }, // светлый, каштановые волосы
-  { skin: [PAL.tan, PAL.fawn], hair: [PAL.night, PAL.ink, PAL.dusk] }, // загорелый брюнет
-  { skin: [PAL.fawn, PAL.brick], hair: [PAL.ink, PAL.ink, PAL.night] }, // смуглый брюнет
-  { skin: [PAL.brick, PAL.umber], hair: [PAL.ink, PAL.ink, PAL.night] }, // темнокожий
-  { skin: [PAL.peach, PAL.fawn], hair: null }, // лысый
-];
-
-/** Цвета лица и головы человека i для карты букв персонажа. */
-function face(i: number): Record<string, string> {
-  const p = PEOPLE[i];
-  const [s, S] = p.skin;
-  const [h, H, k] = p.hair ?? [s, S, PAL.sand];
-  return { s, S, m: S, c: s, h, H, k, r: p.hair ? h : s, R: p.hair ? H : S };
-}
 
 /** Клерк: аккуратная стрижка, белая рубашка, галстук, бейдж, серые брюки. */
 const CLERK: CharStyle = {

@@ -7,6 +7,7 @@ import { canvas } from './pixels';
 import type { Art } from './art';
 import { frameFor } from './frames';
 import { CH_H, CH_W, F, OL_H, OL_W } from './sprites';
+import { themePack } from './themes';
 
 /**
  * Клип «Лучший момент» (раздел 11 ТЗ): 1080×1920, ~11 с.
@@ -122,6 +123,8 @@ export class ClipPlayerScene {
   /** Звук клипа (музыка темы и эффекты момента); без него клип немой. */
   sound: ClipSound | null = null;
   private musicResumeAt = 0;
+  private lastLook = -1;
+  private lookAt = -Infinity;
   private faded = false;
 
   constructor(private inp: ClipInput) {
@@ -248,16 +251,19 @@ export class ClipPlayerScene {
         break;
       case 'star_taken':
         s.play('starTake');
+        if (themePack(this.inp.rec.theme).starSiren) s.play('siren');
         break;
       case 'crowd':
         s.play('crowd');
         s.pause();
         this.musicResumeAt = ev.resumeAt;
         break;
-      case 'twist':
-        s.play('flicker');
-        s.setTwist(ev.on);
+      case 'twist': {
+        const smooth = themePack(this.inp.rec.theme).transition === 'dusk';
+        s.play(smooth ? 'dusk' : 'flicker');
+        s.setTwist(ev.on, smooth);
         break;
+      }
       case 'zone':
         s.play('hedge');
         break;
@@ -358,6 +364,19 @@ export class ClipPlayerScene {
     }
     list.sort((p, q) => p.y - q.y);
     for (const d of list) d.draw();
+
+    // плавная тема (закат): после смены облика лиловые сумерки тают ~0,9 с
+    if (look !== this.lastLook) {
+      if (this.lastLook !== -1) this.lookAt = w.time;
+      this.lastLook = look;
+    }
+    const since = w.time - this.lookAt;
+    if (themePack(this.inp.rec.theme).transition === 'dusk' && since >= 0 && since < 900) {
+      g.fillStyle = look ? PAL.grape : PAL.amber;
+      g.globalAlpha = 0.6 * (1 - since / 900);
+      g.fillRect(0, 0, W, H);
+      g.globalAlpha = 1;
+    }
 
     // изгородь сжимающейся зоны
     const z = w.zoneRect();

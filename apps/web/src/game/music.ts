@@ -125,6 +125,8 @@ export class Music {
   private song: Song | null = null;
   private twist = false;
   private twistBar = 0;
+  /** Смена изнанки, ждущая начала такта. */
+  private pendingTwist: boolean | null = null;
   /** Последние запланированные шестнадцатые: время и место в песне. */
   private sched: { t: number; bar: number; s16: number }[] = [];
   private drive: AudioNode | null = null;
@@ -184,8 +186,16 @@ export class Music {
     this.run();
   }
 
-  /** Изнанка темы: своя песня меняет подачу (тихий куплет → громкий припев). */
-  setTwist(on: boolean): void {
+  /**
+   * Изнанка темы: своя песня меняет подачу (тихий куплет → громкий припев).
+   * smooth — со следующего такта (плавный переход темы), иначе сразу.
+   */
+  setTwist(on: boolean, smooth = false): void {
+    if (smooth && this.running) {
+      this.pendingTwist = on === this.twist ? null : on;
+      return;
+    }
+    this.pendingTwist = null;
     if (on === this.twist) return;
     this.twist = on;
     this.twistBar = this.bar;
@@ -347,6 +357,11 @@ export class Music {
   }
 
   private stepPlay(): void {
+    if (this.pendingTwist !== null && this.s16 === 0) {
+      this.twist = this.pendingTwist;
+      this.twistBar = this.bar;
+      this.pendingTwist = null;
+    }
     // где в песне каждая запланированная шестнадцатая — чтобы пауза продолжилась ровно с неё
     this.sched.push({ t: this.next, bar: this.bar, s16: this.s16 });
     if (this.sched.length > 8) this.sched.shift();

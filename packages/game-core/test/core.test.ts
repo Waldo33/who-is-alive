@@ -351,6 +351,26 @@ describe('MatchSim', () => {
     expect(r.twist).toBe(true);
   });
 
+  it('плавная изнанка (Майами): «Море волнуется» не начинается, пока идёт закат', () => {
+    const rules = themeRules(5);
+    expect(rules.id).toBe('miami');
+    const quiet = rules.twist!.quietSec! * 1000;
+    let checked = 0;
+    for (const seed of [1, 2, 3, 4, 5, 6]) {
+      const sim = new MatchSim(makeConfig({ fixedTheme: 5 }), players, seed);
+      const twists: number[] = [];
+      const bad: number[] = [];
+      sim.world.listeners.push((ev) => {
+        if (ev.t === 'twist') twists.push(ev.at);
+        if (ev.t === 'crowd' && twists.some((at) => ev.at >= at && ev.at < at + quiet)) bad.push(ev.at);
+      });
+      runUntil(sim, () => sim.phase === 'accuse');
+      expect(bad).toEqual([]);
+      checked += twists.length;
+    }
+    expect(checked).toBeGreaterThan(3);
+  });
+
   it('матч заканчивается, счёт сходится', () => {
     const sim = new MatchSim(makeConfig(), players, 61);
     players.forEach((p, i) => sim.addAgent(new AiPlayer(p.pid, i + 9)));

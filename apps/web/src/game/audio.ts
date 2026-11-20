@@ -9,7 +9,7 @@ import type { MusicMode } from './music';
  */
 export type Sfx =
   | 'step' | 'hitPlayer' | 'hitBot' | 'poof' | 'starTake' | 'starSpawn' | 'crowd' | 'tick'
-  | 'click' | 'ready' | 'accuseRight' | 'accuseWrong' | 'fanfare' | 'sad' | 'hedge' | 'pigeon' | 'drum' | 'denied' | 'count' | 'swing' | 'flicker';
+  | 'click' | 'ready' | 'accuseRight' | 'accuseWrong' | 'fanfare' | 'sad' | 'hedge' | 'pigeon' | 'drum' | 'denied' | 'count' | 'swing' | 'flicker' | 'dusk' | 'siren';
 
 const STORAGE_KEY = 'kto:sound';
 const MUSIC_KEY = 'kto:music';
@@ -36,7 +36,7 @@ const CLIP_GAIN = 2.5;
 export interface ClipSound {
   stream: MediaStream;
   start(theme: number, twist: boolean): void;
-  setTwist(on: boolean): void;
+  setTwist(on: boolean, smooth?: boolean): void;
   pause(): void;
   resume(): void;
   play(name: Sfx): void;
@@ -173,9 +173,9 @@ export class Audio {
   }
 
   /** Изнанка темы (офис → подвал): песня темы меняет подачу. */
-  setTwist(on: boolean): void {
+  setTwist(on: boolean, smooth = false): void {
     this.twist = on;
-    this.music?.setTwist(on);
+    this.music?.setTwist(on, smooth);
   }
 
   /** «Море волнуется»: оборвать музыку (зажёванная плёнка). */
@@ -271,6 +271,10 @@ export class Audio {
       case 'swing': this.noise(0.07, 0.2, 1500); this.noise(0.06, 0.12, 3400, 0.03); break;
       // свет мигает: щелчки выключателя и гудение лампы
       case 'flicker': [0, 0.09, 0.2].forEach((d) => this.noise(0.03, 0.22, 2600, d)); this.tone('sawtooth', 100, 100, 0.35, 0.05, 0.05); break;
+      // закат/рассвет: мягкий синтовый «вздох» вверх и шорох волны
+      case 'dusk': this.tone('sine', 220, 440, 1.4, 0.08); this.tone('triangle', 330, 660, 1.4, 0.05, 0.1); this.noise(1.2, 0.05, 900); break;
+      // мигалка: две ноты сирены туда-обратно
+      case 'siren': [0, 0.18, 0.36, 0.54].forEach((d, i) => this.tone('square', i % 2 ? 770 : 960, i % 2 ? 770 : 960, 0.17, 0.09, d)); break;
     }
   }
 
@@ -337,7 +341,7 @@ export class Audio {
         music.start('play', themePack(theme).music);
         music.setTwist(twist);
       },
-      setTwist: (on) => music.setTwist(on),
+      setTwist: (on, smooth) => music.setTwist(on, smooth),
       pause: () => music.tapeStop(),
       resume: () => music.resume(),
       play: (name) => {

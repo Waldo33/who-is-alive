@@ -138,6 +138,7 @@ export class MatchSim {
 
   playStart = 0;
   private nextTwistAt = Infinity;
+  private lastTwistAt = -Infinity;
   private twistLeft = 0;
   plannedPlayEnd = 0;
   playEnd = 0;
@@ -318,6 +319,7 @@ export class MatchSim {
     // изнанка темы: расписание на дубль (зерно — общее, поэтому повтор совпадает)
     const tw = themeRules(this.theme).twist;
     this.twistLeft = tw ? tw.max : 0;
+    this.lastTwistAt = -Infinity;
     this.nextTwistAt = tw ? this.playStart + this.rng.range(tw.firstSec[0], tw.firstSec[1]) * 1000 : Infinity;
   }
 
@@ -348,6 +350,7 @@ export class MatchSim {
       return;
     }
     this.emit({ t: 'twist', on, at: t });
+    this.lastTwistAt = t;
     if (on) this.twistLeft--;
     const [a, b] = on ? tw.onSec : tw.gapSec;
     this.nextTwistAt = t + this.rng.range(a, b) * 1000;
@@ -369,7 +372,8 @@ export class MatchSim {
 
     // «Море волнуется»
     // (не во время сужения: зона зависит от времени, а в стоп-кадре никто не может уйти)
-    if (t >= this.nextCrowdAt && !this.zoneStarted && t < this.plannedPlayEnd - cfg.zoneStartBeforeEndSec * 1000 - 3000) {
+    const quiet = (themeRules(this.theme).twist?.quietSec ?? 0) * 1000;
+    if (t >= this.nextCrowdAt && t >= this.lastTwistAt + quiet && !this.zoneStarted && t < this.plannedPlayEnd - cfg.zoneStartBeforeEndSec * 1000 - 3000) {
       const kind = this.rng.pick<CrowdKind>(['freeze', 'jump', 'dance']);
       const pause = crowdPauseMs(cfg);
       const resumeAt = t + pause;

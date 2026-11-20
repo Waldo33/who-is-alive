@@ -31,6 +31,8 @@ import type { Look } from './themes';
 
 const AY = 24; // верх арены на экране
 const CROWD_KINDS: CrowdKind[] = ['freeze', 'jump', 'dance'];
+/** Половина заката/рассвета: столько сгущаются сумерки, столько же проступает новый облик. */
+const DUSK_HALF_MS = 1400;
 const PANEL_Y = 284;
 const ME = 'me';
 const COLOR_FONT: FontColor[] = ['red', 'blue', 'yellow', 'green'];
@@ -129,6 +131,16 @@ export class GameScene extends Phaser.Scene {
   /** Мигание света при смене изнанки: время начала (performance.now), 0 — нет. */
   private flicker = 0;
   private blackout!: Phaser.GameObjects.Rectangle;
+  private duskVeil!: Phaser.GameObjects.Rectangle;
+  private pulseVeil!: Phaser.GameObjects.Rectangle;
+  private sirenVeil!: Phaser.GameObjects.Rectangle;
+  /** Плавная смена облика (закат/рассвет): какой облик показан, идёт ли переход, для какой темы и какого мира. */
+  private duskShown = 0;
+  private dusk: { from: number; to: number; t0: number } | null = null;
+  private duskTheme = -1;
+  private duskWorld: World | null = null;
+  /** Мигалка «звёзд розыска»: время начала. */
+  private siren = 0;
   private pigeons: Pigeon[] = [];
   private ui!: Phaser.GameObjects.Graphics;
   private fxG!: Phaser.GameObjects.Graphics;
@@ -276,6 +288,10 @@ export class GameScene extends Phaser.Scene {
     this.ui2 = this.add.graphics().setDepth(2050);
     this.dim = this.add.rectangle(0, AY, 180, 260, hexToInt(PAL.ink), 0.45).setOrigin(0, 0).setDepth(39).setVisible(false);
     this.blackout = this.add.rectangle(0, AY, 180, 260, hexToInt(PAL.ink), 0.92).setOrigin(0, 0).setDepth(1000).setVisible(false);
+    // цветные вуали поверх поля: закат/рассвет, пульсация ночного клуба, мигалка
+    this.duskVeil = this.add.rectangle(0, AY, 180, 260, 0, 0).setOrigin(0, 0).setDepth(998).setVisible(false);
+    this.pulseVeil = this.add.rectangle(0, AY, 180, 260, 0, 0).setOrigin(0, 0).setDepth(997).setVisible(false);
+    this.sirenVeil = this.add.rectangle(0, AY, 180, 260, 0, 0).setOrigin(0, 0).setDepth(999).setVisible(false);
     this.setupFreezeFrame();
     // постоянная пометка в нижней панели, пока ты призрак
     this.ghostUi = [
@@ -659,6 +675,10 @@ export class GameScene extends Phaser.Scene {
         break;
       case 'star_taken':
         this.audio.play('starTake');
+        if (themePack(this.sim.theme).starSiren && this.sim.phase === 'play') {
+          this.audio.play('siren');
+          this.siren = performance.now();
+        }
         {
           // вспышка на месте звезды, а не собравшего: в толпе это не подсказка
           const pos = this.starPos.get(ev.id);
@@ -680,12 +700,17 @@ export class GameScene extends Phaser.Scene {
         this.showToast(this.t.game.hedge, 1800);
         break;
       case 'twist': {
-        // изнанка темы: свет мигает, офис → подвал (и обратно); песня темы — громче
-        this.audio.setTwist(ev.on);
+        // изнанка темы: свет мигает, офис → подвал (и обратно); песня темы — громче.
+        // Плавная тема (закат): без мигания, музыка — со следующего такта, облик — на пике сумерек
+        const smooth = themePack(this.sim.theme).transition === 'dusk';
+        this.audio.setTwist(ev.on, smooth);
         if (this.sim.phase !== 'play') break;
-        this.flicker = performance.now();
-        this.audio.play('flicker');
-        this.cameras.main.shake(90, 0.004);
+        if (smooth) this.audio.play('dusk');
+        else {
+          this.flicker = performance.now();
+          this.audio.play('flicker');
+          this.cameras.main.shake(90, 0.004);
+        }
         const tt = this.themeText();
         const msg = ev.on ? tt?.twistOn : tt?.twistOff;
         if (msg) this.showToast(msg, 1800);
@@ -938,6 +963,34 @@ export class GameScene extends Phaser.Scene {
     return id ? this.t.themeText[id] : undefined;
   }
 
+  /**
+   * Вуали поверх поля: закат/рассвет (золото → лиловый → облик меняется → лиловый тает;
+   * рассвет — наоборот), пульсация облика в такт (ночной клуб), мигалка «звёзд розыска».
+   */
+  private renderVeils(): void {
+    const now = performance.now();
+    const d = this.dusk;
+    if (d) {
+      const k = (now - d.t0) / DUSK_HALF_MS;
+      const toNight = d.to === 1;
+      const ramp = k < 1 ? k : Math.max(0, 2 - k);
+      const steps = toNight ? [PAL.amber, PAL.orange, PAL.orchid, PAL.grape] : [PAL.grape, PAL.orchid, PAL.orange, PAL.amber];
+      const col = k < 1 ? steps[Math.min(3, Math.floor(k * 4))] : steps[3];
+      this.duskVeil.setVisible(true).setFillStyle(hexToInt(col), 0.62 * ramp);
+    } else this.duskVeil.setVisible(false);
+    const [kt, kl] = this.lookKey.split('_').map(Number);
+    const pulse = this.lookKey && this.lookKey !== '0_0' && isThemeLoaded(kt) ? themeLook(kt, kl).pulse : undefined;
+    const ph = this.sim.phase;
+    if (pulse && (ph === 'play' || ph === 'countdown' || ph === 'reveal') && !d) {
+      const beat = Math.floor(now / pulse.ms);
+      const decay = 1 - (now % pulse.ms) / pulse.ms;
+      this.pulseVeil.setVisible(true).setFillStyle(hexToInt(pulse.colors[beat % pulse.colors.length]), pulse.alpha * decay);
+    } else this.pulseVeil.setVisible(false);
+    const s = now - this.siren;
+    if (this.siren && s < 800) this.sirenVeil.setVisible(true).setFillStyle(hexToInt(Math.floor(s / 100) % 2 ? PAL.blue : PAL.red), 0.22);
+    else this.sirenVeil.setVisible(false);
+  }
+
   /** Свет мигает при смене изнанки: тьма — свет — тьма — новый облик (мс от начала). */
   private renderFlicker(): void {
     const k = performance.now() - this.flicker;
@@ -1011,7 +1064,33 @@ export class GameScene extends Phaser.Scene {
     const th = this.sim.theme;
     if (!isThemeLoaded(th)) void loadTheme(th).then(() => (this.lookKey = ''));
     const cut = this.sim.phase === 'play' && performance.now() < this.cut25Until;
-    const lk = this.phaseWorld().twist || cut ? 1 : 0;
+    const world = this.phaseWorld();
+    let lk = world.twist || cut ? 1 : 0;
+    // плавная тема (закат): облик меняется на пике сумерек, а не в момент события
+    if (themePack(th).transition === 'dusk' && isThemeLoaded(th)) {
+      if (th !== this.duskTheme || world !== this.duskWorld) {
+        // новый дубль или повтор на разоблачении — сразу как есть
+        this.duskTheme = th;
+        this.duskWorld = world;
+        this.duskShown = lk;
+        this.dusk = null;
+      }
+      const now = performance.now();
+      // страховка: на команде «Море волнуется» облик не меняется посреди — переход сразу доводим
+      const c = world.crowd;
+      const crowdOn = this.sim.phase === 'play' && !!c && world.time >= c.showAt && world.time <= c.windowEnd;
+      if (crowdOn && this.dusk) {
+        this.duskShown = this.dusk.to;
+        this.dusk = null;
+      }
+      if (!this.dusk && !crowdOn && lk !== this.duskShown) this.dusk = { from: this.duskShown, to: lk, t0: now };
+      if (this.dusk) {
+        const k = now - this.dusk.t0;
+        if (k >= DUSK_HALF_MS) this.duskShown = this.dusk.to;
+        if (k >= DUSK_HALF_MS * 2) this.dusk = null;
+      }
+      lk = this.duskShown;
+    }
     const key = this.ensureLook(th, lk);
     if (key === this.lookKey) return;
     this.lookKey = key;
@@ -1064,6 +1143,7 @@ export class GameScene extends Phaser.Scene {
     this.applyTheme();
     this.tickSubliminal();
     this.renderFlicker();
+    this.renderVeils();
     if (phase === 'reveal') this.renderReveal(alpha);
     else this.renderWorld(this.sim.world, phase === 'countdown' || phase === 'play' ? alpha : 1, 'live');
 
