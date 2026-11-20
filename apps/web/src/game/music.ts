@@ -33,12 +33,15 @@ interface Flavor {
   echo: boolean;
 }
 
-/** Характер по темам раунда: кепки — исходник, повара — свинг, пингвины — холодные колокольчики. */
+/**
+ * Характер по темам раунда (индекс = тема): кепки в парке — исходник, повара на кухне — свинг,
+ * пингвины на льдине — холодные колокольчики, космонавты на луне — квадратный «бип» с эхом и арпеджио.
+ */
 const FLAVORS: Flavor[] = [
   { transpose: 0, bpm: 120, swing: 0, lead: 'triangle', bass: 'square', arp: false, echo: false },
   { transpose: 5, bpm: 128, swing: 0.28, lead: 'pulse', bass: 'square', arp: false, echo: false },
   { transpose: -3, bpm: 112, swing: 0, lead: 'sine', bass: 'triangle', arp: true, echo: true },
-  { transpose: 2, bpm: 124, swing: 0.12, lead: 'square', bass: 'pulse', arp: false, echo: true },
+  { transpose: 2, bpm: 116, swing: 0, lead: 'square', bass: 'pulse', arp: true, echo: true },
 ];
 
 /** Меню и лобби: та же тема «лаунжем» — медленно, мягко, с эхом. */

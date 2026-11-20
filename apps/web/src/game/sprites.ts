@@ -1,5 +1,6 @@
 import { PAL } from '@kto/assets';
 import type { ArenaDef } from '@kto/game-core';
+import { locBackground, locCritter, locProp, locWall } from './locations';
 import { canvas, dither, ellipse, grid, outlineOf, px } from './pixels';
 import type { Ctx } from './pixels';
 
@@ -137,6 +138,29 @@ export const THEMES: Theme[] = [
       b: PAL.night, B: PAL.ink, v: PAL.white, l: PAL.amber, L: PAL.orange,
     },
   },
+  {
+    name: 'cosmonauts',
+    map: {
+      ...BASE_MAP,
+      h: PAL.white, H: PAL.slate, k: PAL.cyan, r: PAL.white, R: PAL.mist,
+      s: PAL.peach, S: PAL.fawn, a: PAL.mist, m: PAL.fawn,
+      b: PAL.white, B: PAL.mist, v: PAL.blue, l: PAL.mist, L: PAL.slate,
+    },
+    patch: (m, view) => {
+      // круглый шлем вокруг лица: шире головы на пиксель с каждой стороны
+      const set = (y: number, x: number, ch: string) => {
+        m[y][x] = ch;
+      };
+      set(0, 2, 'o'); set(0, 9, 'o');
+      set(1, 1, 'o'); set(1, 2, 'h'); set(1, 9, 'h'); set(1, 10, 'o');
+      for (let y = 2; y <= 7; y++) {
+        set(y, 0, 'o'); set(y, 1, y < 4 ? 'h' : 'H'); set(y, 10, y < 4 ? 'h' : 'H'); set(y, 11, 'o');
+      }
+      set(8, 1, 'o'); set(8, 2, 'H'); set(8, 9, 'H'); set(8, 10, 'o');
+      // ранец со спины
+      if (view === 'U') for (let y = 9; y <= 11; y++) for (let x = 4; x <= 7; x++) set(y, x, 'H');
+    },
+  },
 ];
 
 function buildMatrix(spec: FrameSpec): string[][] {
@@ -179,18 +203,20 @@ function buildMatrix(spec: FrameSpec): string[][] {
   if (spec.sweat) {
     set(11, 2, 'd'); set(11, 3, 'd');
   }
-  if (spec.shift) {
-    for (const row of m) {
-      if (spec.shift > 0) {
-        row.unshift(...Array(spec.shift).fill('.'));
-        row.splice(CH_W);
-      } else {
-        row.splice(0, -spec.shift);
-        row.push(...Array(-spec.shift).fill('.'));
-      }
+  return m;
+}
+
+/** Сдвиг кадра (танец) — после правок темы, чтобы колпак или шлем ехали вместе с головой. */
+function applyShift(m: string[][], shift: number): void {
+  for (const row of m) {
+    if (shift > 0) {
+      row.unshift(...Array(shift).fill('.'));
+      row.splice(CH_W);
+    } else {
+      row.splice(0, -shift);
+      row.push(...Array(-shift).fill('.'));
     }
   }
-  return m;
 }
 
 const FRAMES: FrameSpec[] = (() => {
@@ -224,6 +250,7 @@ export function makeCharacterSheets(theme: Theme): CharSheets {
   FRAMES.forEach((spec, i) => {
     const m = buildMatrix(spec);
     theme.patch?.(m, spec.view);
+    if (spec.shift) applyShift(m, spec.shift);
     const one = canvas(CH_W, CH_H);
     grid(one.g, 0, 0, m.map((r) => r.join('')), theme.map);
     body.g.drawImage(one.c, i * CH_W, 0);
@@ -358,22 +385,29 @@ export function makeIcons(): { canvas: HTMLCanvasElement; names: string[] } {
   return { canvas: c, names };
 }
 
-export function makePigeon(): HTMLCanvasElement {
+const PIGEON_FRAMES = [
+  ['......', '..oo..', '.ohyo.', 'obbbo.', 'obwbo.', '.o.o..'],
+  ['......', '......', '..oo..', 'oohyo.', 'obwbo.', '.o.o..'],
+  ['o....o', 'wo..ow', '.whhw.', '.obbo.', '..oo..', '......'],
+  ['......', '......', 'oohhoo', 'wwbbww', '..oo..', '......'],
+  ['......', '..hh..', '.obbo.', 'ow..wo', 'o....o', '......'],
+  ['......', '......', 'oohhoo', 'wwbbww', '..oo..', '......'],
+];
+
+/** Зверёк локации (6 кадров 6×6): голубь в парке, мышь на кухне, чайка на льдине, дрон на луне. */
+export function makePigeon(theme = 0): HTMLCanvasElement {
+  const loc = locCritter(theme, PIGEON_FRAMES);
+  if (loc) return loc;
   const { c, g } = canvas(36, 6);
   const map = { o: PAL.ink, b: PAL.slate, h: PAL.steel, w: PAL.mist, y: PAL.amber };
-  const frames = [
-    ['......', '..oo..', '.ohyo.', 'obbbo.', 'obwbo.', '.o.o..'],
-    ['......', '......', '..oo..', 'oohyo.', 'obwbo.', '.o.o..'],
-    ['o....o', 'wo..ow', '.whhw.', '.obbo.', '..oo..', '......'],
-    ['......', '......', 'oohhoo', 'wwbbww', '..oo..', '......'],
-    ['......', '..hh..', '.obbo.', 'ow..wo', 'o....o', '......'],
-    ['......', '......', 'oohhoo', 'wwbbww', '..oo..', '......'],
-  ];
-  frames.forEach((f, i) => grid(g, i * 6, 0, f, map));
+  PIGEON_FRAMES.forEach((f, i) => grid(g, i * 6, 0, f, map));
   return c;
 }
 
-export function makeHedge(): HTMLCanvasElement {
+/** Стенка сужающейся зоны (плитка 8×8): живая изгородь в парке, ящики, лёд, камни. */
+export function makeHedge(theme = 0): HTMLCanvasElement {
+  const loc = locWall(theme);
+  if (loc) return loc;
   const { c, g } = canvas(8, 8);
   px(g, 0, 0, PAL.pine, 8, 8);
   const leaves = ['.gG..gG.', 'gGGggGGg', 'GGfGGGfG', '.gG.fgG.', 'gGGgGGg.', 'GfGGGfGG', '.gGg.gGg', 'gG.fgG.f'];
@@ -400,7 +434,10 @@ function hash(x: number, y: number): number {
   return ((h ^ (h >> 16)) >>> 0) / 4294967296;
 }
 
-export function makeArenaBackground(arena: ArenaDef): HTMLCanvasElement {
+/** Земля арены по теме раунда: парк (здесь), кухня, льдина, луна (locations.ts). */
+export function makeArenaBackground(arena: ArenaDef, theme = 0): HTMLCanvasElement {
+  const loc = locBackground(theme, arena);
+  if (loc) return loc;
   const { width: w, height: h } = arena;
   const { c, g } = canvas(w, h);
   // брусчатка
@@ -466,7 +503,9 @@ export function makeArenaBackground(arena: ArenaDef): HTMLCanvasElement {
 }
 
 /** Пропсы: кадры по горизонтали. Возвращает [canvas, frameW, frameH, frames]. */
-export function makeProp(kind: string): [HTMLCanvasElement, number, number, number] {
+export function makeProp(kind: string, theme = 0): [HTMLCanvasElement, number, number, number] {
+  const loc = locProp(theme, kind);
+  if (loc) return loc;
   switch (kind) {
     case 'fountain': {
       const fw = 34;

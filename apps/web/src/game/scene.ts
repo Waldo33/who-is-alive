@@ -98,7 +98,10 @@ export class GameScene extends Phaser.Scene {
   private views: EntityView[] = [];
   private starSprites = new Map<number, Phaser.GameObjects.Image>();
   private hedges: Phaser.GameObjects.TileSprite[] = [];
-  private props: { spr: Phaser.GameObjects.Image; kind: string; frames: number }[] = [];
+  private props: { spr: Phaser.GameObjects.Image; kind: string }[] = [];
+  private ground!: Phaser.GameObjects.Image;
+  /** Тема, под которую сейчас одеты земля, предметы, стенка зоны и зверьки. */
+  private locTheme = -1;
   private pigeons: Pigeon[] = [];
   private ui!: Phaser.GameObjects.Graphics;
   private fxG!: Phaser.GameObjects.Graphics;
@@ -196,13 +199,14 @@ export class GameScene extends Phaser.Scene {
     this.makeTextures();
 
     const arena = this.sim.arena;
-    this.add.image(0, AY, 'arena').setOrigin(0, 0).setDepth(0);
+    this.locTheme = -1;
+    this.ensureLocation(0);
+    this.ground = this.add.image(0, AY, 'arena0').setOrigin(0, 0).setDepth(0);
     for (const p of arena.props) {
-      const spr = this.add.image(p.x, AY + p.y, 'prop-' + p.kind, 0).setOrigin(0.5, 1).setDepth(AY + p.y);
-      const frames = this.textures.get('prop-' + p.kind).frameTotal - 1;
-      this.props.push({ spr, kind: p.kind, frames });
+      const spr = this.add.image(p.x, AY + p.y, `prop-${p.kind}-0`, 0).setOrigin(0.5, 1).setDepth(AY + p.y);
+      this.props.push({ spr, kind: p.kind });
     }
-    for (let i = 0; i < 4; i++) this.hedges.push(this.add.tileSprite(0, 0, 8, 8, 'hedge').setOrigin(0, 0).setDepth(900).setVisible(false));
+    for (let i = 0; i < 4; i++) this.hedges.push(this.add.tileSprite(0, 0, 8, 8, 'hedge0').setOrigin(0, 0).setDepth(900).setVisible(false));
 
     for (let i = 0; i < this.cfg.entitiesTotal; i++) {
       this.views.push({
@@ -220,7 +224,7 @@ export class GameScene extends Phaser.Scene {
 
     const pigeonSpots = [[70, 56], [118, 214], [146, 98], [34, 182], [104, 30]];
     for (const [x, y] of pigeonSpots) {
-      this.pigeons.push({ hx: x, hy: y, x, y, state: 'idle', t: Math.random() * 3000, spr: this.add.image(x, AY + y, 'pigeon', 0).setOrigin(0.5, 1) });
+      this.pigeons.push({ hx: x, hy: y, x, y, state: 'idle', t: Math.random() * 3000, spr: this.add.image(x, AY + y, 'pigeon0', 0).setOrigin(0.5, 1) });
     }
 
     this.add.image(0, AY, 'vignette').setOrigin(0, 0).setDepth(950).setAlpha(0.35);
@@ -319,11 +323,9 @@ export class GameScene extends Phaser.Scene {
     const once = (key: string, f: () => HTMLCanvasElement) => {
       if (!this.textures.exists(key)) this.textures.addCanvas(key, f());
     };
-    once('arena', () => makeArenaBackground(this.sim.arena));
     once('shadow', makeShadow);
     once('ring', makeRing);
     once('arrow', makeArrow);
-    once('hedge', makeHedge);
     once('mark', () => makeMark('!'));
     once('qmark', () => makeMark('?'));
     once('vignette', () => makeVignette(180, 260));
@@ -331,13 +333,20 @@ export class GameScene extends Phaser.Scene {
     this.addSheet('starflash', makeStarFlash(), 16, 16);
     this.addSheet('poof', makePoof(), 24, 24);
     this.addSheet('stun', makeStunStars(), 12, 5);
-    this.addSheet('pigeon', makePigeon(), 6, 6);
     const icons = makeIcons();
     this.iconNames = icons.names;
     this.addSheet('icons', icons.canvas, 8, 8);
-    for (const kind of ['fountain', 'tree', 'lamp', 'benchH', 'benchV', 'stall', 'planter']) {
-      const [c, fw, fh] = makeProp(kind);
-      this.addSheet('prop-' + kind, c, fw, fh);
+  }
+
+  /** Текстуры локации темы (земля, предметы, стенка зоны, зверёк) — по требованию, один раз. */
+  private ensureLocation(th: number): void {
+    if (this.textures.exists('arena' + th)) return;
+    this.textures.addCanvas('arena' + th, makeArenaBackground(this.sim.arena, th));
+    this.textures.addCanvas('hedge' + th, makeHedge(th));
+    this.addSheet('pigeon' + th, makePigeon(th), 6, 6);
+    for (const kind of new Set(this.sim.arena.props.map((p) => p.kind))) {
+      const [c, fw, fh] = makeProp(kind, th);
+      this.addSheet(`prop-${kind}-${th}`, c, fw, fh);
     }
   }
 
@@ -791,6 +800,14 @@ export class GameScene extends Phaser.Scene {
       v.spr.setTexture('ch' + th, 0);
       v.ol.setTexture('ol' + th, 0);
     }
+    // локация вслед за темой: кепки — парк, повара — кухня, пингвины — льдина, космонавты — луна
+    if (th === this.locTheme) return;
+    this.locTheme = th;
+    this.ensureLocation(th);
+    this.ground.setTexture('arena' + th);
+    for (const p of this.props) p.spr.setTexture(`prop-${p.kind}-${th}`, 0);
+    for (const h of this.hedges) h.setTexture('hedge' + th);
+    for (const p of this.pigeons) p.spr.setTexture('pigeon' + th, 0);
   }
 
   // ───────────── кадр ─────────────

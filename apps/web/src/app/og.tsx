@@ -3,10 +3,11 @@ import { join } from 'node:path';
 import { ImageResponse } from 'next/og';
 import { DICTS } from '@kto/game-core';
 import type { Lang } from '@kto/game-core';
+import { OG_THEMES } from '@/lib/meta';
 
 /**
  * Картинка превью ссылки 1200×630 в стиле игры. Фон (полосы, площадь ×2 в рамке, «?») — готовый PNG
- * из кадра настоящей игры (assets/og/bg.png); текст — пиксельным шрифтом, кегли кратны 8.
+ * по теме раунда из спрайтов игры (assets/og/bg-N.png, скрипт og-bg); текст — пиксельным шрифтом, кегли кратны 8.
  */
 export const OG_SIZE = { width: 1200, height: 630 };
 
@@ -23,17 +24,18 @@ const C = {
   night: '#262b44',
 };
 
-let assets: Promise<{ bg: string; fonts: { name: string; data: Buffer; weight: 400; style: 'normal' }[] }> | null = null;
+let assets: Promise<{ bg: string[]; fonts: { name: string; data: Buffer; weight: 400; style: 'normal' }[] }> | null = null;
 function load() {
   assets ??= (async () => {
     const dir = join(process.cwd(), 'assets/og');
-    const [bg, cyr, lat] = await Promise.all([
-      readFile(join(dir, 'bg.png')),
+    const [cyr, lat, ...bg] = await Promise.all([
       readFile(join(dir, 'press-start-2p-cyrillic-400-normal.woff')),
       readFile(join(dir, 'press-start-2p-latin-400-normal.woff')),
+      // фон по теме: парк, кухня, льдина, луна (pnpm --filter web og-bg)
+      ...Array.from({ length: OG_THEMES }, (_, i) => readFile(join(dir, `bg-${i}.png`))),
     ]);
     return {
-      bg: `data:image/png;base64,${bg.toString('base64')}`,
+      bg: bg.map((b) => `data:image/png;base64,${b.toString('base64')}`),
       fonts: [
         // у шрифтов разные имена: с одинаковым генератор берёт только первый и ищет кириллицу в сети
         { name: 'PS2P', data: lat, weight: 400 as const, style: 'normal' as const },
@@ -47,6 +49,8 @@ function load() {
 export interface OgInput {
   /** Язык отправителя ссылки (из параметра l). */
   lang: Lang;
+  /** Тема фона: 0 — кепки в парке, 1 — повара на кухне, 2 — пингвины на льдине, 3 — космонавты на луне. */
+  theme: number;
   /** Какая страница: общая (главная и всё прочее) или «Играть с ботами». Комната — когда есть code. */
   page?: 'home' | 'sandbox';
   /** Пригласивший (если ссылка на комнату). */
@@ -66,7 +70,7 @@ export async function renderOg(o: OgInput): Promise<ImageResponse> {
   return new ImageResponse(
     (
       <div style={{ width: '100%', height: '100%', display: 'flex', position: 'relative', fontFamily: 'PS2P, PS2PCyr', background: C.ink }}>
-        <img src={bg} width={1200} height={630} alt="" style={{ position: 'absolute', left: 0, top: 0 }} />
+        <img src={bg[o.theme] ?? bg[0]} width={1200} height={630} alt="" style={{ position: 'absolute', left: 0, top: 0 }} />
         <div style={{ position: 'absolute', left: 64, top: 64, width: 680, display: 'flex', flexDirection: 'column' }}>
           <div style={{ fontSize: 16, color: C.amber, letterSpacing: 0 }}>{room ? T.invite : o.page === 'sandbox' ? T.sbLabel : T.party}</div>
           <div style={{ fontSize: 48, color: C.yellow, marginTop: 28, textShadow: `4px 4px 0 ${C.rust}, 8px 8px 0 ${C.ink}`, lineHeight: 1.3 }}>

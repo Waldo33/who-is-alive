@@ -20,9 +20,15 @@ import {
  * Те же процедурные спрайты, что в игре, но как обычные canvas — для рисования клипа
  * и карточки результата без Phaser. Строятся один раз при первом обращении.
  */
-export interface Art {
+export interface LocArt {
   arena: HTMLCanvasElement;
   props: Map<string, { c: HTMLCanvasElement; fw: number; fh: number; frames: number }>;
+  hedge: HTMLCanvasElement;
+}
+
+export interface Art {
+  /** Локация темы раунда (земля, предметы, стенка зоны) — строится при первом обращении. */
+  loc(theme: number): LocArt;
   body: HTMLCanvasElement[];
   /** Контуры по темам: [тема][0 — белый, 1..4 — цвета игроков]. */
   outline: HTMLCanvasElement[][];
@@ -31,7 +37,6 @@ export interface Art {
   star: HTMLCanvasElement;
   stun: HTMLCanvasElement;
   mark: HTMLCanvasElement;
-  hedge: HTMLCanvasElement;
   vignette: HTMLCanvasElement;
   icons: { canvas: HTMLCanvasElement; names: string[] };
 }
@@ -40,16 +45,25 @@ let cache: { arenaId: string; art: Art } | null = null;
 
 export function getArt(arena: ArenaDef): Art {
   if (cache?.arenaId === arena.id) return cache.art;
-  const props = new Map<string, { c: HTMLCanvasElement; fw: number; fh: number; frames: number }>();
-  for (const p of arena.props) {
-    if (props.has(p.kind)) continue;
-    const [c, fw, fh, frames] = makeProp(p.kind);
-    props.set(p.kind, { c, fw, fh, frames });
-  }
+  const locs = new Map<number, LocArt>();
+  const loc = (theme: number): LocArt => {
+    const th = Math.max(0, Math.min(THEMES.length - 1, theme));
+    let l = locs.get(th);
+    if (!l) {
+      const props = new Map<string, { c: HTMLCanvasElement; fw: number; fh: number; frames: number }>();
+      for (const p of arena.props) {
+        if (props.has(p.kind)) continue;
+        const [c, fw, fh, frames] = makeProp(p.kind, th);
+        props.set(p.kind, { c, fw, fh, frames });
+      }
+      l = { arena: makeArenaBackground(arena, th), props, hedge: makeHedge(th) };
+      locs.set(th, l);
+    }
+    return l;
+  };
   const sheets = THEMES.map((th) => makeCharacterSheets(th));
   const art: Art = {
-    arena: makeArenaBackground(arena),
-    props,
+    loc,
     body: sheets.map((s) => s.body),
     outline: sheets.map((s) => [s.outline, ...PLAYER_COLORS.map((col) => tint(s.outline, col))]),
     shadow: makeShadow(),
@@ -57,7 +71,6 @@ export function getArt(arena: ArenaDef): Art {
     star: makeStar(),
     stun: makeStunStars(),
     mark: makeMark('!'),
-    hedge: makeHedge(),
     vignette: makeVignette(arena.width, arena.height),
     icons: makeIcons(),
   };

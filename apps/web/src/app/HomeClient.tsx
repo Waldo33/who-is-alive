@@ -7,7 +7,7 @@ import { DICTS } from '@kto/game-core';
 import type { Lang } from '@kto/game-core';
 import { getAudio } from '@/game/audio';
 import { detectLang } from '@/lib/lang';
-import { TopBar } from '@/ui/TopBar';
+import { TopBar } from '@/ui/TopBarView';
 import type { TopBar as Bar } from '@/ui/topbar';
 import { playerName } from '@/lib/name';
 import { AuthError, ensureAnonymousUser, supabase } from '@/lib/supabase';

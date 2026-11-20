@@ -259,7 +259,7 @@ describe('MatchSim', () => {
     for (let seed = 1; seed <= 12; seed++) {
       const sim = new MatchSim(makeConfig(), players, seed);
       firsts.add(sim.theme);
-      expect([...sim.themeOrder].sort()).toEqual([0, 1, 2]);
+      expect([...sim.themeOrder].sort()).toEqual([0, 1, 2, 3]);
     }
     expect(firsts.size).toBeGreaterThan(1);
   });

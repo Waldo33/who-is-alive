@@ -8,8 +8,32 @@ export function ogLang(v: string | string[] | null | undefined): Lang {
   return s === 'en' ? 'en' : 'ru';
 }
 
-/** Заголовок, описание и картинка превью ссылки на языке отправителя. */
-export function shareMetadata(lang: Lang, room?: { code: string; host?: string | null }, page: 'home' | 'sandbox' = 'home'): Metadata {
+/** Сколько тем (и локаций) у превью: кепки/парк, повара/кухня, пингвины/льдина, космонавты/луна. */
+export const OG_THEMES = 4;
+
+/** Тема превью из параметра ?t= картинки; без него — случайная. */
+export function ogTheme(v: string | null | undefined): number {
+  const n = Number(v);
+  return Number.isInteger(n) && n >= 0 && n < OG_THEMES ? n : Math.floor(Math.random() * OG_THEMES);
+}
+
+/** Тема превью комнаты — по её коду: все, кому прислали ссылку, видят одну и ту же картинку. */
+export function roomTheme(code: string): number {
+  let h = 0;
+  for (const ch of code) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return h % OG_THEMES;
+}
+
+/**
+ * Заголовок, описание и картинка превью ссылки на языке отправителя. Тема картинки — своя у комнаты,
+ * у главной и песочницы — случайная на каждый запрос (theme не задан).
+ */
+export function shareMetadata(
+  lang: Lang,
+  room?: { code: string; host?: string | null },
+  page: 'home' | 'sandbox' = 'home',
+  theme?: number,
+): Metadata {
   const T = DICTS[lang].og;
   const sandbox = !room && page === 'sandbox';
   const title = room
@@ -20,8 +44,14 @@ export function shareMetadata(lang: Lang, room?: { code: string; host?: string |
       ? T.sbTitle
       : T.siteTitle;
   const description = room ? fmt(T.roomDesc, { code: room.code }) : sandbox ? T.sbDesc : T.siteDesc;
-  const q = room ? `&code=${room.code}` : sandbox ? '&p=sandbox' : '';
-  const image = { url: `/og?l=${lang}${q}`, width: 1200, height: 630, alt: T.alt, type: 'image/png' };
+  const t = room ? roomTheme(room.code) : (theme ?? Math.floor(Math.random() * OG_THEMES));
+  // имя хоста — и в адресе картинки: если комната успеет закрыться, пока мессенджер дойдёт до картинки, имя не пропадёт
+  const q = room
+    ? `&code=${room.code}${room.host ? `&n=${encodeURIComponent(room.host)}` : ''}`
+    : sandbox
+      ? '&p=sandbox'
+      : '';
+  const image = { url: `/og?l=${lang}${q}&t=${t}`, width: 1200, height: 630, alt: T.alt, type: 'image/png' };
   return {
     title,
     description,

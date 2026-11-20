@@ -37,6 +37,7 @@ pnpm sim -- --rounds 1000             # безголовая симуляция 
 pnpm --filter web build               # прод-сборка Next.js — гонять перед каждым push
 pnpm --filter web live-e2e            # живой прогон через настоящий Supabase (нужна сеть до supabase.co)
 pnpm --filter web icons               # перерисовать иконки PWA из спрайтов (нужен Playwright)
+pnpm --filter web og-bg               # фоны превью ссылок по темам: apps/web/assets/og/bg-N.png
 pnpm --filter web standalone          # песочница одним HTML-файлом: apps/web/dist/sandbox.html
 ```
 
@@ -75,6 +76,7 @@ CI (`.github/workflows/ci.yml`): lint, typecheck, test, `sim --rounds 200`.
 | `apps/web/src/net/room.ts` | `Room`: вход по RPC, состав, Presence, старт матча, смена хоста |
 | `apps/web/src/app/` | страницы: `/` (`HomeClient`), `/r/[code]` (`RoomClient`: лобби + игра), `/sandbox`; превью ссылок `og.tsx` + маршрут `og/route.tsx` (язык отправителя из `?l=`); `manifest.ts`, `PwaRegister.tsx` |
 | `apps/web/src/game/scene.ts` | сцена Phaser (~1400 строк): рендер, HUD, оверлеи фаз, ввод, музыка по фазам |
+| `…/game/locations.ts` | локации тем: кухня, льдина, луна (парк — в `sprites.ts`); та же раскладка, другой облик |
 | `…/game/sprites.ts`, `art.ts`, `frames.ts`, `pixels.ts`, `font.ts` | процедурный арт, битмап-шрифт, выбор кадра персонажа |
 | `…/game/audio.ts`, `music.ts` | звук: `getAudio()` (один на приложение), эффекты, музыкальный секвенсор |
 | `…/game/clip.ts`, `clip-ui.ts`, `card.ts` | клип «Лучший момент» (MediaRecorder), экран монтажа, карточка результата |

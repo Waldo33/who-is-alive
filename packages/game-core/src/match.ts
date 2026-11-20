@@ -93,7 +93,7 @@ export interface AiAgent {
   update(sim: MatchSim): void;
 }
 
-export const THEME_COUNT = 3;
+export const THEME_COUNT = 4;
 /** Насколько поздно может прийти по сети нажатие, чтобы его засчитали по времени экрана игрока. */
 export const LAG_GRACE_MS = 600;
 

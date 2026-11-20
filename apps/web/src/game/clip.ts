@@ -83,7 +83,7 @@ export class ClipPlayerScene {
     this.c = c;
     this.g = g;
     this.art = getArt(inp.arena);
-    this.hedge = g.createPattern(this.art.hedge, 'repeat');
+    this.hedge = g.createPattern(this.art.loc(inp.rec.theme).hedge, 'repeat');
     const len = inp.moment.to - inp.moment.from;
     this.speed = Math.max(BASE_SPEED, len / PART_MAX_MS);
     this.partDur = len / this.speed;
@@ -139,7 +139,8 @@ export class ClipPlayerScene {
     const t = w.time - TICK_MS + alpha * TICK_MS;
     g.fillStyle = PAL.ink;
     g.fillRect(0, 0, LW, LH);
-    g.drawImage(a.arena, 0, AY);
+    const loc = a.loc(this.inp.rec.theme);
+    g.drawImage(loc.arena, 0, AY);
 
     // следы живых во второй части
     if (reveal) {
@@ -152,7 +153,7 @@ export class ClipPlayerScene {
     type D = { y: number; draw: () => void };
     const list: D[] = [];
     for (const p of this.inp.arena.props) {
-      const pr = a.props.get(p.kind)!;
+      const pr = loc.props.get(p.kind)!;
       const f = p.kind === 'fountain' ? Math.floor(now / 180) % pr.frames : p.kind === 'lamp' ? Math.floor(now / 900) % pr.frames : 0;
       list.push({ y: p.y, draw: () => frame(g, pr.c, pr.fw, pr.fh, f, p.x - pr.fw / 2, AY + p.y - pr.fh) });
     }

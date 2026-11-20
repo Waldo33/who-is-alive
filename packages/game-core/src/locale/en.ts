@@ -23,7 +23,7 @@ export const en: Dict = {
     noun: ['Pixel', 'Toaster', 'Pigeon', 'Raccoon', 'Penguin', 'Gizmo', 'Noodle', 'Sprite', 'Bagel', 'Cactus'],
   },
   colors: ['Red', 'Blue', 'Yellow', 'Green'],
-  themes: ['Caps', 'Chefs', 'Penguins'],
+  themes: ['Caps', 'Chefs', 'Penguins', 'Astronauts'],
   start: {
     aria: 'Start',
     rules: [

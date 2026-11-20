@@ -10,7 +10,7 @@ import type { Dict, Lang } from '@kto/game-core';
 import { getAudio } from '@/game/audio';
 import { isBotUA } from '@/lib/bot';
 import { detectLang } from '@/lib/lang';
-import { TopBar } from '@/ui/TopBar';
+import { TopBar } from '@/ui/TopBarView';
 import type { TopBar as Bar } from '@/ui/topbar';
 import { playerName, saveName } from '@/lib/name';
 import { loadChunk } from '@/lib/chunk';
