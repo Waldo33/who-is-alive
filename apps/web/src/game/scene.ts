@@ -124,6 +124,8 @@ export class GameScene extends Phaser.Scene {
   /** «25-й кадр»: сущность, которая на миг показана в облике изнанки, и до какого времени. */
   private flash25: { eid: number; until: number } | null = null;
   private next25 = 0;
+  /** «Вклеенный кадр»: до какого времени (performance.now) весь мир показан в облике изнанки. */
+  private cut25Until = 0;
   /** Мигание света при смене изнанки: время начала (performance.now), 0 — нет. */
   private flicker = 0;
   private blackout!: Phaser.GameObjects.Rectangle;
@@ -956,13 +958,18 @@ export class GameScene extends Phaser.Scene {
       this.flash25 = null;
       return;
     }
-    if (!this.next25) this.next25 = now + 5000 + Math.random() * 6000;
+    if (!this.next25) this.next25 = now + 4000 + Math.random() * 4000;
     if (now < this.next25) return;
-    this.next25 = now + 7000 + Math.random() * 9000;
-    const alive = this.sim.world.alive();
+    this.next25 = now + 6000 + Math.random() * 6000;
+    // иногда «вклеенный кадр» целиком: на миг весь подвал — и обратно в офис
+    if (Math.random() < 0.3) {
+      this.cut25Until = now + 80;
+      return;
+    }
+    const alive = this.sim.world.alive().filter((e) => !(e.act && this.sim.world.time < e.actEnd));
     if (!alive.length) return;
-    // любая сущность, чаще бот: ничего не выдаёт
-    this.flash25 = { eid: alive[Math.floor(Math.random() * alive.length)].eid, until: now + 70 };
+    // любая сущность, чаще бот: ничего не выдаёт; ~8 кадров — успеваешь заметить, но не разглядеть
+    this.flash25 = { eid: alive[Math.floor(Math.random() * alive.length)].eid, until: now + 140 };
   }
 
   /** Крупное слово по центру поля на миг («Мотор!» на старте дубля). */
@@ -990,7 +997,8 @@ export class GameScene extends Phaser.Scene {
   private applyTheme(): void {
     const th = this.sim.theme;
     if (!isThemeLoaded(th)) void loadTheme(th).then(() => (this.lookKey = ''));
-    const lk = this.phaseWorld().twist ? 1 : 0;
+    const cut = this.sim.phase === 'play' && performance.now() < this.cut25Until;
+    const lk = this.phaseWorld().twist || cut ? 1 : 0;
     const key = this.ensureLook(th, lk);
     if (key === this.lookKey) return;
     this.lookKey = key;
