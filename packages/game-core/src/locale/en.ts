@@ -163,6 +163,7 @@ export const en: Dict = {
     },
     cta: 'Join the extras',
     deathBtn: 'Clip',
+    deathBtnLong: 'Clip: who cut me',
     findMe: 'Can you spot me?',
     thatWasMe: 'That was me!',
     gotMe: 'I got cut!',

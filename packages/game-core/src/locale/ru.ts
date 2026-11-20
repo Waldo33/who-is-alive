@@ -176,6 +176,7 @@ export const ru = {
     },
     cta: 'Попади в массовку',
     deathBtn: 'Клип',
+    deathBtnLong: 'Клип: кто вырезал',
     findMe: 'Найдёшь меня?',
     thatWasMe: 'Это был я!',
     gotMe: 'Меня вырезали!',

@@ -88,6 +88,16 @@ interface Pigeon {
   spr: Phaser.GameObjects.Image;
 }
 
+/** Клип выбывшего: момент выбивания, состояние монтажа; killer — кто выбил (известен после разоблачения). */
+interface DeathClip {
+  eid: number;
+  at: number;
+  status: 'offer' | 'rendering' | 'ready';
+  progress: number;
+  file: File | null;
+  killer?: number;
+}
+
 export class GameScene extends Phaser.Scene {
   private init0!: SceneInit;
   private lang: Lang = 'ru';
@@ -156,7 +166,7 @@ export class GameScene extends Phaser.Scene {
   private closeClip: (() => void) | null = null;
   /** Клип выбывшего: последние секунды перед выбиванием, монтируется в фоне — призрак смотрит игру дальше. */
   /** Клип выбывшего. killer — кто выбил (известно только после разоблачения: тогда клип пересобирается с именами). */
-  private deathClip: { eid: number; at: number; status: 'offer' | 'rendering' | 'ready'; progress: number; file: File | null; killer?: number } | null = null;
+  private deathClip: DeathClip | null = null;
 
   constructor() {
     super('game');
@@ -720,8 +730,13 @@ export class GameScene extends Phaser.Scene {
       label: this.t.clip.deathBtn,
       accent: PAL.amber,
       keep: true,
-      // на экране итогов кнопка перекрыла бы его кнопки — там уже есть «Поделиться» и клип матча
-      visible: () => !!this.deathClip && (this.sim.phase === 'play' || this.sim.phase === 'accuse' || this.sim.phase === 'reveal'),
+      // в игре — в углу поля, на итогах — во всю ширину нижней панели (кнопки итогов выше)
+      visible: () => {
+        const ph = this.sim.phase;
+        const ok = !!this.deathClip && (ph === 'play' || ph === 'accuse' || ph === 'reveal' || ph === 'results');
+        if (ok) this.placeDeathClipButton(b, ph === 'results');
+        return ok;
+      },
       // отпускание пальца: «Отправить» открывает системное меню, а ему нужен свежий жест
       onUp: () => this.onDeathClipTap(),
     };
@@ -747,21 +762,38 @@ export class GameScene extends Phaser.Scene {
     const dc = this.deathClip;
     const k = this.sim.summary?.kills?.find((x) => dc && x.victim === dc.eid);
     if (!dc || !k) return;
-    this.deathClip = { eid: dc.eid, at: dc.at, status: 'offer', progress: 0, file: null, killer: k.by };
+    // полную версию — с выбившим и всеми живыми в их цветах — монтируем сразу, без нажатия
+    const next: DeathClip = { eid: dc.eid, at: dc.at, status: 'offer', progress: 0, file: null, killer: k.by };
+    this.deathClip = next;
     this.updateDeathClipLabel();
-    this.audio.play('ready');
+    this.renderDeathClip(next);
+  }
+
+  private placeDeathClipButton(b: Button, wide: boolean): void {
+    const [x, y, w, h] = wide ? [3, PANEL_Y + 3, 174, 30] : [96, PANEL_Y - 26, 80, 22];
+    if (b.x === x && b.y === y) return;
+    Object.assign(b, { x, y, w, h });
+    const text = this.btnObjs.get('deathclip')?.text;
+    if (text) text.y = y + Math.floor(h / 2) - 5;
+    this.updateDeathClipLabel();
   }
 
   private updateDeathClipLabel(): void {
     const dc = this.deathClip;
     const text = this.btnObjs.get('deathclip')?.text;
-    if (!dc || !text) return;
-    const label = dc.status === 'offer' ? this.t.clip.deathBtn : dc.status === 'rendering' ? `${Math.round(dc.progress * 100)}%` : this.t.clip.send;
-    if (text.text !== label) {
-      // origin 0.5: центр по кнопке, целый пиксель для нечётной ширины
-      text.setText(label);
-      text.x = 136 - (text.width % 2) / 2;
-    }
+    const b = this.buttons.find((x) => x.id === 'deathclip');
+    if (!dc || !text || !b) return;
+    const wide = b.w > 100;
+    const c = this.t.clip;
+    const label =
+      dc.status === 'offer'
+        ? wide ? c.deathBtnLong : c.deathBtn
+        : dc.status === 'rendering'
+          ? wide ? fmt(c.making, { n: Math.round(dc.progress * 100) }) : `${Math.round(dc.progress * 100)}%`
+          : c.send;
+    // origin 0.5: центр по кнопке, целый пиксель для нечётной ширины
+    text.setText(label);
+    text.x = b.x + b.w / 2 - (text.width % 2) / 2;
   }
 
   private onDeathClipTap(): void {
@@ -774,6 +806,10 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     if (dc.status !== 'offer') return;
+    this.renderDeathClip(dc);
+  }
+
+  private renderDeathClip(dc: DeathClip): void {
     const w = this.sim.world;
     const start = w.keyframes[0]?.time ?? 0;
     const to = Math.min(w.time, dc.at + 1500);
