@@ -47,6 +47,8 @@ function load() {
 export interface OgInput {
   /** Язык отправителя ссылки (из параметра l). */
   lang: Lang;
+  /** Какая страница: общая (главная и всё прочее) или «Играть с ботами». Комната — когда есть code. */
+  page?: 'home' | 'sandbox';
   /** Пригласивший (если ссылка на комнату). */
   host?: string | null;
   code?: string;
@@ -66,7 +68,7 @@ export async function renderOg(o: OgInput): Promise<ImageResponse> {
       <div style={{ width: '100%', height: '100%', display: 'flex', position: 'relative', fontFamily: 'PS2P, PS2PCyr', background: C.ink }}>
         <img src={bg} width={1200} height={630} alt="" style={{ position: 'absolute', left: 0, top: 0 }} />
         <div style={{ position: 'absolute', left: 64, top: 64, width: 680, display: 'flex', flexDirection: 'column' }}>
-          <div style={{ fontSize: 16, color: C.amber, letterSpacing: 0 }}>{room ? T.invite : T.party}</div>
+          <div style={{ fontSize: 16, color: C.amber, letterSpacing: 0 }}>{room ? T.invite : o.page === 'sandbox' ? T.sbLabel : T.party}</div>
           <div style={{ fontSize: 48, color: C.yellow, marginTop: 28, textShadow: `4px 4px 0 ${C.rust}, 8px 8px 0 ${C.ink}`, lineHeight: 1.3 }}>
             {T.title}
           </div>
@@ -99,6 +101,17 @@ export async function renderOg(o: OgInput): Promise<ImageResponse> {
                   <div style={{ fontSize: 16, color: C.mist, marginLeft: 24 }}>{`${Math.min(4, o.players)}/4`}</div>
                 ) : null}
               </div>
+            </div>
+          ) : o.page === 'sandbox' ? (
+            <div style={{ display: 'flex', flexDirection: 'column', marginTop: 40 }}>
+              <div style={{ fontSize: 32, color: C.white, lineHeight: 1.4 }}>{T.sb1}</div>
+              <div style={{ fontSize: 24, color: C.sand, marginTop: 12 }}>{T.sb2}</div>
+              <div style={{ display: 'flex', marginTop: 32 }}>
+                <div style={{ display: 'flex', fontSize: 24, color: C.ink, background: C.amber, padding: '12px 18px 8px', boxShadow: `0 6px 0 ${C.rust}` }}>
+                  {T.sb3}
+                </div>
+              </div>
+              <div style={{ fontSize: 16, color: C.coral, marginTop: 30 }}>{T.sb4}</div>
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', marginTop: 40 }}>

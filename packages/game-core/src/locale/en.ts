@@ -179,6 +179,13 @@ export const en: Dict = {
     siteTitle: 'Who’s Alive?',
     siteDesc: 'A pixel party game: find the living among 32 identical little people and don’t give yourself away.',
     alt: 'Who’s Alive? — a pixel party game',
+    sbLabel: 'PLAY RIGHT NOW',
+    sb1: 'You vs 3 AI players',
+    sb2: 'on one phone.',
+    sb3: 'No sign-up.',
+    sb4: 'Spot the living first.',
+    sbTitle: 'Play with bots · Who’s Alive?',
+    sbDesc: 'You and three AI players among 32 identical little people. No sign-up, right in your phone browser.',
   },
   share: {
     text: '{title} {name}: {points}, {kills}. {squares}',

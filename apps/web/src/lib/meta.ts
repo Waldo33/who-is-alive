@@ -9,15 +9,19 @@ export function ogLang(v: string | string[] | null | undefined): Lang {
 }
 
 /** Заголовок, описание и картинка превью ссылки на языке отправителя. */
-export function shareMetadata(lang: Lang, room?: { code: string; host?: string | null }): Metadata {
+export function shareMetadata(lang: Lang, room?: { code: string; host?: string | null }, page: 'home' | 'sandbox' = 'home'): Metadata {
   const T = DICTS[lang].og;
+  const sandbox = !room && page === 'sandbox';
   const title = room
     ? room.host
       ? fmt(T.roomTitle, { name: room.host })
       : fmt(T.roomTitleAnon, { code: room.code })
-    : T.siteTitle;
-  const description = room ? fmt(T.roomDesc, { code: room.code }) : T.siteDesc;
-  const image = { url: `/og?l=${lang}${room ? `&code=${room.code}` : ''}`, width: 1200, height: 630, alt: T.alt, type: 'image/png' };
+    : sandbox
+      ? T.sbTitle
+      : T.siteTitle;
+  const description = room ? fmt(T.roomDesc, { code: room.code }) : sandbox ? T.sbDesc : T.siteDesc;
+  const q = room ? `&code=${room.code}` : sandbox ? '&p=sandbox' : '';
+  const image = { url: `/og?l=${lang}${q}`, width: 1200, height: 630, alt: T.alt, type: 'image/png' };
   return {
     title,
     description,

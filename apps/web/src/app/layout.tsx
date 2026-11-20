@@ -3,9 +3,15 @@ import '@fontsource/press-start-2p/400.css';
 import './globals.css';
 import PwaRegister from './PwaRegister';
 import { SITE_URL } from '@/lib/env';
+import { shareMetadata } from '@/lib/meta';
+
+// превью по умолчанию — для любых адресов без своих метаданных (в том числе «страница не найдена»)
+const defaults = shareMetadata('ru');
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
+  openGraph: defaults.openGraph,
+  twitter: defaults.twitter,
   title: 'Кто тут живой? · Who’s Alive?',
   description: 'Найди живых. Не выдай себя. Find the living. Don’t give yourself away.',
   applicationName: 'Кто тут живой? · Who’s Alive?',
