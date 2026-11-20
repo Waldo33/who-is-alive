@@ -38,7 +38,9 @@ export interface RoomState {
 /** Сообщения лобби в общем канале (только от хоста). */
 export type LobbyMsg =
   | { t: 'lobby'; hostId: string; settings: RoomSettings }
-  | { t: 'kick_refresh' };
+  | { t: 'kick_refresh' }
+  /** Режиссёр убрал участника: тот уходит сам, остальные перечитывают состав. */
+  | { t: 'kick'; userId: string };
 
 /**
  * Комната: вход через RPC, состав из таблицы room_members + Presence (кто онлайн и готов),
@@ -102,6 +104,12 @@ export class Room {
     });
     t.onMessage((channel, msg, from) => {
       const m = msg as { t?: string };
+      if (channel === 'room' && m?.t === 'kick' && from === this.state.hostId) {
+        const km = msg as Extract<LobbyMsg, { t: 'kick' }>;
+        if (km.userId === this.state.selfId) void this.kicked();
+        else this.scheduleRefresh();
+        return;
+      }
       if (channel === 'room' && m?.t === 'lobby') {
         const lm = msg as Extract<LobbyMsg, { t: 'lobby' }>;
         if (from === this.state.hostId) this.set({ hostId: lm.hostId, settings: lm.settings });
@@ -273,8 +281,28 @@ export class Room {
     void this.sb.rpc('join_room', { p_code: this.state.code, p_name: this.myName }).then(({ error }) => {
       // перечитать состав и роли: пока нас не было, хостом мог стать другой
       if (!error) this.scheduleRefresh();
+      // пока вкладка спала, режиссёр убрал нас из комнаты
+      else if (rpcErrorCode(error) === 'kicked') void this.kicked();
     });
   };
+
+  /** Режиссёр: убрать участника из комнаты (только в лобби). Обратно он войти не сможет. */
+  async kick(userId: string): Promise<boolean> {
+    if (!this.isHost || userId === this.state.selfId || this.state.status !== 'lobby') return false;
+    const { error } = await this.sb.rpc('kick_member', { p_code: this.state.code, p_user: userId });
+    if (error) return false;
+    this.dbMembers = this.dbMembers.filter((m) => m.user_id !== userId);
+    this.recompute();
+    await this.transport?.send('room', { t: 'kick', userId } satisfies LobbyMsg);
+    await this.transport?.setRole(true, this.dbMembers.map((m) => m.user_id));
+    return true;
+  }
+
+  /** Нас убрали из комнаты: отключиться и показать экран «Режиссёр убрал тебя». */
+  private async kicked(): Promise<void> {
+    await this.leave();
+    this.set({ status: 'error', error: 'kicked' });
+  }
 
   /** Уйти насовсем (кнопка «Назад» / «Выйти в меню»): освободить место сразу. */
   async quit(): Promise<void> {

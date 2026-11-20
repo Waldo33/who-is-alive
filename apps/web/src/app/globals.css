@@ -78,6 +78,10 @@ button.btn { border: 0; cursor: pointer; border-radius: 0; }
 .badge { font-size: 7px; padding: 4px 5px; background: #3a4466; color: var(--sand); }
 .badge.host { background: #68386c; color: var(--yellow); }
 .badge.ready { background: #265c42; color: #ffffff; }
+/* режиссёр убирает участника: «✕», второе нажатие — «Убрать?» */
+.players .kick { font: inherit; font-size: 10px; min-width: 40px; min-height: 40px; padding: 0 8px; flex: none;
+  color: var(--mist); background: #262b44; border: 0; box-shadow: 0 0 0 2px var(--ink); cursor: pointer; }
+.players .kick.ask { color: #ffffff; background: #be4a2f; }
 .name-edit { flex: 1; }
 .name-edit input { font: inherit; font-size: 16px; width: 100%; background: var(--ink); color: #fff; border: 2px solid var(--amber); padding: 6px; border-radius: 0; }
 .settings { display: flex; flex-direction: column; gap: 10px; }

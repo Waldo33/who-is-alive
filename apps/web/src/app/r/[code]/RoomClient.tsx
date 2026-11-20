@@ -192,7 +192,7 @@ function ErrorScreen({ t, errorKey }: { t: Dict; errorKey: string }) {
         {msg}
       </p>
       <Link className="btn" href="/">
-        {errorKey === 'room_full' || errorKey === 'room_playing' ? t.lobby.createOwn : t.lobby.backHome}
+        {errorKey === 'room_full' || errorKey === 'room_playing' || errorKey === 'kicked' ? t.lobby.createOwn : t.lobby.backHome}
       </Link>
     </main>
   );
@@ -212,6 +212,8 @@ export function Lobby({
   const [qr, setQr] = useState('');
   const [toast, setToast] = useState('');
   const [editing, setEditing] = useState(false);
+  /** Режиссёр нажал «✕» у участника — второе нажатие («Убрать?») подтверждает. */
+  const [kickAsk, setKickAsk] = useState('');
   const me = state.members.find((m) => m.userId === state.selfId);
   const isHost = state.hostId === state.selfId;
   const online = state.members.filter((m) => m.online);
@@ -300,6 +302,23 @@ export function Lobby({
                   {m.userId === state.hostId && <span className="badge host">{t.lobby.host}</span>}
                   {m.ready && <span className="badge ready">{t.lobby.ready}</span>}
                 </span>
+                {isHost && m.userId !== state.selfId && (
+                  <button
+                    className={`kick ${kickAsk === m.userId ? 'ask' : ''}`}
+                    aria-label={fmt(t.lobby.kick, { name: m.name })}
+                    onClick={() => {
+                      if (kickAsk !== m.userId) {
+                        setKickAsk(m.userId);
+                        setTimeout(() => setKickAsk((k) => (k === m.userId ? '' : k)), 3000);
+                        return;
+                      }
+                      setKickAsk('');
+                      void room.kick(m.userId).then((ok) => !ok && flash(t.lobby.errors.unknown));
+                    }}
+                  >
+                    {kickAsk === m.userId ? t.lobby.kickConfirm : '✕'}
+                  </button>
+                )}
               </li>
             ) : (
               <li key={'empty' + i} className="empty">
