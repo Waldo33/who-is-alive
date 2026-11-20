@@ -126,7 +126,9 @@ export class Room {
       this.beginRemote({ t: 'match_start', players: this.membersAsPlayers(), cfg: this.cfgFromSettings(), seed: 0, hostId: this.state.hostId }, true);
     }
     this.statusTimer = setInterval(() => this.watch(), 1000);
-    this.touchTimer = setInterval(() => void this.sb.rpc('touch_room', { p_code: this.state.code }), 60_000);
+    // пульс: кто молчит дольше 75 с, тот освобождает место для нового игрока (см. join_room)
+    this.touchTimer = setInterval(() => this.touch(), 20_000);
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', this.onVisible);
   }
 
   private me(): PresenceMember {
@@ -253,6 +255,28 @@ export class Room {
     })();
   }
 
+  private touch(): void {
+    void this.sb.rpc('touch_room', { p_code: this.state.code });
+  }
+
+  /**
+   * Вернулись во вкладку (телефон усыплял таймеры): отметиться заново. Если за это время место
+   * освободили, в лобби join_room вернёт игрока обратно (при свободном месте).
+   */
+  private onVisible = (): void => {
+    if (document.visibilityState !== 'visible' || !this.transport) return;
+    void this.sb.rpc('join_room', { p_code: this.state.code, p_name: this.myName }).then(({ error }) => {
+      if (!error) void this.loadMembers();
+    });
+  };
+
+  /** Уйти насовсем (кнопка «Назад» / «Выйти в меню»): освободить место сразу. */
+  async quit(): Promise<void> {
+    const code = this.state.code;
+    await this.leave();
+    await this.sb.rpc('leave_room', { p_code: code });
+  }
+
   async setReady(ready: boolean): Promise<void> {
     this.myReady = ready;
     await this.transport?.track(this.me());
@@ -272,6 +296,7 @@ export class Room {
   }
 
   async leave(): Promise<void> {
+    if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', this.onVisible);
     if (this.touchTimer) clearInterval(this.touchTimer);
     if (this.statusTimer) clearInterval(this.statusTimer);
     this.session?.dispose();

@@ -8,6 +8,7 @@ import { PAL, PLAYER_COLORS } from '@kto/assets';
 import { DICTS, fmt } from '@kto/game-core';
 import type { Dict, Lang } from '@kto/game-core';
 import { getAudio } from '@/game/audio';
+import { isBotUA } from '@/lib/bot';
 import { detectLang } from '@/lib/lang';
 import { TopBar } from '@/ui/TopBar';
 import type { TopBar as Bar } from '@/ui/topbar';
@@ -20,7 +21,7 @@ import type { Audio as GameAudio } from '@/game/audio';
 import type { RunningGame } from '@/game/boot';
 import type { RoomSettings, RoomState } from '@/net/room';
 
-export default function RoomClient({ code }: { code: string }) {
+export default function RoomClient({ code, bot = false }: { code: string; bot?: boolean }) {
   const [lang, setLang] = useState<Lang>('ru');
   const t = DICTS[lang];
   const [state, setState] = useState<RoomState | null>(null);
@@ -40,6 +41,20 @@ export default function RoomClient({ code }: { code: string }) {
     let off: (() => void) | undefined;
     let cancelled = false;
     (async () => {
+      // боты превью (в т. ч. iMessage — он выполняет скрипты) не входят в комнату и не занимают место
+      if (bot || isBotUA(navigator.userAgent)) return;
+      // превью и предзагрузка открывают страницу невидимой — входим, только когда её реально видно
+      if (document.visibilityState !== 'visible') {
+        await new Promise<void>((res) => {
+          const on = () => {
+            if (document.visibilityState !== 'visible') return;
+            document.removeEventListener('visibilitychange', on);
+            res();
+          };
+          document.addEventListener('visibilitychange', on);
+        });
+        if (cancelled) return;
+      }
       let uid: string;
       try {
         uid = await ensureAnonymousUser();
@@ -61,7 +76,7 @@ export default function RoomClient({ code }: { code: string }) {
       off?.();
       void room?.leave();
     };
-  }, [code]);
+  }, [code, bot]);
 
   const audioRef = useRef<GameAudio | null>(null);
   const unlockAudio = () => {
@@ -76,7 +91,11 @@ export default function RoomClient({ code }: { code: string }) {
   useEffect(() => {
     if (!inGame) getAudio().setMusic('menu');
   }, [inGame]);
-  const goHome = () => router.push('/');
+  // «Назад» и «Выйти в меню» сразу освобождают место в комнате
+  const goHome = () => {
+    void roomRef.current?.quit();
+    router.push('/');
+  };
   const topBar = (
     <TopBar
       lang={lang}

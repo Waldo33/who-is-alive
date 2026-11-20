@@ -1,4 +1,6 @@
 import type { Metadata } from 'next';
+import { headers } from 'next/headers';
+import { isBotUA } from '@/lib/bot';
 import { ogLang, shareMetadata } from '@/lib/meta';
 import { roomPreview } from '@/lib/preview';
 import RoomClient from './RoomClient';
@@ -24,5 +26,7 @@ export async function generateMetadata({
 
 export default async function RoomPage({ params }: { params: Promise<{ code: string }> }) {
   const { code } = await params;
-  return <RoomClient code={code.toUpperCase()} />;
+  // бот превью ссылки получает только метаданные и не входит в комнату (не занимает место)
+  const bot = isBotUA((await headers()).get('user-agent'));
+  return <RoomClient code={code.toUpperCase()} bot={bot} />;
 }
