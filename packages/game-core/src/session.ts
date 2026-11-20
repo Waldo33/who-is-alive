@@ -129,7 +129,7 @@ export class LocalSession implements ClientSession {
   drainNotices(): Notice[] {
     const list = this.sim.notices;
     this.sim.notices = [];
-    return list.filter((n) => n.t !== 'denied' || n.pid === this.selfPid);
+    return list.filter((n) => (n.t !== 'denied' && n.t !== 'attack') || n.pid === this.selfPid);
   }
 
   onWorldEvent(fn: Parameters<World['listeners']['push']>[0]): void {

@@ -219,6 +219,27 @@ describe('MatchSim', () => {
     expect(new Set(move).size).toBe(1);
   });
 
+  it('удар по сети проверяется по тому, где цель была на экране нападавшего (не дальше LAG_GRACE_MS)', () => {
+    const sim = new MatchSim(makeConfig(), players, 44);
+    runUntil(sim, () => sim.phase === 'play' && sim.world.time > 3000, 20 * 30);
+    const a = sim.pr[0];
+    const ea = sim.world.get(a.eid)!;
+    const bot = sim.world.alive().find((e) => !sim.pr.some((p) => p.eid === e.eid))!;
+    const place = (x: number, y: number) => {
+      Object.assign(bot, { x, y, px: x, py: y, path: [], pi: 0 });
+      sim.bots.remove(bot.eid); // чтобы бот не ушёл сам
+    };
+    place(ea.x + 6, ea.y);
+    for (let i = 0; i < 4; i++) sim.tick();
+    const seenAt = sim.world.time;
+    for (let i = 0; i < 4; i++) sim.tick();
+    place(ea.x + 60, ea.y); // ушёл далеко «за время доставки»
+    sim.intent(a.pid, { k: 'attack', eid: bot.eid, wt: seenAt });
+    sim.tick();
+    expect(bot.alive).toBe(false);
+    expect(sim.notices.some((n) => n.t === 'attack' && n.pid === a.pid && n.result === 'bot')).toBe(true);
+  });
+
   it('вычислили живого: обвинитель +1, у обвинённого нет очка за выживание', () => {
     const sim = new MatchSim(makeConfig(), players, 43);
     runUntil(sim, () => sim.phase === 'accuse', 20 * 90);

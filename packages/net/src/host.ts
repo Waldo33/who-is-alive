@@ -173,6 +173,9 @@ export class HostSession implements ClientSession {
       if (n.t === 'denied') {
         if (n.pid === this.selfPid) this.notices.push(n);
         else this.sendTo(n.pid, { t: 'denied', reason: n.reason });
+      } else if (n.t === 'attack') {
+        // итог удара — лично нападавшему: он увидит «поф» сразу, а не когда мир на его экране дойдёт до удара
+        if (n.pid !== this.selfPid) this.sendTo(n.pid, { t: 'atk', target: n.target, result: n.result, at: n.at });
       } else if (n.t !== 'score') this.notices.push(n);
     }
     s.notices = [];

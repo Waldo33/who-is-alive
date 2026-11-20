@@ -51,6 +51,8 @@ export type PrivateMsg =
   | { t: 'me'; me: MeMsg }
   | { t: 'denied'; reason: 'no_attacks' | 'out_of_range' | 'stunned' | 'autopilot' }
   | { t: 'pong'; c: number; wt: number }
+  /** Итог своего удара (только нападавшему): цель и кто она — ему это и так покажет «поф». */
+  | { t: 'atk'; target: number; result: 'player' | 'bot'; at: number }
   /** Полный снимок для переподключения. */
   | { t: 'resync'; world: WorldSnapshot; round: number; theme: number; t0: number; me: MeMsg; st: Extract<RoomMsg, { t: 'st' }>; players: PlayerInfo[]; cfg: Partial<GameConfig>; hostId: string };
 

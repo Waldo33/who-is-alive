@@ -252,7 +252,7 @@ export class ClipPlayerScene {
     } else {
       const blink = Math.floor(local / 400) % 2 === 0;
       text(g, cap?.reveal ?? t.clip.reveal, LW / 2, PANEL_Y + 8, PAL.white, font, { outline: null });
-      text(g, cap?.kind ?? t.clip.kinds[this.inp.moment.kind], LW / 2, PANEL_Y + 21, blink ? PAL.yellow : PAL.amber, font, { outline: null });
+      text(g, cap?.kind ?? (this.inp.moment.kind === 'knockout' && this.inp.moment.selfRole === 'victim' ? t.clip.gotMe : t.clip.kinds[this.inp.moment.kind]), LW / 2, PANEL_Y + 21, blink ? PAL.yellow : PAL.amber, font, { outline: null });
       // «повтор» в углу — как в спортивной трансляции
       g.fillStyle = PAL.red;
       if (blink) g.fillRect(LW - 9, AY + 4, 4, 4);

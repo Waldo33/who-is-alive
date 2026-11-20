@@ -84,7 +84,9 @@ export type Notice =
   | { t: 'round_start'; round: number; theme: number }
   | { t: 'phase'; phase: Phase; at: number }
   | { t: 'score'; pid: string; delta: number; reason: keyof Omit<PointsLine, 'total'> }
-  | { t: 'denied'; pid: string; reason: 'no_attacks' | 'out_of_range' | 'stunned' | 'autopilot' };
+  | { t: 'denied'; pid: string; reason: 'no_attacks' | 'out_of_range' | 'stunned' | 'autopilot' }
+  /** Итог удара — только для того, кто бил (по сети уходит ему лично, чтобы показать результат без задержки показа мира). */
+  | { t: 'attack'; pid: string; target: number; result: 'player' | 'bot'; at: number };
 
 /** Наблюдатель-ИИ (песочница и безголовая симуляция) получает только то, что видно на поле. */
 export interface AiAgent {
@@ -122,6 +124,11 @@ export class MatchSim {
   summary: RoundSummary | null = null;
   match: MatchSummary | null = null;
   notices: Notice[] = [];
+  /**
+   * Где были сущности последние ~0,7 с (по шагам мира). Игрок по сети видит мир с опозданием,
+   * поэтому удар проверяется и по тому месту, где цель была на его экране («перемотка», как в шутерах).
+   */
+  private posHist: { t: number; pos: Map<number, [number, number]> }[] = [];
   agents: AiAgent[] = [];
 
   playStart = 0;
@@ -254,6 +261,7 @@ export class MatchSim {
     }
     const t0 = Math.ceil(this.world.time / 1000) * 1000 + 1000;
     this.world.init(spawns, t0);
+    this.posHist = [];
     const playerEids = rng.shuffle(spawns.map((s) => s.eid)).slice(0, this.players.length);
     this.pr = this.players.map((p, i) => ({
       pid: p.pid,
@@ -416,6 +424,7 @@ export class MatchSim {
     }
 
     this.world.step();
+    this.recordPositions();
 
     const aliveCount = this.pr.filter((p) => p.alive).length;
     const lastAlive = this.players.length >= 2 && aliveCount <= 1;
@@ -655,15 +664,26 @@ export class MatchSim {
         return;
       }
       case 'attack':
-        {
-          const lag = Math.max(0, Math.min(LAG_GRACE_MS, t - (it.wt ?? t)));
-          this.attack(p, it.eid, e.x, e.y, (lag / 1000) * cfg.entitySpeed * 2);
-        }
+        // момент мира на экране нападавшего (не раньше LAG_GRACE_MS назад)
+        this.attack(p, it.eid, e.x, e.y, Math.max(t - LAG_GRACE_MS, Math.min(t, it.wt ?? t)));
         return;
     }
   }
 
-  private attack(p: PlayerRound, target: number, ax: number, ay: number, slack = 0): void {
+  private recordPositions(): void {
+    const pos = new Map<number, [number, number]>();
+    for (const e of this.world.entities) if (e.alive) pos.set(e.eid, [e.x, e.y]);
+    this.posHist.push({ t: this.world.time, pos });
+    while (this.posHist.length && this.posHist[0].t < this.world.time - LAG_GRACE_MS - 100) this.posHist.shift();
+  }
+
+  /** Где была сущность в момент мира t (последний записанный шаг не позже t). */
+  private posAt(eid: number, t: number): [number, number] | null {
+    for (let i = this.posHist.length - 1; i >= 0; i--) if (this.posHist[i].t <= t) return this.posHist[i].pos.get(eid) ?? null;
+    return null;
+  }
+
+  private attack(p: PlayerRound, target: number, ax: number, ay: number, view?: number): void {
     const cfg = this.cfg;
     const t = this.world.time;
     if (p.attacksLeft <= 0) {
@@ -672,7 +692,10 @@ export class MatchSim {
     }
     const te = this.world.get(target);
     if (!te || !te.alive || target === p.eid) return;
-    if (Math.hypot(te.x - ax, te.y - ay) > cfg.attackRange + 1 + slack) {
+    const reach = (x: number, y: number) => Math.hypot(x - ax, y - ay) <= cfg.attackRange + 1;
+    // цель в радиусе сейчас или там, где её видел нападавший (его персонаж у хоста уже там, где был на его экране)
+    const seen = view !== undefined && view < t ? this.posAt(target, view) : null;
+    if (!reach(te.x, te.y) && !(seen && reach(seen[0], seen[1]))) {
       this.notices.push({ t: 'denied', pid: p.pid, reason: 'out_of_range' });
       return;
     }
@@ -699,6 +722,7 @@ export class MatchSim {
       this.emit({ t: 'hit', target, result: 'bot', x: hx, y: hy, attacker: p.eid, at: t });
     }
     this.emit({ t: 'remove', eid: target, cause: victim ? 'player' : 'bot', at: t });
+    this.notices.push({ t: 'attack', pid: p.pid, target, result: victim ? 'player' : 'bot', at: t });
     // испуг соседей маскирует нападающего
     for (const o of this.world.alive()) {
       if (o.eid === target) continue;

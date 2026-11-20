@@ -24,9 +24,11 @@ export interface Moment {
   kind: 'knockout' | 'star3' | 'hit_bot' | 'close' | 'end';
   /** Время главного события. */
   at: number;
+  /** Кем в главном событии был тот, для кого клип: выбил сам или выбили его. */
+  selfRole?: 'attacker' | 'victim';
 }
 
-/** Окно момента: обычно ~6 с, но может растянуться, чтобы целиком вместить два события подряд. */
+/** Окно момента: обычно ~6 с, но может растянуться, чтобы целиком вместить два события подряд или долгий подход. */
 export const MOMENT_MIN_MS = 5000;
 export const MOMENT_MS = 6000;
 export const MOMENT_MAX_MS = 8000;
@@ -40,6 +42,19 @@ const SELF_BONUS = 3;
 const CLOSE_CAP = 3;
 /** Сразу после появления все стоят рядом — это не напряжённый момент. */
 const SPAWN_QUIET_MS = 5000;
+/** Нападавший — живой игрок не дальше этого от цели в момент удара (удар 14 пикс. плюс запас на сетевую перемотку). */
+const ATTACKER_PX = 24;
+/** «Охота» начинается, когда нападавший был дальше этого от жертвы. */
+const APPROACH_PX = 40;
+/** Подход показываем не короче и не длиннее этого. */
+const APPROACH_MIN_MS = 2500;
+const APPROACH_MAX_MS = 4500;
+/** Второе выбивание тем же игроком вскоре после первого — серия. */
+const COMBO_MS = 4000;
+const COMBO_BONUS = 2;
+/** Выбили того, кто только что ошибся и стоит оглушённый, — расплата. */
+const PUNISH_MS = 3000;
+const PUNISH_BONUS = 2;
 
 /**
  * Событие с «кадром»: сколько нужно показать до и после него, чтобы оно читалось.
@@ -52,17 +67,24 @@ export interface MomentEvent {
   /** Начало и конец кадра события (уже обрезаны границами раунда). */
   from: number;
   to: number;
+  /** Участие того, для кого клип. */
+  selfRole?: 'attacker' | 'victim';
 }
 
+/** Кадр события по умолчанию: [до, после]. У выбивания «до» растягивается на весь подход нападавшего. */
 const CONTEXT: Record<Moment['kind'], [number, number]> = {
-  knockout: [2500, 1200], // подход и удар + «поф» и реакция толпы
+  knockout: [APPROACH_MIN_MS, 1200], // подход и удар + «поф» и реакция толпы
   hit_bot: [1500, 1200], // удар мимо и оглушение
   star3: [2000, 800], // путь к третьей звезде
   close: [0, 0],
   end: [0, 0],
 };
 
-/** События раунда с очками по эвристике раздела 11 ТЗ (плюс бонус за участие selfEid). */
+/**
+ * События раунда с очками по эвристике раздела 11 ТЗ. Раунд проигрывается заново один раз:
+ * по позициям живых видно, кто кого выбил (в событии мира нападавшего нет — чтобы по сети не вычислить игроков),
+ * откуда начался подход, кто стоял рядом.
+ */
 export function momentEvents(rec: RoundRecording, selfEid?: number): MomentEvent[] {
   const kf0 = rec.keyframes[0];
   if (!kf0) return [];
@@ -70,35 +92,97 @@ export function momentEvents(rec: RoundRecording, selfEid?: number): MomentEvent
   const end = rec.playEnd;
   const isPlayer = new Set(rec.players.map((p) => p.eid));
   const out: MomentEvent[] = [];
-  const add = (at: number, pts: number, kind: Moment['kind']) => {
-    const [pre, post] = CONTEXT[kind];
-    out.push({ at, pts, kind, from: Math.max(start, at - pre), to: Math.min(end, at + post) });
+  const add = (at: number, pts: number, kind: Moment['kind'], pre?: number, selfRole?: MomentEvent['selfRole']) => {
+    const [p0, post] = CONTEXT[kind];
+    out.push({ at, pts, kind, from: Math.max(start, at - (pre ?? p0)), to: Math.min(end, at + post), selfRole });
   };
+
+  // позиции живых игроков на каждом шаге (их всего 2–4) и близость раз в секунду
+  const track = new Map<number, { t: number; x: number; y: number }[]>();
+  for (const eid of isPlayer) track.set(eid, []);
+  const w = makeReplay(worldOf(rec), start, end);
+  if (w) {
+    while (w.time <= end) {
+      for (const eid of isPlayer) {
+        const e = w.get(eid);
+        if (e && e.alive) track.get(eid)!.push({ t: w.time, x: e.x, y: e.y });
+      }
+      if (w.time % 1000 === 0 && w.time >= start + SPAWN_QUIET_MS) {
+        const alive = rec.players.map((p) => w.get(p.eid)).filter((e) => e && e.alive);
+        for (let i = 0; i < alive.length; i++) {
+          for (let j = i + 1; j < alive.length; j++) {
+            if (Math.hypot(alive[i]!.x - alive[j]!.x, alive[i]!.y - alive[j]!.y) < CLOSE_PX) add(w.time, 1, 'close');
+          }
+        }
+      }
+      if (w.time >= end) break;
+      w.step();
+    }
+  }
+  const posAt = (eid: number, t: number) => {
+    const tr = track.get(eid);
+    if (!tr) return null;
+    for (let i = tr.length - 1; i >= 0; i--) if (tr[i].t <= t) return tr[i].t > t - 200 ? tr[i] : null;
+    return null;
+  };
+  /** Кто выбил: ближайший к цели живой игрок (боты игроков не бьют). */
+  const attackerOf = (target: number, at: number, x: number, y: number): number | undefined => {
+    let best: number | undefined;
+    let bd = ATTACKER_PX;
+    for (const eid of isPlayer) {
+      if (eid === target) continue;
+      const p = posAt(eid, at);
+      if (!p) continue;
+      const d = Math.hypot(p.x - x, p.y - y);
+      if (d <= bd) {
+        bd = d;
+        best = eid;
+      }
+    }
+    return best;
+  };
+  /** С какого момента нападавший шёл к жертве: последний раз был дальше APPROACH_PX. */
+  const approachFrom = (attacker: number, victim: number, at: number): number => {
+    const ta = track.get(attacker) ?? [];
+    for (let i = ta.length - 1; i >= 0; i--) {
+      const a = ta[i];
+      if (a.t > at) continue;
+      if (a.t < at - APPROACH_MAX_MS) return at - APPROACH_MAX_MS;
+      const v = posAt(victim, a.t);
+      if (v && Math.hypot(a.x - v.x, a.y - v.y) > APPROACH_PX) return a.t;
+    }
+    return at - APPROACH_MIN_MS;
+  };
+
   const starsBy = new Map<number, number>();
+  const lastKoBy = new Map<number, number>();
+  const missAt = new Map<number, number>(); // игрок → когда последний раз ударил бота
   for (const ev of rec.log) {
     if (ev.at < start || ev.at > end) continue;
     if (ev.t === 'hit') {
-      const mine = selfEid !== undefined && (ev.target === selfEid || ev.attacker === selfEid);
-      if (ev.result === 'player') add(ev.at, 5 + (ev.at >= end - 3000 ? 3 : 0) + (mine ? SELF_BONUS : 0), 'knockout');
-      else add(ev.at, 2 + (mine ? SELF_BONUS : 0), 'hit_bot');
+      if (ev.result === 'player') {
+        const attacker = ev.attacker ?? attackerOf(ev.target, ev.at, ev.x, ev.y);
+        const role = selfEid === undefined ? undefined : ev.target === selfEid ? 'victim' : attacker === selfEid ? 'attacker' : undefined;
+        let pts = 5 + (ev.at >= end - 3000 ? 3 : 0) + (role ? SELF_BONUS : 0);
+        const miss = missAt.get(ev.target);
+        if (miss !== undefined && ev.at - miss <= PUNISH_MS) pts += PUNISH_BONUS;
+        let pre = APPROACH_MIN_MS;
+        if (attacker !== undefined) {
+          const prev = lastKoBy.get(attacker);
+          if (prev !== undefined && ev.at - prev <= COMBO_MS) pts += COMBO_BONUS;
+          lastKoBy.set(attacker, ev.at);
+          pre = Math.min(APPROACH_MAX_MS, Math.max(APPROACH_MIN_MS, ev.at - approachFrom(attacker, ev.target, ev.at) + 300));
+        }
+        add(ev.at, pts, 'knockout', pre, role);
+      } else {
+        const mine = selfEid !== undefined && ev.attacker === selfEid;
+        if (ev.attacker !== undefined) missAt.set(ev.attacker, ev.at);
+        add(ev.at, 2 + (mine ? SELF_BONUS : 0), 'hit_bot', undefined, mine ? 'attacker' : undefined);
+      }
     } else if (ev.t === 'star_taken' && isPlayer.has(ev.eid)) {
       const n = (starsBy.get(ev.eid) ?? 0) + 1;
       starsBy.set(ev.eid, n);
-      if (n === 3) add(ev.at, 4 + (ev.eid === selfEid ? SELF_BONUS : 0), 'star3');
-    }
-  }
-  // близость живых игроков: проигрываем раунд и раз в секунду меряем расстояния
-  const w = makeReplay(worldOf(rec), start, end);
-  if (w) {
-    while (w.time < end) {
-      w.step();
-      if (w.time % 1000 !== 0 || w.time < start + SPAWN_QUIET_MS) continue;
-      const alive = rec.players.map((p) => w.get(p.eid)).filter((e) => e && e.alive);
-      for (let i = 0; i < alive.length; i++) {
-        for (let j = i + 1; j < alive.length; j++) {
-          if (Math.hypot(alive[i]!.x - alive[j]!.x, alive[i]!.y - alive[j]!.y) < CLOSE_PX) add(w.time, 1, 'close');
-        }
-      }
+      if (n === 3) add(ev.at, 4 + (ev.eid === selfEid ? SELF_BONUS : 0), 'star3', undefined, ev.eid === selfEid ? 'attacker' : undefined);
     }
   }
   return out;
@@ -127,8 +211,19 @@ export function findBestMoment(rec: RoundRecording, selfEid?: number): Moment | 
   const maxLen = Math.min(MOMENT_MAX_MS, end - start);
   const minLen = Math.min(MOMENT_MIN_MS, maxLen);
   for (let len = minLen; len <= maxLen; len += STEP_MS) {
-    for (let from = start; from + len <= end; from += STEP_MS) {
+    // начала окон: сетка от начала раунда, конец раунда и края кадров событий —
+    // иначе событие у самого конца раунда (третья звезда, последнее выбивание) не помещалось бы ни в одно окно
+    const froms = new Set<number>();
+    for (let from = start; from + len <= end; from += STEP_MS) froms.add(from);
+    froms.add(end - len);
+    for (const e of events) {
+      if (e.kind === 'close') continue;
+      froms.add(e.from);
+      froms.add(e.to - len);
+    }
+    for (const from of froms) {
       const to = from + len;
+      if (from < start || to > end) continue;
       let pts = 0;
       let main: MomentEvent | null = null;
       let cut = 0;
@@ -153,7 +248,7 @@ export function findBestMoment(rec: RoundRecording, selfEid?: number): Moment | 
       const score = pts - cut - (Math.max(0, len - MOMENT_MS) / 1000) * LONG_PENALTY;
       // при равенстве: короче, затем позже (ближе к развязке)
       if (!best || score > bestScore + 1e-9 || (Math.abs(score - bestScore) < 1e-9 && (len < bestLen || (len === bestLen && from > best.from)))) {
-        best = { from, to, score: pts, kind: main.kind, at: main.at };
+        best = { from, to, score: pts, kind: main.kind, at: main.at, selfRole: main.selfRole };
         bestScore = score;
         bestLen = len;
       }

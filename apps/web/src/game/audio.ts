@@ -8,7 +8,7 @@ import type { MusicMode } from './music';
  */
 export type Sfx =
   | 'step' | 'hitPlayer' | 'hitBot' | 'poof' | 'starTake' | 'starSpawn' | 'crowd' | 'tick'
-  | 'click' | 'ready' | 'accuseRight' | 'accuseWrong' | 'fanfare' | 'sad' | 'hedge' | 'pigeon' | 'drum' | 'denied' | 'count';
+  | 'click' | 'ready' | 'accuseRight' | 'accuseWrong' | 'fanfare' | 'sad' | 'hedge' | 'pigeon' | 'drum' | 'denied' | 'count' | 'swing';
 
 const STORAGE_KEY = 'kto:sound';
 const MUSIC_KEY = 'kto:music';
@@ -234,6 +234,8 @@ export class Audio {
       case 'pigeon': for (let i = 0; i < 4; i++) this.noise(0.04, 0.12, 3000, i * 0.05); break;
       case 'drum': for (let i = 0; i < 14; i++) this.noise(0.05, 0.12 + i * 0.015, 300, i * 0.07); break;
       case 'denied': this.tone('square', 200, 160, 0.12, 0.15); break;
+      // замах: короткий свист — звучит сразу по нажатию, итог удара приходит следом
+      case 'swing': this.noise(0.07, 0.2, 1500); this.noise(0.06, 0.12, 3400, 0.03); break;
     }
   }
 

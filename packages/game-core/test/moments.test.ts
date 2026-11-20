@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { WorldEvent } from '../src';
 import { MOMENT_MAX_MS, MOMENT_MIN_MS, createLocalSession, findBestMoment, makeConfig, makeReplay, momentEvents, recordRound, worldOf } from '../src';
 
 const players = ['me', 'b', 'c', 'd'].map((pid, i) => ({ pid, name: pid, color: i }));
@@ -43,5 +44,35 @@ describe('лучший момент', () => {
     }
     // ИИ-игроки бьют и собирают звёзды — хоть в одном раунде из трёх момент должен набрать очки
     expect(found).toBeGreaterThan(0);
+  });
+
+  it('событие у самого конца раунда помещается в окно: третья звезда завершает раунд', () => {
+    const s = createLocalSession(makeConfig(), players, 31, 'me');
+    for (let i = 0; i < 20 * 200 && s.phase !== 'reveal'; i++) s.tick();
+    const sum = s.summary!;
+    const rec = recordRound(s.world, { round: s.round, theme: s.theme, players: sum.reveal, playEnd: sum.replayTo });
+    const end = rec.playEnd + 30; // конец раунда не на сетке окон
+    const who = sum.reveal[1].eid;
+    const log: WorldEvent[] = rec.log.filter((e) => e.t !== 'hit' && e.t !== 'star_taken');
+    for (const [i, dt] of [3000, 1500, 0].entries()) log.push({ t: 'star_taken', id: 900 + i, eid: who, at: end - dt });
+    const m = findBestMoment({ ...rec, log, playEnd: end })!;
+    expect(m.kind).toBe('star3');
+    expect(m.to).toBe(end);
+  });
+
+  it('своё выбивание узнаётся по месту удара, хотя в событии нападавшего нет', () => {
+    let checked = 0;
+    for (const seed of [41, 42, 43, 44, 45, 46]) {
+      const s = createLocalSession(makeConfig(), players, seed, 'me');
+      for (let i = 0; i < 20 * 200 && s.phase !== 'reveal'; i++) s.tick();
+      const sum = s.summary!;
+      const rec = recordRound(s.world, { round: s.round, theme: s.theme, players: sum.reveal, playEnd: sum.replayTo });
+      for (const r of sum.reveal) {
+        const evs = momentEvents(rec, r.eid).filter((e) => e.kind === 'knockout');
+        // кого-то выбили — у кого-то из игроков это его удар
+        for (const e of evs) if (e.selfRole === 'attacker') checked++;
+      }
+    }
+    expect(checked).toBeGreaterThan(0);
   });
 });

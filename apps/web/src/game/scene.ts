@@ -136,6 +136,10 @@ export class GameScene extends Phaser.Scene {
   private confetti: { x: number; y: number; vx: number; vy: number; c: number }[] = [];
   private stepSoundAt = 0;
   private lastAttackAt = -9999;
+  /** Замах своего персонажа к цели — сразу по нажатию, до ответа хоста. */
+  private lunge: { dx: number; dy: number; start: number } | null = null;
+  /** Вспышки замаха у цели (белая обводка цели и искры), мс с начала. */
+  private swingFx: { eid: number; x: number; y: number; t: number }[] = [];
   private holdTarget: { eid: number; at: number } | null = null;
   private iconNames: string[] = [];
   private flashes: { x: number; y: number; t: number }[] = [];
@@ -572,6 +576,17 @@ export class GameScene extends Phaser.Scene {
 
   private doAttack(eid: number): void {
     this.lastAttackAt = this.sim.world.time;
+    // мгновенный отклик: замах, свист и искры у цели. Итог (поф или оглушение) — от хоста
+    const me = this.me();
+    const w = this.sim.world;
+    const mine = me ? w.get(me.eid) : undefined;
+    const te = w.get(eid);
+    if (me && mine && te && me.attacksLeft > 0 && w.time >= me.stunUntil) {
+      const d = Math.hypot(te.x - mine.x, te.y - mine.y) || 1;
+      this.lunge = { dx: ((te.x - mine.x) / d) * 3, dy: ((te.y - mine.y) / d) * 2, start: performance.now() };
+      this.swingFx.push({ eid, x: te.x, y: te.y, t: 0 });
+      this.audio.play('swing');
+    }
     this.sim.intent({ k: 'attack', eid });
   }
 
@@ -895,7 +910,21 @@ export class GameScene extends Phaser.Scene {
       const { frame, flip, yoff } = this.frameFor(e, t);
       let jumpOff = yoff;
       if (mode === 'final' && highlight?.has(e.eid)) jumpOff = -Math.abs(Math.round(Math.sin(performance.now() / 140) * 5));
-      v.spr.setVisible(true).setFrame(frame).setFlipX(flip).setPosition(x, sy + jumpOff).setDepth(sy);
+      // замах своего персонажа (только на своём экране)
+      let lx = 0;
+      let ly = 0;
+      if (mode === 'live' && e.eid === myEid && this.lunge) {
+        const k = (performance.now() - this.lunge.start) / 160;
+        if (k >= 1) this.lunge = null;
+        else {
+          lx = Math.round(this.lunge.dx * Math.sin(k * Math.PI));
+          ly = Math.round(this.lunge.dy * Math.sin(k * Math.PI));
+        }
+      }
+      v.spr.setVisible(true).setFrame(frame).setFlipX(flip).setPosition(x + lx, sy + jumpOff + ly).setDepth(sy);
+      // цель замаха на миг вспыхивает белым
+      if (mode === 'live' && this.swingFx.some((s) => s.eid === e.eid && s.t < 90)) v.spr.setTintFill(0xffffff);
+      else v.spr.clearTint();
       v.shadow.setVisible(true).setPosition(x, sy).setDepth(sy - 0.5);
       // контур: цели в радиусе удара (только у себя) или подсветка живых в разоблачении
       let olVis = false;
@@ -1106,6 +1135,16 @@ export class GameScene extends Phaser.Scene {
         });
       }
     }
+    // искры замаха у цели
+    this.swingFx = this.swingFx.filter((s) => {
+      s.t += delta;
+      const fr = Math.floor(s.t / 60);
+      if (fr > 2) return false;
+      const r = 3 + fr * 2;
+      g.fillStyle(hexToInt(fr === 0 ? PAL.white : PAL.sand), 1);
+      for (const [ax, ay] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) g.fillRect(Math.round(s.x + ax * r), Math.round(AY + s.y - 8 + ay * r), 1, 1);
+      return true;
+    });
     // вспышки звёзд
     this.flashes = this.flashes.filter((f) => {
       f.t += delta;

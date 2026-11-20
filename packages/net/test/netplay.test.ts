@@ -143,6 +143,42 @@ describe('сетевая игра', () => {
     }
   });
 
+  it('оптимистичный интерфейс: свой удар и его итог видны раньше, чем мир гостя дойдёт до удара', () => {
+    const rig = makeRig([120, 250], 0, 8);
+    const g = rig.guests[0];
+    let target = -1;
+    for (let i = 0; i < 20 * 70 && target < 0; i++) {
+      rig.step();
+      const me = g.me();
+      if (!me || g.phase !== 'play' || !me.alive || g.world.time < 3000) continue;
+      const mine = g.world.get(me.eid)!;
+      const near = g.world.alive().find((e) => e.eid !== me.eid && Math.hypot(e.x - mine.x, e.y - mine.y) < 9);
+      if (!near) continue;
+      const before = me.attacksLeft;
+      g.intent({ k: 'attack', eid: near.eid });
+      // кулак гаснет сразу, не дожидаясь хоста
+      expect(g.me()!.attacksLeft).toBe(before - 1);
+      target = near.eid;
+    }
+    expect(target).toBeGreaterThanOrEqual(0);
+    let shownWt = -1;
+    let resultAt = -1;
+    for (let i = 0; i < 40; i++) {
+      rig.step();
+      const atk = rig.privLog.find((m) => m.to === 'g1' && (m.msg as { t: string }).t === 'atk');
+      if (atk) resultAt = (atk.msg as { at: number }).at;
+      if (shownWt < 0 && !g.world.get(target)!.alive) shownWt = g.world.time;
+    }
+    const denied = rig.privLog.some((m) => m.to === 'g1' && (m.msg as { t: string }).t === 'denied');
+    if (denied) return; // цель успела уйти и по перемотке — тогда итога нет, это честно
+    expect(resultAt).toBeGreaterThan(0);
+    expect(shownWt).toBeGreaterThan(0);
+    // «поф» показан, когда мир гостя ещё не дошёл до момента удара у хоста
+    expect(shownWt).toBeLessThan(resultAt);
+    // итог удара получает только нападавший
+    expect(rig.privLog.filter((m) => (m.msg as { t: string }).t === 'atk').every((m) => m.to === 'g1')).toBe(true);
+  });
+
   it('нагрузка: не больше 35 доставленных сообщений в секунду на комнату', () => {
     const rig = makeRig([50, 100], 0, 6);
     const rng = new Rng(6);

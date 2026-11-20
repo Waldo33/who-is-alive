@@ -1,8 +1,9 @@
-import { NavGrid, TICK_MS, World, clampToRect, emoteDur, makeConfig, planPath, plazaArena } from '@kto/game-core';
+import { CROWD_ACT, NavGrid, TICK_MS, World, clampToRect, crowdActDur, emoteDur, makeConfig, planPath, plazaArena } from '@kto/game-core';
 import type {
   ArenaDef,
   AwardCard,
   ClientSession,
+  CrowdKind,
   EmoteKind,
   GameConfig,
   Intent,
@@ -12,6 +13,7 @@ import type {
   Phase,
   PlayerInfo,
   RoundSummary,
+  Star,
   WorldEvent,
 } from '@kto/game-core';
 import { SNAP_SCALE } from './protocol';
@@ -44,6 +46,8 @@ const OWN_BLEND = 0.2;
 /** Не больше этого за шаг (пикс.): 12 пикс./с — заметно медленнее ходьбы (18 пикс./с). */
 const OWN_MAX_STEP = 0.6;
 const EMOTES: EmoteKind[] = ['wave', 'dance', 'jump'];
+/** Сколько ждём подтверждения хоста, прежде чем отменить показанное заранее (мс). */
+const OPTIMISTIC_MS = 2500;
 
 /**
  * Гость: мир строится только из событий хоста. Гость не знает, какие сущности — игроки:
@@ -91,6 +95,22 @@ export class RemoteSession implements ClientSession {
   private local = new WeakSet<WorldEvent>();
   /** До этого момента шагами своего персонажа управляет хост (автопилот и сразу после него). */
   private hostDrivenUntil = 0;
+  /*
+   * Оптимистичный интерфейс: всё, что игрок сделал сам, показываем сразу, не дожидаясь хоста
+   * (как в сетевых играх: ввод отзывается мгновенно, хост потом подтверждает или поправляет).
+   */
+  /** Удары, ушедшие хосту: кулак в счётчике гаснет сразу. base — сколько ударов было по данным хоста. */
+  private pendingAtk: { base: number; until: number }[] = [];
+  /** Цели, «поф» которых уже показан по личному итогу удара: повтор из потока мира не нужен. */
+  private fastHits = new Set<number>();
+  /** Свой промах уже показан (оглушение и метка): такие же события хоста про себя пропускаем. */
+  private fastStun = { act: false, mark: false };
+  /** Команда «Море волнуется», нажатая в этом стоп-кадре. */
+  private crowdPred: { warnAt: number; kind: CrowdKind; act: boolean } | null = null;
+  private accusePred: number | null = null;
+  private autoPred: { on: boolean; until: number } | null = null;
+  /** Звёзды, которые свой персонаж уже подобрал на экране гостя. */
+  private starPred = new Map<number, { base: number; until: number; star: Star; confirmed: boolean }>();
   private readonly t: Transport;
   private readonly clock: () => number;
   private unsub: (() => void) | null = null;
@@ -179,12 +199,17 @@ export class RemoteSession implements ClientSession {
   private onPrivate(m: PrivateMsg): void {
     switch (m.t) {
       case 'me':
+        if (this.autoPred && m.me.autopilot === this.autoPred.on) this.autoPred = null;
         if (this.meMsg?.autopilot && !m.me.autopilot) this.hostDrivenUntil = this.clock() + 3000;
         if (m.me.autopilot) this.hostDrivenUntil = Math.max(this.hostDrivenUntil, this.clock() + 3000);
         this.meMsg = m.me;
         break;
       case 'denied':
+        this.pendingAtk.shift();
         this.notices.push({ t: 'denied', pid: this.selfPid, reason: m.reason });
+        break;
+      case 'atk':
+        this.fastHit(m.target, m.result, m.at);
         break;
       case 'pong': {
         const rtt = this.clock() - m.c;
@@ -213,11 +238,25 @@ export class RemoteSession implements ClientSession {
     this.lastAuth = null;
     this.lastPred = null;
     this.emotePred = null;
+    this.pendingAtk = [];
+    this.fastHits.clear();
+    this.fastStun = { act: false, mark: false };
+    this.crowdPred = null;
+    this.accusePred = null;
+    this.starPred.clear();
   }
 
   /** Применять ли событие хоста в мире гостя: шаги своего персонажа гость уже показал сам. */
   private keepEvent(ev: WorldEvent): boolean {
     if (this.local.has(ev)) return true;
+    // уже показанное заранее: свой удар, своя звезда
+    if ((ev.t === 'hit' || ev.t === 'remove') && this.fastHits.has(ev.t === 'hit' ? ev.target : ev.eid)) return false;
+    if (ev.t === 'star_taken' && this.starPred.has(ev.id)) {
+      const sp = this.starPred.get(ev.id)!;
+      if (ev.eid === this.meMsg?.eid) sp.confirmed = true;
+      else this.starPred.delete(ev.id); // звезду всё-таки взял другой — своя прибавка отменяется
+      return false;
+    }
     const me = this.meMsg;
     if (!me || !('eid' in ev) || ev.eid !== me.eid) return true;
     if (me.autopilot || this.clock() < this.hostDrivenUntil) return true;
@@ -232,6 +271,19 @@ export class RemoteSession implements ClientSession {
       return false;
     }
     if (ev.t === 'stop' || ev.t === 'face') return false;
+    if (ev.t === 'act' && ev.kind === 'stun' && this.fastStun.act) {
+      this.fastStun.act = false;
+      return false;
+    }
+    if (ev.t === 'mark' && this.fastStun.mark) {
+      this.fastStun.mark = false;
+      return false;
+    }
+    const cp = this.crowdPred;
+    if (ev.t === 'act' && cp?.act && ev.kind === CROWD_ACT[cp.kind] && this.world.crowd?.warnAt === cp.warnAt) {
+      cp.act = false;
+      return false;
+    }
     if (ev.t === 'act' && ev.kind !== 'stun' && this.emotePred && ev.kind === this.emotePred.kind && this.clock() < this.emotePred.until) {
       this.emotePred = null;
       return false;
@@ -344,6 +396,7 @@ export class RemoteSession implements ClientSession {
       steps++;
       this.applyCorrection();
       this.recordOwn();
+      this.predictStars();
       if (this.snap && this.world.time >= this.snap.wt) this.applySnap();
     }
     if (steps === 0 && this.running) this.stalls++;
@@ -357,6 +410,44 @@ export class RemoteSession implements ClientSession {
         (dataReady && matchReady && (st.wt === undefined || this.world.time >= st.wt || !this.running)) || this.clock() - this.tlAt > 3000;
       if (!due) break;
       this.applySt(this.stQueue.shift()!);
+    }
+  }
+
+  /** Итог своего удара пришёл лично: показать «поф» сейчас, а не когда мир гостя дойдёт до момента удара. */
+  private fastHit(target: number, result: 'player' | 'bot', at: number): void {
+    const te = this.world.get(target);
+    const myEid = this.meMsg?.eid;
+    if (!te || !te.alive || this.world.time >= at || myEid === undefined) return;
+    const t = this.world.time;
+    this.fastHits.add(target);
+    this.pushLocal({ t: 'hit', target, result, x: te.x, y: te.y, at: t });
+    this.pushLocal({ t: 'remove', eid: target, cause: result, at: t });
+    if (result === 'bot') {
+      this.fastStun = { act: true, mark: true };
+      this.pushLocal({ t: 'act', eid: myEid, kind: 'stun', dur: this.cfg.missStunSec * 1000, at: t });
+      this.pushLocal({ t: 'mark', eid: myEid, until: t + this.cfg.missMarkSec * 1000, at: t });
+    }
+  }
+
+  /** Свой персонаж наступил на звезду — подобрать на экране сразу; хост подтвердит. */
+  private predictStars(): void {
+    const now = this.clock();
+    for (const [id, sp] of this.starPred) {
+      if (now < sp.until) continue;
+      this.starPred.delete(id);
+      // хост так и не отдал звезду — вернуть её на поле
+      if (!sp.confirmed && !this.world.stars.has(id)) this.world.stars.set(id, sp.star);
+    }
+    const me = this.meMsg;
+    if (!me || !me.alive || me.autopilot || this.phase !== 'play' || now < this.hostDrivenUntil) return;
+    if (this.hostNow() < me.stunUntil) return;
+    const e = this.world.get(me.eid);
+    if (!e || !e.alive) return;
+    for (const st of this.world.stars.values()) {
+      if (this.starPred.has(st.id) || Math.hypot(st.x - e.x, st.y - e.y) > this.cfg.starPickupRadius) continue;
+      this.starPred.set(st.id, { base: me.stars, until: now + OPTIMISTIC_MS, star: { ...st }, confirmed: false });
+      this.pushLocal({ t: 'star_taken', id: st.id, eid: me.eid, at: this.world.time });
+      break;
     }
   }
 
@@ -392,15 +483,21 @@ export class RemoteSession implements ClientSession {
   me(): MeView | undefined {
     const m = this.meMsg;
     if (!m) return undefined;
+    const now = this.clock();
+    this.pendingAtk = this.pendingAtk.filter((p) => p.base === m.attacksLeft && now < p.until);
+    let stars = m.stars;
+    for (const sp of this.starPred.values()) if (sp.base === m.stars && now < sp.until) stars++;
+    const cp = this.crowdPred;
+    const ap = this.autoPred && now < this.autoPred.until ? this.autoPred.on : null;
     return {
       eid: m.eid,
       alive: m.alive,
-      attacksLeft: m.attacksLeft,
-      stars: m.stars,
+      attacksLeft: Math.max(0, m.attacksLeft - this.pendingAtk.length),
+      stars,
       stunUntil: m.stunUntil,
-      autopilot: m.autopilot,
-      crowdAnswered: m.crowdAnswered,
-      accused: m.accused,
+      autopilot: ap ?? m.autopilot,
+      crowdAnswered: cp && this.world.crowd?.warnAt === cp.warnAt ? cp.warnAt : m.crowdAnswered,
+      accused: this.phase === 'accuse' && this.accusePred !== null ? this.accusePred : m.accused,
     };
   }
 
@@ -434,6 +531,8 @@ export class RemoteSession implements ClientSession {
     let out: Intent = it;
     if (it.k === 'crowd' || it.k === 'attack') out = { ...it, wt: this.world.time };
     const me = this.meMsg;
+    if (it.k === 'accuse' && this.phase === 'accuse') this.accusePred = it.eid;
+    if (it.k === 'autopilot' && me && me.alive && this.phase === 'play') this.autoPred = { on: it.on, until: this.clock() + OPTIMISTIC_MS };
     // предсказание: показать своё действие сразу, если хост его примет (не автопилот, не оглушён к его приходу)
     const lead = this.estimateLead();
     const accepts = !!me && me.alive && this.phase === 'play' && !me.autopilot && this.hostNow() + this.latency >= me.stunUntil;
@@ -458,6 +557,18 @@ export class RemoteSession implements ClientSession {
         this.emotePred = { kind, until: this.clock() + 3000 };
         this.lastPredClock = this.clock();
         out = { k: 'emote', kind };
+      } else if (it.k === 'attack') {
+        const left = me!.attacksLeft - this.pendingAtk.length;
+        if (left > 0) this.pendingAtk.push({ base: me!.attacksLeft, until: this.clock() + OPTIMISTIC_MS });
+      } else if (it.k === 'crowd') {
+        const c = this.world.crowd;
+        if (c && this.crowdWindowOpen() && me!.crowdAnswered !== c.warnAt && this.crowdPred?.warnAt !== c.warnAt) {
+          // в стоп-кадре — вместе с толпой (с таким же разбросом, как у ботов), после — сразу
+          const [a, b] = this.cfg.botCrowdReactMs;
+          const at = this.world.time < c.resumeAt ? c.resumeAt + Math.round((a + Math.random() * (b - a)) / TICK_MS) * TICK_MS : this.world.time;
+          this.crowdPred = { warnAt: c.warnAt, kind: it.kind, act: true };
+          this.pushLocal({ t: 'act', eid: me!.eid, kind: CROWD_ACT[it.kind], dur: crowdActDur(this.cfg, it.kind), at });
+        }
       }
     }
     void this.t.send('host', { t: 'i', i: out });
