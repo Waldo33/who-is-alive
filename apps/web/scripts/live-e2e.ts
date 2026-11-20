@@ -77,8 +77,14 @@ async function main(): Promise<void> {
 
   await rooms[1].setReady(true);
   await rooms[2].setReady(true);
-  await sleep(800);
-  check('host sees ready flags', rooms[0].state.members.filter((m) => m.ready).length === 2);
+  const tr = Date.now();
+  while (Date.now() - tr < 6000 && rooms[0].state.members.filter((m) => m.ready).length < 2) await sleep(100);
+  check('host sees ready flags', rooms[0].state.members.filter((m) => m.ready).length === 2, {
+    ms: Date.now() - tr,
+    host: rooms[0].state.members.map((m) => [m.name, m.online, m.ready]),
+    raw: rooms[0].transport!.presence().map((p) => [p.name, p.ready]),
+    guestSelf: rooms[1].state.members.map((m) => [m.name, m.ready]),
+  });
 
   await rooms[0].startMatch();
   const t1 = Date.now();
