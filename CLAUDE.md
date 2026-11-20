@@ -78,7 +78,7 @@ CI (`.github/workflows/ci.yml`): lint, typecheck, test, `sim --rounds 200`.
 | `apps/web/src/net/room.ts` | `Room`: вход по RPC, состав, Presence, старт матча, смена хоста |
 | `apps/web/src/app/` | страницы: `/` (`HomeClient`), `/r/[code]` (`RoomClient`: лобби + игра), `/sandbox`; превью ссылок `og.tsx` + маршрут `og/route.tsx` (язык отправителя из `?l=`); `manifest.ts`, `PwaRegister.tsx` |
 | `apps/web/src/game/scene.ts` | сцена Phaser (~1400 строк): рендер, HUD, оверлеи фаз, ввод, музыка по фазам |
-| `…/game/themes/` | пакеты тем («площадки»): облик толпы, локация, музыка; каждый — свой файл, грузится по требованию (`index.ts › loadTheme`). Парк — в `sprites.ts`. Как добавить тему — `docs/architecture.md › Темы` |
+| `…/game/themes/` | пакеты тем («площадки»): облик толпы, локация, музыка; каждый — свой файл, грузится по требованию (`index.ts › loadTheme`, до старта игры — `loadAllThemes`). Парк — в `sprites.ts`. Новая тема на заданный сеттинг — скилл `.claude/skills/new-theme/SKILL.md` |
 | `…/game/sprites.ts`, `art.ts`, `frames.ts`, `pixels.ts`, `font.ts` | процедурный арт, битмап-шрифт, выбор кадра персонажа |
 | `…/game/audio.ts`, `music.ts` | звук: `getAudio()` (один на приложение), эффекты, музыкальный секвенсор |
 | `…/game/clip.ts`, `clip-ui.ts`, `card.ts` | клип «Лучший момент» (MediaRecorder), экран монтажа, карточка результата |

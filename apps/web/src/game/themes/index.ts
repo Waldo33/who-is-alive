@@ -69,6 +69,15 @@ export function preloadThemes(): void {
   else setTimeout(run, 1500);
 }
 
+/**
+ * Загрузить все темы до старта игры (вместе со шрифтом — параллельно), но не дольше timeoutMs:
+ * иначе первый кадр дубля мелькнёт парком, а потом переоденется.
+ */
+export function loadAllThemes(timeoutMs = 2500): Promise<void> {
+  const all = Promise.all(THEME_RULES.map((_, i) => loadTheme(i))).then(() => undefined);
+  return Promise.race([all, new Promise<void>((r) => setTimeout(r, timeoutMs))]);
+}
+
 /** Облик темы: 0 — обычный, 1 — изнанка (если у темы её нет — обычный). */
 export function themeLook(theme: number, look: number): Look {
   const p = themePack(theme);

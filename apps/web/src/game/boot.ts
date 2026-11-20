@@ -4,6 +4,7 @@ import type { GameConfig } from '@kto/game-core';
 import { getAudio } from './audio';
 import type { Audio } from './audio';
 import { GameScene } from './scene';
+import { loadAllThemes } from './themes';
 import type { SceneInit } from './scene';
 
 export const LOGICAL_W = 180;
@@ -42,7 +43,8 @@ export async function bootGame(
   parent: HTMLElement,
   init: Omit<SceneInit, 'audio'> & { audio?: Audio; cfg?: Partial<GameConfig> },
 ): Promise<RunningGame> {
-  await loadPixelFont(init.fontFamily);
+  // шрифт и пакеты тем — параллельно: первый кадр сразу в теме дубля, без мелькания парка
+  await Promise.all([loadPixelFont(init.fontFamily), loadAllThemes()]);
   const audio = init.audio ?? getAudio();
   const data: SceneInit = { ...init, audio };
   const game = new Phaser.Game({

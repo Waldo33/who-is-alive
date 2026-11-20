@@ -915,7 +915,9 @@ export class GameScene extends Phaser.Scene {
   private renderFlicker(): void {
     const k = performance.now() - this.flicker;
     const dark = this.flicker > 0 && ((k >= 0 && k < 70) || (k >= 130 && k < 260));
-    this.blackout.setVisible(dark);
+    // пакет темы ещё грузится (медленная сеть) — поле тёмное, а не парк, который потом переоденется
+    const waiting = !isThemeLoaded(this.sim.theme);
+    this.blackout.setVisible(dark || waiting).setAlpha(waiting ? 1 : 0.92);
     if (k > 300) this.flicker = 0;
   }
 
