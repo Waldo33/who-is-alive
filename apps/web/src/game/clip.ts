@@ -433,7 +433,7 @@ export class ClipPlayerScene {
     if (after && atk) {
       // итог по именам: «Енот / выбил Батона»
       line(short(atk.name, 18), 8, PLAYER_COLORS[atk.color]);
-      if (m.kind === 'knockout' && vic) line(fmt(t.clip.koOf, { name: short(vic.name) }), 21, PLAYER_COLORS[vic.color]);
+      if (m.kind === 'knockout' && vic) line(fmt(t.clip.koOf, { name: short(vic.name, 11) }), 21, PLAYER_COLORS[vic.color]);
       else line(m.kind === 'star3' ? t.clip.star3Of : m.kind === 'hit_bot' ? t.clip.botOf : t.clip.kinds[m.kind], 21, blink ? PAL.yellow : PAL.amber);
     } else {
       line(cap?.reveal ?? t.clip.reveal, 8, PAL.white);

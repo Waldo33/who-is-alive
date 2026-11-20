@@ -8,6 +8,7 @@ import {
   makeConfig,
   makeReplay,
   tp,
+  fmt,
   DICTS,
 } from '@kto/game-core';
 import type { AwardId, ClientSession, CrowdKind, Dict, Entity, GameConfig, Lang, Moment, Notice, RoundRecording, World, WorldEvent } from '@kto/game-core';
@@ -764,7 +765,9 @@ export class GameScene extends Phaser.Scene {
     const dc = this.deathClip;
     if (!dc) return;
     if (dc.status === 'ready' && dc.file) {
-      void this.init0.onShare?.(this.t.clip.deathText, [dc.file]);
+      const k = dc.killer === undefined ? undefined : this.sim.summary?.reveal.find((r) => r.eid === dc.killer);
+      const kName = k ? this.sim.info(k.pid)?.name : undefined;
+      void this.init0.onShare?.(kName ? fmt(this.t.clip.deathTextBy, { name: kName }) : this.t.clip.deathText, [dc.file]);
       return;
     }
     if (dc.status !== 'offer') return;
@@ -1310,6 +1313,15 @@ export class GameScene extends Phaser.Scene {
         const s = sim.summary!;
         this.ovDyn.final = this.ovText(90, PANEL_Y + 13, '', 'sand').setVisible(false);
         this.ovDyn.caught = this.ovText(90, PANEL_Y + 20, this.t.game.caught, 'red').setVisible(false);
+        // кто выбил тебя — после разоблачения уже не секрет
+        const myEid = s.reveal.find((r) => r.pid === this.sim.selfPid)?.eid;
+        const by = s.kills?.find((k) => k.victim === myEid)?.by;
+        const killer = s.reveal.find((r) => r.eid === by);
+        const kInfo = killer ? sim.info(killer.pid) : undefined;
+        if (kInfo) {
+          const nm = kInfo.name.length > 12 ? kInfo.name.slice(0, 11) + '…' : kInfo.name;
+          this.ovDyn.killedBy = this.ovText(90, PANEL_Y + 20, fmt(this.t.game.killedBy, { name: nm }), COLOR_FONT[kInfo.color]).setVisible(false);
+        }
         s.reveal.forEach((r, i) => {
           const info = sim.info(r.pid)!;
           this.ovDyn['name' + i] = this.txt(0, 0, info.name, COLOR_FONT[info.color]).setVisible(false);
@@ -1465,7 +1477,8 @@ export class GameScene extends Phaser.Scene {
         const meR = s.reveal.find((r) => r.pid === this.sim.selfPid);
         const caught = !!meR?.alive && s.accusations.some((a) => a.eid === meR.eid);
         this.ovDyn.caught?.setVisible(caught);
-        this.ovDyn.final.y = caught ? PANEL_Y + 6 : PANEL_Y + 13;
+        this.ovDyn.killedBy?.setVisible(!caught);
+        this.ovDyn.final.y = caught || this.ovDyn.killedBy ? PANEL_Y + 6 : PANEL_Y + 13;
         this.drawAccusations();
       }
     }
@@ -1565,7 +1578,11 @@ export class GameScene extends Phaser.Scene {
         { ...best, arena: this.sim.arena, t: this.t, font: this.init0.fontFamily, site: location.host },
         this.t,
         async (file) => {
-          await this.init0.onShare?.(this.t.meta.title, [file]);
+          const m = best.moment;
+          const a = best.players.find((p) => p.eid === m.attacker);
+          const b = best.players.find((p) => p.eid === m.victim);
+          const text = m.kind === 'knockout' && a && b ? fmt(this.t.clip.shareKo, { a: a.name, b: b.name }) : this.t.meta.title;
+          await this.init0.onShare?.(text, [file]);
         },
         (file) => this.init0.onSave?.(file),
       );
