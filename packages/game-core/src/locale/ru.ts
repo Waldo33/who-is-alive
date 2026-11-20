@@ -1,0 +1,109 @@
+/**
+ * Русские тексты. Все строки игры — только здесь и в en.ts (одинаковая структура, проверяется типом Dict).
+ * Строки, которые выводятся на canvas шириной 180 пикс., — не длиннее 21 символа.
+ */
+
+/** Формы множественного числа по Intl.PluralRules: one / few / many / other. */
+export interface Plural {
+  one: string;
+  few?: string;
+  many?: string;
+  other: string;
+}
+
+export const ru = {
+  meta: {
+    title: 'Кто тут живой?',
+    short: 'Кто живой?',
+    tagline: 'Найди живых. Не выдай себя.',
+    description: 'Браузерная игра на 2–4 игроков с телефонов.',
+  },
+  awards: {
+    blindNeighbors: { title: 'Слепые соседи', text: '{n} с рядом!' as string | Plural },
+    ninja: { title: 'Ниндзя', text: 'удар из засады' as string | Plural },
+    paranoid: {
+      title: 'Параноик',
+      text: { one: '{n} удар по боту', few: '{n} удара по ботам', many: '{n} ударов по ботам', other: '{n} удара по ботам' } as string | Plural,
+    },
+    botlike: { title: 'Ботоподобный', text: 'вне подозрений' as string | Plural },
+    greedy: { title: 'Жадина', text: 'звёзд: {n}' as string | Plural },
+    kamikaze: { title: 'Камикадзе', text: 'выбыл за {n} с' as string | Plural },
+    clairvoyant: { title: 'Ясновидящий', text: 'угадал призраком' as string | Plural },
+    topHunter: { title: 'Главный охотник', text: 'выбиваний: {n}' as string | Plural },
+  },
+  names: {
+    adj: ['Злой', 'Тихий', 'Хитрый', 'Сонный', 'Быстрый', 'Ловкий', 'Важный', 'Добрый', 'Шустрый', 'Ржавый'],
+    noun: ['Пиксель', 'Кот-8бит', 'Голубь', 'Батон', 'Пингвин', 'Тостер', 'Енот', 'Джойстик', 'Пельмень', 'Спрайт'],
+  },
+  colors: ['Красный', 'Синий', 'Жёлтый', 'Зелёный'],
+  themes: ['Кепки', 'Повара', 'Пингвины'],
+  start: {
+    aria: 'Начало',
+    rules: [
+      'Ты — один из 32 одинаковых человечков. Двигайся тапами, <b>как бот</b>.',
+      'Тапни соседа рядом — удар. Попал в живого — он выбыл, в бота — ты <b>оглушён</b> и раскрыт.',
+      'Три звезды — победа в раунде, но место сбора тебя выдаст.',
+      'Музыка оборвалась — <b>жми команду</b> вместе с толпой.',
+    ],
+    name: 'Имя',
+    nameAria: 'Имя игрока',
+    kids: 'Детский режим',
+    play: 'Играть с ботами',
+    createGame: 'Создать игру',
+    note: 'Песочница: ты и три ИИ-игрока на одном телефоне. Игра с друзьями по ссылке — следующий этап.',
+    rotate: 'Поверни телефон вертикально',
+    copied: 'Скопировано — вставь в чат',
+    devApply: 'Применить и начать заново',
+    devApplied: 'Конфиг применён',
+    language: 'Язык',
+  },
+  game: {
+    you: 'Ты',
+    soundOffHint: 'Звук выкл: см. вверху',
+    soundOn: 'Звук включён',
+    soundOff: 'Звук выключен',
+    outTitle: 'Ты выбит!',
+    outSub: 'Теперь ты призрак',
+    outHint: 'Ставь «?» на живых',
+    ghost: 'Ты призрак',
+    ghostHint: 'Тапай: метка «?»',
+    hedge: 'Изгородь растёт!',
+    denied: { no_attacks: 'Удары кончились', out_of_range: 'Далеко', stunned: 'Оглушён!', autopilot: 'На автопилоте' },
+    roundShort: 'Р{n}',
+    crowd: { freeze: 'Замри!', jump: 'Прыжок!', dance: 'Танец!' },
+    withCrowd: 'Вместе с толпой',
+    late: 'Опаздываешь!',
+    watchLate: 'Кто опоздает?',
+    findYourself: 'Найди себя!',
+    roundTheme: 'Раунд {n} · {theme}',
+    accuseTitle: 'Кто тут живой?',
+    accuseSub: 'Тапни подозреваемого',
+    accuseChange: 'Можно передумать',
+    reveal: 'Разоблачение…',
+    revealReplay: 'Кто был живым…',
+    revealFinal: 'Вот они!',
+    guessed: 'Ты угадал! +1',
+    missed: 'Мимо!',
+    noAccuse: 'Ты никого не обвинил',
+    resultsTitle: 'Итоги раунда {n}',
+    endReason: { time: 'Время вышло', stars: 'Три звезды!', last_alive: 'Остался один' },
+    noAwards: 'Без наград. Скучно!',
+    share: 'Поделиться',
+    next: 'Дальше',
+    nextIn: 'Дальше через {n}',
+    youWon: 'Ты победил!',
+    winner: 'Победа:',
+    tooAlive: 'Слишком живые!',
+    rematch: 'Реванш',
+    and: ' и ',
+  },
+  share: {
+    text: '{title} {name}: {points}, {kills}. {squares}',
+    points: { one: '{n} очко', few: '{n} очка', many: '{n} очков', other: '{n} очка' } as Plural,
+    kills: { one: 'выбил {n} игрока', few: 'выбил {n} игроков', many: 'выбил {n} игроков', other: 'выбил {n} игрока' } as Plural,
+    noKills: 'никого не выбил',
+  },
+};
+
+export type Dict = typeof ru;
+export type AwardId = keyof Dict['awards'];

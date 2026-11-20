@@ -1,0 +1,40 @@
+:root {
+  --ink: #181425;
+  --night: #262b44;
+  --plum: #3e2731;
+  --sand: #ead4aa;
+  --yellow: #fee761;
+  --amber: #feae34;
+  --rust: #be4a2f;
+  --coral: #f6757a;
+  --mist: #c0cbdc;
+  --steel: #5a6988;
+  --font-pixel: 'Press Start 2P';
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--ink); color: var(--sand); touch-action: manipulation; }
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+input, select, textarea { font-size: 16px; }
+body { font-family: var(--font-pixel), monospace; overscroll-behavior: none; -webkit-text-size-adjust: 100%; }
+.home {
+  min-height: 100dvh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px;
+  padding: calc(24px + env(safe-area-inset-top)) 20px calc(24px + env(safe-area-inset-bottom)); text-align: center;
+  background-image: repeating-linear-gradient(0deg, var(--ink) 0 6px, var(--plum) 6px 7px);
+}
+.home h1 { font-size: clamp(22px, 7vw, 40px); line-height: 1.35; margin: 0; color: var(--yellow); max-width: 12ch;
+  text-shadow: 3px 3px 0 var(--rust), 6px 6px 0 var(--ink); }
+.home p { margin: 0; font-size: 10px; line-height: 1.9; color: var(--mist); max-width: 36ch; }
+.home .tag { color: var(--coral); }
+.btn { display: inline-flex; align-items: center; justify-content: center; min-height: 56px; padding: 16px 22px;
+  font: inherit; font-size: 12px; color: var(--ink); background: var(--amber); text-decoration: none;
+  box-shadow: 0 4px 0 var(--rust), 0 0 0 2px var(--ink); }
+.btn:active { transform: translateY(3px); box-shadow: 0 1px 0 var(--rust), 0 0 0 2px var(--ink); }
+.btn:focus-visible { outline: 2px solid var(--yellow); outline-offset: 3px; }
+.btn[aria-disabled='true'] { background: var(--night); color: var(--steel); box-shadow: 0 0 0 2px var(--ink); pointer-events: none; }
+.crowd { display: flex; gap: 6px; image-rendering: pixelated; }
+.crowd i { width: 12px; height: 16px; display: block; background: var(--night); box-shadow: inset 0 -5px 0 var(--steel);
+  animation: hop 1.2s steps(2) infinite; }
+.crowd i.me { background: var(--amber); }
+@keyframes hop { 50% { transform: translateY(-2px); } }
+@media (prefers-reduced-motion: reduce) { .crowd i { animation: none; } .btn:active { transform: none; } }
