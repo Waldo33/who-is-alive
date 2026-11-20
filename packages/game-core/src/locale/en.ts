@@ -138,6 +138,8 @@ export const en: Dict = {
     howTo: 'How to play',
     close: 'Close',
     exit: 'Exit to menu',
+
+    author: 'made by',
   },
   clip: {
     button: 'Best moment clip',

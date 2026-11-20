@@ -151,6 +151,7 @@ export const ru = {
     howTo: 'Как играть',
     close: 'Закрыть',
     exit: 'Выйти в меню',
+    author: 'автор',
   },
   clip: {
     button: 'Клип лучшего момента',

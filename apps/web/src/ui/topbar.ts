@@ -134,6 +134,7 @@ export function mountTopBar(parent: HTMLElement, init: TopBarOptions): TopBar {
           ${o.onExit ? `<button type="button" class="kto-sheet-exit">${t.ui.exit}</button>` : ''}
           <button type="button" class="kto-sheet-close">${t.ui.close}</button>
         </div>
+        <p class="kto-credit">${t.ui.author} · <a href="https://t.me/waldente" target="_blank" rel="noopener">@waldente</a></p>
       </div>`;
     sheet.querySelectorAll<HTMLButtonElement>('[data-lang]').forEach((b) =>
       b.addEventListener('click', () => {
@@ -242,6 +243,8 @@ export const TOPBAR_CSS = `
 .kto-sheet-actions button{font:inherit;font-size:11px;min-height:48px;padding:0 16px;border:0;border-radius:0;cursor:pointer;
   background:#feae34;color:#181425;box-shadow:0 4px 0 #be4a2f,0 0 0 2px #181425}
 .kto-sheet-actions .kto-sheet-exit{background:#181425;color:#ead4aa;box-shadow:0 0 0 2px #5a6988}
+.kto-credit{margin:18px 0 0;font-size:8px;line-height:1.6;color:#5a6988;text-align:right}
+.kto-credit a{color:#5a6988;text-decoration:none;padding:6px 0}
 `;
 
 let cssAdded = false;
