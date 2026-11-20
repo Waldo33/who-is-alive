@@ -12,6 +12,7 @@ import {
 } from '@kto/game-core';
 import type { AwardId, ClientSession, CrowdKind, Dict, Entity, GameConfig, Lang, Moment, Notice, RoundRecording, World, WorldEvent } from '@kto/game-core';
 import { resultCardFile } from './card';
+import { openClipOverlay } from './clip-ui';
 import type { ClipPlayer } from './clip';
 import { Audio } from './audio';
 import { frameFor } from './frames';
@@ -1197,7 +1198,9 @@ export class GameScene extends Phaser.Scene {
       sim.intent({ k: 'rematch' });
     }, PAL.amber);
     this.addOverlayButton('share2', 91, AY + 214, 80, 30, this.t.game.share, () => this.share(), undefined, true);
-    if (this.best) this.addOverlayButton('clip', 3, PANEL_Y + 3, 174, 30, this.t.clip.button, () => this.openClip(), PAL.amber, true);
+    // открывается касанием: отпускание пальца у нижнего края экрана браузер может забрать себе (Chrome на iPhone);
+    // жест для системного меню не нужен — отправка идёт отдельной кнопкой в окне клипа
+    if (this.best) this.addOverlayButton('clip', 3, PANEL_Y + 3, 174, 30, this.t.clip.button, () => this.openClip(), PAL.amber);
     // карточку рисуем заранее: к нажатию «Поделиться» файл уже готов, и меню откроется без задержки
     void resultCardFile({
       players: sim.players,
@@ -1352,7 +1355,9 @@ export class GameScene extends Phaser.Scene {
     const best = this.best;
     if (!best) return;
     this.closeClip?.();
-    void import('./clip-ui').then(({ openClipOverlay }) => {
+    // модуль клипа в основной сборке (не ленивый чанк): после обновления сайта открытая вкладка
+    // не сможет подгрузить чанк, которого уже нет на сервере, и кнопка молча не срабатывала бы
+    try {
       this.closeClip = openClipOverlay(
         document.body,
         { ...best, arena: this.sim.arena, t: this.t, font: this.init0.fontFamily, site: location.host },
@@ -1362,8 +1367,10 @@ export class GameScene extends Phaser.Scene {
         },
         (file) => this.init0.onSave?.(file),
       );
-    });
-    this.events.once('shutdown', () => this.closeClip?.());
+      this.events.once('shutdown', () => this.closeClip?.());
+    } catch {
+      this.showToast(this.t.clip.failed, 2500);
+    }
   }
 }
 

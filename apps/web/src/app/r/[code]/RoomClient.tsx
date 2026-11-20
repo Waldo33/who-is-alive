@@ -11,6 +11,7 @@ import { detectLang } from '@/lib/lang';
 import { TopBar } from '@/ui/TopBar';
 import type { TopBar as Bar } from '@/ui/topbar';
 import { playerName, saveName } from '@/lib/name';
+import { loadChunk } from '@/lib/chunk';
 import { download, shareContent } from '@/lib/share';
 import { AuthError, ensureAnonymousUser, supabase } from '@/lib/supabase';
 import { Room } from '@/net/room';
@@ -63,7 +64,7 @@ export default function RoomClient({ code }: { code: string }) {
 
   const audioRef = useRef<GameAudio | null>(null);
   const unlockAudio = () => {
-    void import('@/game/audio').then(({ Audio }) => {
+    void loadChunk(() => import('@/game/audio')).then(({ Audio }) => {
       audioRef.current ??= new Audio();
       audioRef.current.unlock();
     });
@@ -139,7 +140,7 @@ function GameView({
     let cancelled = false;
     const session = room.session!;
     const me = session.info(room.state.selfId);
-    void Promise.all([import('@/game/boot'), import('@/game/audio')]).then(async ([{ bootGame }, { Audio }]) => {
+    void loadChunk(() => Promise.all([import('@/game/boot'), import('@/game/audio')])).then(async ([{ bootGame }, { Audio }]) => {
       if (cancelled || !ref.current) return;
       audio.current ??= new Audio();
       running = await bootGame(ref.current, {

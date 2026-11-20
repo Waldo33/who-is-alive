@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
+import { loadChunk } from '@/lib/chunk';
 
 export default function SandboxClient() {
   const ref = useRef<HTMLDivElement>(null);
@@ -8,7 +9,7 @@ export default function SandboxClient() {
     let unmount: (() => void) | undefined;
     let cancelled = false;
     // Phaser работает только в браузере, поэтому грузим его динамически
-    import('@/game/shell').then(({ mountSandbox }) => {
+    void loadChunk(() => import('@/game/shell')).then(({ mountSandbox }) => {
       if (cancelled || !ref.current) return;
       unmount = mountSandbox(ref.current, { fontFamily: '"Press Start 2P", monospace' });
     });
