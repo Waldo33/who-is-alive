@@ -102,9 +102,11 @@ export class Room {
     });
     t.onMessage((channel, msg, from) => {
       const m = msg as { t?: string };
-      if (channel === 'room' && m?.t === 'lobby' && from === this.state.hostId) {
+      if (channel === 'room' && m?.t === 'lobby') {
         const lm = msg as Extract<LobbyMsg, { t: 'lobby' }>;
-        this.set({ hostId: lm.hostId, settings: lm.settings });
+        if (from === this.state.hostId) this.set({ hostId: lm.hostId, settings: lm.settings });
+        // сообщение от другого участника — значит, хост сменился: кто хост, решает база, не сообщение
+        else if (this.dbMembers.some((d) => d.user_id === from)) this.scheduleRefresh();
         return;
       }
       // старт матча — от хоста; после смены хоста — от нового (он уже записан в базе как хост)
@@ -224,6 +226,9 @@ export class Room {
 
   /** Раз в секунду: пропал ли хост, и статус комнаты для опоздавших. */
   private watch(): void {
+    // в лобби роль хоста сама не передаётся: хост, ушедший в мессенджер позвать друзей, не должен
+    // её терять; перезаход (та же личность на устройстве) возвращает его хостом. Явный уход
+    // кнопкой «Назад» передаёт роль через leave_room.
     if (this.state.status !== 'game' || !this.session) return;
     const s = this.session;
     if (this.isHost) {
@@ -266,7 +271,8 @@ export class Room {
   private onVisible = (): void => {
     if (document.visibilityState !== 'visible' || !this.transport) return;
     void this.sb.rpc('join_room', { p_code: this.state.code, p_name: this.myName }).then(({ error }) => {
-      if (!error) void this.loadMembers();
+      // перечитать состав и роли: пока нас не было, хостом мог стать другой
+      if (!error) this.scheduleRefresh();
     });
   };
 
