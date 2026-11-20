@@ -99,7 +99,7 @@ export function drawResultCard(inp: CardInput): HTMLCanvasElement {
   });
 
   text(g, t.card.cta, LW / 2, LH - 22, PAL.white, font, { outline: null });
-  text(g, inp.site, LW / 2, LH - 12, PAL.cyan, font, { outline: null, size: fitSize(inp.site, LW - 12, SCALE) });
+  text(g, inp.site, LW / 2, LH - 12, PAL.cyan, font, { outline: null, size: fitSize(inp.site, LW - 12, SCALE), maxWidth: LW - 12 });
   return c;
 }
 

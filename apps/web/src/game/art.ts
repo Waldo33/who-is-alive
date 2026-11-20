@@ -131,20 +131,40 @@ export function text(
   y: number,
   color: string,
   font: string,
-  opts: { size?: number; align?: CanvasTextAlign; outline?: string | null } = {},
+  opts: { size?: number; align?: CanvasTextAlign; outline?: string | null; maxWidth?: number } = {},
 ): number {
-  const size = opts.size ?? 1;
-  g.font = `${8 * size}px ${font}`;
+  // Рисуем в экранных пикселях с целым кеглем: Safari отбрасывает дробный размер шрифта
+  // (например 6.67px при масштабе ×6) и рисует прежним — строка вылезала за кадр.
+  const m = g.getTransform();
+  const sc = m.a || 1;
+  let px = Math.max(1, Math.round(8 * (opts.size ?? 1) * sc));
+  g.save();
+  g.setTransform(1, 0, 0, 1, m.e, m.f);
+  const setFont = () => (g.font = `${px}px ${font}`);
+  setFont();
+  // страховка: если строка всё равно шире — уменьшаем по одному экранному пикселю на пиксель шрифта
+  if (opts.maxWidth) {
+    const limit = opts.maxWidth * sc;
+    while (px > 8 && g.measureText(s).width > limit) {
+      px = Math.max(8, px - 8);
+      setFont();
+    }
+  }
   g.textAlign = opts.align ?? 'center';
   g.textBaseline = 'top';
+  const X = Math.round(x * sc);
+  const Y = Math.round(y * sc);
+  const step = px / 8; // один пиксель шрифта в экранных пикселях
   const outline = opts.outline === undefined ? PAL.ink : opts.outline;
   if (outline) {
     g.fillStyle = outline;
     for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1], [1, 1], [-1, 1], [1, -1], [-1, -1]]) {
-      g.fillText(s, x + dx * size, y + dy * size);
+      g.fillText(s, X + dx * step, Y + dy * step);
     }
   }
   g.fillStyle = color;
-  g.fillText(s, x, y);
-  return g.measureText(s).width;
+  g.fillText(s, X, Y);
+  const w = g.measureText(s).width / sc;
+  g.restore();
+  return w;
 }

@@ -281,7 +281,7 @@ export class ClipPlayerScene {
     g.restore();
     text(g, t.clip.cta, LW / 2, 196, PAL.white, font);
     // адрес бывает длинным (who-is-alive.vercel.app — 23 знака): уменьшаем, чтобы влез с полями
-    text(g, this.inp.site, LW / 2, 212, PAL.cyan, font, { size: fitSize(this.inp.site, LW - 12, CLIP_SCALE) });
+    text(g, this.inp.site, LW / 2, 212, PAL.cyan, font, { size: fitSize(this.inp.site, LW - 12, CLIP_SCALE), maxWidth: LW - 12 });
     g.globalAlpha = 1;
   }
 }
