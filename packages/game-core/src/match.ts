@@ -23,8 +23,9 @@ export type Intent =
   | { k: 'move'; x: number; y: number }
   | { k: 'stop' }
   | { k: 'emote' }
-  | { k: 'crowd'; kind: CrowdKind }
-  | { k: 'attack'; eid: number }
+  /** wt — время мира на экране игрока в момент нажатия (компенсация задержки сети). */
+  | { k: 'crowd'; kind: CrowdKind; wt?: number }
+  | { k: 'attack'; eid: number; wt?: number }
   | { k: 'autopilot'; on: boolean }
   | { k: 'accuse'; eid: number }
   | { k: 'next' }
@@ -90,6 +91,8 @@ export interface AiAgent {
 }
 
 export const THEME_COUNT = 3;
+/** Насколько поздно может прийти по сети нажатие, чтобы его засчитали по времени экрана игрока. */
+export const LAG_GRACE_MS = 600;
 
 /**
  * Авторитетная симуляция матча. Работает у хоста; в песочнице — на единственном устройстве.
@@ -536,6 +539,20 @@ export class MatchSim {
     this.themeOrder = order;
   }
 
+  /**
+   * Продолжить матч после смены хоста: счёт известен всем, текущий раунд начинается заново (раздел 13).
+   */
+  resumeMatch(state: { scores: Record<string, number>; round: number; matchKills?: Record<string, number> }): void {
+    for (const p of this.players) {
+      this.scores[p.pid] = state.scores[p.pid] ?? 0;
+      this.matchKills[p.pid] = state.matchKills?.[p.pid] ?? 0;
+    }
+    this.round = Math.max(0, state.round - 1);
+    this.roundAwards = Array.from({ length: this.round }, () => []);
+    this.notices = [];
+    this.startRound();
+  }
+
   private rematch(): void {
     this.shuffleThemes();
     for (const p of this.players) {
@@ -594,11 +611,15 @@ export class MatchSim {
       }
       case 'crowd': {
         const c = this.world.crowd;
-        if (!c || !this.crowdWindowOpen(t) || p.crowdAnswered === c.warnAt) return;
+        if (!c || p.crowdAnswered === c.warnAt) return;
+        // игрок по сети видит мир с опозданием: судим по тому, что было на его экране
+        const wt = Math.max(t - LAG_GRACE_MS, Math.min(t, it.wt ?? t));
+        if (wt < c.showAt || wt > c.windowEnd || t > c.windowEnd + LAG_GRACE_MS) return;
         p.crowdAnswered = c.warnAt;
-        if (t < c.resumeAt) {
+        if (wt < c.resumeAt) {
           const [a, b] = cfg.botCrowdReactMs;
-          p.crowdQueued = { kind: it.kind, at: c.resumeAt + crowdJitter(this.rng, a, b) };
+          // нажал в стоп-кадре — выполнит вместе с толпой (или сразу, если пакет пришёл уже после паузы)
+          p.crowdQueued = { kind: it.kind, at: Math.max(t, c.resumeAt + crowdJitter(this.rng, a, b)) };
         } else {
           this.emit({ t: 'act', eid: p.eid, kind: CROWD_ACT[it.kind], dur: crowdActDur(cfg, it.kind), at: t });
         }
@@ -630,12 +651,15 @@ export class MatchSim {
         return;
       }
       case 'attack':
-        this.attack(p, it.eid, e.x, e.y);
+        {
+          const lag = Math.max(0, Math.min(LAG_GRACE_MS, t - (it.wt ?? t)));
+          this.attack(p, it.eid, e.x, e.y, (lag / 1000) * cfg.entitySpeed * 2);
+        }
         return;
     }
   }
 
-  private attack(p: PlayerRound, target: number, ax: number, ay: number): void {
+  private attack(p: PlayerRound, target: number, ax: number, ay: number, slack = 0): void {
     const cfg = this.cfg;
     const t = this.world.time;
     if (p.attacksLeft <= 0) {
@@ -644,7 +668,7 @@ export class MatchSim {
     }
     const te = this.world.get(target);
     if (!te || !te.alive || target === p.eid) return;
-    if (Math.hypot(te.x - ax, te.y - ay) > cfg.attackRange + 1) {
+    if (Math.hypot(te.x - ax, te.y - ay) > cfg.attackRange + 1 + slack) {
       this.notices.push({ t: 'denied', pid: p.pid, reason: 'out_of_range' });
       return;
     }

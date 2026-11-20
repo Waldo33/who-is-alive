@@ -324,7 +324,7 @@ export class GameScene extends Phaser.Scene {
     }
     // Свои звёзды — своим цветом; чужие — без цветов и имён, по убыванию:
     // видно, что кто-то близок к победе, но не видно, кто именно (раздел 5).
-    const mine = this.sim.info(ME)!;
+    const mine = this.sim.info(this.sim.selfPid)!;
     this.add.image(86, 12, 'icons', this.icon('star')).setDepth(1100);
     this.hud.starsMe = this.txt(91, 7, '0', COLOR_FONT[mine.color]).setDepth(1100);
     for (let i = 1; i < this.sim.players.length; i++) {
@@ -599,7 +599,7 @@ export class GameScene extends Phaser.Scene {
         this.spawnConfetti();
       }
       this.buildOverlay();
-    } else if (n.t === 'denied' && n.pid === ME) {
+    } else if (n.t === 'denied' && n.pid === this.sim.selfPid) {
       this.audio.play('denied');
       const msg = this.t.game.denied[n.reason];
       this.showToast(msg, 1000);
@@ -1135,7 +1135,7 @@ export class GameScene extends Phaser.Scene {
       g.fillStyle(hexToInt(PLAYER_COLORS[p.color])).fillRect(17, y + 1, 6, 6);
       this.ov(g, 2010);
       const name = p.name.length > 11 ? p.name.slice(0, 10) + '…' : p.name;
-      this.ovText(28, y, name, p.pid === ME ? 'yellow' : 'white', false);
+      this.ovText(28, y, name, p.pid === this.sim.selfPid ? 'yellow' : 'white', false);
       this.ovText(124, y, pts.total ? `+${pts.total}` : '0', pts.total ? 'green' : 'mist', false);
       this.ovText(148, y, String(sim.scores[p.pid]), 'sand', false);
     });
@@ -1170,8 +1170,8 @@ export class GameScene extends Phaser.Scene {
     if (m.tooAlive) this.ovText(90, AY + 36, this.t.game.tooAlive, 'yellow');
     else {
       const w = sim.info(m.winners[0])!;
-      this.ovText(90, AY + 36, w.pid === ME ? this.t.game.youWon : this.t.game.winner, 'yellow');
-      if (w.pid !== ME) this.ovText(90, AY + 48, w.name, COLOR_FONT[w.color]);
+      this.ovText(90, AY + 36, w.pid === this.sim.selfPid ? this.t.game.youWon : this.t.game.winner, 'yellow');
+      if (w.pid !== this.sim.selfPid) this.ovText(90, AY + 48, w.name, COLOR_FONT[w.color]);
     }
     const order = [...sim.players].sort((a, b) => m.scores[b.pid] - m.scores[a.pid]);
     order.forEach((p, i) => {
@@ -1230,7 +1230,7 @@ export class GameScene extends Phaser.Scene {
           t.setVisible(r.alive);
           if (r.alive) t.setPosition(Math.round(Math.min(178 - t.width, Math.max(2, r.x - t.width / 2))), AY + r.y - CH_H - 16);
         });
-        const mine = s.accusations.find((a) => a.pid === ME);
+        const mine = s.accusations.find((a) => a.pid === this.sim.selfPid);
         this.ovDyn.final?.setText(mine ? (mine.correct ? this.t.game.guessed : this.t.game.missed) : this.t.game.noAccuse).setVisible(true);
         this.ovDyn.final.x = Math.round(90 - this.ovDyn.final.width / 2);
         this.drawAccusations();
@@ -1286,8 +1286,8 @@ export class GameScene extends Phaser.Scene {
 
   private share(): void {
     const sim = this.sim;
-    const me = sim.info(ME)!;
-    const score = sim.scores[ME];
+    const me = sim.info(this.sim.selfPid)!;
+    const score = sim.scores[this.sim.selfPid];
     const kills = sim.myMatchKills;
     const squares = sim.roundAwards.map((_, i) => (i < sim.round ? '🟩' : '⬛')).join('');
     const sh = this.t.share;

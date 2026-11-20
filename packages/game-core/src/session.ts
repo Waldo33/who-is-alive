@@ -67,13 +67,16 @@ export interface ClientSession extends ClientView {
 /** Песочница: вся симуляция на этом устройстве, остальные игроки — ИИ. */
 export class LocalSession implements ClientSession {
   constructor(
-    private readonly sim: MatchSim,
+    readonly sim: MatchSim,
     readonly selfPid: string,
     aiSeed: number,
+    opts: { ai?: boolean } = {},
   ) {
-    sim.players
-      .filter((p) => p.pid !== selfPid)
-      .forEach((p, i) => sim.addAgent(new AiPlayer(p.pid, aiSeed + i * 7919 + 1)));
+    if (opts.ai !== false) {
+      sim.players
+        .filter((p) => p.pid !== selfPid)
+        .forEach((p, i) => sim.addAgent(new AiPlayer(p.pid, aiSeed + i * 7919 + 1)));
+    }
   }
 
   get hostPid() { return this.sim.hostPid; }
