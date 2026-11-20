@@ -26,7 +26,7 @@ const html = `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#181425">
-<title>Кто тут живой? — песочница</title>
+<title>Массовка — репетиция</title>
 <style>${fontCss}
 html,body{margin:0;height:100%;background:#181425;color-scheme:dark;touch-action:manipulation;-webkit-text-size-adjust:100%;text-size-adjust:100%}
 :root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}</style>

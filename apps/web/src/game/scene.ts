@@ -654,7 +654,10 @@ export class GameScene extends Phaser.Scene {
       }
     } else if (n.t === 'phase') {
       if (n.phase === 'countdown') this.audio.play('count');
-      if (n.phase === 'play') this.audio.play('ready');
+      if (n.phase === 'play') {
+        this.audio.play('ready');
+        this.flashWord(this.t.game.action);
+      }
       if (n.phase === 'accuse') this.audio.play('tick');
       this.syncMusic(n.phase === 'countdown');
       if (n.phase === 'reveal') {
@@ -822,6 +825,13 @@ export class GameScene extends Phaser.Scene {
       this.updateDeathClipLabel();
       this.audio.play('starTake');
     });
+  }
+
+  /** Крупное слово по центру поля на миг («Мотор!» на старте дубля). */
+  private flashWord(s: string): void {
+    const t = this.txt(90, AY + 96, s, 'yellow').setScale(2).setDepth(2200);
+    this.centerScaled(t);
+    this.tweens.add({ targets: t, alpha: 0, delay: 500, duration: 400, onComplete: () => t.destroy() });
   }
 
   private clearDeath(): void {

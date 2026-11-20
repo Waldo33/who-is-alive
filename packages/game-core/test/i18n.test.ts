@@ -40,6 +40,7 @@ describe('i18n', () => {
       for (const s of flat) expect(s.length, `${lang}: «${s}»`).toBeLessThanOrEqual(21);
       // заголовок выбывания рисуется вдвое крупнее
       expect(g.outTitle.length * 16, g.outTitle).toBeLessThanOrEqual(176);
+      expect(g.action.length * 16, g.action).toBeLessThanOrEqual(176);
       for (const a of Object.values(t.awards)) {
         expect(a.title.length, `${lang}: ${a.title}`).toBeLessThanOrEqual(16);
         expect(tp(lang, a.text, 12).length, `${lang}: ${tp(lang, a.text, 12)}`).toBeLessThanOrEqual(18);

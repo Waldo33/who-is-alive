@@ -12,10 +12,10 @@ export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   openGraph: defaults.openGraph,
   twitter: defaults.twitter,
-  title: 'Кто тут живой? · Who’s Alive?',
-  description: 'Найди живых. Не выдай себя. Find the living. Don’t give yourself away.',
-  applicationName: 'Кто тут живой? · Who’s Alive?',
-  appleWebApp: { capable: true, title: 'Кто живой?', statusBarStyle: 'black-translucent' },
+  title: 'Массовка · Be Nobody',
+  description: 'Будь массовкой. Собирай звёзды. Everyone’s an extra. Someone’s acting.',
+  applicationName: 'Массовка · Be Nobody',
+  appleWebApp: { capable: true, title: 'Массовка', statusBarStyle: 'black-translucent' },
   icons: {
     icon: [
       { url: '/favicon.ico', sizes: '16x16 32x32' },

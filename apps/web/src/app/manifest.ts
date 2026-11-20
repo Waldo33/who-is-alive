@@ -3,9 +3,9 @@ import type { MetadataRoute } from 'next';
 export default function manifest(): MetadataRoute.Manifest {
   return {
     id: '/',
-    name: 'Кто тут живой? · Who’s Alive?',
-    short_name: 'Кто живой?',
-    description: 'Найди живых. Не выдай себя. Find the living. Don’t give yourself away.',
+    name: 'Массовка · Be Nobody',
+    short_name: 'Массовка',
+    description: 'Будь массовкой. Собирай звёзды. Everyone’s an extra. Someone’s acting.',
     lang: 'ru',
     start_url: '/?source=pwa',
     scope: '/',

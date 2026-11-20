@@ -24,7 +24,7 @@ export function integerZoom(el: HTMLElement): number {
 export async function loadPixelFont(family: string): Promise<void> {
   try {
     await Promise.race([
-      document.fonts.load(`8px ${family}`, 'Кто тут живой? ABC'),
+      document.fonts.load(`8px ${family}`, 'Массовка ABC'),
       new Promise((r) => setTimeout(r, 2500)),
     ]);
   } catch {
