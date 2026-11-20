@@ -386,6 +386,7 @@ function Settings({ t, settings, onChange }: { t: Dict; settings: RoomSettings; 
         <input type="checkbox" checked={settings.kidsMode} onChange={(e) => onChange({ ...settings, kidsMode: e.target.checked })} />
         <span>{t.lobby.kids}</span>
       </label>
+      <p className="setting-hint">{t.lobby.kidsHint}</p>
     </section>
   );
 }

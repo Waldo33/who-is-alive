@@ -39,6 +39,7 @@ const CSS = `
 .kto-btn:active{transform:translateY(3px);box-shadow:0 1px 0 ${PAL.rust},0 0 0 2px ${PAL.ink}}
 .kto-small{font-size:8px;color:${PAL.steel};max-width:36ch;line-height:1.8;margin:0}
 .kto-check{display:flex;align-items:center;gap:8px;font-size:9px;color:${PAL.mist}}
+.kto-hint{font-size:8px;line-height:1.8;color:${PAL.steel};max-width:34ch;margin:-10px 0 0;text-align:center}
 .kto-check input{width:20px;height:20px;accent-color:${PAL.amber}}
 .kto-rotate{position:absolute;inset:0;display:none;align-items:center;justify-content:center;flex-direction:column;gap:16px;
   background:${PAL.ink};z-index:20;font-size:11px;color:${PAL.sand};text-align:center;padding:24px}
@@ -84,6 +85,7 @@ export function mountSandbox(root: HTMLElement, opts: ShellOptions): () => void 
       <p class="kto-rules"></p>
       <label class="kto-row"><span class="kto-name-label"></span> <input class="kto-input" maxlength="14"></label>
       <label class="kto-check"><input type="checkbox" class="kto-kids"> <span class="kto-kids-label"></span></label>
+      <p class="kto-hint kto-kids-hint"></p>
       <button class="kto-btn kto-play"></button>
       <p class="kto-small"></p>
     </section>
@@ -118,6 +120,7 @@ export function mountSandbox(root: HTMLElement, opts: ShellOptions): () => void 
     $('.kto-name-label').textContent = t.start.name;
     nameInput.setAttribute('aria-label', t.start.nameAria);
     $('.kto-kids-label').textContent = t.start.kids;
+    $('.kto-kids-hint').textContent = t.start.kidsHint;
     $('.kto-play').textContent = t.start.play;
     $('.kto-small').textContent = t.start.note;
     $('.kto-rotate').textContent = t.start.rotate;
