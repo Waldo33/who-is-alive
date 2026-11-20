@@ -16,13 +16,32 @@ import { centerDist, critterSheet, hash, line, tile } from './util';
 
 // ═════════════ костюмы ═════════════
 
+/**
+ * Люди толпы: кожа и волосы. Фигура с номером i — один и тот же человек и в офисе, и в подвале
+ * (клерк i ↔ боец i), меняется только одежда. Порядок совпадает с CLERKS/FIGHTERS.
+ */
+const PEOPLE: { skin: [string, string]; hair: [string, string, string] | null }[] = [
+  { skin: [PAL.peach, PAL.fawn], hair: [PAL.umber, PAL.plum, PAL.brick] }, // светлый, каштановые волосы
+  { skin: [PAL.tan, PAL.fawn], hair: [PAL.night, PAL.ink, PAL.dusk] }, // загорелый брюнет
+  { skin: [PAL.fawn, PAL.brick], hair: [PAL.ink, PAL.ink, PAL.night] }, // смуглый брюнет
+  { skin: [PAL.brick, PAL.umber], hair: [PAL.ink, PAL.ink, PAL.night] }, // темнокожий
+  { skin: [PAL.peach, PAL.fawn], hair: null }, // лысый
+];
+
+/** Цвета лица и головы человека i для карты букв персонажа. */
+function face(i: number): Record<string, string> {
+  const p = PEOPLE[i];
+  const [s, S] = p.skin;
+  const [h, H, k] = p.hair ?? [s, S, PAL.sand];
+  return { s, S, m: S, c: s, h, H, k, r: p.hair ? h : s, R: p.hair ? H : S };
+}
+
 /** Клерк: аккуратная стрижка, белая рубашка, галстук, бейдж, серые брюки. */
 const CLERK: CharStyle = {
   map: {
     ...BASE_MAP,
-    h: PAL.umber, H: PAL.plum, k: PAL.brick, r: PAL.umber, R: PAL.plum,
-    s: PAL.peach, S: PAL.fawn, a: PAL.mist, m: PAL.fawn, c: PAL.peach,
-    b: PAL.white, B: PAL.mist, v: PAL.white, l: PAL.steel, L: PAL.ink,
+    ...face(0),
+    a: PAL.mist, b: PAL.white, B: PAL.mist, v: PAL.white, l: PAL.steel, L: PAL.ink,
     t: PAL.wine, n: PAL.blue,
     // ноутбук, кружка с кофе, сигарета, дым, телефон
     Q: PAL.slate, U: PAL.red, u: PAL.umber, C: PAL.white, E: PAL.orange, F: PAL.mist, P: PAL.night,
@@ -40,6 +59,9 @@ const CLERK: CharStyle = {
   },
 };
 
+/** Остальные клерки — те же люди, что бойцы FIGHTERS (по номеру): одежда та же, лица разные. */
+const CLERKS: CharStyle[] = [1, 2, 3, 4].map((i) => ({ map: { ...CLERK.map, ...face(i) }, patch: CLERK.patch }));
+
 /** Общее у всех бойцов: бинты на кулаках, фингал, ссадина. */
 function fighterMarks(m: string[][], view: View): void {
   if (view === 'D') {
@@ -52,13 +74,13 @@ function fighterMarks(m: string[][], view: View): void {
   } else if (m[10][7] === 'a') m[10][7] = 'T';
 }
 
-/** Боец: голый торс, ёжик, джинсы. Остальные бойцы — FIGHTERS ниже. */
+/** Боец (человек 0): голый торс, ёжик, джинсы. Остальные бойцы — FIGHTERS ниже. */
 const FIGHTER: CharStyle = {
   map: {
     ...BASE_MAP,
-    h: PAL.night, H: PAL.ink, k: PAL.dusk, r: PAL.night, R: PAL.ink,
-    s: PAL.peach, S: PAL.fawn, a: PAL.peach, m: PAL.fawn, c: PAL.coral,
-    b: PAL.peach, B: PAL.fawn, v: PAL.tan, l: PAL.navy, L: PAL.ink,
+    ...face(0),
+    c: PAL.coral, // раскраснелся
+    a: PAL.peach, b: PAL.peach, B: PAL.fawn, v: PAL.tan, l: PAL.navy, L: PAL.ink,
     x: PAL.grape,
     z: PAL.red, // ссадина
     Q: PAL.red, // скакалка
@@ -79,7 +101,7 @@ const FIGHTER: CharStyle = {
 const FIGHTERS: CharStyle[] = [
   // в белой майке, загорелый, серые треники
   {
-    map: { ...FIGHTER.map, h: PAL.umber, H: PAL.plum, k: PAL.brick, r: PAL.umber, R: PAL.plum, s: PAL.tan, S: PAL.fawn, a: PAL.tan, m: PAL.fawn, b: PAL.white, B: PAL.mist, v: PAL.white, l: PAL.steel },
+    map: { ...FIGHTER.map, ...face(1), a: PAL.tan, b: PAL.white, B: PAL.mist, v: PAL.white, l: PAL.steel },
     patch: (m, view) => {
       fighterMarks(m, view);
       m[1] = m[1].map((ch) => (ch === 'k' ? 'h' : ch));
@@ -87,7 +109,7 @@ const FIGHTERS: CharStyle[] = [
   },
   // в сером капюшоне
   {
-    map: { ...FIGHTER.map, h: PAL.slate, H: PAL.steel, k: PAL.mist, r: PAL.slate, R: PAL.steel, s: PAL.fawn, S: PAL.brick, a: PAL.slate, m: PAL.brick, c: PAL.clay, b: PAL.slate, B: PAL.steel, v: PAL.steel, l: PAL.night },
+    map: { ...FIGHTER.map, ...face(2), h: PAL.slate, H: PAL.steel, k: PAL.mist, r: PAL.slate, R: PAL.steel, a: PAL.slate, b: PAL.slate, B: PAL.steel, v: PAL.steel, l: PAL.night },
     patch: (m, view) => {
       fighterMarks(m, view);
       if (view === 'D') for (let y = 4; y <= 7; y++) { m[y][1] = 'H'; m[y][10] = 'H'; } // капюшон вокруг лица
@@ -96,7 +118,7 @@ const FIGHTERS: CharStyle[] = [
   },
   // боксёр: смуглый, красная повязка, красные трусы
   {
-    map: { ...FIGHTER.map, h: PAL.ink, H: PAL.red, k: PAL.night, r: PAL.ink, R: PAL.ink, s: PAL.brick, S: PAL.umber, a: PAL.brick, m: PAL.umber, c: PAL.clay, b: PAL.brick, B: PAL.umber, v: PAL.clay, l: PAL.red, L: PAL.ink },
+    map: { ...FIGHTER.map, ...face(3), H: PAL.red, a: PAL.brick, b: PAL.brick, B: PAL.umber, v: PAL.clay, l: PAL.red, L: PAL.ink },
     patch: (m, view) => {
       fighterMarks(m, view);
       // ноги ниже трусов — голые
@@ -105,7 +127,7 @@ const FIGHTERS: CharStyle[] = [
   },
   // бритый, чёрная майка, армейские штаны
   {
-    map: { ...FIGHTER.map, h: PAL.peach, H: PAL.fawn, k: PAL.sand, r: PAL.peach, R: PAL.fawn, s: PAL.peach, S: PAL.fawn, a: PAL.peach, b: PAL.night, B: PAL.ink, v: PAL.night, l: PAL.forest, L: PAL.ink, z: PAL.navy },
+    map: { ...FIGHTER.map, ...face(4), c: PAL.coral, a: PAL.peach, b: PAL.night, B: PAL.ink, v: PAL.night, l: PAL.forest, L: PAL.ink, z: PAL.navy },
     patch: (m, view) => {
       fighterMarks(m, view);
       if (view === 'D') m[10][2] = 'z'; // наколка на плече
@@ -787,6 +809,7 @@ const pack: ThemePack = {
   looks: [
     {
       chars: CLERK,
+      variants: CLERKS,
       poses: OFFICE_POSES,
       acts: OFFICE_ACTS,
       icons: OFFICE_ICONS,
