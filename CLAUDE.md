@@ -38,6 +38,7 @@ pnpm --filter web build               # прод-сборка Next.js — гон
 pnpm --filter web live-e2e            # живой прогон через настоящий Supabase (нужна сеть до supabase.co)
 pnpm --filter web icons               # перерисовать иконки PWA из спрайтов (нужен Playwright)
 pnpm --filter web og-bg               # фоны превью ссылок по темам: apps/web/assets/og/bg-N.png
+pnpm --filter web clip-preview <папка> 11,12   # кадры клипа «Лучший момент» по зернам — проверить глазами
 pnpm --filter web standalone          # песочница одним HTML-файлом: apps/web/dist/sandbox.html
 ```
 

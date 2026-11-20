@@ -14,6 +14,8 @@ export interface RoundRecording {
   /** Сущности живых игроков: eid → pid. */
   players: { pid: string; eid: number }[];
   playEnd: number;
+  /** Кто кого выбил — из итогов раунда (если есть, нападавшего не нужно угадывать по месту удара). */
+  kills?: { by: number; victim: number; at: number }[];
 }
 
 export interface Moment {
@@ -26,6 +28,9 @@ export interface Moment {
   at: number;
   /** Кем в главном событии был тот, для кого клип: выбил сам или выбили его. */
   selfRole?: 'attacker' | 'victim';
+  /** Участники главного события: кто действовал (выбил, ударил, собрал) и над кем. Для камеры и подписей клипа. */
+  attacker?: number;
+  victim?: number;
 }
 
 /** Окно момента: обычно ~6 с, но может растянуться, чтобы целиком вместить два события подряд или долгий подход. */
@@ -69,6 +74,8 @@ export interface MomentEvent {
   to: number;
   /** Участие того, для кого клип. */
   selfRole?: 'attacker' | 'victim';
+  attacker?: number;
+  victim?: number;
 }
 
 /** Кадр события по умолчанию: [до, после]. У выбивания «до» растягивается на весь подход нападавшего. */
@@ -92,9 +99,9 @@ export function momentEvents(rec: RoundRecording, selfEid?: number): MomentEvent
   const end = rec.playEnd;
   const isPlayer = new Set(rec.players.map((p) => p.eid));
   const out: MomentEvent[] = [];
-  const add = (at: number, pts: number, kind: Moment['kind'], pre?: number, selfRole?: MomentEvent['selfRole']) => {
+  const add = (at: number, pts: number, kind: Moment['kind'], pre?: number, selfRole?: MomentEvent['selfRole'], attacker?: number, victim?: number) => {
     const [p0, post] = CONTEXT[kind];
-    out.push({ at, pts, kind, from: Math.max(start, at - (pre ?? p0)), to: Math.min(end, at + post), selfRole });
+    out.push({ at, pts, kind, from: Math.max(start, at - (pre ?? p0)), to: Math.min(end, at + post), selfRole, attacker, victim });
   };
 
   // позиции живых игроков на каждом шаге (их всего 2–4) и близость раз в секунду
@@ -111,7 +118,7 @@ export function momentEvents(rec: RoundRecording, selfEid?: number): MomentEvent
         const alive = rec.players.map((p) => w.get(p.eid)).filter((e) => e && e.alive);
         for (let i = 0; i < alive.length; i++) {
           for (let j = i + 1; j < alive.length; j++) {
-            if (Math.hypot(alive[i]!.x - alive[j]!.x, alive[i]!.y - alive[j]!.y) < CLOSE_PX) add(w.time, 1, 'close');
+            if (Math.hypot(alive[i]!.x - alive[j]!.x, alive[i]!.y - alive[j]!.y) < CLOSE_PX) add(w.time, 1, 'close', undefined, undefined, alive[i]!.eid, alive[j]!.eid);
           }
         }
       }
@@ -161,7 +168,8 @@ export function momentEvents(rec: RoundRecording, selfEid?: number): MomentEvent
     if (ev.at < start || ev.at > end) continue;
     if (ev.t === 'hit') {
       if (ev.result === 'player') {
-        const attacker = ev.attacker ?? attackerOf(ev.target, ev.at, ev.x, ev.y);
+        const known = rec.kills?.find((k) => k.victim === ev.target);
+        const attacker = ev.attacker ?? known?.by ?? attackerOf(ev.target, ev.at, ev.x, ev.y);
         const role = selfEid === undefined ? undefined : ev.target === selfEid ? 'victim' : attacker === selfEid ? 'attacker' : undefined;
         let pts = 5 + (ev.at >= end - 3000 ? 3 : 0) + (role ? SELF_BONUS : 0);
         const miss = missAt.get(ev.target);
@@ -173,16 +181,16 @@ export function momentEvents(rec: RoundRecording, selfEid?: number): MomentEvent
           lastKoBy.set(attacker, ev.at);
           pre = Math.min(APPROACH_MAX_MS, Math.max(APPROACH_MIN_MS, ev.at - approachFrom(attacker, ev.target, ev.at) + 300));
         }
-        add(ev.at, pts, 'knockout', pre, role);
+        add(ev.at, pts, 'knockout', pre, role, attacker, ev.target);
       } else {
         const mine = selfEid !== undefined && ev.attacker === selfEid;
         if (ev.attacker !== undefined) missAt.set(ev.attacker, ev.at);
-        add(ev.at, 2 + (mine ? SELF_BONUS : 0), 'hit_bot', undefined, mine ? 'attacker' : undefined);
+        add(ev.at, 2 + (mine ? SELF_BONUS : 0), 'hit_bot', undefined, mine ? 'attacker' : undefined, ev.attacker, ev.target);
       }
     } else if (ev.t === 'star_taken' && isPlayer.has(ev.eid)) {
       const n = (starsBy.get(ev.eid) ?? 0) + 1;
       starsBy.set(ev.eid, n);
-      if (n === 3) add(ev.at, 4 + (ev.eid === selfEid ? SELF_BONUS : 0), 'star3', undefined, ev.eid === selfEid ? 'attacker' : undefined);
+      if (n === 3) add(ev.at, 4 + (ev.eid === selfEid ? SELF_BONUS : 0), 'star3', undefined, ev.eid === selfEid ? 'attacker' : undefined, ev.eid);
     }
   }
   return out;
@@ -248,7 +256,7 @@ export function findBestMoment(rec: RoundRecording, selfEid?: number): Moment | 
       const score = pts - cut - (Math.max(0, len - MOMENT_MS) / 1000) * LONG_PENALTY;
       // при равенстве: короче, затем позже (ближе к развязке)
       if (!best || score > bestScore + 1e-9 || (Math.abs(score - bestScore) < 1e-9 && (len < bestLen || (len === bestLen && from > best.from)))) {
-        best = { from, to, score: pts, kind: main.kind, at: main.at, selfRole: main.selfRole };
+        best = { from, to, score: pts, kind: main.kind, at: main.at, selfRole: main.selfRole, attacker: main.attacker, victim: main.victim };
         bestScore = score;
         bestLen = len;
       }
@@ -268,7 +276,7 @@ export function worldOf(rec: RoundRecording): World {
 /** Снять запись раунда с мира, пока следующий раунд её не сбросил (init создаёт новые массивы). */
 export function recordRound(
   world: World,
-  info: { round: number; theme: number; players: { pid: string; eid: number }[]; playEnd: number },
+  info: { round: number; theme: number; players: { pid: string; eid: number }[]; playEnd: number; kills?: { by: number; victim: number; at: number }[] },
 ): RoundRecording {
   return { ...info, nav: world.nav, speed: world.speed, log: world.log, keyframes: world.keyframes };
 }

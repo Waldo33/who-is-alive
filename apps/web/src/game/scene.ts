@@ -154,7 +154,8 @@ export class GameScene extends Phaser.Scene {
   private cardFile: File | null = null;
   private closeClip: (() => void) | null = null;
   /** Клип выбывшего: последние секунды перед выбиванием, монтируется в фоне — призрак смотрит игру дальше. */
-  private deathClip: { eid: number; at: number; status: 'offer' | 'rendering' | 'ready'; progress: number; file: File | null } | null = null;
+  /** Клип выбывшего. killer — кто выбил (известно только после разоблачения: тогда клип пересобирается с именами). */
+  private deathClip: { eid: number; at: number; status: 'offer' | 'rendering' | 'ready'; progress: number; file: File | null; killer?: number } | null = null;
 
   constructor() {
     super('game');
@@ -662,6 +663,7 @@ export class GameScene extends Phaser.Scene {
         this.replay = makeReplay(this.sim.world, s.replayFrom, this.sim.world.time);
         this.trails.clear();
         this.noteMoment();
+        this.upgradeDeathClip();
         this.audio.play('drum');
       }
       if (n.phase === 'match_end') {
@@ -736,6 +738,16 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
+  /** Раунд закончился: теперь известно, кто выбил, — клип выбывшего можно снять заново, с ним в кадре. */
+  private upgradeDeathClip(): void {
+    const dc = this.deathClip;
+    const k = this.sim.summary?.kills?.find((x) => dc && x.victim === dc.eid);
+    if (!dc || !k) return;
+    this.deathClip = { eid: dc.eid, at: dc.at, status: 'offer', progress: 0, file: null, killer: k.by };
+    this.updateDeathClipLabel();
+    this.audio.play('ready');
+  }
+
   private updateDeathClipLabel(): void {
     const dc = this.deathClip;
     const text = this.btnObjs.get('deathclip')?.text;
@@ -759,25 +771,35 @@ export class GameScene extends Phaser.Scene {
     const w = this.sim.world;
     const start = w.keyframes[0]?.time ?? 0;
     const to = Math.min(w.time, dc.at + 1500);
-    const from = Math.max(start, to - 6000);
     const me = this.sim.info(this.sim.selfPid);
+    const s = this.sim.summary;
+    const known = dc.killer !== undefined && !!s;
+    // с известным нападавшим показываем его подход целиком (до 4,5 с), иначе — 6 с до развязки
+    const from = Math.max(start, known ? dc.at - 4500 : to - 6000);
     if (!me || to - from < 1500) return;
     dc.status = 'rendering';
     this.updateDeathClipLabel();
-    // посреди раунда других живых не раскрываем (гость их и не знает): подсвечен только ты
-    const rec = recordRound(w, { round: this.sim.round, theme: this.sim.theme, players: [], playEnd: to });
-    const moment: Moment = { from, to, score: 0, kind: 'knockout', at: dc.at };
     const c = this.t.clip;
+    // посреди раунда других живых не раскрываем (гость их и не знает): подсвечен только ты, подпись — «Кто меня выбил?».
+    // После разоблачения — все живые с именами и итог «Енот / выбил меня».
+    const players = known
+      ? s!.reveal.map((r) => {
+          const info = this.sim.info(r.pid)!;
+          return { eid: r.eid, name: info.name, color: info.color };
+        })
+      : [{ eid: dc.eid, name: me.name, color: me.color }];
+    const rec = recordRound(w, { round: this.sim.round, theme: this.sim.theme, players: known ? s!.reveal : [], playEnd: to, kills: s?.kills });
+    const moment: Moment = { from, to, score: 0, kind: 'knockout', at: dc.at, victim: dc.eid, attacker: dc.killer, selfRole: 'victim' };
     void recordClipInBackground(
       {
         rec,
         moment,
         arena: this.sim.arena,
-        players: [{ eid: dc.eid, name: me.name, color: me.color }],
+        players,
         t: this.t,
         font: this.init0.fontFamily,
         site: location.host,
-        captions: { find: c.findMe, reveal: c.thatWasMe, kind: c.gotMe },
+        captions: known ? { find: c.whoGotMe, reveal: c.reveal, kind: c.gotMe } : { find: c.findMe, reveal: c.thatWasMe, kind: c.whoGotMe },
       },
       (p) => {
         if (this.deathClip !== dc) return;
@@ -1518,7 +1540,7 @@ export class GameScene extends Phaser.Scene {
     const s = this.sim.summary;
     if (!s) return;
     try {
-      const rec = recordRound(this.sim.world, { round: s.round, theme: this.sim.theme, players: s.reveal, playEnd: s.replayTo });
+      const rec = recordRound(this.sim.world, { round: s.round, theme: this.sim.theme, players: s.reveal, playEnd: s.replayTo, kills: s.kills });
       const moment = findBestMoment(rec, this.sim.me()?.eid);
       if (!moment || (this.best && this.best.moment.score > moment.score)) return;
       const players = s.reveal.map((r) => {

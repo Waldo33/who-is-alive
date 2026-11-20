@@ -11,7 +11,8 @@
     "standalone": "node scripts/build-standalone.mjs",
     "icons": "node scripts/make-icons.mjs",
     "live-e2e": "esbuild scripts/live-e2e.ts --bundle --platform=node --format=esm --alias:@=./src --outfile=.live-e2e.mjs --log-level=warning && node .live-e2e.mjs",
-    "og-bg": "node scripts/make-og.mjs"
+    "og-bg": "node scripts/make-og.mjs",
+    "clip-preview": "node scripts/clip-preview.mjs"
   },
   "dependencies": {
     "@fontsource/press-start-2p": "5.3.0",

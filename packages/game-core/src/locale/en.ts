@@ -165,6 +165,11 @@ export const en: Dict = {
     findMe: 'Can you spot me?',
     thatWasMe: 'That was me!',
     gotMe: 'They got me!',
+    whoGotMe: 'Who got me?',
+    watch: 'Watch {name}',
+    koOf: 'took out {name}',
+    star3Of: 'got 3 stars!',
+    botOf: 'hit a bot!',
     deathText: 'I got spotted in Who’s Alive? 😅 Can you find me?',
   },
   card: {

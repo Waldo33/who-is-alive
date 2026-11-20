@@ -71,6 +71,8 @@ export interface RoundSummary {
   awards: AwardCard[];
   replayFrom: number;
   replayTo: number;
+  /** Кто кого выбил (сущности). После разоблачения это уже не секрет — для повтора и клипа. */
+  kills?: { by: number; victim: number; at: number }[];
 }
 
 export interface MatchSummary {
@@ -129,6 +131,8 @@ export class MatchSim {
    * поэтому удар проверяется и по тому месту, где цель была на его экране («перемотка», как в шутерах).
    */
   private posHist: { t: number; pos: Map<number, [number, number]> }[] = [];
+  /** Выбивания раунда: кто кого (сущности) — уходят в итоги раунда. */
+  private roundKills: { by: number; victim: number; at: number }[] = [];
   agents: AiAgent[] = [];
 
   playStart = 0;
@@ -262,6 +266,7 @@ export class MatchSim {
     const t0 = Math.ceil(this.world.time / 1000) * 1000 + 1000;
     this.world.init(spawns, t0);
     this.posHist = [];
+    this.roundKills = [];
     const playerEids = rng.shuffle(spawns.map((s) => s.eid)).slice(0, this.players.length);
     this.pr = this.players.map((p, i) => ({
       pid: p.pid,
@@ -510,6 +515,7 @@ export class MatchSim {
       awards,
       replayFrom,
       replayTo,
+      kills: [...this.roundKills],
     };
     this.setPhase('reveal', revealMs(cfg));
   }
@@ -708,6 +714,7 @@ export class MatchSim {
       victim.diedAt = t;
       p.kills++;
       p.killTimes.push(t);
+      this.roundKills.push({ by: p.eid, victim: target, at: t });
       this.matchKills[p.pid]++;
       this.addScore(p.pid, cfg.points.kill, 'kill');
       const key = [p.pid, victim.pid].sort().join('|');
