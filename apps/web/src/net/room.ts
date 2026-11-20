@@ -1,0 +1,194 @@
+'use client';
+
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { SupabaseTransport } from '@kto/net';
+import type { PresenceMember, Transport } from '@kto/net';
+import { rpcErrorCode } from '@/lib/supabase';
+
+export interface RoomSettings {
+  roundSec: 60 | 75 | 90;
+  maxRounds: 3 | 5 | 7;
+  kidsMode: boolean;
+}
+
+export const DEFAULT_SETTINGS: RoomSettings = { roundSec: 75, maxRounds: 5, kidsMode: false };
+
+export interface Member {
+  userId: string;
+  name: string;
+  color: number;
+  joinedAt: number;
+  online: boolean;
+  ready: boolean;
+}
+
+export interface RoomState {
+  status: 'connecting' | 'lobby' | 'error';
+  error?: string;
+  code: string;
+  selfId: string;
+  hostId: string;
+  members: Member[];
+  settings: RoomSettings;
+}
+
+/** Сообщения лобби в общем канале (только от хоста). */
+export type LobbyMsg =
+  | { t: 'lobby'; hostId: string; settings: RoomSettings }
+  | { t: 'kick_refresh' };
+
+/**
+ * Комната: вход через RPC, состав из таблицы room_members + Presence (кто онлайн и готов),
+ * хост и настройки. Игровой протокол работает поверх того же транспорта (этап C).
+ */
+export class Room {
+  state: RoomState;
+  transport: Transport | null = null;
+  private listeners = new Set<(s: RoomState) => void>();
+  private dbMembers: { user_id: string; name: string; color: number; joined_at: string }[] = [];
+  private presence: PresenceMember[] = [];
+  private touchTimer: ReturnType<typeof setInterval> | null = null;
+  private refreshTimer: ReturnType<typeof setTimeout> | null = null;
+  private myName = '';
+  private myReady = false;
+  /** Сообщения игры (всё, что не лобби) — для этапа C. */
+  onGameMessage: ((channel: string, msg: unknown, from: string) => void) | null = null;
+  /** Хост нажал «Начать» — обработчик подставляет экран игры (этап C). */
+  onStartRequest: (() => void) | null = null;
+
+  constructor(private sb: SupabaseClient, code: string, selfId: string) {
+    this.state = { status: 'connecting', code: code.toUpperCase(), selfId, hostId: '', members: [], settings: DEFAULT_SETTINGS };
+  }
+
+  get isHost(): boolean {
+    return this.state.hostId === this.state.selfId;
+  }
+
+  subscribe(fn: (s: RoomState) => void): () => void {
+    this.listeners.add(fn);
+    fn(this.state);
+    return () => this.listeners.delete(fn);
+  }
+
+  private set(patch: Partial<RoomState>): void {
+    this.state = { ...this.state, ...patch };
+    for (const l of this.listeners) l(this.state);
+  }
+
+  async join(name: string): Promise<void> {
+    this.myName = name;
+    const { data, error } = await this.sb.rpc('join_room', { p_code: this.state.code, p_name: name });
+    if (error) {
+      this.set({ status: 'error', error: rpcErrorCode(error) });
+      return;
+    }
+    const r = data as { code: string; color: number; host_id: string; settings: Partial<RoomSettings> };
+    this.set({ code: r.code, hostId: r.host_id, settings: { ...DEFAULT_SETTINGS, ...(r.settings ?? {}) } });
+    await this.loadMembers();
+    const t = new SupabaseTransport(this.sb, r.code, this.state.selfId);
+    this.transport = t;
+    t.onPresence((list) => {
+      this.presence = list;
+      this.recompute();
+      this.scheduleRefresh();
+    });
+    t.onMessage((channel, msg, from) => {
+      const m = msg as { t?: string };
+      if (channel === 'room' && m?.t === 'lobby' && from === this.state.hostId) {
+        const lm = msg as Extract<LobbyMsg, { t: 'lobby' }>;
+        this.set({ hostId: lm.hostId, settings: lm.settings });
+        return;
+      }
+      this.onGameMessage?.(channel, msg, from);
+    });
+    try {
+      await t.connect(this.me(), this.isHost, this.dbMembers.map((m) => m.user_id));
+    } catch {
+      this.set({ status: 'error', error: 'network' });
+      return;
+    }
+    this.set({ status: 'lobby' });
+    this.touchTimer = setInterval(() => void this.sb.rpc('touch_room', { p_code: this.state.code }), 60_000);
+  }
+
+  private me(): PresenceMember {
+    const db = this.dbMembers.find((m) => m.user_id === this.state.selfId);
+    return {
+      userId: this.state.selfId,
+      name: this.myName,
+      color: db?.color ?? 0,
+      joinedAt: db ? Date.parse(db.joined_at) : Date.now(),
+      ready: this.myReady,
+    };
+  }
+
+  private async loadMembers(): Promise<void> {
+    const [{ data: members }, { data: room }] = await Promise.all([
+      this.sb.from('room_members').select('user_id,name,color,joined_at').eq('room_code', this.state.code).order('joined_at'),
+      this.sb.from('rooms').select('host_id,settings,status').eq('code', this.state.code).maybeSingle(),
+    ]);
+    if (members) this.dbMembers = members;
+    if (room) this.set({ hostId: room.host_id, settings: { ...DEFAULT_SETTINGS, ...(room.settings ?? {}) } });
+    this.recompute();
+  }
+
+  /** Кто-то вошёл или вышел — перечитать состав (новые участники видны в таблице сразу после join_room). */
+  private scheduleRefresh(): void {
+    if (this.refreshTimer) clearTimeout(this.refreshTimer);
+    this.refreshTimer = setTimeout(async () => {
+      const wasHost = this.isHost;
+      await this.loadMembers();
+      if (this.isHost !== wasHost || this.isHost) {
+        await this.transport?.setRole(this.isHost, this.dbMembers.map((m) => m.user_id));
+      }
+    }, 300);
+  }
+
+  private recompute(): void {
+    const online = new Map(this.presence.map((p) => [p.userId, p]));
+    const members: Member[] = this.dbMembers.map((m) => {
+      const p = online.get(m.user_id);
+      return {
+        userId: m.user_id,
+        name: p?.name || m.name,
+        color: m.color,
+        joinedAt: Date.parse(m.joined_at),
+        online: !!p,
+        ready: !!p?.ready,
+      };
+    });
+    this.set({ members });
+  }
+
+  async setReady(ready: boolean): Promise<void> {
+    this.myReady = ready;
+    await this.transport?.track(this.me());
+  }
+
+  async rename(name: string): Promise<void> {
+    this.myName = name;
+    await this.sb.rpc('rename_member', { p_code: this.state.code, p_name: name });
+    await this.transport?.track(this.me());
+  }
+
+  async updateSettings(settings: RoomSettings): Promise<void> {
+    if (!this.isHost) return;
+    this.set({ settings });
+    await this.sb.rpc('update_room_settings', { p_code: this.state.code, p_settings: settings });
+    await this.transport?.send('room', { t: 'lobby', hostId: this.state.hostId, settings } satisfies LobbyMsg);
+  }
+
+  async leave(): Promise<void> {
+    if (this.touchTimer) clearInterval(this.touchTimer);
+    if (this.refreshTimer) clearTimeout(this.refreshTimer);
+    await this.transport?.close();
+    this.transport = null;
+  }
+}
+
+/** Создать комнату и вернуть код. */
+export async function createRoom(sb: SupabaseClient, name: string, settings: RoomSettings = DEFAULT_SETTINGS): Promise<string> {
+  const { data, error } = await sb.rpc('create_room', { p_name: name, p_settings: settings });
+  if (error) throw new Error(rpcErrorCode(error));
+  return (data as { code: string }).code;
+}

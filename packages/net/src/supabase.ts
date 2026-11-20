@@ -1,0 +1,147 @@
+import type { RealtimeChannel, SupabaseClient } from '@supabase/supabase-js';
+import type { Channel, PresenceMember, Transport } from './transport';
+
+/**
+ * Транспорт на Supabase Realtime: Broadcast + Presence, приватные каналы с RLS (раздел 13).
+ *   room:CODE        — все читают, пишет хост; Presence всех участников
+ *   room:CODE:host   — пишут участники, читает хост
+ *   room:CODE:p:UID  — пишет хост, читает UID
+ * Права проверяются политиками на realtime.messages при подключении к каналу,
+ * поэтому при смене хоста каналы переподключаются (setRole).
+ */
+interface Envelope {
+  d: unknown;
+  f: string;
+}
+
+export class SupabaseTransport implements Transport {
+  private room: RealtimeChannel | null = null;
+  private hostCh: RealtimeChannel | null = null;
+  private privCh = new Map<string, RealtimeChannel>();
+  private handlers = new Set<(c: Channel, m: unknown, f: string) => void>();
+  private presenceHandlers = new Set<(m: PresenceMember[]) => void>();
+  private members: PresenceMember[] = [];
+  private me: PresenceMember | null = null;
+  private isHost = false;
+  /** Отправлено сообщений — для оценки нагрузки на лимит Realtime. */
+  sent = 0;
+
+  constructor(
+    private readonly sb: SupabaseClient,
+    private readonly code: string,
+    readonly selfId: string,
+  ) {}
+
+  private topic(suffix = ''): string {
+    return `room:${this.code}${suffix}`;
+  }
+
+  private open(topic: string, opts: { presence?: boolean; receive?: Channel }): Promise<RealtimeChannel> {
+    const ch = this.sb.channel(topic, {
+      config: { private: true, broadcast: { self: false, ack: false }, presence: opts.presence ? { key: this.selfId } : undefined },
+    });
+    if (opts.receive) {
+      const kind = opts.receive;
+      ch.on('broadcast', { event: 'm' }, ({ payload }) => {
+        const env = payload as Envelope;
+        for (const h of this.handlers) h(kind, env.d, env.f);
+      });
+    }
+    if (opts.presence) {
+      ch.on('presence', { event: 'sync' }, () => {
+        const state = ch.presenceState<PresenceMember>();
+        this.members = Object.values(state)
+          .map((arr) => arr[arr.length - 1])
+          .filter(Boolean)
+          .map((p) => ({ userId: p.userId, name: p.name, color: p.color, joinedAt: p.joinedAt, ready: p.ready }))
+          .sort((a, b) => a.joinedAt - b.joinedAt);
+        for (const h of this.presenceHandlers) h(this.members.slice());
+      });
+    }
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      ch.subscribe((status, err) => {
+        if (settled) return;
+        if (status === 'SUBSCRIBED') {
+          settled = true;
+          resolve(ch);
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          settled = true;
+          void this.sb.removeChannel(ch);
+          reject(new Error(`${topic}: ${status}${err ? ' ' + err.message : ''}`));
+        }
+      });
+    });
+  }
+
+  /** Подключиться к комнате. Хост дополнительно открывает личные каналы игроков. */
+  async connect(me: PresenceMember, isHost: boolean, playerIds: string[]): Promise<void> {
+    await this.sb.realtime.setAuth();
+    this.me = me;
+    this.room = await this.open(this.topic(), { presence: true, receive: 'room' });
+    await this.room.track(me);
+    await this.setRole(isHost, playerIds, true);
+  }
+
+  async setRole(isHost: boolean, playerIds: string[], force = false): Promise<void> {
+    if (!force && isHost === this.isHost && (!isHost || playerIds.every((id) => id === this.selfId || this.privCh.has(id)))) return;
+    this.isHost = isHost;
+    await this.sb.realtime.setAuth();
+    if (this.hostCh) await this.sb.removeChannel(this.hostCh);
+    // хост читает канал намерений, гости в него только пишут
+    this.hostCh = await this.open(this.topic(':host'), { receive: isHost ? 'host' : undefined });
+    for (const [id, ch] of this.privCh) {
+      await this.sb.removeChannel(ch);
+      this.privCh.delete(id);
+    }
+    if (isHost) {
+      for (const id of playerIds) {
+        if (id === this.selfId) continue;
+        this.privCh.set(id, await this.open(this.topic(`:p:${id}`), {}));
+      }
+    } else {
+      this.privCh.set(this.selfId, await this.open(this.topic(`:p:${this.selfId}`), { receive: 'private' }));
+    }
+    // права на общий канал (писать Broadcast может только хост) тоже кешируются при подключении
+    if (this.room && !force) {
+      await this.sb.removeChannel(this.room);
+      this.room = await this.open(this.topic(), { presence: true, receive: 'room' });
+      if (this.me) await this.room.track(this.me);
+    }
+  }
+
+  async send(channel: Channel, msg: unknown, to?: string): Promise<void> {
+    const ch = channel === 'room' ? this.room : channel === 'host' ? this.hostCh : to ? this.privCh.get(to) : undefined;
+    if (!ch) return;
+    this.sent++;
+    await ch.send({ type: 'broadcast', event: 'm', payload: { d: msg, f: this.selfId } satisfies Envelope });
+  }
+
+  onMessage(h: (c: Channel, m: unknown, f: string) => void): () => void {
+    this.handlers.add(h);
+    return () => this.handlers.delete(h);
+  }
+
+  presence(): PresenceMember[] {
+    return this.members.slice();
+  }
+
+  onPresence(h: (m: PresenceMember[]) => void): () => void {
+    this.presenceHandlers.add(h);
+    return () => this.presenceHandlers.delete(h);
+  }
+
+  async track(state: PresenceMember): Promise<void> {
+    this.me = state;
+    await this.room?.track(state);
+  }
+
+  async close(): Promise<void> {
+    for (const ch of [this.room, this.hostCh, ...this.privCh.values()]) if (ch) await this.sb.removeChannel(ch);
+    this.room = null;
+    this.hostCh = null;
+    this.privCh.clear();
+    this.handlers.clear();
+    this.presenceHandlers.clear();
+  }
+}
