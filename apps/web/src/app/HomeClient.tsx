@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { DICTS } from '@kto/game-core';
 import type { Lang } from '@kto/game-core';
+import { getAudio } from '@/game/audio';
 import { detectLang } from '@/lib/lang';
 import { TopBar } from '@/ui/TopBar';
 import type { TopBar as Bar } from '@/ui/topbar';
@@ -28,6 +29,8 @@ export default function HomeClient() {
     setLang(l);
     document.documentElement.lang = l;
     document.title = DICTS[l].meta.title;
+    // музыка меню: заиграет после первого касания экрана (раньше браузер звук не пустит)
+    getAudio().setMusic('menu');
   }, []);
   const t = DICTS[lang];
 

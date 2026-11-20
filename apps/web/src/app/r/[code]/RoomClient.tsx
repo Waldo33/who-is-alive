@@ -7,6 +7,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { PAL, PLAYER_COLORS } from '@kto/assets';
 import { DICTS, fmt } from '@kto/game-core';
 import type { Dict, Lang } from '@kto/game-core';
+import { getAudio } from '@/game/audio';
 import { detectLang } from '@/lib/lang';
 import { TopBar } from '@/ui/TopBar';
 import type { TopBar as Bar } from '@/ui/topbar';
@@ -64,13 +65,17 @@ export default function RoomClient({ code }: { code: string }) {
 
   const audioRef = useRef<GameAudio | null>(null);
   const unlockAudio = () => {
-    void loadChunk(() => import('@/game/audio')).then(({ Audio }) => {
-      audioRef.current ??= new Audio();
+    void loadChunk(() => import('@/game/audio')).then(({ getAudio }) => {
+      audioRef.current ??= getAudio();
       audioRef.current.unlock();
     });
   };
 
   const inGame = state?.status === 'game' && !!roomRef.current?.session;
+  // в лобби — музыка меню; в игре музыкой управляет сцена
+  useEffect(() => {
+    if (!inGame) getAudio().setMusic('menu');
+  }, [inGame]);
   const goHome = () => router.push('/');
   const topBar = (
     <TopBar
@@ -88,13 +93,6 @@ export default function RoomClient({ code }: { code: string }) {
       onBack={inGame ? undefined : goHome}
       onExit={inGame ? goHome : undefined}
       noGear={inGame}
-      onSound={(on) => {
-        const a = audioRef.current;
-        if (!a) return;
-        if (a.enabled !== on) a.toggle();
-        if (on && inGame) a.startMusic();
-        if (!on) a.stopMusic();
-      }}
     />
   );
 
@@ -140,9 +138,9 @@ function GameView({
     let cancelled = false;
     const session = room.session!;
     const me = session.info(room.state.selfId);
-    void loadChunk(() => Promise.all([import('@/game/boot'), import('@/game/audio')])).then(async ([{ bootGame }, { Audio }]) => {
+    void loadChunk(() => Promise.all([import('@/game/boot'), import('@/game/audio')])).then(async ([{ bootGame }, { getAudio }]) => {
       if (cancelled || !ref.current) return;
-      audio.current ??= new Audio();
+      audio.current ??= getAudio();
       running = await bootGame(ref.current, {
         playerName: me?.name ?? '',
         fontFamily: '"Press Start 2P", monospace',

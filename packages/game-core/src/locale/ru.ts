@@ -140,6 +140,8 @@ export const ru = {
     back: 'Назад',
     language: 'Язык',
     sound: 'Звук',
+    music: 'Музыка',
+    sfx: 'Звуки',
     on: 'Вкл',
     off: 'Выкл',
     howTo: 'Как играть',

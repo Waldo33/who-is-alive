@@ -5,7 +5,7 @@ import { mountTopBar } from '../ui/topbar';
 import type { TopBarOptions } from '../ui/topbar';
 import type { Dict, GameConfig, Lang } from '@kto/game-core';
 import { PAL } from '@kto/assets';
-import { Audio } from './audio';
+import { getAudio } from './audio';
 import { bootGame } from './boot';
 import type { RunningGame } from './boot';
 
@@ -127,7 +127,9 @@ export function mountSandbox(root: HTMLElement, opts: ShellOptions): () => void 
   };
   applyLang();
 
-  const audio = new Audio();
+  const audio = getAudio();
+  // музыка меню на стартовом экране (заиграет после первого касания — так требуют браузеры)
+  audio.setMusic('menu');
   let running: RunningGame | null = null;
 
   // «← Назад» на главную и шестерёнка (язык, звук, правила). В игре — только лист по шестерёнке на холсте.
@@ -142,20 +144,14 @@ export function mountSandbox(root: HTMLElement, opts: ShellOptions): () => void 
     onExit: undefined,
     noGear: false,
   });
-  const bar = mountTopBar(root, {
-    ...menuOpts(),
-    onSound: (on) => {
-      if (audio.enabled !== on) audio.toggle();
-      if (on && running) audio.startMusic();
-      if (!on) audio.stopMusic();
-    },
-  });
+  const bar = mountTopBar(root, menuOpts());
   const exitToMenu = () => {
     running?.destroy();
     running = null;
     stage.innerHTML = '';
     start.style.display = '';
     bar.update(menuOpts());
+    audio.setMusic('menu');
   };
   const gameOpts = (): Partial<TopBarOptions> => ({ onLang: undefined, onBack: undefined, onExit: exitToMenu, noGear: true });
   let overrides: Partial<GameConfig> = {};

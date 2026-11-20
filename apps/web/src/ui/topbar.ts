@@ -1,6 +1,7 @@
 import { DICTS, LANGS } from '@kto/game-core';
 import type { Lang } from '@kto/game-core';
 import { LANG_KEY } from '../lib/lang';
+import { getAudio } from '../game/audio';
 
 /**
  * Верхняя панель всех экранов: «← Назад» слева и шестерёнка справа.
@@ -8,6 +9,16 @@ import { LANG_KEY } from '../lib/lang';
  * Без фреймворка — одна реализация для страниц React, песочницы и экрана игры.
  */
 export const SOUND_KEY = 'kto:sound';
+export const MUSIC_KEY = 'kto:music';
+
+export function musicEnabled(): boolean {
+  try {
+    const m = localStorage.getItem(MUSIC_KEY);
+    return m ? m !== 'off' : soundEnabled();
+  } catch {
+    return true;
+  }
+}
 
 export function soundEnabled(): boolean {
   try {
@@ -29,8 +40,10 @@ export interface TopBarOptions {
   lang: Lang;
   /** Нет — переключателя языка в листе нет (например, посреди матча). */
   onLang?: (l: Lang) => void;
-  /** Живой звук игры; без него настройка просто запоминается. */
+  /** Звуки игры (эффекты) вкл/выкл. Хранение настройки — в getAudio(). */
   onSound?: (on: boolean) => void;
+  /** Музыка вкл/выкл. */
+  onMusic?: (on: boolean) => void;
   /** Нет — кнопки «Назад» нет. */
   onBack?: () => void;
   /** Пункт «Выйти в меню» в листе (в игре). */
@@ -92,6 +105,7 @@ export function mountTopBar(parent: HTMLElement, init: TopBarOptions): TopBar {
     gear.setAttribute('aria-label', t.ui.settings);
     if (sheet.hidden) return;
     const on = soundEnabled();
+    const mus = musicEnabled();
     sheet.setAttribute('aria-label', t.ui.settings);
     sheet.innerHTML = `
       <div class="kto-sheet-box">
@@ -103,7 +117,11 @@ export function mountTopBar(parent: HTMLElement, init: TopBarOptions): TopBar {
                </div></div>`
             : ''
         }
-        <div class="kto-set"><span>${t.ui.sound}</span><div class="kto-seg" role="group" aria-label="${t.ui.sound}">
+        <div class="kto-set"><span>${t.ui.music}</span><div class="kto-seg" role="group" aria-label="${t.ui.music}">
+          <button type="button" data-music="on" aria-pressed="${mus}">${t.ui.on}</button>
+          <button type="button" data-music="off" aria-pressed="${!mus}">${t.ui.off}</button>
+        </div></div>
+        <div class="kto-set"><span>${t.ui.sfx}</span><div class="kto-seg" role="group" aria-label="${t.ui.sfx}">
           <button type="button" data-sound="on" aria-pressed="${on}">${t.ui.on}</button>
           <button type="button" data-sound="off" aria-pressed="${!on}">${t.ui.off}</button>
         </div></div>
@@ -133,7 +151,16 @@ export function mountTopBar(parent: HTMLElement, init: TopBarOptions): TopBar {
       b.addEventListener('click', () => {
         const v = b.dataset.sound === 'on';
         saveSound(v);
+        getAudio().setSfxEnabled(v);
         o.onSound?.(v);
+        render();
+      }),
+    );
+    sheet.querySelectorAll<HTMLButtonElement>('[data-music]').forEach((b) =>
+      b.addEventListener('click', () => {
+        const v = b.dataset.music === 'on';
+        getAudio().setMusicEnabled(v);
+        o.onMusic?.(v);
         render();
       }),
     );

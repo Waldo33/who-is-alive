@@ -127,6 +127,8 @@ export const en: Dict = {
     back: 'Back',
     language: 'Language',
     sound: 'Sound',
+    music: 'Music',
+    sfx: 'Sounds',
     on: 'On',
     off: 'Off',
     howTo: 'How to play',

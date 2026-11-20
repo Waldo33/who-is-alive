@@ -1,31 +1,59 @@
+import { Music } from './music';
+import type { MusicMode } from './music';
+
 /**
- * Звук: Web Audio API, один AudioContext, разблокировка по первому тапу.
- * Эффекты синтезируются кодом (заглушка вместо ZzFX до этапа 7, интерфейс тот же: play(name)).
- * Музыка — короткий чиптюн-луп ~120 BPM, который резко обрывается на «Море волнуется».
+ * Звук: Web Audio API, один AudioContext на всё приложение (getAudio), разблокировка по первому тапу.
+ * Эффекты синтезируются кодом; музыка — секвенсор из music.ts (тема, вариации, напряжение, меню).
+ * Музыку и эффекты можно выключать по отдельности.
  */
 export type Sfx =
   | 'step' | 'hitPlayer' | 'hitBot' | 'poof' | 'starTake' | 'starSpawn' | 'crowd' | 'tick'
-  | 'click' | 'ready' | 'accuseRight' | 'accuseWrong' | 'fanfare' | 'hedge' | 'pigeon' | 'drum' | 'denied' | 'count';
+  | 'click' | 'ready' | 'accuseRight' | 'accuseWrong' | 'fanfare' | 'sad' | 'hedge' | 'pigeon' | 'drum' | 'denied' | 'count';
 
 const STORAGE_KEY = 'kto:sound';
+const MUSIC_KEY = 'kto:music';
+
+function stored(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+function store(key: string, v: string): void {
+  try {
+    localStorage.setItem(key, v);
+  } catch {
+    /* приватный режим */
+  }
+}
+
+let shared: Audio | null = null;
+/** Один звук на всё приложение: музыка меню не обрывается при переходе между экранами. */
+export function getAudio(): Audio {
+  shared ??= new Audio();
+  return shared;
+}
 
 export class Audio {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
-  private musicGain: GainNode | null = null;
+  private sfx: GainNode | null = null;
+  private duck: GainNode | null = null;
   private noiseBuf: AudioBuffer | null = null;
+  private music: Music | null = null;
+  /** Звуки игры (эффекты). */
   enabled = true;
-  private musicOn = false;
-  private musicTimer: number | null = null;
-  private nextNoteTime = 0;
-  private step = 0;
+  /** Музыка. */
+  musicEnabled = true;
+  /** Какая музыка должна звучать сейчас (играет, если музыка включена и звук разблокирован). */
+  private want: { mode: MusicMode; theme: number } = { mode: 'off', theme: 0 };
 
   constructor() {
-    try {
-      this.enabled = localStorage.getItem(STORAGE_KEY) !== 'off';
-    } catch {
-      this.enabled = true;
-    }
+    this.enabled = stored(STORAGE_KEY) !== 'off';
+    const m = stored(MUSIC_KEY);
+    // раньше был один переключатель: выключенный звук выключает и музыку
+    this.musicEnabled = m ? m !== 'off' : this.enabled;
     document.addEventListener('visibilitychange', () => {
       if (!this.ctx) return;
       if (document.hidden) void this.ctx.suspend().catch(() => undefined);
@@ -56,28 +84,96 @@ export class Audio {
     const AC = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
     if (!AC) return;
     this.ctx = new AC();
+    // общий выравниватель: на динамике телефона ничего не хрипит, когда всё звучит разом
+    const comp = this.ctx.createDynamicsCompressor();
+    comp.threshold.value = -14;
+    comp.ratio.value = 4;
+    comp.connect(this.ctx.destination);
     this.master = this.ctx.createGain();
-    this.master.gain.value = this.enabled ? 0.5 : 0;
-    this.master.connect(this.ctx.destination);
-    this.musicGain = this.ctx.createGain();
-    this.musicGain.gain.value = 0.32;
-    this.musicGain.connect(this.master);
+    this.master.gain.value = 0.5;
+    this.master.connect(comp);
+    this.sfx = this.ctx.createGain();
+    this.sfx.gain.value = this.enabled ? 1 : 0;
+    this.sfx.connect(this.master);
+    this.duck = this.ctx.createGain();
+    this.duck.connect(this.master);
     const len = this.ctx.sampleRate;
     this.noiseBuf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
     const d = this.noiseBuf.getChannelData(0);
     for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    this.music = new Music(this.ctx, this.duck, this.noiseBuf);
+    this.apply();
   }
 
+  /** Эффекты вкл/выкл. */
+  setSfxEnabled(on: boolean): void {
+    this.enabled = on;
+    store(STORAGE_KEY, on ? 'on' : 'off');
+    if (this.sfx) this.sfx.gain.value = on ? 1 : 0;
+    if (on) this.unlock();
+  }
+
+  /** Музыка вкл/выкл (эффекты не трогает). */
+  setMusicEnabled(on: boolean): void {
+    this.musicEnabled = on;
+    store(MUSIC_KEY, on ? 'on' : 'off');
+    if (on) this.unlock();
+    this.apply(true);
+  }
+
+  /** Старая кнопка «звук» (автономная песочница): выключает и включает всё сразу. */
   toggle(): boolean {
-    this.enabled = !this.enabled;
-    try {
-      localStorage.setItem(STORAGE_KEY, this.enabled ? 'on' : 'off');
-    } catch {
-      /* приватный режим */
+    const on = !(this.enabled || this.musicEnabled);
+    this.setSfxEnabled(on);
+    this.setMusicEnabled(on);
+    return on;
+  }
+
+  /**
+   * Какая музыка нужна сейчас. Повторный вызов с тем же режимом и темой не перезапускает песню
+   * (музыка меню течёт через переходы между экранами); restart — начать заново (новый раунд).
+   */
+  setMusic(mode: MusicMode, theme = 0, restart = false): void {
+    const same = this.want.mode === mode && this.want.theme === theme;
+    this.want = { mode, theme };
+    this.apply(restart || !same);
+  }
+
+  private apply(force = false): void {
+    const m = this.music;
+    if (!m || !this.ctx) return;
+    const { mode, theme } = this.want;
+    if (!this.musicEnabled || mode === 'off') {
+      m.stop();
+      return;
     }
-    if (this.master) this.master.gain.value = this.enabled ? 0.5 : 0;
-    if (this.enabled) this.unlock();
-    return this.enabled;
+    if (force || m.mode !== mode || (!m.running && !m.paused)) m.start(mode, theme);
+  }
+
+  /** «Море волнуется»: оборвать музыку (зажёванная плёнка). */
+  cutMusic(): void {
+    this.music?.tapeStop();
+  }
+
+  /** Продолжить после паузы с того же места песни. */
+  resumeMusic(): void {
+    if (this.musicEnabled) this.music?.resume();
+  }
+
+  /** Напряжение раунда 0–2. */
+  setIntensity(level: number): void {
+    this.music?.setIntensity(level);
+  }
+
+  /** Важный звук — музыку на миг приглушить, чтобы его было слышно. */
+  private duckMusic(): void {
+    const ctx = this.ctx;
+    const g = this.duck?.gain;
+    if (!ctx || !g) return;
+    const t = ctx.currentTime;
+    g.cancelScheduledValues(t);
+    g.setValueAtTime(0.45, t);
+    g.linearRampToValueAtTime(1, t + 0.45);
   }
 
   private tone(type: OscillatorType, f0: number, f1: number, dur: number, vol: number, when = 0, out?: AudioNode): void {
@@ -92,7 +188,7 @@ export class Audio {
     g.gain.setValueAtTime(0.0001, t);
     g.gain.exponentialRampToValueAtTime(vol, t + 0.005);
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    o.connect(g).connect(out ?? this.master);
+    o.connect(g).connect(out ?? this.sfx!);
     o.start(t);
     o.stop(t + dur + 0.02);
   }
@@ -109,13 +205,14 @@ export class Audio {
     const g = ctx.createGain();
     g.gain.setValueAtTime(vol, t);
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    s.connect(f).connect(g).connect(out ?? this.master);
+    s.connect(f).connect(g).connect(out ?? this.sfx!);
     s.start(t, Math.random() * 0.5);
     s.stop(t + dur + 0.02);
   }
 
   play(name: Sfx): void {
     if (!this.ctx || !this.enabled) return;
+    if (name === 'hitPlayer' || name === 'hitBot' || name === 'starTake' || name === 'accuseRight' || name === 'accuseWrong') this.duckMusic();
     switch (name) {
       case 'step': this.noise(0.03, 0.05, 1800); break;
       case 'hitPlayer': this.noise(0.18, 0.5, 900); this.tone('square', 420, 60, 0.25, 0.25); break;
@@ -131,6 +228,8 @@ export class Audio {
       case 'accuseRight': [523, 659, 784].forEach((f, i) => this.tone('triangle', f, f, 0.25, 0.2, i * 0.07)); break;
       case 'accuseWrong': this.tone('sawtooth', 220, 110, 0.4, 0.18); this.tone('sawtooth', 233, 100, 0.4, 0.12); break;
       case 'fanfare': [523, 659, 784, 1047, 784, 1047].forEach((f, i) => this.tone('square', f, f, 0.16, 0.16, i * 0.12)); break;
+      // «Слишком живые!» — грустный тромбон: три ступени вниз и долгая нота с вибрато
+      case 'sad': [392, 370, 349].forEach((f, i) => this.tone('sawtooth', f, f * 0.98, 0.32, 0.12, i * 0.36)); this.sadTail(1.08); break;
       case 'hedge': this.noise(0.4, 0.06, 600); break;
       case 'pigeon': for (let i = 0; i < 4; i++) this.noise(0.04, 0.12, 3000, i * 0.05); break;
       case 'drum': for (let i = 0; i < 14; i++) this.noise(0.05, 0.12 + i * 0.015, 300, i * 0.07); break;
@@ -138,52 +237,40 @@ export class Audio {
     }
   }
 
-  // ───────────── музыка ─────────────
+  private sadTail(when: number): void {
+    const ctx = this.ctx;
+    if (!ctx || !this.sfx) return;
+    const t = ctx.currentTime + when;
+    const o = ctx.createOscillator();
+    o.type = 'sawtooth';
+    o.frequency.setValueAtTime(330, t);
+    const lfo = ctx.createOscillator();
+    lfo.frequency.value = 6;
+    const depth = ctx.createGain();
+    depth.gain.value = 9;
+    lfo.connect(depth).connect(o.frequency);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.12, t + 0.03);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 1.1);
+    o.connect(g).connect(this.sfx);
+    o.start(t);
+    lfo.start(t);
+    o.stop(t + 1.15);
+    lfo.stop(t + 1.15);
+  }
 
-  private static BASS = [45, 45, 52, 45, 48, 48, 55, 48, 41, 41, 48, 41, 43, 43, 50, 47];
-  private static LEAD = [69, 72, 76, 72, 72, 76, 79, 76, 65, 69, 72, 69, 67, 71, 74, 71];
+  // ───────────── совместимость со старыми вызовами ─────────────
 
   startMusic(): void {
-    if (!this.ctx || !this.master || this.musicOn) return;
-    this.musicOn = true;
-    // новый узел громкости: остановка просто отключает старый, и уже запланированные ноты обрываются
-    this.musicGain = this.ctx.createGain();
-    this.musicGain.gain.value = 0.32;
-    this.musicGain.connect(this.master);
-    this.nextNoteTime = this.ctx.currentTime + 0.05;
-    this.step = 0;
-    const schedule = () => {
-      if (!this.ctx || !this.musicOn) return;
-      const sixteenth = 60 / 120 / 4;
-      while (this.nextNoteTime < this.ctx.currentTime + 0.12) {
-        const s = this.step % 64;
-        const when = this.nextNoteTime - this.ctx.currentTime;
-        const bar = Math.floor(s / 16);
-        const beat = s % 16;
-        const mtf = (m: number) => 440 * Math.pow(2, (m - 69) / 12);
-        if (beat % 4 === 0) this.tone('square', mtf(Audio.BASS[bar * 4 + beat / 4]), mtf(Audio.BASS[bar * 4 + beat / 4]), 0.2, 0.18, when, this.musicGain!);
-        if (beat % 2 === 0) {
-          const n = Audio.LEAD[bar * 4 + ((beat / 2) % 4)];
-          this.tone('triangle', mtf(n + (beat >= 8 ? 12 : 0)), mtf(n + (beat >= 8 ? 12 : 0)), 0.1, 0.09, when, this.musicGain!);
-        }
-        if (beat % 4 === 2) this.noise(0.03, 0.05, 6000, when, this.musicGain!);
-        if (beat === 4 || beat === 12) this.noise(0.08, 0.1, 1200, when, this.musicGain!);
-        this.nextNoteTime += sixteenth;
-        this.step++;
-      }
-    };
-    this.musicTimer = window.setInterval(schedule, 25);
-    schedule();
+    this.setMusic('play', this.want.theme);
   }
 
   stopMusic(): void {
-    this.musicOn = false;
-    if (this.musicTimer !== null) window.clearInterval(this.musicTimer);
-    this.musicTimer = null;
-    this.musicGain?.disconnect();
+    this.setMusic('off');
   }
 
   get musicPlaying(): boolean {
-    return this.musicOn;
+    return !!this.music?.running;
   }
 }

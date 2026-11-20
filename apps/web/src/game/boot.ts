@@ -1,7 +1,8 @@
 import * as Phaser from 'phaser';
 import { PAL } from '@kto/assets';
 import type { GameConfig } from '@kto/game-core';
-import { Audio } from './audio';
+import { getAudio } from './audio';
+import type { Audio } from './audio';
 import { GameScene } from './scene';
 import type { SceneInit } from './scene';
 
@@ -42,7 +43,7 @@ export async function bootGame(
   init: Omit<SceneInit, 'audio'> & { audio?: Audio; cfg?: Partial<GameConfig> },
 ): Promise<RunningGame> {
   await loadPixelFont(init.fontFamily);
-  const audio = init.audio ?? new Audio();
+  const audio = init.audio ?? getAudio();
   const data: SceneInit = { ...init, audio };
   const game = new Phaser.Game({
     type: Phaser.AUTO,

@@ -242,8 +242,18 @@ export class GameScene extends Phaser.Scene {
     this.input.on('pointerup', (p: Phaser.Input.Pointer) => this.onUp(p));
 
     this.applyTheme();
-    this.audio.startMusic();
-    if (!this.audio.enabled) this.showToast(this.t.game.soundOffHint, 2500);
+    this.syncMusic(true);
+    if (!this.audio.enabled && !this.audio.musicEnabled) this.showToast(this.t.game.soundOffHint, 2500);
+  }
+
+  /** Музыка по фазе: отсчёт и игра — тема раунда (новый раунд — с начала), обвинение — пульс, дальше — тишина. */
+  private syncMusic(restart = false): void {
+    const phase = this.sim.phase;
+    if (phase === 'countdown' || phase === 'play') {
+      this.audio.setMusic('play', this.sim.theme, restart && phase === 'countdown');
+      if (phase === 'play' && this.sim.world.isFrozen()) this.audio.cutMusic();
+    } else if (phase === 'accuse') this.audio.setMusic('accuse');
+    else this.audio.setMusic('off');
   }
 
   private setupFreezeFrame(): void {
@@ -387,8 +397,6 @@ export class GameScene extends Phaser.Scene {
         const b = this.buttons.find((x) => x.id === 'sound')!;
         b.icon = on ? 'soundOn' : 'soundOff';
         this.btnObjs.get('sound')?.icon?.setFrame(this.icon(b.icon));
-        if (on) this.audio.startMusic();
-        else this.audio.stopMusic();
         this.showToast(on ? this.t.game.soundOn : this.t.game.soundOff, 1200);
       },
     });
@@ -472,8 +480,8 @@ export class GameScene extends Phaser.Scene {
   private pressedBy = new Map<number, Button>();
 
   private onDown(p: Phaser.Input.Pointer): void {
+    // первый тап разблокирует звук; нужная музыка включится сама (по фазе), без перезапуска при каждом касании
     this.audio.unlock();
-    if (this.audio.enabled && !this.audio.musicPlaying && this.sim.phase !== 'match_end') this.audio.startMusic();
     requestWakeLock();
     const b = this.hitButton(p.x, p.y);
     if (b) {
@@ -579,7 +587,7 @@ export class GameScene extends Phaser.Scene {
         if (this.sim.phase === 'play') this.audio.play('starSpawn');
         break;
       case 'crowd':
-        this.audio.stopMusic();
+        this.audio.cutMusic();
         this.audio.play('crowd');
         this.musicResumeAt = ev.windowEnd + 900;
         break;
@@ -610,14 +618,9 @@ export class GameScene extends Phaser.Scene {
       }
     } else if (n.t === 'phase') {
       if (n.phase === 'countdown') this.audio.play('count');
-      if (n.phase === 'play') {
-        this.audio.play('ready');
-        if (this.audio.enabled) this.audio.startMusic();
-      }
-      if (n.phase === 'accuse') {
-        this.audio.stopMusic();
-        this.audio.play('tick');
-      }
+      if (n.phase === 'play') this.audio.play('ready');
+      if (n.phase === 'accuse') this.audio.play('tick');
+      this.syncMusic(n.phase === 'countdown');
       if (n.phase === 'reveal') {
         this.revealStartNow = this.sim.now;
         this.finalSoundsPlayed = false;
@@ -628,7 +631,7 @@ export class GameScene extends Phaser.Scene {
         this.audio.play('drum');
       }
       if (n.phase === 'match_end') {
-        this.audio.play('fanfare');
+        this.audio.play(this.sim.match?.tooAlive ? 'sad' : 'fanfare');
         this.spawnConfetti();
       }
       this.buildOverlay();
@@ -701,7 +704,13 @@ export class GameScene extends Phaser.Scene {
     const phase = this.sim.phase;
     if (this.musicResumeAt && this.sim.world.time >= this.musicResumeAt && phase === 'play') {
       this.musicResumeAt = 0;
-      if (this.audio.enabled) this.audio.startMusic();
+      this.audio.resumeMusic();
+    }
+    if (phase === 'play') {
+      // напряжение: изгородь сжимается — 1, последние 10 секунд — 2
+      const w = this.sim.world;
+      const level = this.sim.timeLeft() <= 10_000 ? 2 : w.zone && w.time >= w.zone.startAt ? 1 : 0;
+      this.audio.setIntensity(level);
     }
 
     if (phase === 'reveal') this.renderReveal(alpha);
