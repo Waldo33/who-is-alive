@@ -6,7 +6,7 @@
  *  - у каждой темы раунда свой характер (тональность, темп, свинг, тембр), но мотив тот же;
  *  - напряжение растёт к концу раунда: бочка, частый хэт, мелодия октавой выше, темп быстрее;
  *  - «Море волнуется» обрывает музыку эффектом зажёванной плёнки, после паузы песня
- *    продолжается с того же места, а не с начала;
+ *    продолжается с той же ноты, где оборвалась (не с начала и не со следующего такта);
  *  - в фазе обвинения — сердцебиение.
  */
 
@@ -125,6 +125,8 @@ export class Music {
   private song: Song | null = null;
   private twist = false;
   private twistBar = 0;
+  /** Последние запланированные шестнадцатые: время и место в песне. */
+  private sched: { t: number; bar: number; s16: number }[] = [];
   private drive: AudioNode | null = null;
   private readonly api: SongApi = {
     voice: (type, midi, when, dur, vol) => this.voice(type, midi, when, dur, vol),
@@ -214,6 +216,14 @@ export class Music {
         l.src.playbackRate.linearRampToValueAtTime(0.25, now + T);
       }
     }
+    // ноты планируются чуть вперёд: место паузы — первая ещё не прозвучавшая шестнадцатая
+    // (через границу такта — только у своей песни темы: у общей мотив делится на части)
+    const pending = this.sched.find((x) => x.t > now);
+    if (pending && (pending.bar === this.bar || this.song)) {
+      this.bar = pending.bar;
+      this.s16 = pending.s16;
+    }
+    this.sched = [];
     const bus = this.bus;
     if (bus) {
       bus.gain.cancelScheduledValues(now);
@@ -227,18 +237,17 @@ export class Music {
     this.paused = true;
   }
 
-  /** После паузы — короткий «перезапуск» и песня дальше со следующего такта. */
+  /** После паузы — песня продолжается с той же ноты, где её оборвало (мягко нарастая). */
   resume(): void {
     if (!this.paused || this.mode !== 'play') return;
     this.paused = false;
     this.openBus();
     const t = this.ctx.currentTime + 0.03;
-    this.voice(this.flavor.lead, 69 - 12, t, 0.06, 0.08);
-    this.voice(this.flavor.lead, 76 - 12, t + 0.06, 0.06, 0.08);
-    this.voice(this.flavor.lead, 81 - 12, t + 0.12, 0.1, 0.09);
-    this.advanceBar();
-    this.s16 = 0;
-    this.next = t + 0.24;
+    const bus = this.bus!;
+    const full = bus.gain.value;
+    bus.gain.setValueAtTime(0.0001, t);
+    bus.gain.exponentialRampToValueAtTime(full, t + 0.12);
+    this.next = t;
     this.run();
   }
 
@@ -338,6 +347,9 @@ export class Music {
   }
 
   private stepPlay(): void {
+    // где в песне каждая запланированная шестнадцатая — чтобы пауза продолжилась ровно с неё
+    this.sched.push({ t: this.next, bar: this.bar, s16: this.s16 });
+    if (this.sched.length > 8) this.sched.shift();
     if (this.song) {
       const dt = this.sixteenth();
       this.song.step(this.api, {
