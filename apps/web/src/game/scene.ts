@@ -1336,7 +1336,7 @@ export class GameScene extends Phaser.Scene {
     if (!s) return;
     try {
       const rec = recordRound(this.sim.world, { round: s.round, theme: this.sim.theme, players: s.reveal, playEnd: s.replayTo });
-      const moment = findBestMoment(rec);
+      const moment = findBestMoment(rec, this.sim.me()?.eid);
       if (!moment || (this.best && this.best.moment.score > moment.score)) return;
       const players = s.reveal.map((r) => {
         const info = this.sim.info(r.pid)!;

@@ -19,8 +19,9 @@ const LH = 320;
 const AY = 24;
 const PANEL_Y = 284;
 export const CLIP_SCALE = 6;
-/** Скорость повтора: окно 6 с идёт ~4,8 с. */
-const SPEED = 1.25;
+/** Скорость повтора: окно 6 с идёт ~4,8 с; длинное окно (до 8 с) — чуть быстрее, чтобы клип оставался ~11–12 с. */
+const BASE_SPEED = 1.25;
+const PART_MAX_MS = 5000;
 const OUTRO_MS = 1800;
 const FLASH_MS = 220;
 const FPS = 30;
@@ -68,6 +69,7 @@ export class ClipPlayerScene {
   private art: Art;
   private hedge: CanvasPattern | null;
   private partDur: number;
+  private speed: number;
   readonly duration: number;
   private replay: World | null = null;
   private part = 0;
@@ -80,7 +82,9 @@ export class ClipPlayerScene {
     this.g = g;
     this.art = getArt(inp.arena);
     this.hedge = g.createPattern(this.art.hedge, 'repeat');
-    this.partDur = (inp.moment.to - inp.moment.from) / SPEED;
+    const len = inp.moment.to - inp.moment.from;
+    this.speed = Math.max(BASE_SPEED, len / PART_MAX_MS);
+    this.partDur = len / this.speed;
     this.duration = this.partDur * 2 + OUTRO_MS;
     for (const p of inp.players) this.colors.set(p.eid, p.color);
   }
@@ -98,7 +102,7 @@ export class ClipPlayerScene {
       return;
     }
     const local = ms - (part === 1 ? 0 : this.partDur);
-    const target = this.inp.moment.from + local * SPEED;
+    const target = this.inp.moment.from + local * this.speed;
     const w = this.replay!;
     while (w.time + TICK_MS <= target && w.time < this.inp.moment.to) {
       w.step();
