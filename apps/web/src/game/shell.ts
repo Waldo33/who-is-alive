@@ -1,6 +1,8 @@
-import { DEFAULT_CONFIG, DICTS, LANGS } from '@kto/game-core';
-import { LANG_KEY, detectLang } from '../lib/lang';
+import { DEFAULT_CONFIG, DICTS } from '@kto/game-core';
+import { detectLang } from '../lib/lang';
 import { download, shareContent } from '../lib/share';
+import { mountTopBar } from '../ui/topbar';
+import type { TopBarOptions } from '../ui/topbar';
 import type { Dict, GameConfig, Lang } from '@kto/game-core';
 import { PAL } from '@kto/assets';
 import { Audio } from './audio';
@@ -38,10 +40,6 @@ const CSS = `
 .kto-small{font-size:8px;color:${PAL.steel};max-width:36ch;line-height:1.8;margin:0}
 .kto-check{display:flex;align-items:center;gap:8px;font-size:9px;color:${PAL.mist}}
 .kto-check input{width:20px;height:20px;accent-color:${PAL.amber}}
-.kto-lang{position:absolute;top:calc(12px + env(safe-area-inset-top));left:12px;display:flex;gap:0;box-shadow:0 0 0 2px ${PAL.dusk}}
-.kto-lang button{font:inherit;font-size:9px;min-width:44px;min-height:36px;border:0;border-radius:0;background:${PAL.night};color:${PAL.steel};cursor:pointer}
-.kto-lang button[aria-pressed="true"]{background:${PAL.dusk};color:${PAL.yellow}}
-.kto-lang button:focus-visible{outline:2px solid ${PAL.yellow};outline-offset:2px}
 .kto-rotate{position:absolute;inset:0;display:none;align-items:center;justify-content:center;flex-direction:column;gap:16px;
   background:${PAL.ink};z-index:20;font-size:11px;color:${PAL.sand};text-align:center;padding:24px}
 @media (orientation:landscape) and (max-height:500px){.kto-rotate{display:flex}}
@@ -81,9 +79,6 @@ export function mountSandbox(root: HTMLElement, opts: ShellOptions): () => void 
   root.innerHTML = `
     <div class="kto-stage"></div>
     <section class="kto-start">
-      <div class="kto-lang" role="group">
-        ${LANGS.map((l) => `<button type="button" data-lang="${l}">${l.toUpperCase()}</button>`).join('')}
-      </div>
       <h1 class="kto-logo"></h1>
       <p class="kto-tag"></p>
       <p class="kto-rules"></p>
@@ -117,8 +112,6 @@ export function mountSandbox(root: HTMLElement, opts: ShellOptions): () => void 
     document.documentElement.lang = lang;
     document.title = t.meta.title;
     $('.kto-start').setAttribute('aria-label', t.start.aria);
-    $('.kto-lang').setAttribute('aria-label', t.start.language);
-    root.querySelectorAll<HTMLButtonElement>('.kto-lang button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.lang === lang)));
     $('.kto-logo').textContent = t.meta.title;
     $('.kto-tag').textContent = t.meta.tagline;
     $('.kto-rules').innerHTML = t.start.rules.join('<br>');
@@ -132,21 +125,39 @@ export function mountSandbox(root: HTMLElement, opts: ShellOptions): () => void 
     const devBtn = root.querySelector<HTMLButtonElement>('.kto-dev .kto-btn');
     if (devBtn) devBtn.textContent = t.start.devApply;
   };
-  root.querySelectorAll<HTMLButtonElement>('.kto-lang button').forEach((b) =>
-    b.addEventListener('click', () => {
-      lang = b.dataset.lang as Lang;
-      try {
-        localStorage.setItem(LANG_KEY, lang);
-      } catch {
-        /* приватный режим */
-      }
-      applyLang();
-    }),
-  );
   applyLang();
 
   const audio = new Audio();
   let running: RunningGame | null = null;
+
+  // «← Назад» на главную и шестерёнка (язык, звук, правила). В игре — только лист по шестерёнке на холсте.
+  const standalone = location.protocol === 'file:';
+  const menuOpts = (): TopBarOptions => ({
+    lang,
+    onLang: (l: Lang) => {
+      lang = l;
+      applyLang();
+    },
+    onBack: standalone ? undefined : () => location.assign('/'),
+    onExit: undefined,
+    noGear: false,
+  });
+  const bar = mountTopBar(root, {
+    ...menuOpts(),
+    onSound: (on) => {
+      if (audio.enabled !== on) audio.toggle();
+      if (on && running) audio.startMusic();
+      if (!on) audio.stopMusic();
+    },
+  });
+  const exitToMenu = () => {
+    running?.destroy();
+    running = null;
+    stage.innerHTML = '';
+    start.style.display = '';
+    bar.update(menuOpts());
+  };
+  const gameOpts = (): Partial<TopBarOptions> => ({ onLang: undefined, onBack: undefined, onExit: exitToMenu, noGear: true });
   let overrides: Partial<GameConfig> = {};
 
   const toast = (s: string) => {
@@ -196,11 +207,22 @@ export function mountSandbox(root: HTMLElement, opts: ShellOptions): () => void 
       /* приватный режим */
     }
     start.style.display = 'none';
+    bar.update(gameOpts());
     const cfg = { ...overrides, kidsMode: kids.checked };
     if (running) running.restart({ playerName, cfg, lang });
     else {
       const speed = dev ? Number(new URLSearchParams(location.search).get('speed')) || 1 : 1;
-      running = await bootGame(stage, { playerName, fontFamily: opts.fontFamily, audio, cfg, onShare, onSave, timeScale: speed, lang });
+      running = await bootGame(stage, {
+        playerName,
+        fontFamily: opts.fontFamily,
+        audio,
+        cfg,
+        onShare,
+        onSave,
+        onSettings: () => bar.openSettings(),
+        timeScale: speed,
+        lang,
+      });
       if (dev) (window as unknown as { __kto: RunningGame }).__kto = running;
     }
   });
@@ -233,6 +255,7 @@ export function mountSandbox(root: HTMLElement, opts: ShellOptions): () => void 
 
   return () => {
     running?.destroy();
+    bar.destroy();
     for (const ev of gestureEvents) document.removeEventListener(ev, block);
     document.removeEventListener('touchend', noDoubleTap);
     document.removeEventListener('touchstart', noPinch);

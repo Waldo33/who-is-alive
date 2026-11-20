@@ -2,11 +2,14 @@
 
 import Link from 'next/link';
 import QRCode from 'qrcode';
+import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { PAL, PLAYER_COLORS } from '@kto/assets';
 import { DICTS, fmt } from '@kto/game-core';
 import type { Dict, Lang } from '@kto/game-core';
-import { LANG_KEY, detectLang } from '@/lib/lang';
+import { detectLang } from '@/lib/lang';
+import { TopBar } from '@/ui/TopBar';
+import type { TopBar as Bar } from '@/ui/topbar';
 import { playerName, saveName } from '@/lib/name';
 import { download, shareContent } from '@/lib/share';
 import { AuthError, ensureAnonymousUser, supabase } from '@/lib/supabase';
@@ -21,6 +24,8 @@ export default function RoomClient({ code }: { code: string }) {
   const [state, setState] = useState<RoomState | null>(null);
   const [fatal, setFatal] = useState('');
   const roomRef = useRef<Room | null>(null);
+  const router = useRouter();
+  const bar = useRef<Bar | null>(null);
 
   useEffect(() => {
     const l = detectLang();
@@ -64,23 +69,70 @@ export default function RoomClient({ code }: { code: string }) {
     });
   };
 
+  const inGame = state?.status === 'game' && !!roomRef.current?.session;
+  const goHome = () => router.push('/');
+  const topBar = (
+    <TopBar
+      lang={lang}
+      barRef={bar}
+      // посреди матча язык не меняем (экран игры пересоздался бы), выход — через «Выйти в меню»
+      onLang={
+        inGame
+          ? undefined
+          : (l) => {
+              setLang(l);
+              document.documentElement.lang = l;
+            }
+      }
+      onBack={inGame ? undefined : goHome}
+      onExit={inGame ? goHome : undefined}
+      noGear={inGame}
+      onSound={(on) => {
+        const a = audioRef.current;
+        if (!a) return;
+        if (a.enabled !== on) a.toggle();
+        if (on && inGame) a.startMusic();
+        if (!on) a.stopMusic();
+      }}
+    />
+  );
+
   const errorKey = fatal || (state?.status === 'error' ? state.error : '');
-  if (errorKey) return <ErrorScreen t={t} errorKey={errorKey} />;
-  if (!state || state.status === 'connecting') {
-    return (
+  let screen: React.ReactNode;
+  if (errorKey) screen = <ErrorScreen t={t} errorKey={errorKey} />;
+  else if (!state || state.status === 'connecting') {
+    screen = (
       <main className="lobby center">
         <p className="muted">{t.lobby.connecting}</p>
       </main>
     );
-  }
-  if (state.status === 'game' && roomRef.current?.session) {
-    return <GameView key={state.gameId} room={roomRef.current} lang={lang} audio={audioRef} t={t} />;
-  }
-  return <Lobby t={t} lang={lang} setLang={setLang} state={state} room={roomRef.current!} onGesture={unlockAudio} />;
+  } else if (inGame) {
+    screen = <GameView key={state.gameId} room={roomRef.current!} lang={lang} audio={audioRef} t={t} onSettings={() => bar.current?.openSettings()} />;
+  } else screen = <Lobby t={t} state={state} room={roomRef.current!} onGesture={unlockAudio} />;
+  return (
+    <>
+      {topBar}
+      {screen}
+    </>
+  );
 }
 
 /** Экран игры: та же сцена, что в песочнице, но сессия — хост или гость. */
-function GameView({ room, lang, audio, t }: { room: Room; lang: Lang; audio: React.RefObject<GameAudio | null>; t: Dict }) {
+function GameView({
+  room,
+  lang,
+  audio,
+  t,
+  onSettings,
+}: {
+  room: Room;
+  lang: Lang;
+  audio: React.RefObject<GameAudio | null>;
+  t: Dict;
+  onSettings: () => void;
+}) {
+  const settingsRef = useRef(onSettings);
+  settingsRef.current = onSettings;
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     let running: RunningGame | null = null;
@@ -100,6 +152,7 @@ function GameView({ room, lang, audio, t }: { room: Room; lang: Lang; audio: Rea
           await shareContent({ text, url: `${location.origin}/r/${room.state.code}`, files });
         },
         onSave: (file: File) => download(file),
+        onSettings: () => settingsRef.current(),
       });
       if (cancelled) running.destroy();
     });
@@ -128,15 +181,11 @@ function ErrorScreen({ t, errorKey }: { t: Dict; errorKey: string }) {
 
 export function Lobby({
   t,
-  lang,
-  setLang,
   state,
   room,
   onGesture,
 }: {
   t: Dict;
-  lang: Lang;
-  setLang: (l: Lang) => void;
   state: RoomState;
   room: Room;
   onGesture: () => void;
@@ -184,25 +233,6 @@ export function Lobby({
 
   return (
     <main className="lobby">
-      <div className="lang-switch" role="group" aria-label={t.start.language}>
-        {(['ru', 'en'] as Lang[]).map((l) => (
-          <button
-            key={l}
-            aria-pressed={l === lang}
-            onClick={() => {
-              setLang(l);
-              try {
-                localStorage.setItem(LANG_KEY, l);
-              } catch {
-                /* приватный режим */
-              }
-            }}
-          >
-            {l.toUpperCase()}
-          </button>
-        ))}
-      </div>
-
       <h1 className="lobby-logo">{t.meta.title}</h1>
 
       <section className="invite-card" aria-label={t.lobby.codeLabel}>

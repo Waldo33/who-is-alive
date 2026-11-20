@@ -38,6 +38,8 @@ export interface SceneInit {
   onExit?: () => void;
   /** Поделиться текстом и, если есть, файлами (карточка, клип). Вызывается из жеста пользователя. */
   onShare?: (text: string, files?: File[]) => void | Promise<void>;
+  /** Открыть настройки (шестерёнка в углу). Без него — кнопка просто включает и выключает звук. */
+  onSettings?: () => void;
   /** Сохранить файл на устройство (клип). */
   onSave?: (file: File) => void;
   lang?: Lang;
@@ -372,9 +374,14 @@ export class GameScene extends Phaser.Scene {
         },
       });
     });
+    // шестерёнка: звук, правила и выход — в листе настроек поверх игры (язык меняется вне матча)
     this.buttons.push({
-      id: 'sound', x: 166, y: 3, w: 12, h: 18, icon: this.audio.enabled ? 'soundOn' : 'soundOff', visible: () => true,
-      onDown: () => {
+      id: 'sound', x: 166, y: 3, w: 12, h: 18, icon: this.init0.onSettings ? 'gear' : this.audio.enabled ? 'soundOn' : 'soundOff', visible: () => true,
+      onUp: () => {
+        if (this.init0.onSettings) {
+          this.init0.onSettings();
+          return;
+        }
         const on = this.audio.toggle();
         const b = this.buttons.find((x) => x.id === 'sound')!;
         b.icon = on ? 'soundOn' : 'soundOff';

@@ -343,6 +343,7 @@ export function makeIcons(): { canvas: HTMLCanvasElement; names: string[] } {
     dance: ['...oooo.', '...owwo.', '...oo.o.', '...o..o.', '.ooo.oo.', 'owwo.oo.', 'owwo....', '.oo.....'],
     check: ['......oo', '.....owo', 'oo..owo.', 'owo.owo.', '.owowo..', '..owo...', '...o....', '........'],
     cross: ['oo....oo', 'owo..owo', '.owoowo.', '..owwo..', '..owwo..', '.owoowo.', 'owo..owo', 'oo....oo'],
+    gear: ['...mm...', '.m.mm.m.', '..mmmm..', 'mmm..mmm', 'mmm..mmm', '..mmmm..', '.m.mm.m.', '...mm...'],
     crown: ['o..o..o.', 'oyoyoyo.', 'oyyyyyo.', 'oyyyyyo.', 'oyryryo.', 'ooooooo.', '........', '........'],
   };
   const names = Object.keys(icons);

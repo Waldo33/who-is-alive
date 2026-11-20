@@ -2,10 +2,12 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { DICTS } from '@kto/game-core';
 import type { Lang } from '@kto/game-core';
 import { detectLang } from '@/lib/lang';
+import { TopBar } from '@/ui/TopBar';
+import type { TopBar as Bar } from '@/ui/topbar';
 import { playerName } from '@/lib/name';
 import { AuthError, ensureAnonymousUser, supabase } from '@/lib/supabase';
 import { createRoom } from '@/net/room';
@@ -20,6 +22,7 @@ export default function HomeClient() {
   const [error, setError] = useState('');
   const [showCode, setShowCode] = useState(false);
   const [code, setCode] = useState('');
+  const bar = useRef<Bar | null>(null);
   useEffect(() => {
     const l = detectLang();
     setLang(l);
@@ -46,6 +49,15 @@ export default function HomeClient() {
 
   return (
     <main className="home">
+      <TopBar
+        lang={lang}
+        barRef={bar}
+        onLang={(l) => {
+          setLang(l);
+          document.documentElement.lang = l;
+          document.title = DICTS[l].meta.title;
+        }}
+      />
       <div className="crowd" aria-hidden>
         {CROWD.map((i) => (
           <i key={i} className={i === 7 ? 'me' : undefined} style={{ animationDelay: `${(i * 137) % 900}ms` }} />
@@ -87,6 +99,9 @@ export default function HomeClient() {
       <Link className="link" href="/sandbox">
         {t.start.play}
       </Link>
+      <button className="link" onClick={() => bar.current?.openSettings('rules')}>
+        {t.ui.howTo}
+      </button>
       {error && (
         <p className="error" role="alert">
           {error}

@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit",
     "test": "echo \"web: тесты появятся на этапе 4 (сетевой стенд)\"",
     "standalone": "node scripts/build-standalone.mjs",
+    "icons": "node scripts/make-icons.mjs",
     "live-e2e": "esbuild scripts/live-e2e.ts --bundle --platform=node --format=esm --alias:@=./src --outfile=.live-e2e.mjs --log-level=warning && node .live-e2e.mjs"
   },
   "dependencies": {
