@@ -10,6 +10,8 @@ import { LANG_KEY, detectLang } from '@/lib/lang';
 import { playerName, saveName } from '@/lib/name';
 import { AuthError, ensureAnonymousUser, supabase } from '@/lib/supabase';
 import { Room } from '@/net/room';
+import type { Audio as GameAudio } from '@/game/audio';
+import type { RunningGame } from '@/game/boot';
 import type { RoomSettings, RoomState } from '@/net/room';
 
 export default function RoomClient({ code }: { code: string }) {
@@ -53,6 +55,14 @@ export default function RoomClient({ code }: { code: string }) {
     };
   }, [code]);
 
+  const audioRef = useRef<GameAudio | null>(null);
+  const unlockAudio = () => {
+    void import('@/game/audio').then(({ Audio }) => {
+      audioRef.current ??= new Audio();
+      audioRef.current.unlock();
+    });
+  };
+
   const errorKey = fatal || (state?.status === 'error' ? state.error : '');
   if (errorKey) return <ErrorScreen t={t} errorKey={errorKey} />;
   if (!state || state.status === 'connecting') {
@@ -62,7 +72,47 @@ export default function RoomClient({ code }: { code: string }) {
       </main>
     );
   }
-  return <Lobby t={t} lang={lang} setLang={setLang} state={state} room={roomRef.current!} />;
+  if (state.status === 'game' && roomRef.current?.session) {
+    return <GameView key={state.gameId} room={roomRef.current} lang={lang} audio={audioRef} t={t} />;
+  }
+  return <Lobby t={t} lang={lang} setLang={setLang} state={state} room={roomRef.current!} onGesture={unlockAudio} />;
+}
+
+/** Экран игры: та же сцена, что в песочнице, но сессия — хост или гость. */
+function GameView({ room, lang, audio, t }: { room: Room; lang: Lang; audio: React.RefObject<GameAudio | null>; t: Dict }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    let running: RunningGame | null = null;
+    let cancelled = false;
+    const session = room.session!;
+    const me = session.info(room.state.selfId);
+    void Promise.all([import('@/game/boot'), import('@/game/audio')]).then(async ([{ bootGame }, { Audio }]) => {
+      if (cancelled || !ref.current) return;
+      audio.current ??= new Audio();
+      running = await bootGame(ref.current, {
+        playerName: me?.name ?? '',
+        fontFamily: '"Press Start 2P", monospace',
+        audio: audio.current,
+        lang,
+        createSession: () => session,
+        onShare: async (text: string) => {
+          const url = `${location.origin}/r/${room.state.code}`;
+          try {
+            if (navigator.share) return void (await navigator.share({ text, url }));
+            await navigator.clipboard.writeText(`${text} ${url}`);
+          } catch {
+            /* меню закрыли */
+          }
+        },
+      });
+      if (cancelled) running.destroy();
+    });
+    return () => {
+      cancelled = true;
+      running?.destroy();
+    };
+  }, [room, lang, audio]);
+  return <div ref={ref} className="game-stage" aria-label={t.meta.title} />;
 }
 
 function ErrorScreen({ t, errorKey }: { t: Dict; errorKey: string }) {
@@ -86,12 +136,14 @@ export function Lobby({
   setLang,
   state,
   room,
+  onGesture,
 }: {
   t: Dict;
   lang: Lang;
   setLang: (l: Lang) => void;
   state: RoomState;
   room: Room;
+  onGesture: () => void;
 }) {
   const [qr, setQr] = useState('');
   const [toast, setToast] = useState('');
@@ -217,12 +269,18 @@ export function Lobby({
 
       <div className="lobby-actions">
         {!isHost && (
-          <button className={`btn ${me?.ready ? 'on' : ''}`} aria-pressed={!!me?.ready} onClick={() => void room.setReady(!me?.ready)}>
+          <button className={`btn ${me?.ready ? 'on' : ''}`} aria-pressed={!!me?.ready} onClick={() => {
+              onGesture();
+              void room.setReady(!me?.ready);
+            }}>
             {me?.ready ? `✓ ${t.lobby.ready}` : t.lobby.imReady}
           </button>
         )}
         {isHost ? (
-          <button className="btn" disabled={!canStart} onClick={() => room.onStartRequest?.()}>
+          <button className="btn" disabled={!canStart} onClick={() => {
+              onGesture();
+              void room.startMatch();
+            }}>
             {t.lobby.start}
           </button>
         ) : (

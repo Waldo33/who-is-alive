@@ -74,6 +74,8 @@ export class RemoteSession implements ClientSession {
   latency = 0;
   /** Сколько шагов мира пришлось догонять или ждать — для отладки плавности. */
   stalls = 0;
+  /** Запас задержки: растёт, если данные хоста не успевают, и медленно сокращается. */
+  private jitter = JITTER_MS;
 
   constructor(o: RemoteOptions) {
     this.t = o.transport;
@@ -213,7 +215,9 @@ export class RemoteSession implements ClientSession {
   private targetTime(): number {
     if (!this.running) return this.lastHostWt;
     const off = this.offsets.length ? Math.max(...this.offsets) : this.lastHostWt - this.clock();
-    const est = this.clock() + off - this.cfg.cmdBatchMs - JITTER_MS;
+    const est = this.clock() + off - this.cfg.cmdBatchMs - this.jitter;
+    if (est > this.lastHostWt) this.jitter = Math.min(500, this.jitter + 15);
+    else if (this.lastHostWt - est > 150) this.jitter = Math.max(JITTER_MS, this.jitter - 0.5);
     return Math.min(est, this.lastHostWt);
   }
 

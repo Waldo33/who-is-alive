@@ -95,3 +95,10 @@ button.btn { border: 0; cursor: pointer; border-radius: 0; }
 .toast { position: fixed; left: 50%; bottom: calc(16px + env(safe-area-inset-bottom)); transform: translateX(-50%);
   background: var(--night); color: var(--sand); font-size: 9px; padding: 10px 14px; box-shadow: 0 0 0 2px var(--ink); z-index: 10; }
 @media (max-width: 360px) { .qr { width: 132px; height: 132px; } .room-code { font-size: 20px; } }
+
+/* ───────────── экран игры в комнате ───────────── */
+.game-stage { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; touch-action: none;
+  background: var(--ink); background-image: repeating-linear-gradient(0deg, var(--ink) 0 6px, var(--plum) 6px 7px);
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  -webkit-user-select: none; user-select: none; overscroll-behavior: none; }
+.game-stage canvas { image-rendering: pixelated; box-shadow: 0 0 0 2px #262b44, 0 0 0 4px var(--ink), 0 0 0 6px #68386c, 0 0 0 8px var(--ink); }

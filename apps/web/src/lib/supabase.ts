@@ -11,7 +11,13 @@ let client: SupabaseClient | null = null;
 
 export function supabase(): SupabaseClient {
   client ??= createClient(URL, KEY, {
-    auth: { persistSession: true, autoRefreshToken: true, storageKey: 'kto-auth' },
+    // сессия на вкладку: перезагрузка возвращает того же игрока, новая вкладка — новый игрок
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      storageKey: 'kto-auth',
+      storage: typeof window === 'undefined' ? undefined : window.sessionStorage,
+    },
     realtime: { params: { eventsPerSecond: 40 } },
   });
   return client;

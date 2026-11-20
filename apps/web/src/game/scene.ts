@@ -166,6 +166,7 @@ export class GameScene extends Phaser.Scene {
     const players = names.map((name, i) => ({ pid: i === 0 ? ME : `ai${i}`, name, color: i }));
     const seed = this.init0.seed ?? (Date.now() & 0x7fffffff);
     this.sim = this.init0.createSession?.(this.cfg, players, seed) ?? createLocalSession(this.cfg, players, seed, ME);
+    this.cfg = this.sim.cfg; // по сети конфиг задаёт хост
     this.sim.onWorldEvent((ev) => this.onWorldEvent(ev));
     this.events.once('shutdown', () => this.sim.dispose());
     registerFonts(this, this.init0.fontFamily);

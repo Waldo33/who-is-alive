@@ -1,8 +1,9 @@
 'use client';
 
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { SupabaseTransport } from '@kto/net';
-import type { PresenceMember, Transport } from '@kto/net';
+import { HostSession, RemoteSession, SupabaseTransport } from '@kto/net';
+import type { PresenceMember, RoomMsg, Transport } from '@kto/net';
+import type { ClientSession, PlayerInfo } from '@kto/game-core';
 import { rpcErrorCode } from '@/lib/supabase';
 
 export interface RoomSettings {
@@ -23,7 +24,9 @@ export interface Member {
 }
 
 export interface RoomState {
-  status: 'connecting' | 'lobby' | 'error';
+  status: 'connecting' | 'lobby' | 'error' | 'game';
+  /** Номер игровой сессии: меняется при старте и смене хоста — экран игры пересоздаётся. */
+  gameId?: number;
   error?: string;
   code: string;
   selfId: string;
@@ -53,8 +56,13 @@ export class Room {
   private myReady = false;
   /** Сообщения игры (всё, что не лобби) — для этапа C. */
   onGameMessage: ((channel: string, msg: unknown, from: string) => void) | null = null;
-  /** Хост нажал «Начать» — обработчик подставляет экран игры (этап C). */
-  onStartRequest: (() => void) | null = null;
+  /** Текущая игровая сессия (хост или гость). */
+  session: ClientSession | null = null;
+  private gameSeq = 0;
+  private matchPlayers: PlayerInfo[] = [];
+  private hostMissingSince = 0;
+  private statusTimer: ReturnType<typeof setInterval> | null = null;
+  private lastStatus = '';
 
   constructor(private sb: SupabaseClient, code: string, selfId: string) {
     this.state = { status: 'connecting', code: code.toUpperCase(), selfId, hostId: '', members: [], settings: DEFAULT_SETTINGS };
@@ -82,7 +90,7 @@ export class Room {
       this.set({ status: 'error', error: rpcErrorCode(error) });
       return;
     }
-    const r = data as { code: string; color: number; host_id: string; settings: Partial<RoomSettings> };
+    const r = data as { code: string; color: number; host_id: string; status: string; settings: Partial<RoomSettings> };
     this.set({ code: r.code, hostId: r.host_id, settings: { ...DEFAULT_SETTINGS, ...(r.settings ?? {}) } });
     await this.loadMembers();
     const t = new SupabaseTransport(this.sb, r.code, this.state.selfId);
@@ -99,6 +107,11 @@ export class Room {
         this.set({ hostId: lm.hostId, settings: lm.settings });
         return;
       }
+      // старт матча — от хоста; после смены хоста — от нового (он уже записан в базе как хост)
+      if (channel === 'room' && m?.t === 'match_start' && from !== this.state.selfId && this.dbMembers.some((d) => d.user_id === from)) {
+        this.beginRemote(msg as Extract<RoomMsg, { t: 'match_start' }>, false);
+        return;
+      }
       this.onGameMessage?.(channel, msg, from);
     });
     try {
@@ -108,6 +121,11 @@ export class Room {
       return;
     }
     this.set({ status: 'lobby' });
+    // перезагрузка во время матча: вернуться в игру по снимку от хоста
+    if (r.status === 'playing' && !this.isHost) {
+      this.beginRemote({ t: 'match_start', players: this.membersAsPlayers(), cfg: this.cfgFromSettings(), seed: 0, hostId: this.state.hostId }, true);
+    }
+    this.statusTimer = setInterval(() => this.watch(), 1000);
     this.touchTimer = setInterval(() => void this.sb.rpc('touch_room', { p_code: this.state.code }), 60_000);
   }
 
@@ -160,6 +178,81 @@ export class Room {
     this.set({ members });
   }
 
+  private membersAsPlayers(): PlayerInfo[] {
+    return this.state.members
+      .filter((m) => m.online || m.userId === this.state.selfId)
+      .map((m) => ({ pid: m.userId, name: m.name, color: m.color }));
+  }
+
+  private cfgFromSettings() {
+    const s = this.state.settings;
+    return { roundSec: s.roundSec, maxRounds: s.maxRounds, kidsMode: s.kidsMode };
+  }
+
+  /** Хост: начать матч с теми, кто сейчас в комнате. */
+  async startMatch(resume?: { scores: Record<string, number>; round: number }): Promise<void> {
+    if (!this.isHost || !this.transport) return;
+    const players = resume ? this.matchPlayers.filter((p) => this.state.members.some((m) => m.userId === p.pid && (m.online || m.userId === this.state.selfId))) : this.membersAsPlayers();
+    if (players.length < 2 && !resume) return;
+    this.matchPlayers = players;
+    await this.transport.setRole(true, players.map((p) => p.pid));
+    await this.sb.rpc('set_room_status', { p_code: this.state.code, p_status: 'playing' });
+    const seed = Math.floor(Math.random() * 2 ** 31);
+    const cfg = this.cfgFromSettings();
+    await this.transport.send('room', { t: 'match_start', players, cfg, seed, hostId: this.state.selfId } satisfies RoomMsg);
+    this.session?.dispose();
+    this.session = new HostSession({ transport: this.transport, players, cfg, seed, hostPid: this.state.selfId, resume });
+    this.set({ status: 'game', gameId: ++this.gameSeq });
+  }
+
+  private beginRemote(m: Extract<RoomMsg, { t: 'match_start' }>, resync: boolean): void {
+    if (!this.transport) return;
+    this.matchPlayers = m.players;
+    this.session?.dispose();
+    this.session = new RemoteSession({
+      transport: this.transport,
+      selfPid: this.state.selfId,
+      hostPid: m.hostId,
+      players: m.players,
+      cfg: m.cfg,
+      resync,
+    });
+    this.set({ status: 'game', hostId: m.hostId, gameId: ++this.gameSeq });
+  }
+
+  /** Раз в секунду: пропал ли хост, и статус комнаты для опоздавших. */
+  private watch(): void {
+    if (this.state.status !== 'game' || !this.session) return;
+    const s = this.session;
+    if (this.isHost) {
+      const status = s.phase === 'match_end' ? 'lobby' : 'playing';
+      if (status !== this.lastStatus) {
+        this.lastStatus = status;
+        void this.sb.rpc('set_room_status', { p_code: this.state.code, p_status: status });
+      }
+      return;
+    }
+    const hostOnline = this.presence.some((p) => p.userId === this.state.hostId);
+    if (hostOnline) {
+      this.hostMissingSince = 0;
+      return;
+    }
+    this.hostMissingSince ||= Date.now();
+    if (Date.now() - this.hostMissingSince < 5000) return;
+    // следующий по порядку входа среди оставшихся забирает роль хоста и перезапускает раунд
+    const next = this.presence.filter((p) => p.userId !== this.state.hostId).sort((a, b) => a.joinedAt - b.joinedAt)[0];
+    if (next?.userId !== this.state.selfId) return;
+    this.hostMissingSince = 0;
+    void (async () => {
+      const { error } = await this.sb.rpc('claim_host', { p_code: this.state.code });
+      if (error) return;
+      const oldHost = this.state.hostId;
+      this.set({ hostId: this.state.selfId });
+      this.matchPlayers = this.matchPlayers.filter((p) => p.pid !== oldHost);
+      await this.startMatch({ scores: { ...s.scores }, round: s.round });
+    })();
+  }
+
   async setReady(ready: boolean): Promise<void> {
     this.myReady = ready;
     await this.transport?.track(this.me());
@@ -180,6 +273,9 @@ export class Room {
 
   async leave(): Promise<void> {
     if (this.touchTimer) clearInterval(this.touchTimer);
+    if (this.statusTimer) clearInterval(this.statusTimer);
+    this.session?.dispose();
+    this.session = null;
     if (this.refreshTimer) clearTimeout(this.refreshTimer);
     await this.transport?.close();
     this.transport = null;
