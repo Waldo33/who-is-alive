@@ -1248,6 +1248,7 @@ export class GameScene extends Phaser.Scene {
         this.ovDyn.speed = this.ovText(176, AY + 248, '×2.5', 'mist', false).setOrigin(1, 0).setVisible(false);
         const s = sim.summary!;
         this.ovDyn.final = this.ovText(90, PANEL_Y + 13, '', 'sand').setVisible(false);
+        this.ovDyn.caught = this.ovText(90, PANEL_Y + 20, this.t.game.caught, 'red').setVisible(false);
         s.reveal.forEach((r, i) => {
           const info = sim.info(r.pid)!;
           this.ovDyn['name' + i] = this.txt(0, 0, info.name, COLOR_FONT[info.color]).setVisible(false);
@@ -1399,6 +1400,11 @@ export class GameScene extends Phaser.Scene {
         const mine = s.accusations.find((a) => a.pid === this.sim.selfPid);
         this.ovDyn.final?.setText(mine ? (mine.correct ? this.t.game.guessed : this.t.game.missed) : this.t.game.noAccuse).setVisible(true);
         this.ovDyn.final.x = Math.round(90 - this.ovDyn.final.width / 2);
+        // тебя вычислили: вторая строка, первая поднимается
+        const meR = s.reveal.find((r) => r.pid === this.sim.selfPid);
+        const caught = !!meR?.alive && s.accusations.some((a) => a.eid === meR.eid);
+        this.ovDyn.caught?.setVisible(caught);
+        this.ovDyn.final.y = caught ? PANEL_Y + 6 : PANEL_Y + 13;
         this.drawAccusations();
       }
     }

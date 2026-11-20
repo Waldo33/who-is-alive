@@ -459,7 +459,8 @@ export class MatchSim {
       if (correct) this.addScore(p.pid, cfg.points.accuse, 'accuse', pts);
     }
     for (const p of this.pr) {
-      if (p.alive) this.addScore(p.pid, cfg.points.survive, 'survive', pts);
+      // выжил, но тебя вычислили — очко за выживание пропадает (обвинитель своё +1 уже получил)
+      if (p.alive && !accusedCount.get(p.eid)) this.addScore(p.pid, cfg.points.survive, 'survive', pts);
       if (this.starWinner === p.pid) this.addScore(p.pid, cfg.points.stars, 'stars', pts);
     }
     for (const p of this.pr) pts[p.pid].total = pts[p.pid].kill + pts[p.pid].survive + pts[p.pid].stars + pts[p.pid].accuse;

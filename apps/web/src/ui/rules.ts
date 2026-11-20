@@ -2,11 +2,12 @@ import { PAL } from '@kto/assets';
 import type { Dict } from '@kto/game-core';
 import { tint } from '../game/art';
 import { canvas } from '../game/pixels';
-import { CH_H, CH_W, F, OL_H, OL_W, THEMES, makeCharacterSheets, makeIcons, makeStar } from '../game/sprites';
+import { CH_H, CH_W, F, OL_H, OL_W, THEMES, makeCharacterSheets, makeIcons, makeMark, makeStar } from '../game/sprites';
 
 /**
  * «Как играть»: каждый пункт правил — отдельная строка с пиксельной картинкой из игры:
- * человечек в жёлтом контуре живого, кулак удара, звезда, кнопка команды «Море волнуется».
+ * человечек в жёлтом контуре живого, кулак удара, звезда, кнопка команды «Море волнуется»,
+ * человечек под «?» с галочкой (обвинение).
  * Одна разметка для стартового экрана песочницы и листа настроек.
  */
 let icons: string[] | null = null;
@@ -51,7 +52,14 @@ function makeRuleIcons(): string[] {
   d.g.fillRect(2, 3, 16, 1);
   iconAt(d.g, 'hand', 6, 7);
 
-  return [a, b, c, d].map((x) => x.c.toDataURL('image/png'));
+  // 5. обвинение: человечек под «?» и галочка — вычислил
+  const e = cell();
+  const q = makeMark('?');
+  e.g.drawImage(sheets.body, F.D * CH_W, 0, CH_W, CH_H, 2, 4, CH_W, CH_H);
+  e.g.drawImage(q, 8 - Math.floor(q.width / 2), 0);
+  iconAt(e.g, 'check', 12, 11);
+
+  return [a, b, c, d, e].map((x) => x.c.toDataURL('image/png'));
 }
 
 export function rulesHtml(t: Dict): string {

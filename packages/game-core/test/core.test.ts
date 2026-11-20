@@ -219,6 +219,19 @@ describe('MatchSim', () => {
     expect(new Set(move).size).toBe(1);
   });
 
+  it('вычислили живого: обвинитель +1, у обвинённого нет очка за выживание', () => {
+    const sim = new MatchSim(makeConfig(), players, 43);
+    runUntil(sim, () => sim.phase === 'accuse', 20 * 90);
+    const [a, b, c] = sim.pr;
+    expect(b.alive && c.alive).toBe(true);
+    sim.intent(a.pid, { k: 'accuse', eid: b.eid }); // верно
+    runUntil(sim, () => sim.phase !== 'accuse', 20 * 20);
+    const pts = sim.summary!.points;
+    expect(pts[a.pid].accuse).toBe(1);
+    expect(pts[b.pid].survive).toBe(0);
+    expect(pts[c.pid].survive).toBe(1);
+  });
+
   it('чудачества ботов: случаются, все виды, бот остаётся ботом', () => {
     const sim = new MatchSim(makeConfig({ botQuirkPerMin: 20 }), players, 71);
     players.forEach((p, i) => sim.addAgent(new AiPlayer(p.pid, i + 3)));
