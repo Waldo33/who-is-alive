@@ -236,7 +236,11 @@ export class RemoteSession implements ClientSession {
     // фазы применяются, когда мир гостя дошёл до момента смены (иначе обвинение начнётся раньше, чем замер мир)
     while (this.stQueue.length) {
       const st = this.stQueue[0];
-      const due = st.wt === undefined || this.world.time >= st.wt || !this.running || this.clock() - this.tlAt > 1500;
+      // итоги и конец матча показываем только вместе с данными для них
+      const dataReady = (st.phase !== 'reveal' && st.phase !== 'results') || this.summary !== null;
+      const matchReady = st.phase !== 'match_end' || this.match !== null;
+      const due =
+        (dataReady && matchReady && (st.wt === undefined || this.world.time >= st.wt || !this.running)) || this.clock() - this.tlAt > 3000;
       if (!due) break;
       this.applySt(this.stQueue.shift()!);
     }

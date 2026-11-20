@@ -43,6 +43,8 @@ export class LoopbackHub {
   /** Счётчик доставленных сообщений — для оценки нагрузки. */
   delivered = 0;
   private rand: () => number;
+  /** Порядок внутри канала сохраняется, как в Realtime: следующее сообщение не обгоняет предыдущее. */
+  private lastDue = new Map<string, number>();
 
   constructor(seed = 1) {
     let s = seed >>> 0 || 1;
@@ -82,10 +84,13 @@ export class LoopbackHub {
       // JSON — как по сети: никакие ссылки на объекты отправителя не доходят до получателя
       const copy = JSON.parse(JSON.stringify(msg));
       const [a, b] = this.latency;
-      const delay = a + (b - a) * this.rand();
+      const key = `${from}>${id}:${channel}`;
+      const now = Date.now();
+      const due = Math.max(now + a + (b - a) * this.rand(), this.lastDue.get(key) ?? 0);
+      this.lastDue.set(key, due);
       this.delivered++;
-      if (delay <= 0) queueMicrotask(() => p.deliver(channel, copy, from));
-      else setTimeout(() => p.deliver(channel, copy, from), delay);
+      if (due - now <= 0) queueMicrotask(() => p.deliver(channel, copy, from));
+      else setTimeout(() => p.deliver(channel, copy, from), due - now);
     }
   }
 }

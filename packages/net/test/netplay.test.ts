@@ -180,4 +180,49 @@ describe('сетевая игра', () => {
     // потерянный пакет событий портит позиции до ближайшего ключевого кадра (≤ 2 с) — доля таких кадров небольшая
     expect(late / total).toBeLessThan(0.15);
   });
+
+  it('переподключение: новая вкладка того же игрока получает снимок и догоняет хоста', () => {
+    const rig = makeRig([60, 120], 0, 8);
+    const rng = new Rng(8);
+    for (let i = 0; i < 20 * 25; i++) {
+      rig.step();
+      botFingers(rig, rng);
+    }
+    // гость g1 «перезагрузил страницу»: старая сессия умерла, новая просит снимок
+    const old = rig.guests[0];
+    old.dispose();
+    const t = rig.hub.join({ userId: 'g1', name: 'g1', color: 1, joinedAt: 9 });
+    const fresh = new RemoteSession({ transport: t, selfPid: 'g1', hostPid: 'h', players, cfg: {}, clock: rig.now, resync: true });
+    rig.guests[0] = fresh;
+    let maxDiff = 0;
+    let compared = 0;
+    for (let i = 0; i < 20 * 15; i++) {
+      rig.step();
+      if (i < 20 * 3) continue;
+      const h = rig.history.get(fresh.world.time);
+      if (!h || fresh.phase !== 'play') continue;
+      for (const e of fresh.world.entities) {
+        const p = h.get(e.eid);
+        if (!p || !e.alive || e.eid === fresh.me()?.eid) continue;
+        maxDiff = Math.max(maxDiff, Math.hypot(p[0] - e.x, p[1] - e.y));
+        compared++;
+      }
+    }
+    expect(fresh.me()?.eid).toBe(rig.host.sim.playerRound('g1')!.eid);
+    expect(compared).toBeGreaterThan(1000);
+    expect(maxDiff).toBeLessThanOrEqual(1);
+  });
+
+  it('смена хоста: матч продолжается со счётом, раунд начинается заново', () => {
+    const rig = makeRig([40, 80], 0, 10);
+    for (let i = 0; i < 20 * 60 * 3 && rig.host.round < 2; i++) rig.step();
+    const scores = { ...rig.guests[0].scores };
+    const round = rig.guests[0].round;
+    const { HostSession: H } = { HostSession };
+    const next = new H({ transport: rig.hub.join({ userId: 'g1', name: 'g1', color: 1, joinedAt: 1 }), players: players.filter((p) => p.pid !== 'h'), cfg: {}, seed: 99, hostPid: 'g1', resume: { scores, round } });
+    expect(next.round).toBe(round);
+    for (const p of players.filter((p) => p.pid !== 'h')) expect(next.scores[p.pid]).toBe(scores[p.pid]);
+    expect(next.phase).toBe('countdown');
+  });
 });
+
