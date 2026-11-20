@@ -1,5 +1,6 @@
 import { DEFAULT_CONFIG, DICTS, LANGS } from '@kto/game-core';
 import { LANG_KEY, detectLang } from '../lib/lang';
+import { download, shareContent } from '../lib/share';
 import type { Dict, GameConfig, Lang } from '@kto/game-core';
 import { PAL } from '@kto/assets';
 import { Audio } from './audio';
@@ -154,23 +155,12 @@ export function mountSandbox(root: HTMLElement, opts: ShellOptions): () => void 
     setTimeout(() => (toastEl.style.display = 'none'), 2200);
   };
 
-  const onShare = async (text: string) => {
-    const url = location.origin + location.pathname;
-    try {
-      if (navigator.share) {
-        await navigator.share({ text, url });
-        return;
-      }
-    } catch {
-      return; // пользователь закрыл меню
-    }
-    try {
-      await navigator.clipboard.writeText(`${text} ${url}`);
-      toast(t.start.copied);
-    } catch {
-      toast(text);
-    }
+  const onShare = async (text: string, files?: File[]) => {
+    const res = await shareContent({ text, url: location.origin + location.pathname, files });
+    if (res === 'copied') toast(t.start.copied);
+    if (res === 'failed') toast(text);
   };
+  const onSave = (file: File) => download(file);
 
   // Никакого масштабирования страницы: щипок, двойной тап, зум при фокусе поля.
   // iOS Safari игнорирует user-scalable=no, поэтому гасим жесты вручную.
@@ -210,7 +200,7 @@ export function mountSandbox(root: HTMLElement, opts: ShellOptions): () => void 
     if (running) running.restart({ playerName, cfg, lang });
     else {
       const speed = dev ? Number(new URLSearchParams(location.search).get('speed')) || 1 : 1;
-      running = await bootGame(stage, { playerName, fontFamily: opts.fontFamily, audio, cfg, onShare, timeScale: speed, lang });
+      running = await bootGame(stage, { playerName, fontFamily: opts.fontFamily, audio, cfg, onShare, onSave, timeScale: speed, lang });
       if (dev) (window as unknown as { __kto: RunningGame }).__kto = running;
     }
   });

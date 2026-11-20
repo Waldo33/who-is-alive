@@ -5,7 +5,9 @@ import { pickMatchAwards, pickRoundAwards } from './awards';
 import { BotBrain, CROWD_ACT, crowdActDur, crowdJitter, emoteDur, planPath } from './bots';
 import type { GameConfig } from './config';
 import { TICK_MS, accuseMs, crowdPauseMs, revealMs } from './config';
-import type { ActKind, CrowdKind, Dir, EntitySpawn, WorldEvent } from './events';
+import type { ActKind, CrowdKind, Dir, EmoteKind, EntitySpawn, WorldEvent } from './events';
+
+const EMOTES: EmoteKind[] = ['wave', 'dance', 'jump'];
 import { NavGrid } from './nav';
 import { Rng } from './rng';
 import { World } from './world';
@@ -22,7 +24,8 @@ export type Phase = 'countdown' | 'play' | 'accuse' | 'reveal' | 'results' | 'ma
 export type Intent =
   | { k: 'move'; x: number; y: number }
   | { k: 'stop' }
-  | { k: 'emote' }
+  /** kind выбирает сам игрок (гость показывает эмоцию сразу, не дожидаясь хоста); без него — случайно. */
+  | { k: 'emote'; kind?: EmoteKind }
   /** wt — время мира на экране игрока в момент нажатия (компенсация задержки сети). */
   | { k: 'crowd'; kind: CrowdKind; wt?: number }
   | { k: 'attack'; eid: number; wt?: number }
@@ -646,7 +649,7 @@ export class MatchSim {
         this.emit({ t: 'stop', eid: p.eid, at: t });
         return;
       case 'emote': {
-        const kind = this.rng.pick<ActKind>(['wave', 'dance', 'jump']);
+        const kind: ActKind = it.kind && EMOTES.includes(it.kind) ? it.kind : this.rng.pick<ActKind>(EMOTES);
         this.emit({ t: 'act', eid: p.eid, kind, dur: emoteDur(kind), at: t });
         return;
       }

@@ -2,18 +2,24 @@ import * as Phaser from 'phaser';
 import { PAL, PLAYER_COLORS, hexToInt } from '@kto/assets';
 import {
   createLocalSession,
+  findBestMoment,
+  recordRound,
   TICK_MS,
   makeConfig,
   makeReplay,
   tp,
   DICTS,
 } from '@kto/game-core';
-import type { AwardId, ClientSession, CrowdKind, Dict, Entity, GameConfig, Lang, Notice, World, WorldEvent } from '@kto/game-core';
+import type { AwardId, ClientSession, CrowdKind, Dict, Entity, GameConfig, Lang, Moment, Notice, RoundRecording, World, WorldEvent } from '@kto/game-core';
+import { resultCardFile } from './card';
+import type { ClipPlayer } from './clip';
 import { Audio } from './audio';
+import { frameFor } from './frames';
+import type { CharFrame } from './frames';
 import type { FontColor } from './font';
 import { registerFonts } from './font';
 import {
-  CH_H, CH_W, F, OL_H, OL_W, THEMES,
+  CH_H, CH_W, OL_H, OL_W, THEMES,
   makeArenaBackground, makeArrow, makeCharacterSheets, makeHedge, makeIcons, makeMark, makePigeon,
   makePoof, makeProp, makeRing, makeShadow, makeStar, makeStarFlash, makeStunStars, makeVignette,
 } from './sprites';
@@ -30,7 +36,10 @@ export interface SceneInit {
   cfg?: Partial<GameConfig>;
   seed?: number;
   onExit?: () => void;
-  onShare?: (text: string) => void;
+  /** Поделиться текстом и, если есть, файлами (карточка, клип). Вызывается из жеста пользователя. */
+  onShare?: (text: string, files?: File[]) => void | Promise<void>;
+  /** Сохранить файл на устройство (клип). */
+  onSave?: (file: File) => void;
   lang?: Lang;
   /** Источник игры; по умолчанию — песочница с ИИ. Сеть подставляет сюда хост или гостя. */
   createSession?: (cfg: GameConfig, players: { pid: string; name: string; color: number }[], seed: number) => ClientSession;
@@ -128,6 +137,10 @@ export class GameScene extends Phaser.Scene {
   private deathObjs: Phaser.GameObjects.GameObject[] = [];
   private ghostUi: Phaser.GameObjects.GameObject[] = [];
   private starPos = new Map<number, { x: number; y: number }>();
+  /** Лучший момент матча для клипа: запись раунда переживает следующий раунд. */
+  private best: { rec: RoundRecording; moment: Moment; players: ClipPlayer[] } | null = null;
+  private cardFile: File | null = null;
+  private closeClip: (() => void) | null = null;
 
   constructor() {
     super('game');
@@ -158,6 +171,8 @@ export class GameScene extends Phaser.Scene {
     this.deathObjs = [];
     this.ghostUi = [];
     this.starPos = new Map();
+    this.best = null;
+    this.cardFile = null;
   }
 
   create(): void {
@@ -376,9 +391,12 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  private addOverlayButton(id: string, x: number, y: number, w: number, h: number, label: string, onDown: () => void, accent?: string): void {
+  private addOverlayButton(
+    id: string, x: number, y: number, w: number, h: number, label: string, onDown: () => void, accent?: string, onRelease = false,
+  ): void {
     const phase = this.sim.phase;
-    const b: Button = { id, x, y, w, h, label, visible: () => this.sim.phase === phase, onDown, accent };
+    // системные меню (поделиться) открываются только по отпусканию пальца: касание ещё не считается жестом
+    const b: Button = { id, x, y, w, h, label, visible: () => this.sim.phase === phase, accent, ...(onRelease ? { onUp: onDown } : { onDown }) };
     this.buttons = this.buttons.filter((o) => o.id !== id);
     this.buttons.push(b);
     const text = this.txt(x + w / 2, y + Math.floor(h / 2) - 5, label, accent ? 'yellow' : 'white').setOrigin(0.5, 0);
@@ -577,6 +595,11 @@ export class GameScene extends Phaser.Scene {
       this.applyTheme();
       this.ghostMarks.clear();
       this.replay = null;
+      if (n.round === 1) {
+        // реванш: новый матч — новые лучший момент и карточка
+        this.best = null;
+        this.cardFile = null;
+      }
     } else if (n.t === 'phase') {
       if (n.phase === 'countdown') this.audio.play('count');
       if (n.phase === 'play') {
@@ -593,6 +616,7 @@ export class GameScene extends Phaser.Scene {
         const s = this.sim.summary!;
         this.replay = makeReplay(this.sim.world, s.replayFrom, this.sim.world.time);
         this.trails.clear();
+        this.noteMoment();
         this.audio.play('drum');
       }
       if (n.phase === 'match_end') {
@@ -689,29 +713,8 @@ export class GameScene extends Phaser.Scene {
     if (this.toast.visible && performance.now() > this.toastUntil) this.toast.setVisible(false);
   }
 
-  private frameFor(e: Entity, t: number): { frame: number; flip: boolean; yoff: number } {
-    const base = e.dir === 0 ? F.D : e.dir === 1 ? F.U : F.S;
-    const flip = e.dir === 2;
-    if (e.act && t < e.actEnd) {
-      const dt = t - e.actStart;
-      switch (e.act) {
-        case 'freeze':
-          return { frame: F.FREEZE, flip: false, yoff: 0 };
-        case 'jump':
-          return { frame: F.JUMP, flip: false, yoff: -Math.round(Math.sin(Math.PI * Math.min(1, dt / 600)) * 6) };
-        case 'dance':
-          return { frame: F.DANCE + (Math.floor(dt / 160) % 4), flip: false, yoff: 0 };
-        case 'wave':
-          return { frame: F.WAVE + [0, 1, 2, 1][Math.floor(dt / 110) % 4], flip: false, yoff: 0 };
-        case 'startle':
-          return { frame: F.STARTLE + (dt < 150 ? 0 : 1), flip: false, yoff: dt < 150 ? -2 : 0 };
-        case 'stun':
-          return { frame: F.STUN, flip: false, yoff: 0 };
-      }
-    }
-    if (e.moving || e.pi < e.path.length) return { frame: base + 2 + (Math.floor(e.walk / 2.25) % 4), flip, yoff: 0 };
-    const blink = (t + e.eid * 977) % 3400 < 130;
-    return { frame: base + (blink ? 1 : 0), flip, yoff: 0 };
+  private frameFor(e: Entity, t: number): CharFrame {
+    return frameFor(e, t);
   }
 
   private renderWorld(
@@ -1142,7 +1145,7 @@ export class GameScene extends Phaser.Scene {
     });
     s.awards.forEach((a, i) => this.awardCard(16, AY + 112 + i * 42, a.id, a.pids, a.value));
     if (!s.awards.length) this.ovText(90, AY + 130, this.t.game.noAwards, 'mist');
-    this.addOverlayButton('share', 9, AY + 214, 81, 30, this.t.game.share, () => this.share());
+    this.addOverlayButton('share', 9, AY + 214, 81, 30, this.t.game.share, () => this.share(), undefined, true);
     this.addOverlayButton('next', 91, AY + 214, 80, 30, this.t.game.next, () => sim.intent({ k: 'next' }), PAL.amber);
     this.ovDyn.auto = this.ovText(90, AY + 200, '', 'mist');
   }
@@ -1186,7 +1189,24 @@ export class GameScene extends Phaser.Scene {
       this.confetti = [];
       sim.intent({ k: 'rematch' });
     }, PAL.amber);
-    this.addOverlayButton('share2', 91, AY + 214, 80, 30, this.t.game.share, () => this.share());
+    this.addOverlayButton('share2', 91, AY + 214, 80, 30, this.t.game.share, () => this.share(), undefined, true);
+    if (this.best) this.addOverlayButton('clip', 3, PANEL_Y + 3, 174, 30, this.t.clip.button, () => this.openClip(), PAL.amber, true);
+    // карточку рисуем заранее: к нажатию «Поделиться» файл уже готов, и меню откроется без задержки
+    void resultCardFile({
+      players: sim.players,
+      scores: m.scores,
+      winners: m.winners,
+      tooAlive: m.tooAlive,
+      awards: m.awards,
+      theme: sim.theme,
+      arena: sim.arena,
+      t: this.t,
+      lang: this.lang,
+      font: this.init0.fontFamily,
+      site: location.host,
+    }).then((f) => {
+      if (this.sim.phase === 'match_end') this.cardFile = f;
+    });
   }
 
   private centerScaled(t: Phaser.GameObjects.BitmapText): void {
@@ -1299,7 +1319,44 @@ export class GameScene extends Phaser.Scene {
       kills: kills ? tp(this.lang, sh.kills, kills) : sh.noKills,
       squares,
     });
-    this.init0.onShare?.(text);
+    const files = sim.phase === 'match_end' && this.cardFile ? [this.cardFile] : undefined;
+    void this.init0.onShare?.(text, files);
+  }
+
+  /** Запомнить лучший момент раунда (если он лучше прежних в этом матче). */
+  private noteMoment(): void {
+    const s = this.sim.summary;
+    if (!s) return;
+    try {
+      const rec = recordRound(this.sim.world, { round: s.round, theme: this.sim.theme, players: s.reveal, playEnd: s.replayTo });
+      const moment = findBestMoment(rec);
+      if (!moment || (this.best && this.best.moment.score > moment.score)) return;
+      const players = s.reveal.map((r) => {
+        const info = this.sim.info(r.pid)!;
+        return { eid: r.eid, name: info.name, color: info.color };
+      });
+      this.best = { rec, moment, players };
+    } catch {
+      /* клип — не главное: при сбое просто не предлагаем его */
+    }
+  }
+
+  private openClip(): void {
+    const best = this.best;
+    if (!best) return;
+    this.closeClip?.();
+    void import('./clip-ui').then(({ openClipOverlay }) => {
+      this.closeClip = openClipOverlay(
+        document.body,
+        { ...best, arena: this.sim.arena, t: this.t, font: this.init0.fontFamily, site: location.host },
+        this.t,
+        async (file) => {
+          await this.init0.onShare?.(this.t.meta.title, [file]);
+        },
+        (file) => this.init0.onSave?.(file),
+      );
+    });
+    this.events.once('shutdown', () => this.closeClip?.());
   }
 }
 

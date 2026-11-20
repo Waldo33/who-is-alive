@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DICTS, LANGS, pickLang, tp } from '../src';
+import { DICTS, LANGS, fmt, pickLang, tp } from '../src';
 import type { Dict, Lang } from '../src';
 
 function shape(o: unknown): unknown {
@@ -45,6 +45,12 @@ describe('i18n', () => {
         expect(tp(lang, a.text, 12).length, `${lang}: ${tp(lang, a.text, 12)}`).toBeLessThanOrEqual(18);
       }
       for (const s of [g.share, g.next, g.rematch]) expect(s.length * 8).toBeLessThanOrEqual(80);
+      // клип и карточка рисуются тем же шрифтом 8 пикс. на ширине 180
+      const c = t.clip;
+      for (const s of [c.button, fmt(c.making, { n: 100 }), c.ready, c.failed, c.find, c.reveal, fmt(c.round, { n: 7 }), ...Object.values(c.kinds), c.cta, ...Object.values(t.card)]) {
+        expect(s.length, `${lang}: «${s}»`).toBeLessThanOrEqual(21);
+      }
+      for (const s of [c.send, c.save, c.close]) expect(s.length).toBeLessThanOrEqual(10);
     }
   });
 

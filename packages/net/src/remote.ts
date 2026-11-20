@@ -1,8 +1,9 @@
-import { NavGrid, TICK_MS, World, makeConfig, planPath, plazaArena } from '@kto/game-core';
+import { NavGrid, TICK_MS, World, clampToRect, emoteDur, makeConfig, planPath, plazaArena } from '@kto/game-core';
 import type {
   ArenaDef,
   AwardCard,
   ClientSession,
+  EmoteKind,
   GameConfig,
   Intent,
   MatchSummary,
@@ -34,6 +35,15 @@ export interface RemoteOptions {
 /** Запас поверх интервала пакетов: насколько отстаёт отрисовка от последних данных хоста. */
 const JITTER_MS = 120;
 const OFFSET_WINDOW = 40;
+/** Расхождение своего персонажа с хостом, которое считаем шумом (пикс.): дальше — плавно поправляем. */
+const OWN_TOLERANCE = 6;
+/** Больше этого — уже не «догонялки», а другое место: переносим сразу. */
+const OWN_TELEPORT = 48;
+/** Доля оставшейся поправки за шаг мира (50 мс): ~0,3 с на всю поправку. */
+const OWN_BLEND = 0.2;
+/** Не больше этого за шаг (пикс.): 12 пикс./с — заметно медленнее ходьбы (18 пикс./с). */
+const OWN_MAX_STEP = 0.6;
+const EMOTES: EmoteKind[] = ['wave', 'dance', 'jump'];
 
 /**
  * Гость: мир строится только из событий хоста. Гость не знает, какие сущности — игроки:
@@ -65,7 +75,22 @@ export class RemoteSession implements ClientSession {
   private running = false;
   private offsets: number[] = [];
   private snap: { wt: number; p: [number, number, number][] } | null = null;
-  private predicted: { cell: number; until: number } | null = null;
+  /**
+   * Свой персонаж гость ведёт сам (предсказание), как в сетевых играх: команды хоста на шаги
+   * своего персонажа не применяются, а снимки хоста сверяются с собственной историей
+   * со сдвигом lead — на столько свой персонаж живёт впереди остального мира.
+   */
+  private own: { t: number; x: number; y: number }[] = [];
+  private lead = 0;
+  private corr: { x: number; y: number } | null = null;
+  private lastPred: { at: number; cell: number } | null = null;
+  private lastPredClock = -1e9;
+  private lastAuth: { x: number; y: number } | null = null;
+  private emotePred: { kind: string; until: number } | null = null;
+  /** События, которые гость положил в мир сам (предсказание) — фильтр их пропускает. */
+  private local = new WeakSet<WorldEvent>();
+  /** До этого момента шагами своего персонажа управляет хост (автопилот и сразу после него). */
+  private hostDrivenUntil = 0;
   private readonly t: Transport;
   private readonly clock: () => number;
   private unsub: (() => void) | null = null;
@@ -86,6 +111,7 @@ export class RemoteSession implements ClientSession {
     this.arena = plazaArena(this.cfg.arenaWidth, this.cfg.arenaHeight);
     this.world = new World(new NavGrid(this.arena, this.cfg.navCellSize), this.cfg.entitySpeed);
     this.clock = o.clock ?? (() => performance.now());
+    this.world.filter = (ev) => this.keepEvent(ev);
     for (const p of this.players) this.scores[p.pid] = 0;
     this.unsub = this.t.onMessage((ch, msg, from) => {
       if (from !== this.hostPid) return;
@@ -119,7 +145,7 @@ export class RemoteSession implements ClientSession {
         this.theme = m.theme;
         this.summary = null;
         this.snap = null;
-        this.predicted = null;
+        this.resetOwn();
         this.offsets = [];
         this.lastHostWt = m.t0;
         this.noteOffset(m.t0);
@@ -129,10 +155,7 @@ export class RemoteSession implements ClientSession {
         this.lastHostWt = Math.max(this.lastHostWt, m.wt);
         this.running = m.run;
         this.noteOffset(m.wt);
-        for (const ev of m.ev) {
-          if (this.dropPredicted(ev)) continue;
-          this.world.push(ev);
-        }
+        for (const ev of m.ev) this.world.push(ev);
         break;
       }
       case 'snap':
@@ -156,6 +179,8 @@ export class RemoteSession implements ClientSession {
   private onPrivate(m: PrivateMsg): void {
     switch (m.t) {
       case 'me':
+        if (this.meMsg?.autopilot && !m.me.autopilot) this.hostDrivenUntil = this.clock() + 3000;
+        if (m.me.autopilot) this.hostDrivenUntil = Math.max(this.hostDrivenUntil, this.clock() + 3000);
         this.meMsg = m.me;
         break;
       case 'denied':
@@ -168,6 +193,7 @@ export class RemoteSession implements ClientSession {
       }
       case 'resync':
         this.world.restore(m.world);
+        this.resetOwn();
         this.round = m.round;
         this.theme = m.theme;
         this.meMsg = m.me;
@@ -181,21 +207,104 @@ export class RemoteSession implements ClientSession {
     }
   }
 
-  /** Своё движение уже предсказано локально — подтверждение хоста с той же целью пропускаем. */
-  private dropPredicted(ev: WorldEvent): boolean {
-    const pr = this.predicted;
+  private resetOwn(): void {
+    this.own = [];
+    this.corr = null;
+    this.lastAuth = null;
+    this.lastPred = null;
+    this.emotePred = null;
+  }
+
+  /** Применять ли событие хоста в мире гостя: шаги своего персонажа гость уже показал сам. */
+  private keepEvent(ev: WorldEvent): boolean {
+    if (this.local.has(ev)) return true;
     const me = this.meMsg;
-    if (!pr || !me || ev.t !== 'move' || ev.eid !== me.eid) return false;
-    if (this.clock() > pr.until) {
-      this.predicted = null;
+    if (!me || !('eid' in ev) || ev.eid !== me.eid) return true;
+    if (me.autopilot || this.clock() < this.hostDrivenUntil) return true;
+    if (ev.t === 'move') {
+      // подтверждение последнего нажатия: точный сдвиг между своим временем и временем хоста
+      const lp = this.lastPred;
+      if (lp && ev.path[ev.path.length - 1] === lp.cell && ev.at >= lp.at) {
+        const d = ev.at - lp.at;
+        this.lead = this.lead ? this.lead * 0.5 + d * 0.5 : d;
+        this.lastPred = null;
+      }
       return false;
     }
-    if (ev.path[ev.path.length - 1] === pr.cell) {
-      this.predicted = null;
-      return true;
+    if (ev.t === 'stop' || ev.t === 'face') return false;
+    if (ev.t === 'act' && ev.kind !== 'stun' && this.emotePred && ev.kind === this.emotePred.kind && this.clock() < this.emotePred.until) {
+      this.emotePred = null;
+      return false;
     }
-    return false;
+    return true;
   }
+
+  /** Оценка текущего времени хоста. */
+  private hostNow(): number {
+    const off = this.offsets.length ? Math.max(...this.offsets) : this.lastHostWt - this.clock();
+    return this.clock() + off;
+  }
+
+  /** На сколько свой персонаж впереди мира гостя: задержка показа + дорога до хоста. */
+  private estimateLead(): number {
+    return Math.max(0, this.hostNow() - this.world.time + this.latency * 2);
+  }
+
+  /** Где был свой персонаж в момент t по собственной истории. */
+  private ownAt(t: number): { x: number; y: number } | null {
+    const h = this.own;
+    if (!h.length) return null;
+    if (t <= h[0].t) return h[0];
+    for (let i = h.length - 1; i >= 0; i--) if (h[i].t <= t) return h[i];
+    return h[0];
+  }
+
+  /** Снимок хоста про своего персонажа: сверка с историей и плавная поправка. */
+  private reconcileOwn(e: { x: number; y: number; px: number; py: number; moving: boolean; path: number[]; pi: number }, ax: number, ay: number, wt: number): void {
+    const prevAuth = this.lastAuth;
+    this.lastAuth = { x: ax, y: ay };
+    const authMoving = !prevAuth || Math.hypot(prevAuth.x - ax, prevAuth.y - ay) > 0.05;
+    const idle = !e.moving && e.pi >= e.path.length && this.clock() - this.lastPredClock > this.lead + 300;
+    if (idle && authMoving) return; // свой уже пришёл, а у хоста он ещё идёт (маршрут бывает длиннее) — ждём
+    // оба стоят — сравниваем с текущим местом и добираем даже мелочь; на ходу — с историей со сдвигом lead
+    const ref = idle ? e : this.ownAt(wt - this.lead) ?? e;
+    const dx = ax - ref.x;
+    const dy = ay - ref.y;
+    const d = Math.hypot(dx, dy);
+    if (d > OWN_TELEPORT) {
+      e.x += dx;
+      e.y += dy;
+      e.px += dx;
+      e.py += dy;
+      this.corr = null;
+      this.own = [];
+      return;
+    }
+    if (d > (idle ? 0.05 : OWN_TOLERANCE)) this.corr = { x: dx, y: dy };
+  }
+
+  private applyCorrection(): void {
+    const c = this.corr;
+    const id = this.meMsg?.eid;
+    const e = id === undefined ? undefined : this.world.get(id);
+    if (!c || !e || !e.alive) {
+      this.corr = null;
+      return;
+    }
+    // поправка медленнее ходьбы: со стороны это лёгкая смена темпа, а не рывок
+    const left = Math.hypot(c.x, c.y);
+    const k = left <= OWN_MAX_STEP ? 1 : Math.min(OWN_BLEND, OWN_MAX_STEP / left);
+    const sx = c.x * k;
+    const sy = c.y * k;
+    e.x += sx;
+    e.y += sy;
+    e.px += sx;
+    e.py += sy;
+    c.x -= sx;
+    c.y -= sy;
+    if (k === 1) this.corr = null;
+  }
+
 
   private applySt(st: St): void {
     if (st.phase !== this.phase) {
@@ -218,18 +327,23 @@ export class RemoteSession implements ClientSession {
     const est = this.clock() + off - this.cfg.cmdBatchMs - this.jitter;
     if (est > this.lastHostWt) this.jitter = Math.min(500, this.jitter + 15);
     else if (this.lastHostWt - est > 150) this.jitter = Math.max(JITTER_MS, this.jitter - 0.5);
-    return Math.min(est, this.lastHostWt);
+    return est;
   }
 
   tick(): void {
     this.now += TICK_MS;
     const target = this.targetTime();
+    // ровно один шаг мира на кадр; два — если отстали, ноль — если убежали вперёд.
+    // Так нет дрожи 0-2-0-2 шага, когда время колеблется у границы шага.
+    const err = target - this.world.time;
+    let want = err > 2000 ? 60 : err > 120 ? 2 : err < -60 ? 0 : 1;
+    const limit = this.running ? this.lastHostWt : target;
     let steps = 0;
-    const behind = target - this.world.time;
-    const maxSteps = behind > 2000 ? 60 : 2;
-    while (this.world.time + TICK_MS <= target && steps < maxSteps) {
+    while (want-- > 0 && this.world.time + TICK_MS <= limit) {
       this.world.step();
       steps++;
+      this.applyCorrection();
+      this.recordOwn();
       if (this.snap && this.world.time >= this.snap.wt) this.applySnap();
     }
     if (steps === 0 && this.running) this.stalls++;
@@ -246,6 +360,14 @@ export class RemoteSession implements ClientSession {
     }
   }
 
+  private recordOwn(): void {
+    const id = this.meMsg?.eid;
+    const e = id === undefined ? undefined : this.world.get(id);
+    if (!e) return;
+    this.own.push({ t: this.world.time, x: e.x, y: e.y });
+    if (this.own.length > 200) this.own.splice(0, this.own.length - 200);
+  }
+
   private applySnap(): void {
     const s = this.snap!;
     this.snap = null;
@@ -258,7 +380,10 @@ export class RemoteSession implements ClientSession {
       const y = y100 / SNAP_SCALE;
       const d = Math.hypot(e.x - x, e.y - y);
       if (d < 0.02) continue;
-      if (eid === myEid && d < 8) continue; // своё движение предсказано — мелкие расхождения не дёргаем
+      if (eid === myEid) {
+        this.reconcileOwn(e, x, y, s.wt);
+        continue;
+      }
       e.x = x;
       e.y = y;
     }
@@ -309,22 +434,38 @@ export class RemoteSession implements ClientSession {
     let out: Intent = it;
     if (it.k === 'crowd' || it.k === 'attack') out = { ...it, wt: this.world.time };
     const me = this.meMsg;
-    // предсказание своего движения: начать идти сразу, не дожидаясь хоста
-    if (me && me.alive && this.phase === 'play' && !me.autopilot && this.world.time >= me.stunUntil) {
-      const e = this.world.get(me.eid);
-      if (e && (!e.act || e.act === 'stun')) {
-        if (it.k === 'move') {
-          const path = planPath(this.world, me.eid, it.x, it.y, this.world.zoneRect());
-          if (path && path.length && !this.world.isFrozen()) {
-            this.world.push({ t: 'move', eid: me.eid, path, at: this.world.time });
-            this.predicted = { cell: path[path.length - 1], until: this.clock() + 1500 };
-          }
-        } else if (it.k === 'stop') {
-          this.world.push({ t: 'stop', eid: me.eid, at: this.world.time });
+    // предсказание: показать своё действие сразу, если хост его примет (не автопилот, не оглушён к его приходу)
+    const lead = this.estimateLead();
+    const accepts = !!me && me.alive && this.phase === 'play' && !me.autopilot && this.hostNow() + this.latency >= me.stunUntil;
+    const e = me ? this.world.get(me.eid) : undefined;
+    if (accepts && e && e.alive) {
+      if (it.k === 'move') {
+        const zone = this.world.zoneRect(this.world.time + lead);
+        const tgt = zone ? clampToRect(zone, it.x, it.y, 2) : { x: it.x, y: it.y };
+        const path = planPath(this.world, me!.eid, tgt.x, tgt.y, zone);
+        if (path && path.length) {
+          this.pushLocal({ t: 'move', eid: me!.eid, path, at: this.world.time });
+          this.lastPred = { at: this.world.time, cell: path[path.length - 1] };
+          this.lastPredClock = this.clock();
+          if (!this.lead) this.lead = lead;
         }
+      } else if (it.k === 'stop') {
+        this.pushLocal({ t: 'stop', eid: me!.eid, at: this.world.time });
+        this.lastPredClock = this.clock();
+      } else if (it.k === 'emote') {
+        const kind = it.kind ?? EMOTES[Math.floor(Math.random() * EMOTES.length)];
+        this.pushLocal({ t: 'act', eid: me!.eid, kind, dur: emoteDur(kind), at: this.world.time });
+        this.emotePred = { kind, until: this.clock() + 3000 };
+        this.lastPredClock = this.clock();
+        out = { k: 'emote', kind };
       }
     }
     void this.t.send('host', { t: 'i', i: out });
+  }
+
+  private pushLocal(ev: WorldEvent): void {
+    this.local.add(ev);
+    this.world.push(ev);
   }
 
   drainNotices(): Notice[] {

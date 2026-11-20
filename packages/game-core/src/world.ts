@@ -77,6 +77,8 @@ export class World {
   keyframes: WorldSnapshot[] = [];
   recordKeyframes = true;
   listeners: ((ev: WorldEvent) => void)[] = [];
+  /** Отсев событий в момент применения (гость не применяет хостовые шаги своего персонажа — он их предсказал). */
+  filter: ((ev: WorldEvent) => boolean) | null = null;
 
   constructor(readonly nav: NavGrid, readonly speed: number) {}
 
@@ -124,6 +126,7 @@ export class World {
     if (this.recordKeyframes && this.time % 1000 === 0) this.keyframes.push(this.snapshot());
     while (this.pending.length && this.pending[0].at <= this.time) {
       const ev = this.pending.shift()!;
+      if (this.filter && !this.filter(ev)) continue;
       this.apply(ev);
     }
     const dt = TICK_MS / 1000;

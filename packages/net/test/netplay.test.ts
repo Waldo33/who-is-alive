@@ -213,6 +213,57 @@ describe('сетевая игра', () => {
     expect(maxDiff).toBeLessThanOrEqual(1);
   });
 
+  it.each([
+    { lat: [40, 90] as [number, number], loss: 0, seed: 12 },
+    { lat: [120, 350] as [number, number], loss: 0, seed: 13 },
+    { lat: [200, 600] as [number, number], loss: 0.03, seed: 14 },
+  ])('свой персонаж у гостя не отбрасывает назад и он приходит туда, куда нажали последним ($lat мс, потери $loss)', ({ lat, loss, seed }) => {
+    const rig = makeRig(lat, loss, seed);
+    const g = rig.guests[0];
+    const rng = new Rng(seed);
+    while (g.phase !== 'play' || !g.me()) rig.step();
+    for (let i = 0; i < 20 * 3; i++) rig.step();
+    const speed = g.cfg.entitySpeed;
+    const maxStep = (speed * 50) / 1000;
+    let jumps = 0;
+    let worst = 0;
+    let prev: [number, number] | null = null;
+    let last: [number, number] = [0, 0];
+    const zone = () => g.world.zoneRect() ?? g.arena.walk;
+    for (let i = 0; i < 20 * 30 && rig.host.phase === 'play'; i++) {
+      // тап каждые 0,4–1,2 с, иногда очень часто — как на телефоне
+      if (i % 20 === 0 || (i % 7 === 0 && rng.chance(0.4))) {
+        const z = zone();
+        last = [rng.int(Math.ceil(z.x) + 4, Math.floor(z.x + z.w) - 4), rng.int(Math.ceil(z.y) + 4, Math.floor(z.y + z.h) - 4)];
+        g.intent({ k: 'move', x: last[0], y: last[1] });
+      }
+      rig.step();
+      const me = g.world.get(g.me()!.eid)!;
+      if (!me.alive || g.world.isFrozen()) {
+        prev = null;
+        continue;
+      }
+      if (prev) {
+        const d = Math.hypot(me.x - prev[0], me.y - prev[1]);
+        worst = Math.max(worst, d);
+        // два шага мира (догоняем хоста) + плавная поправка — больше уже рывок
+        if (d > maxStep * 3 + 0.01) jumps++;
+      }
+      prev = [me.x, me.y];
+    }
+    // за кадр персонаж смещается не больше чем на три шага ходьбы: никаких телепортов назад
+    expect(jumps, `worst ${worst.toFixed(2)} px per tick, step ${maxStep}`).toBe(0);
+    // остановились — гость и хост сходятся в одной точке, рядом с последним нажатием
+    for (let i = 0; i < 20 * 10; i++) rig.step();
+    const eid = g.me()!.eid;
+    const mine = g.world.get(eid)!;
+    const auth = rig.host.world.get(eid)!;
+    if (mine.alive && auth.alive && rig.host.phase === 'play') {
+      expect(Math.hypot(mine.x - auth.x, mine.y - auth.y)).toBeLessThanOrEqual(1);
+      expect(Math.hypot(mine.x - last[0], mine.y - last[1])).toBeLessThanOrEqual(10);
+    }
+  });
+
   it('смена хоста: матч продолжается со счётом, раунд начинается заново', () => {
     const rig = makeRig([40, 80], 0, 10);
     for (let i = 0; i < 20 * 60 * 3 && rig.host.round < 2; i++) rig.step();

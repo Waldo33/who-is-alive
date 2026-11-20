@@ -8,6 +8,7 @@ import { DICTS, fmt } from '@kto/game-core';
 import type { Dict, Lang } from '@kto/game-core';
 import { LANG_KEY, detectLang } from '@/lib/lang';
 import { playerName, saveName } from '@/lib/name';
+import { download, shareContent } from '@/lib/share';
 import { AuthError, ensureAnonymousUser, supabase } from '@/lib/supabase';
 import { Room } from '@/net/room';
 import type { Audio as GameAudio } from '@/game/audio';
@@ -95,15 +96,10 @@ function GameView({ room, lang, audio, t }: { room: Room; lang: Lang; audio: Rea
         audio: audio.current,
         lang,
         createSession: () => session,
-        onShare: async (text: string) => {
-          const url = `${location.origin}/r/${room.state.code}`;
-          try {
-            if (navigator.share) return void (await navigator.share({ text, url }));
-            await navigator.clipboard.writeText(`${text} ${url}`);
-          } catch {
-            /* меню закрыли */
-          }
+        onShare: async (text: string, files?: File[]) => {
+          await shareContent({ text, url: `${location.origin}/r/${room.state.code}`, files });
         },
+        onSave: (file: File) => download(file),
       });
       if (cancelled) running.destroy();
     });

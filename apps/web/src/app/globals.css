@@ -102,3 +102,18 @@ button.btn { border: 0; cursor: pointer; border-radius: 0; }
   padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
   -webkit-user-select: none; user-select: none; overscroll-behavior: none; }
 .game-stage canvas { image-rendering: pixelated; box-shadow: 0 0 0 2px #262b44, 0 0 0 4px var(--ink), 0 0 0 6px #68386c, 0 0 0 8px var(--ink); }
+
+/* монтаж клипа поверх игры */
+.clip-overlay { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center;
+  background: rgba(24, 20, 37, 0.92); padding: calc(12px + env(safe-area-inset-top)) 16px calc(12px + env(safe-area-inset-bottom));
+  touch-action: manipulation; font-family: var(--font-pixel), monospace; }
+.clip-box { display: flex; flex-direction: column; align-items: center; gap: 12px; width: 100%; max-width: 420px; max-height: 100%; }
+.clip-frame { box-shadow: 0 0 0 2px var(--ink), 0 0 0 4px var(--steel); background: var(--ink); line-height: 0; }
+.clip-frame canvas, .clip-frame video { display: block; height: min(58dvh, 640px); width: auto; aspect-ratio: 9 / 16;
+  image-rendering: pixelated; }
+.clip-status { margin: 0; font-size: 11px; color: var(--sand); text-align: center; line-height: 1.6; }
+.clip-progress { width: 100%; max-width: 280px; height: 10px; background: var(--night); box-shadow: 0 0 0 2px var(--ink); }
+.clip-progress i { display: block; height: 100%; width: 0; background: var(--amber); }
+.clip-actions { display: flex; gap: 12px; }
+.clip-actions[hidden], .clip-progress[hidden] { display: none; }
+.clip-close { background: var(--night); color: var(--sand); box-shadow: 0 4px 0 var(--ink), 0 0 0 2px var(--steel); }
