@@ -112,6 +112,18 @@ export function frame(
  * Пиксельный текст с контуром. Размер шрифта — 8 «игровых» пикселей × size.
  * align: 'left' | 'center' | 'right' относительно x.
  */
+/**
+ * Размер шрифта, при котором строка влезает в ширину maxW (в игровых пикселях) на холсте ×scale.
+ * Уменьшаем ступенями по целому числу экранных пикселей на пиксель шрифта (6 → 5 → 4 → 3 при ×6),
+ * чтобы буквы оставались чёткими, а не размытыми дробным масштабом.
+ */
+export function fitSize(s: string, maxW: number, scale: number, size = 1): number {
+  for (let k = Math.round(scale * size); k >= Math.ceil(scale / 2); k--) {
+    if (s.length * 8 * (k / scale) <= maxW) return k / scale;
+  }
+  return Math.ceil(scale / 2) / scale;
+}
+
 export function text(
   g: CanvasRenderingContext2D,
   s: string,

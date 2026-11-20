@@ -1,7 +1,7 @@
 import { PAL, PLAYER_COLORS } from '@kto/assets';
 import { TICK_MS, fmt, makeReplay, worldOf } from '@kto/game-core';
 import type { ArenaDef, Dict, Moment, RoundRecording, World } from '@kto/game-core';
-import { frame, getArt, scaledCanvas, text } from './art';
+import { fitSize, frame, getArt, scaledCanvas, text } from './art';
 import type { Art } from './art';
 import { frameFor } from './frames';
 import { CH_H, CH_W, F, OL_H, OL_W } from './sprites';
@@ -276,7 +276,8 @@ export class ClipPlayerScene {
     });
     g.restore();
     text(g, t.clip.cta, LW / 2, 196, PAL.white, font);
-    text(g, this.inp.site, LW / 2, 212, PAL.cyan, font);
+    // адрес бывает длинным (who-is-alive.vercel.app — 23 знака): уменьшаем, чтобы влез с полями
+    text(g, this.inp.site, LW / 2, 212, PAL.cyan, font, { size: fitSize(this.inp.site, LW - 12, CLIP_SCALE) });
     g.globalAlpha = 1;
   }
 }

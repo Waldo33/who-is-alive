@@ -1,7 +1,7 @@
 import { PAL, PLAYER_COLORS } from '@kto/assets';
 import { tp } from '@kto/game-core';
 import type { ArenaDef, AwardCard, Dict, Lang, PlayerInfo } from '@kto/game-core';
-import { frame, getArt, scaledCanvas, text } from './art';
+import { fitSize, frame, getArt, scaledCanvas, text } from './art';
 import { CH_H, CH_W, F, OL_H, OL_W } from './sprites';
 
 /**
@@ -99,7 +99,7 @@ export function drawResultCard(inp: CardInput): HTMLCanvasElement {
   });
 
   text(g, t.card.cta, LW / 2, LH - 22, PAL.white, font, { outline: null });
-  text(g, inp.site, LW / 2, LH - 12, PAL.cyan, font, { outline: null });
+  text(g, inp.site, LW / 2, LH - 12, PAL.cyan, font, { outline: null, size: fitSize(inp.site, LW - 12, SCALE) });
   return c;
 }
 
