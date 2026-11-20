@@ -315,7 +315,12 @@ export class GameScene extends Phaser.Scene {
     const n = [...this.t.names.noun];
     const out: string[] = [];
     for (let i = 0; i < 3; i++) {
-      out.push(`${a.splice(Math.floor(Math.random() * a.length), 1)[0]} ${n.splice(Math.floor(Math.random() * n.length), 1)[0]}`);
+      const adj = a.splice(Math.floor(Math.random() * a.length), 1)[0];
+      // существительное — такое, чтобы имя влезло в 14 знаков
+      const fit = n.filter((w) => adj.length + 1 + w.length <= 14);
+      const noun = fit.length ? fit[Math.floor(Math.random() * fit.length)] : n[0];
+      n.splice(n.indexOf(noun), 1);
+      out.push(`${adj} ${noun}`);
     }
     return out;
   }
@@ -1365,8 +1370,9 @@ export class GameScene extends Phaser.Scene {
         const killer = s.reveal.find((r) => r.eid === by);
         const kInfo = killer ? sim.info(killer.pid) : undefined;
         if (kInfo) {
-          const nm = kInfo.name.length > 12 ? kInfo.name.slice(0, 11) + '…' : kInfo.name;
-          this.ovDyn.killedBy = this.ovText(90, PANEL_Y + 20, fmt(this.t.game.killedBy, { name: nm }), COLOR_FONT[kInfo.color]).setVisible(false);
+          // имя — отдельной строкой: целиком (до 14 знаков), без обрезки
+          this.ovDyn.killedBy = this.ovText(90, PANEL_Y + 13, this.t.game.killedBy, 'mist').setVisible(false);
+          this.ovDyn.killerName = this.ovText(90, PANEL_Y + 23, kInfo.name, COLOR_FONT[kInfo.color]).setVisible(false);
         }
         s.reveal.forEach((r, i) => {
           const info = sim.info(r.pid)!;
@@ -1398,13 +1404,14 @@ export class GameScene extends Phaser.Scene {
       const y = AY + 46 + i * 16;
       const pts = s.points[p.pid];
       const g = this.add.graphics();
-      g.fillStyle(hexToInt(PAL.ink)).fillRect(16, y, 8, 8);
-      g.fillStyle(hexToInt(PLAYER_COLORS[p.color])).fillRect(17, y + 1, 6, 6);
+      // имя целиком (до 14 знаков = 112 пикс.): квадрат цвета, имя, очки за дубль, счёт у правого края
+      g.fillStyle(hexToInt(PAL.ink)).fillRect(9, y + 1, 7, 7);
+      g.fillStyle(hexToInt(PLAYER_COLORS[p.color])).fillRect(10, y + 2, 5, 5);
       this.ov(g, 2010);
-      const name = p.name.length > 11 ? p.name.slice(0, 10) + '…' : p.name;
-      this.ovText(28, y, name, p.pid === this.sim.selfPid ? 'yellow' : 'white', false);
-      this.ovText(124, y, pts.total ? `+${pts.total}` : '0', pts.total ? 'green' : 'mist', false);
-      this.ovText(148, y, String(sim.scores[p.pid]), 'sand', false);
+      this.ovText(18, y, p.name.slice(0, 14), p.pid === this.sim.selfPid ? 'yellow' : 'white', false);
+      this.ovText(136, y, pts.total ? `+${pts.total}` : '0', pts.total ? 'green' : 'mist', false);
+      const total = this.ovText(0, y, String(sim.scores[p.pid]), 'sand', false);
+      total.x = 171 - total.width;
     });
     s.awards.forEach((a, i) => this.awardCard(16, AY + 112 + i * 42, a.id, a.pids, a.value));
     if (!s.awards.length) this.ovText(90, AY + 130, this.t.game.noAwards, 'mist');
@@ -1443,9 +1450,9 @@ export class GameScene extends Phaser.Scene {
     const order = [...sim.players].sort((a, b) => m.scores[b.pid] - m.scores[a.pid]);
     order.forEach((p, i) => {
       const y = AY + 66 + i * 14;
-      const name = p.name.length > 14 ? p.name.slice(0, 13) + '…' : p.name;
-      this.ovText(20, y, name, COLOR_FONT[p.color], false);
-      this.ovText(146, y, String(m.scores[p.pid]), 'sand', false);
+      this.ovText(16, y, p.name.slice(0, 14), COLOR_FONT[p.color], false);
+      const total = this.ovText(0, y, String(m.scores[p.pid]), 'sand', false);
+      total.x = 166 - total.width;
     });
     m.awards.forEach((a, i) => this.awardCard(16, AY + 124 + i * 42, a.id, a.pids, a.value));
     this.addOverlayButton('rematch', 9, AY + 214, 81, 30, this.t.game.rematch, () => {
@@ -1524,7 +1531,8 @@ export class GameScene extends Phaser.Scene {
         const caught = !!meR?.alive && s.accusations.some((a) => a.eid === meR.eid);
         this.ovDyn.caught?.setVisible(caught);
         this.ovDyn.killedBy?.setVisible(!caught);
-        this.ovDyn.final.y = caught || this.ovDyn.killedBy ? PANEL_Y + 6 : PANEL_Y + 13;
+        this.ovDyn.killerName?.setVisible(!caught);
+        this.ovDyn.final.y = this.ovDyn.killedBy ? PANEL_Y + 3 : caught ? PANEL_Y + 6 : PANEL_Y + 13;
         this.drawAccusations();
       }
     }

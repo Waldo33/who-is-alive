@@ -33,7 +33,7 @@ describe('i18n', () => {
       const flat: string[] = [
         g.soundOffHint, g.soundOn, g.soundOff, g.outSub, g.outHint, g.ghost, g.ghostHint, g.hedge, ...Object.values(g.denied),
         ...Object.values(g.crowd), g.withCrowd, g.late, g.watchLate, g.findYourself, g.accuseTitle, g.accuseSub,
-        g.accuseChange, g.reveal, g.revealReplay, g.revealFinal, g.guessed, g.missed, g.caught, fmt(g.killedBy, { name: 'Ш'.repeat(12) }), g.noAccuse,
+        g.accuseChange, g.reveal, g.revealReplay, g.revealFinal, g.guessed, g.missed, g.caught, g.killedBy, g.noAccuse,
         tp(lang, g.resultsTitle, 5), ...Object.values(g.endReason), g.noAwards, tp(lang, g.nextIn, 10),
         g.youWon, g.winner, g.tooAlive, tp(lang, g.roundTheme, 5, { theme: t.themes.reduce((a, b) => (a.length > b.length ? a : b)) }),
       ];

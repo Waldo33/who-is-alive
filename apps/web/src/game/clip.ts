@@ -88,7 +88,6 @@ const WIDE_MIN_MS = 900;
 const PART1_SPEED = 1.5;
 const PART1_MAX_MS = 4500;
 
-const short = (s: string, n = 12) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
 
 /** Сцена клипа: состояние повтора и отрисовка любого момента времени. */
 export class ClipPlayerScene {
@@ -375,7 +374,7 @@ export class ClipPlayerScene {
         if (zoomed && p.eid !== m.attacker && p.eid !== m.victim) continue;
         const sp = toScreen(pos.get(p.eid)!);
         if (sp.x < 0 || sp.x > LW || sp.y < AY || sp.y > PANEL_Y + 10) continue;
-        const name = short(p.name, 10);
+        const name = p.name;
         const half = (name.length * 8) / 2;
         labels.push({ x: Math.max(half + 1, Math.min(LW - half - 1, sp.x)), y: Math.max(AY + 1, sp.y - (CH_H + 13) * (zoomed ? 1.6 : 1)), name, color: PLAYER_COLORS[p.color] });
       }
@@ -432,12 +431,12 @@ export class ClipPlayerScene {
     const after = world >= m.at && local >= this.hitClip;
     if (after && atk) {
       // итог по именам: «Енот / выбил Батона»
-      line(short(atk.name, 18), 8, PLAYER_COLORS[atk.color]);
-      if (m.kind === 'knockout' && vic) line(fmt(t.clip.koOf, { name: short(vic.name, 11) }), 21, PLAYER_COLORS[vic.color]);
+      line(atk.name, 8, PLAYER_COLORS[atk.color]);
+      if (m.kind === 'knockout' && vic) line(fmt(t.clip.koOf, { name: vic.name }), 21, PLAYER_COLORS[vic.color]);
       else line(m.kind === 'star3' ? t.clip.star3Of : m.kind === 'hit_bot' ? t.clip.botOf : t.clip.kinds[m.kind], 21, blink ? PAL.yellow : PAL.amber);
     } else {
       line(cap?.reveal ?? t.clip.reveal, 8, PAL.white);
-      if (atk && !after && local >= this.cutAt) line(fmt(t.clip.watch, { name: short(atk.name) }), 21, PLAYER_COLORS[atk.color]);
+      if (atk && !after && local >= this.cutAt) line(fmt(t.clip.watch, { name: atk.name }), 21, PLAYER_COLORS[atk.color]);
       else line(cap?.kind ?? (m.kind === 'knockout' && m.selfRole === 'victim' ? t.clip.gotMe : t.clip.kinds[m.kind]), 21, blink ? PAL.yellow : PAL.amber);
     }
     // «повтор» в углу — как в спортивной трансляции

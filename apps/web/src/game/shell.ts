@@ -59,10 +59,14 @@ const CSS = `
 @media (prefers-reduced-motion:reduce){.kto-btn:active{transform:none}}
 `;
 
+/** Имена — до 14 знаков: длиннее в итогах и подписях клипа не помещаются целиком. */
 function randomName(t: Dict): string {
-  const a = t.names.adj[Math.floor(Math.random() * t.names.adj.length)];
-  const n = t.names.noun[Math.floor(Math.random() * t.names.noun.length)];
-  return `${a} ${n}`;
+  for (let i = 0; i < 20; i++) {
+    const a = t.names.adj[Math.floor(Math.random() * t.names.adj.length)];
+    const n = t.names.noun[Math.floor(Math.random() * t.names.noun.length)];
+    if (a.length + 1 + n.length <= 14) return `${a} ${n}`;
+  }
+  return t.names.noun[0];
 }
 
 export interface ShellOptions {

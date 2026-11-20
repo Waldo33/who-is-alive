@@ -64,7 +64,7 @@ export function drawResultCard(inp: CardInput): HTMLCanvasElement {
     const names = inp.winners.map((pid) => byColor(pid)!);
     const w = names[0];
     const label = names.length > 1 ? names.map((n) => n.name.split(' ')[0]).join(t.game.and) : w.name;
-    text(g, fit(label, 20), LW / 2, 53, PLAYER_COLORS[w.color], font);
+    text(g, label, LW / 2, 53, PLAYER_COLORS[w.color], font, { maxWidth: LW - 10 });
   }
 
   // счёт
@@ -75,7 +75,7 @@ export function drawResultCard(inp: CardInput): HTMLCanvasElement {
     g.fillRect(14, y, 9, 9);
     g.fillStyle = PLAYER_COLORS[p.color];
     g.fillRect(15, y + 1, 7, 7);
-    text(g, fit(p.name, 14), 28, y + 1, PAL.white, font, { align: 'left' });
+    text(g, p.name, 28, y + 1, PAL.white, font, { align: 'left', maxWidth: LW - 28 - 30 });
     text(g, String(inp.scores[p.pid] ?? 0), LW - 14, y + 1, PAL.sand, font, { align: 'right' });
   });
 
@@ -94,7 +94,7 @@ export function drawResultCard(inp: CardInput): HTMLCanvasElement {
     text(g, fit(def.title, 18), x + 15, y + 4, PAL.yellow, font, { align: 'left', outline: null });
     const who = a.pids.map((pid) => byColor(pid)?.name ?? '?');
     const whoS = who.length > 1 ? who.map((n) => n.split(' ')[0]).join(t.game.and) : who[0];
-    text(g, fit(whoS, 20), x + 4, y + 14, PAL.white, font, { align: 'left', outline: null });
+    text(g, whoS, x + 4, y + 14, PAL.white, font, { align: 'left', outline: null, maxWidth: LW - 24 });
     text(g, fit(tp(inp.lang, def.text, a.value), 20), x + 4, y + 23, PAL.mist, font, { align: 'left', outline: null });
   });
 

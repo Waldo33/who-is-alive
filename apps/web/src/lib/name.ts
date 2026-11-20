@@ -2,10 +2,17 @@ import type { Dict } from '@kto/game-core';
 
 const KEY = 'kto:name';
 
+/** Имена — до 14 знаков (лимит комнаты): длинней в итогах и подписях не помещаются целиком. */
+export const NAME_MAX = 14;
+
 export function randomName(t: Dict): string {
-  const a = t.names.adj[Math.floor(Math.random() * t.names.adj.length)];
-  const n = t.names.noun[Math.floor(Math.random() * t.names.noun.length)];
-  return `${a} ${n}`;
+  for (let i = 0; i < 20; i++) {
+    const a = t.names.adj[Math.floor(Math.random() * t.names.adj.length)];
+    const n = t.names.noun[Math.floor(Math.random() * t.names.noun.length)];
+    const s = `${a} ${n}`;
+    if (s.length <= NAME_MAX) return s;
+  }
+  return t.names.noun[0];
 }
 
 export function savedName(): string {

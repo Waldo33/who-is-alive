@@ -88,7 +88,7 @@ export const ru = {
     guessed: 'В точку! +1',
     missed: 'Это массовка!',
     caught: 'Тебя вычислили! -1',
-    killedBy: 'Вырезал: {name}',
+    killedBy: 'Тебя вырезал:',
     noAccuse: 'Ты никого не обвинил',
     resultsTitle: 'Итоги дубля {n}',
     endReason: { time: 'Плёнка кончилась', stars: 'Три звезды!', last_alive: 'Остался один' },

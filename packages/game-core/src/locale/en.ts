@@ -75,7 +75,7 @@ export const en: Dict = {
     guessed: 'Nailed it! +1',
     missed: 'Just an extra!',
     caught: 'Caught acting! -1',
-    killedBy: 'Cut by {name}',
+    killedBy: 'You were cut by:',
     noAccuse: 'You accused nobody',
     resultsTitle: 'Take {n}: results',
     endReason: { time: 'Out of film', stars: 'Three stars!', last_alive: 'One left standing' },
