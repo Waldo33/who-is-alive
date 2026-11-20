@@ -1,6 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { ImageResponse } from 'next/og';
+import { DICTS } from '@kto/game-core';
+import type { Lang } from '@kto/game-core';
 
 /**
  * Картинка превью ссылки 1200×630 в стиле игры. Фон (полосы, площадь ×2 в рамке, «?») — готовый PNG
@@ -43,6 +45,8 @@ function load() {
 }
 
 export interface OgInput {
+  /** Язык отправителя ссылки (из параметра l). */
+  lang: Lang;
   /** Пригласивший (если ссылка на комнату). */
   host?: string | null;
   code?: string;
@@ -55,28 +59,29 @@ const fit = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + '…' 
 export async function renderOg(o: OgInput): Promise<ImageResponse> {
   const { bg, fonts } = await load();
   const room = !!o.code;
+  const T = DICTS[o.lang].og;
   const host = o.host ? fit(o.host, 14) : null;
   return new ImageResponse(
     (
       <div style={{ width: '100%', height: '100%', display: 'flex', position: 'relative', fontFamily: 'PS2P, PS2PCyr', background: C.ink }}>
         <img src={bg} width={1200} height={630} alt="" style={{ position: 'absolute', left: 0, top: 0 }} />
         <div style={{ position: 'absolute', left: 64, top: 64, width: 680, display: 'flex', flexDirection: 'column' }}>
-          <div style={{ fontSize: 16, color: C.amber, letterSpacing: 0 }}>{room ? 'ПРИГЛАШЕНИЕ В ИГРУ' : 'ИГРА ДЛЯ КОМПАНИИ · 2-4 ИГРОКА'}</div>
+          <div style={{ fontSize: 16, color: C.amber, letterSpacing: 0 }}>{room ? T.invite : T.party}</div>
           <div style={{ fontSize: 48, color: C.yellow, marginTop: 28, textShadow: `4px 4px 0 ${C.rust}, 8px 8px 0 ${C.ink}`, lineHeight: 1.3 }}>
-            Кто тут живой?
+            {T.title}
           </div>
           {room ? (
             <div style={{ display: 'flex', flexDirection: 'column', marginTop: 40 }}>
               {host ? (
                 <div style={{ display: 'flex', flexDirection: 'column' }}>
                   <div style={{ fontSize: 32, color: C.white, lineHeight: 1.4 }}>{host}</div>
-                  <div style={{ fontSize: 24, color: C.sand, marginTop: 12 }}>зовёт тебя сыграть!</div>
+                  <div style={{ fontSize: 24, color: C.sand, marginTop: 12 }}>{T.callsYou}</div>
                 </div>
               ) : (
-                <div style={{ fontSize: 24, color: C.sand }}>Тебя зовут сыграть!</div>
+                <div style={{ fontSize: 24, color: C.sand }}>{T.called}</div>
               )}
               <div style={{ display: 'flex', alignItems: 'center', marginTop: 36 }}>
-                <div style={{ fontSize: 16, color: C.mist, marginRight: 20 }}>КОД</div>
+                <div style={{ fontSize: 16, color: C.mist, marginRight: 20 }}>{T.code}</div>
                 <div
                   style={{
                     display: 'flex',
@@ -97,16 +102,15 @@ export async function renderOg(o: OgInput): Promise<ImageResponse> {
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', marginTop: 40 }}>
-              <div style={{ fontSize: 24, color: C.coral, lineHeight: 1.6 }}>Найди живых.</div>
-              <div style={{ fontSize: 24, color: C.coral, lineHeight: 1.6 }}>Не выдай себя.</div>
-              <div style={{ fontSize: 16, color: C.sand, marginTop: 28, lineHeight: 1.8 }}>32 одинаковых человечка.</div>
-              <div style={{ fontSize: 16, color: C.sand, lineHeight: 1.8 }}>Среди них — твои друзья.</div>
+              <div style={{ fontSize: 24, color: C.coral, lineHeight: 1.6 }}>{T.tag1}</div>
+              <div style={{ fontSize: 24, color: C.coral, lineHeight: 1.6 }}>{T.tag2}</div>
+              <div style={{ fontSize: 16, color: C.sand, marginTop: 28, lineHeight: 1.8 }}>{T.line1}</div>
+              <div style={{ fontSize: 16, color: C.sand, lineHeight: 1.8 }}>{T.line2}</div>
             </div>
           )}
         </div>
         <div style={{ position: 'absolute', left: 64, bottom: 56, display: 'flex', flexDirection: 'column' }}>
-          <div style={{ fontSize: 16, color: C.mist }}>{room ? "Who's Alive? · You're invited" : "Who's Alive? · Find the living"}</div>
-          <div style={{ fontSize: 16, color: C.cyan, marginTop: 14 }}>{o.site}</div>
+          <div style={{ fontSize: 16, color: C.cyan }}>{o.site}</div>
         </div>
       </div>
     ),

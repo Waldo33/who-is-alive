@@ -13,7 +13,7 @@ import { TopBar } from '@/ui/TopBar';
 import type { TopBar as Bar } from '@/ui/topbar';
 import { playerName, saveName } from '@/lib/name';
 import { loadChunk } from '@/lib/chunk';
-import { download, shareContent } from '@/lib/share';
+import { download, shareContent, withLang } from '@/lib/share';
 import { AuthError, ensureAnonymousUser, supabase } from '@/lib/supabase';
 import { Room } from '@/net/room';
 import type { Audio as GameAudio } from '@/game/audio';
@@ -148,7 +148,7 @@ function GameView({
         lang,
         createSession: () => session,
         onShare: async (text: string, files?: File[]) => {
-          await shareContent({ text, url: `${location.origin}/r/${room.state.code}`, files });
+          await shareContent({ text, url: withLang(`${location.origin}/r/${room.state.code}`), files });
         },
         onSave: (file: File) => download(file),
         onSettings: () => settingsRef.current(),
@@ -196,7 +196,8 @@ export function Lobby({
   const isHost = state.hostId === state.selfId;
   const online = state.members.filter((m) => m.online);
   const canStart = isHost && online.length >= 2;
-  const url = useMemo(() => (typeof window === 'undefined' ? '' : `${window.location.origin}/r/${state.code}`), [state.code]);
+  // язык отправителя в ссылке — для превью в мессенджере (t меняется вместе с языком)
+  const url = useMemo(() => (typeof window === 'undefined' ? '' : withLang(`${window.location.origin}/r/${state.code}`)), [state.code, t]);
 
   useEffect(() => {
     if (!url) return;

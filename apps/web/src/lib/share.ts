@@ -65,3 +65,14 @@ async function copy(s: string): Promise<boolean> {
 export function siteLabel(): string {
   return typeof location === 'undefined' ? 'who-is-alive.vercel.app' : location.host;
 }
+
+/**
+ * Ссылка, которой делимся, с языком отправителя (?l=ru|en): по нему мессенджер получает
+ * превью на языке того, кто зовёт. Интерфейс получателя от него не меняется.
+ */
+export function withLang(url: string): string {
+  const lang = typeof document !== 'undefined' && document.documentElement.lang === 'en' ? 'en' : 'ru';
+  const u = new URL(url);
+  u.searchParams.set('l', lang);
+  return u.toString();
+}

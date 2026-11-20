@@ -1,6 +1,6 @@
 import { DEFAULT_CONFIG, DICTS } from '@kto/game-core';
 import { detectLang } from '../lib/lang';
-import { download, shareContent } from '../lib/share';
+import { download, shareContent, withLang } from '../lib/share';
 import { mountTopBar } from '../ui/topbar';
 import type { TopBarOptions } from '../ui/topbar';
 import type { Dict, GameConfig, Lang } from '@kto/game-core';
@@ -163,7 +163,7 @@ export function mountSandbox(root: HTMLElement, opts: ShellOptions): () => void 
   };
 
   const onShare = async (text: string, files?: File[]) => {
-    const res = await shareContent({ text, url: location.origin + location.pathname, files });
+    const res = await shareContent({ text, url: withLang(location.origin + location.pathname), files });
     if (res === 'copied') toast(t.start.copied);
     if (res === 'failed') toast(text);
   };

@@ -73,14 +73,14 @@ CI (`.github/workflows/ci.yml`): lint, typecheck, test, `sim --rounds 200`.
 | `…/host.ts`, `remote.ts` | `HostSession` (оборачивает `MatchSim`), `RemoteSession` (гость: прогноз и сверка) |
 | `…/protocol.ts` | типы сообщений и zod-схемы того, что гость шлёт хосту |
 | `apps/web/src/net/room.ts` | `Room`: вход по RPC, состав, Presence, старт матча, смена хоста |
-| `apps/web/src/app/` | страницы: `/` (`HomeClient`), `/r/[code]` (`RoomClient`: лобби + игра), `/sandbox`; превью `og.tsx`, `opengraph-image.tsx`; `manifest.ts`, `PwaRegister.tsx` |
+| `apps/web/src/app/` | страницы: `/` (`HomeClient`), `/r/[code]` (`RoomClient`: лобби + игра), `/sandbox`; превью ссылок `og.tsx` + маршрут `og/route.tsx` (язык отправителя из `?l=`); `manifest.ts`, `PwaRegister.tsx` |
 | `apps/web/src/game/scene.ts` | сцена Phaser (~1400 строк): рендер, HUD, оверлеи фаз, ввод, музыка по фазам |
 | `…/game/sprites.ts`, `art.ts`, `frames.ts`, `pixels.ts`, `font.ts` | процедурный арт, битмап-шрифт, выбор кадра персонажа |
 | `…/game/audio.ts`, `music.ts` | звук: `getAudio()` (один на приложение), эффекты, музыкальный секвенсор |
 | `…/game/clip.ts`, `clip-ui.ts`, `card.ts` | клип «Лучший момент» (MediaRecorder), экран монтажа, карточка результата |
 | `…/game/shell.ts`, `boot.ts` | оболочка песочницы, запуск Phaser |
 | `apps/web/src/ui/topbar.ts` | верхняя панель «< Назад» + шестерёнка (язык, музыка, звуки, «Как играть») |
-| `apps/web/src/lib/` | `share` (поделиться с запасными путями), `chunk` (перезагрузка при устаревшей вкладке), `preview` (RPC для OG), `env`, `supabase`, `lang`, `name` |
+| `apps/web/src/lib/` | `share` (поделиться с запасными путями, `withLang` — `?l=` в ссылках), `meta` (метаданные превью по языку), `chunk` (перезагрузка при устаревшей вкладке), `preview` (RPC для OG), `env`, `supabase`, `lang`, `name` |
 | `apps/web/public/sw.js` | сервис-воркер PWA |
 | `supabase/migrations/` | схема БД, RLS, RPC, политики Realtime |
 
