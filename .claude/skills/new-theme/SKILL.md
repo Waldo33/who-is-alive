@@ -38,7 +38,7 @@ description: Создать новую тему-«площадку» для «М
 
 ## 1. Концепт — одним сообщением владельцу
 
-Перед кодом пришли (SendUserMessage) коротко: название темы (ru/en), обычный облик и изнанка (если есть), кто толпа, 3–5 предметов, событие и жест толпы, музыка (жанр + что меняется в изнанке), 2–3 текстовки. Не жди ответа, если владелец не просил согласовать — начинай.
+Перед кодом пришли (SendUserMessage) коротко: название темы (ru/en), обычный облик и изнанка (если есть), кто толпа, 3–5 предметов, событие изнанки, **таблица действий по обликам** (что толпа делает на «замри», «прыжок», «танец» и эмоцию — занятия сеттинга, а не танцы: в офисе работают, пьют кофе, курят; в подвале — стойка, скакалка, бой с тенью), музыка (жанр + части + что меняется в изнанке), 2–3 текстовки. Не жди ответа, если владелец не просил согласовать — начинай.
 
 ## 2. Правила — `packages/game-core/src/themes.ts`
 
@@ -65,11 +65,19 @@ import { BASE_MAP } from './base';
 import type { CharStyle, PropSet, ThemePack } from './types';
 import { centerDist, critterSheet, hash, line, tile } from './util';
 
-const CROWD: CharStyle = { map: { ...BASE_MAP, /* буквы → PAL */ }, patch: (m, view) => { /* правки */ } };
+const CROWD: CharStyle = { map: { ...BASE_MAP, /* буквы → PAL, и буквы предметов поз */ }, patch: (m, view) => { /* правки */ } };
 function ground(arena: ArenaDef): HTMLCanvasElement { /* … */ }
 const PROPS: PropSet = { fountain: () => [c, 34, 34, 4], /* … */ };
+const POSES: Pose[] = [{ view: 'D', patch: (m) => { /* предмет в руках */ } } /* … */];
+const ACTS: Look['acts'] = { freeze: { poses: [0], ms: 1000 }, jump: { poses: [1, 2], ms: 250 }, dance: { … }, wave: { … } };
+const ICONS = { freeze: [/* 8 строк по 8 */], jump: […], dance: […] };
+const song: Song = { step(a: SongApi, st: SongStep) { /* … */ } };
 const pack: ThemePack = {
-  looks: [{ chars: CROWD, ground, prop: (k) => PROPS[k]?.() ?? null, wall: () => tile(rows, map), critter: () => critterSheet(frames, map) }],
+  looks: [
+    { chars: CROWD, ground, prop: (k) => PROPS[k]?.() ?? null, wall: () => tile(rows, map), critter: () => critterSheet(frames, map),
+      poses: POSES, acts: ACTS, icons: ICONS },
+    // { …изнанка: свои chars, ground, prop, wall, critter, poses, acts, icons }
+  ],
   music: { flavor: { transpose: 0, bpm: 120, swing: 0, lead: 'pulse', bass: 'triangle', arp: false, echo: true }, song },
 };
 export default pack;
@@ -150,11 +158,22 @@ pnpm --filter web build && pnpm --filter web start -p 3124
 pnpm --filter web clip-preview <папка-в-scratchpad> 11,12,13 <индекс темы>   # кадры клипа в теме
 ```
 
-Playwright (Chromium, `p.devices['Pixel 7']`): `http://localhost:3124/sandbox?dev&theme=<N>&speed=2`, `page.tap('.kto-play')`, сцена — `window.__kto.game.scene.getScene('game')`. Сними:
+Готовые скрипты:
+
+```bash
+pnpm --filter web theme-sheet <N> <файл.png>   # лист ×8: костюм в общих кадрах, свои позы, иконки — по каждому облику
+pnpm --filter web theme-video <N> <файл.mp4>   # видео дубля со звуком игры (нужен запущенный сайт и ffmpeg), ~1,5 мин
+```
+
+Сначала **лист** (`theme-sheet`) — смотри его, пока не читается каждая поза и иконка; это быстрее, чем ловить действие в игре.
+
+Потом Playwright (Chromium, `p.devices['Pixel 7']`): `http://localhost:3124/sandbox?dev&theme=<N>&speed=2`, `page.tap('.kto-play')`, сцена — `window.__kto.game.scene.getScene('game')`. Сними:
 1. обычный облик на старте игры (`sim.phase === 'play'`), `lookKey` должен быть `<N>_0` с первого кадра;
 2. изнанку — дождись `sim.world.twist === true`, кадр сразу (мигание) и через 1.5 с;
-3. жест толпы крупно — замедли `init0.timeScale = 0.02`, обрежь 1:1 участок 540×720;
-4. возврат и полный матч до `match_end` на `speed=8` без ошибок в консоли; затем без `theme` — случайные темы, все `lookKey` встречаются.
+3. команды «Море волнуется» в каждом облике: стоп-кадр (`sim.world.isFrozen()` — своё название и иконка) и толпу через ~0.5 с после `crowd.resumeAt` (свои позы); эмоции — когда у 3+ сущностей `act` в `wave|dance|jump`. Замедляй `init0.timeScale = 0.01`, обрезай 1:1;
+4. полный матч до `match_end` на `speed=8` без ошибок в консоли; изнанка ни разу не включилась между `crowd.showAt` и `crowd.windowEnd`; затем без `theme` — случайные темы, все `lookKey` встречаются.
+
+В конце запиши `theme-video` и пришли владельцу — музыку ты сам не слышишь, он услышит.
 
 Смотри обрезки в масштабе 1:1: читается ли типаж, не сливается ли толпа с полом, нет ли квадратных пятен шума, не налезают ли предметы на соседние следы. Спроси себя: **узнал бы владелец сеттинг за две секунды без подписи?** Если нет — добавь сигнатуру из таблицы §0, а не деталей «вообще».
 
@@ -162,4 +181,4 @@ Playwright (Chromium, `p.devices['Pixel 7']`): `http://localhost:3124/sandbox?de
 
 - `docs/roadmap.md` — строка о теме; `docs/architecture.md › Темы` — только если поменялся механизм.
 - Коммит на русском (автор и трейлеры — как в CLAUDE.md), `git push` в `main`, дождаться `READY` (Vercel MCP `list_deployments`).
-- Владельцу: 4–6 строк «что увидит игрок», ссылка `…/sandbox?dev&theme=N`, одна картинка (обычный облик | изнанка рядом), что проверить на слух.
+- Владельцу: 4–6 строк «что увидит игрок» (таблица действий по обликам), ссылка `…/sandbox?dev&theme=N`, одна картинка (обычный облик | изнанка рядом), видео со звуком, что проверить на слух.
