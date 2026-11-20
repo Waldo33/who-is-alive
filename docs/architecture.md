@@ -83,10 +83,10 @@
 ## 3. Комнаты и Supabase
 
 - Таблицы: `rooms` (код из 4 букв без похожих — `^[ABCDEFGHJKMNPQRSTUVWXYZ]{4}$`, `host_id`, `status lobby|playing`, `settings`, `last_active_at`), `room_members` (цвет уникален в комнате), `analytics_events`.
-- RPC (`security definer`, `search_path = ''`, проверки внутри): `create_room`, `join_room` (`room_full`, `room_playing`, `room_not_found`), `leave_room`, `claim_host`, `touch_room`, `set_room_status`, `update_room_settings`, `rename_member`, `room_preview` (без входа: имя хоста, число игроков, статус — для превью ссылки).
-- Пульс: каждый участник раз в 20 с вызывает `touch_room` (`room_members.last_seen_at`); `join_room` в лобби вытесняет молчащих > 75 с (кроме хоста), `leave_room` передаёт роль хоста недавно отметившемуся. Боты превью в комнату не входят (`lib/bot.ts`).
+- RPC (`security definer`, `search_path = ''`, проверки внутри): `create_room`, `join_room` (`room_full`, `room_playing`, `room_not_found`), `leave_room`, `claim_host`, `touch_room`, `set_room_status`, `update_room_settings`, `rename_member`, `kick_member` (режиссёр убирает участника в лобби), `room_preview` (без входа: имя хоста, число игроков, статус — для превью ссылки).
+- Пульс: каждый участник раз в 20 с вызывает `touch_room` (`room_members.last_seen_at`; комнату пульс **не** продлевает и отвечает `ok | gone | out` — на `gone` в лобби клиент показывает «комната закрылась»); `join_room` в лобби вытесняет молчащих > 75 с (кроме хоста), `leave_room` передаёт роль хоста недавно отметившемуся. Боты превью в комнату не входят (`lib/bot.ts`).
 - RLS: участник видит свою комнату и её состав. Прямой записи в таблицы нет, только RPC; аналитику можно писать только со своим `user_id`.
-- Уборка: `pg_cron` каждые 10 мин вызывает `private.cleanup()` — удаляет комнаты старше 30 мин без активности и анонимных пользователей старше 7 дней.
+- Уборка: `pg_cron` каждые 10 мин вызывает `private.cleanup()` — удаляет комнаты без действий 30 мин (вход, матч, настройки, имя, смена режиссёра; пульс не считается) или старше 6 часов, и анонимных пользователей старше 7 дней.
 - Анонимный вход должен быть включён в Auth → Providers проекта. Советник Supabase предупреждает о `security definer`-функциях — это осознанно.
 - `apps/web/src/net/room.ts` (`Room`):
   - вход через `join_room`;

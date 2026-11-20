@@ -268,8 +268,19 @@ export class Room {
     })();
   }
 
+  /**
+   * Пульс. Если комнату убрала уборка (долго без действий или старше 6 часов), в лобби показать
+   * «комната закрылась»; во время матча — доиграть, следующий пульс в лобби поймает.
+   */
   private touch(): void {
-    void this.sb.rpc('touch_room', { p_code: this.state.code });
+    void this.sb.rpc('touch_room', { p_code: this.state.code }).then(({ data, error }) => {
+      if (!error && data === 'gone' && this.state.status === 'lobby') void this.closed();
+    });
+  }
+
+  private async closed(): Promise<void> {
+    await this.leave();
+    this.set({ status: 'error', error: 'closed' });
   }
 
   /**
@@ -281,6 +292,7 @@ export class Room {
     void this.sb.rpc('join_room', { p_code: this.state.code, p_name: this.myName }).then(({ error }) => {
       // перечитать состав и роли: пока нас не было, хостом мог стать другой
       if (!error) this.scheduleRefresh();
+      else if (rpcErrorCode(error) === 'room_not_found' && this.state.status === 'lobby') void this.closed();
     });
   };
 

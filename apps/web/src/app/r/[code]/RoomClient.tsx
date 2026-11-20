@@ -192,7 +192,7 @@ function ErrorScreen({ t, errorKey }: { t: Dict; errorKey: string }) {
         {msg}
       </p>
       <Link className="btn" href="/">
-        {errorKey === 'room_full' || errorKey === 'room_playing' || errorKey === 'kicked' ? t.lobby.createOwn : t.lobby.backHome}
+        {errorKey === 'room_full' || errorKey === 'room_playing' || errorKey === 'kicked' || errorKey === 'closed' ? t.lobby.createOwn : t.lobby.backHome}
       </Link>
     </main>
   );
