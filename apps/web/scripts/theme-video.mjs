@@ -5,7 +5,7 @@
 import { spawnSync } from 'node:child_process';
 import { writeFileSync, rmSync } from 'node:fs';
 import { Buffer } from 'node:buffer';
-/* global window, AudioNode, AudioDestinationNode, MediaStream, MediaRecorder, Blob, btoa, performance, setInterval -- код внутри page.evaluate выполняется в браузере */
+/* global document, window, AudioNode, AudioDestinationNode, MediaStream, MediaRecorder, Blob, btoa, performance, setInterval -- код внутри page.evaluate выполняется в браузере */
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
@@ -15,7 +15,7 @@ if (themeArg === undefined || !outFile) {
   console.error('node scripts/theme-video.mjs <индекс темы> <файл.mp4> [адрес]');
   process.exit(1);
 }
-const MAX_SEC = 150;
+const MAX_SEC = 240;
 const S = "window.__kto.game.scene.getScene('game')";
 
 const browser = await chromium.launch({ args: ['--use-gl=swiftshader', '--enable-webgl', '--ignore-gpu-blocklist', '--autoplay-policy=no-user-gesture-required'] });
@@ -41,6 +41,15 @@ const errors = [];
 page.on('pageerror', (e) => errors.push(String(e)));
 await page.goto(`${base}/sandbox?dev&theme=${themeArg}`);
 await page.waitForTimeout(1500);
+// показ целого дубля: ИИ-игроки в песочнице быстро собирают три звезды — для видео победа по звёздам выключена
+await page.evaluate(() => {
+  const form = document.querySelector('.kto-dev');
+  const inp = form?.querySelector('input[name="starsToWin"]');
+  if (!form || !inp) return;
+  inp.value = '99';
+  form.requestSubmit();
+});
+await page.waitForTimeout(300);
 await page.tap('.kto-play');
 await page.waitForFunction(() => window.__kto?.game && window.__msd);
 await page.evaluate(() => {
@@ -93,11 +102,27 @@ await page.evaluate((sel) => {
     }
   }, 100);
 }, S);
-// один дубль: до итогов и ещё 4,5 с
+// до итогов дубля, в котором были и изнанка, и «Море волнуется» (иначе пишем следующий, но не больше двух), и ещё 4,5 с
 let endAt = Infinity;
+let sawTwist = false;
+let sawCrowd = false;
+let lastPhase = '';
+let rounds = 0;
 for (let t = 0; t < MAX_SEC * 10 && t < endAt; t++) {
-  const phase = await page.evaluate((sel) => eval(sel).sim.phase, S);
-  if (phase === 'results' && endAt === Infinity) endAt = t + 45;
+  const [phase, twist, crowd] = await page.evaluate((sel) => {
+    const s = eval(sel).sim;
+    return [s.phase, s.world.twist, !!s.world.crowd];
+  }, S);
+  if (phase === 'countdown' && lastPhase !== 'countdown') sawTwist = sawCrowd = false;
+  sawTwist ||= twist;
+  sawCrowd ||= crowd;
+  if (phase === 'results' && lastPhase !== 'results') {
+    rounds++;
+    // у темы без изнанки её не будет — после двух дублей хватит
+    if ((sawCrowd && sawTwist) || rounds >= 2) endAt = t + 45;
+  }
+  if (phase === 'match_end' && endAt === Infinity) endAt = t + 60;
+  lastPhase = phase;
   await page.waitForTimeout(100);
 }
 await page.evaluate(() => new Promise((r) => ((window.__rec.onstop = r), window.__rec.stop())));
