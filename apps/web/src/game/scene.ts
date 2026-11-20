@@ -10,8 +10,9 @@ import {
   tp,
   fmt,
   DICTS,
+  THEME_RULES,
 } from '@kto/game-core';
-import type { AwardId, ClientSession, CrowdKind, Dict, Entity, GameConfig, Lang, Moment, Notice, RoundRecording, World, WorldEvent } from '@kto/game-core';
+import type { AwardId, ClientSession, CrowdKind, Dict, Entity, GameConfig, Lang, Moment, Notice, RoundRecording, ThemeText, World, WorldEvent } from '@kto/game-core';
 import { resultCardFile } from './card';
 import { clipSupported, openClipOverlay, recordClipInBackground } from './clip-ui';
 import type { ClipPlayer } from './clip';
@@ -21,10 +22,11 @@ import type { CharFrame } from './frames';
 import type { FontColor } from './font';
 import { registerFonts } from './font';
 import {
-  CH_H, CH_W, OL_H, OL_W, THEMES,
+  CH_H, CH_W, OL_H, OL_W,
   makeArenaBackground, makeArrow, makeCharacterSheets, makeHedge, makeIcons, makeMark, makePigeon,
   makePoof, makeProp, makeRing, makeShadow, makeStar, makeStarFlash, makeStunStars, makeVignette,
 } from './sprites';
+import { isThemeLoaded, loadTheme, lookCount, preloadThemes, themeLook, themePack } from './themes';
 
 const AY = 24; // верх арены на экране
 const PANEL_Y = 284;
@@ -112,7 +114,14 @@ export class GameScene extends Phaser.Scene {
   private props: { spr: Phaser.GameObjects.Image; kind: string }[] = [];
   private ground!: Phaser.GameObjects.Image;
   /** Тема, под которую сейчас одеты земля, предметы, стенка зоны и зверьки. */
-  private locTheme = -1;
+  /** Текущий облик на поле: «тема_облик» (облик 1 — изнанка темы). */
+  private lookKey = '';
+  /** «25-й кадр»: сущность, которая на миг показана в облике изнанки, и до какого времени. */
+  private flash25: { eid: number; until: number } | null = null;
+  private next25 = 0;
+  /** Мигание света при смене изнанки: время начала (performance.now), 0 — нет. */
+  private flicker = 0;
+  private blackout!: Phaser.GameObjects.Rectangle;
   private pigeons: Pigeon[] = [];
   private ui!: Phaser.GameObjects.Graphics;
   private fxG!: Phaser.GameObjects.Graphics;
@@ -215,20 +224,26 @@ export class GameScene extends Phaser.Scene {
     this.makeTextures();
 
     const arena = this.sim.arena;
-    this.locTheme = -1;
-    this.ensureLocation(0);
-    this.ground = this.add.image(0, AY, 'arena0').setOrigin(0, 0).setDepth(0);
+    this.lookKey = '';
+    this.flicker = 0;
+    this.flash25 = null;
+    this.next25 = 0;
+    this.ensureLook(0, 0);
+    // пакет темы этого дубля — сразу, остальные — в фоне, когда браузер свободен
+    void loadTheme(this.sim.theme);
+    preloadThemes();
+    this.ground = this.add.image(0, AY, 'arena0_0').setOrigin(0, 0).setDepth(0);
     for (const p of arena.props) {
-      const spr = this.add.image(p.x, AY + p.y, `prop-${p.kind}-0`, 0).setOrigin(0.5, 1).setDepth(AY + p.y);
+      const spr = this.add.image(p.x, AY + p.y, `prop-${p.kind}-0_0`, 0).setOrigin(0.5, 1).setDepth(AY + p.y);
       this.props.push({ spr, kind: p.kind });
     }
-    for (let i = 0; i < 4; i++) this.hedges.push(this.add.tileSprite(0, 0, 8, 8, 'hedge0').setOrigin(0, 0).setDepth(900).setVisible(false));
+    for (let i = 0; i < 4; i++) this.hedges.push(this.add.tileSprite(0, 0, 8, 8, 'hedge0_0').setOrigin(0, 0).setDepth(900).setVisible(false));
 
     for (let i = 0; i < this.cfg.entitiesTotal; i++) {
       this.views.push({
         shadow: this.add.image(0, 0, 'shadow').setOrigin(0.5, 0.5),
-        ol: this.add.image(0, 0, 'ol0', 0).setOrigin(7 / OL_W, 17 / OL_H).setVisible(false),
-        spr: this.add.image(0, 0, 'ch0', 0).setOrigin(6 / CH_W, 1),
+        ol: this.add.image(0, 0, 'ol0_0', 0).setOrigin(7 / OL_W, 17 / OL_H).setVisible(false),
+        spr: this.add.image(0, 0, 'ch0_0', 0).setOrigin(6 / CH_W, 1),
         stun: this.add.image(0, 0, 'stun', 0).setOrigin(0.5, 1).setVisible(false),
         mark: this.add.image(0, 0, 'mark').setOrigin(0.5, 1).setVisible(false),
         q: this.add.image(0, 0, 'qmark').setOrigin(0.5, 1).setVisible(false),
@@ -240,7 +255,7 @@ export class GameScene extends Phaser.Scene {
 
     const pigeonSpots = [[70, 56], [118, 214], [146, 98], [34, 182], [104, 30]];
     for (const [x, y] of pigeonSpots) {
-      this.pigeons.push({ hx: x, hy: y, x, y, state: 'idle', t: Math.random() * 3000, spr: this.add.image(x, AY + y, 'pigeon0', 0).setOrigin(0.5, 1) });
+      this.pigeons.push({ hx: x, hy: y, x, y, state: 'idle', t: Math.random() * 3000, spr: this.add.image(x, AY + y, 'pigeon0_0', 0).setOrigin(0.5, 1) });
     }
 
     this.add.image(0, AY, 'vignette').setOrigin(0, 0).setDepth(950).setAlpha(0.35);
@@ -253,6 +268,7 @@ export class GameScene extends Phaser.Scene {
     this.toast = this.txt(90, PANEL_Y - 14, '', 'sand').setOrigin(0.5, 0).setDepth(1600).setVisible(false);
     this.ui2 = this.add.graphics().setDepth(2050);
     this.dim = this.add.rectangle(0, AY, 180, 260, hexToInt(PAL.ink), 0.45).setOrigin(0, 0).setDepth(39).setVisible(false);
+    this.blackout = this.add.rectangle(0, AY, 180, 260, hexToInt(PAL.ink), 0.92).setOrigin(0, 0).setDepth(1000).setVisible(false);
     this.setupFreezeFrame();
     // постоянная пометка в нижней панели, пока ты призрак
     this.ghostUi = [
@@ -335,12 +351,6 @@ export class GameScene extends Phaser.Scene {
   }
 
   private makeTextures(): void {
-    THEMES.forEach((th, i) => {
-      if (this.textures.exists('ch' + i)) return;
-      const s = makeCharacterSheets(th);
-      this.addSheet('ch' + i, s.body, CH_W, CH_H);
-      this.addSheet('ol' + i, s.outline, OL_W, OL_H);
-    });
     const once = (key: string, f: () => HTMLCanvasElement) => {
       if (!this.textures.exists(key)) this.textures.addCanvas(key, f());
     };
@@ -359,16 +369,26 @@ export class GameScene extends Phaser.Scene {
     this.addSheet('icons', icons.canvas, 8, 8);
   }
 
-  /** Текстуры локации темы (земля, предметы, стенка зоны, зверёк) — по требованию, один раз. */
-  private ensureLocation(th: number): void {
-    if (this.textures.exists('arena' + th)) return;
-    this.textures.addCanvas('arena' + th, makeArenaBackground(this.sim.arena, th));
-    this.textures.addCanvas('hedge' + th, makeHedge(th));
-    this.addSheet('pigeon' + th, makePigeon(th), 6, 6);
+  /**
+   * Текстуры облика темы (толпа, земля, предметы, стенка зоны, зверёк) — по требованию, один раз.
+   * Пакет темы должен быть загружен (themes/index.ts), иначе вернётся парк.
+   */
+  private ensureLook(th: number, lk: number): string {
+    const key = isThemeLoaded(th) ? `${th}_${Math.min(lk, lookCount(th) - 1)}` : '0_0';
+    if (this.textures.exists('arena' + key)) return key;
+    const [t, l] = key.split('_').map(Number);
+    const look = themeLook(t, l);
+    const s = makeCharacterSheets(look.chars);
+    this.addSheet('ch' + key, s.body, CH_W, CH_H);
+    this.addSheet('ol' + key, s.outline, OL_W, OL_H);
+    this.textures.addCanvas('arena' + key, makeArenaBackground(this.sim.arena, look));
+    this.textures.addCanvas('hedge' + key, makeHedge(look));
+    this.addSheet('pigeon' + key, makePigeon(look), 6, 6);
     for (const kind of new Set(this.sim.arena.props.map((p) => p.kind))) {
-      const [c, fw, fh] = makeProp(kind, th);
-      this.addSheet(`prop-${kind}-${th}`, c, fw, fh);
+      const [c, fw, fh] = makeProp(kind, look);
+      this.addSheet(`prop-${kind}-${key}`, c, fw, fh);
     }
+    return key;
   }
 
   private icon(name: string): number {
@@ -645,6 +665,18 @@ export class GameScene extends Phaser.Scene {
         this.audio.play('hedge');
         this.showToast(this.t.game.hedge, 1800);
         break;
+      case 'twist': {
+        // изнанка темы: свет мигает, офис → подвал (и обратно); песня темы — громче
+        this.audio.setTwist(ev.on);
+        if (this.sim.phase !== 'play') break;
+        this.flicker = performance.now();
+        this.audio.play('flicker');
+        this.cameras.main.shake(90, 0.004);
+        const tt = this.themeText();
+        const msg = ev.on ? tt?.twistOn : tt?.twistOff;
+        if (msg) this.showToast(msg, 1800);
+        break;
+      }
       default:
         break;
     }
@@ -658,6 +690,9 @@ export class GameScene extends Phaser.Scene {
   private onNotice(n: Notice): void {
     if (n.t === 'round_start') {
       this.clearDeath();
+      this.audio.setTwist(false);
+      this.next25 = 0;
+      void loadTheme(n.theme);
       this.applyTheme();
       this.ghostMarks.clear();
       this.replay = null;
@@ -672,6 +707,8 @@ export class GameScene extends Phaser.Scene {
       if (n.phase === 'play') {
         this.audio.play('ready');
         this.flashWord(this.t.game.action);
+        const intro = this.themeText()?.intro;
+        if (intro) this.time.delayedCall(900, () => this.sim.phase === 'play' && this.showToast(intro, 2400));
       }
       if (n.phase === 'accuse') this.audio.play('tick');
       this.syncMusic(n.phase === 'countdown');
@@ -868,6 +905,44 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
+  /** Свои текстовки темы раунда (словарь › themeText), если есть. */
+  private themeText(): ThemeText | undefined {
+    const id = THEME_RULES[this.sim.theme]?.id;
+    return id ? this.t.themeText[id] : undefined;
+  }
+
+  /** Свет мигает при смене изнанки: тьма — свет — тьма — новый облик (мс от начала). */
+  private renderFlicker(): void {
+    const k = performance.now() - this.flicker;
+    const dark = this.flicker > 0 && ((k >= 0 && k < 70) || (k >= 130 && k < 260));
+    this.blackout.setVisible(dark);
+    if (k > 300) this.flicker = 0;
+  }
+
+  /** «25-й кадр»: в обычном облике темы на миг (кадр-два) мелькает кто-то из изнанки. */
+  private subliminalKey(eid: number): string | null {
+    const f = this.flash25;
+    if (!f || f.eid !== eid || performance.now() > f.until) return null;
+    return this.ensureLook(this.sim.theme, 1);
+  }
+
+  private tickSubliminal(): void {
+    const th = this.sim.theme;
+    const now = performance.now();
+    const can = this.sim.phase === 'play' && !this.sim.world.twist && isThemeLoaded(th) && lookCount(th) > 1 && !!themePack(th).subliminal;
+    if (!can) {
+      this.flash25 = null;
+      return;
+    }
+    if (!this.next25) this.next25 = now + 5000 + Math.random() * 6000;
+    if (now < this.next25) return;
+    this.next25 = now + 7000 + Math.random() * 9000;
+    const alive = this.sim.world.alive();
+    if (!alive.length) return;
+    // любая сущность, чаще бот: ничего не выдаёт
+    this.flash25 = { eid: alive[Math.floor(Math.random() * alive.length)].eid, until: now + 70 };
+  }
+
   /** Крупное слово по центру поля на миг («Мотор!» на старте дубля). */
   private flashWord(s: string): void {
     const t = this.txt(90, AY + 96, s, 'yellow').setScale(2).setDepth(2200);
@@ -885,20 +960,26 @@ export class GameScene extends Phaser.Scene {
     this.toastUntil = performance.now() + ms;
   }
 
+  /**
+   * Облик поля по теме раунда и изнанке того мира, что сейчас на экране (в разоблачении — повтора):
+   * толпа, земля, предметы, стенка зоны, зверёк. Пакет темы грузится по требованию — пока его нет,
+   * поле остаётся в парке, а как загрузится, облик сменится сам.
+   */
   private applyTheme(): void {
     const th = this.sim.theme;
+    if (!isThemeLoaded(th)) void loadTheme(th).then(() => (this.lookKey = ''));
+    const lk = this.phaseWorld().twist ? 1 : 0;
+    const key = this.ensureLook(th, lk);
+    if (key === this.lookKey) return;
+    this.lookKey = key;
     for (const v of this.views) {
-      v.spr.setTexture('ch' + th, 0);
-      v.ol.setTexture('ol' + th, 0);
+      v.spr.setTexture('ch' + key, 0);
+      v.ol.setTexture('ol' + key, 0);
     }
-    // локация вслед за темой: кепки — парк, повара — кухня, пингвины — льдина, космонавты — луна
-    if (th === this.locTheme) return;
-    this.locTheme = th;
-    this.ensureLocation(th);
-    this.ground.setTexture('arena' + th);
-    for (const p of this.props) p.spr.setTexture(`prop-${p.kind}-${th}`, 0);
-    for (const h of this.hedges) h.setTexture('hedge' + th);
-    for (const p of this.pigeons) p.spr.setTexture('pigeon' + th, 0);
+    this.ground.setTexture('arena' + key);
+    for (const p of this.props) p.spr.setTexture(`prop-${p.kind}-${key}`, 0);
+    for (const h of this.hedges) h.setTexture('hedge' + key);
+    for (const p of this.pigeons) p.spr.setTexture('pigeon' + key, 0);
   }
 
   // ───────────── кадр ─────────────
@@ -929,6 +1010,9 @@ export class GameScene extends Phaser.Scene {
       this.audio.setIntensity(level);
     }
 
+    this.applyTheme();
+    this.tickSubliminal();
+    this.renderFlicker();
     if (phase === 'reveal') this.renderReveal(alpha);
     else this.renderWorld(this.sim.world, phase === 'countdown' || phase === 'play' ? alpha : 1, 'live');
 
@@ -997,6 +1081,9 @@ export class GameScene extends Phaser.Scene {
           ly = Math.round(this.lunge.dy * Math.sin(k * Math.PI));
         }
       }
+      const flashKey = mode === 'live' ? this.subliminalKey(e.eid) : null;
+      const chKey = 'ch' + (flashKey ?? this.lookKey);
+      if (v.spr.texture.key !== chKey) v.spr.setTexture(chKey, frame);
       v.spr.setVisible(true).setFrame(frame).setFlipX(flip).setPosition(x + lx, sy + jumpOff + ly).setDepth(sy);
       // цель замаха на миг вспыхивает белым
       if (mode === 'live' && this.swingFx.some((s) => s.eid === e.eid && s.t < 90)) v.spr.setTintFill(0xffffff);

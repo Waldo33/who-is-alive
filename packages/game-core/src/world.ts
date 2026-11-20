@@ -56,6 +56,8 @@ export interface WorldSnapshot {
   stars: Star[];
   zone: ZoneState | null;
   crowd: CrowdState | null;
+  /** Изнанка темы включена (необязательно — для снимков старых версий). */
+  twist?: boolean;
   pending: WorldEvent[];
 }
 
@@ -70,6 +72,8 @@ export class World {
   stars = new Map<number, Star>();
   zone: ZoneState | null = null;
   crowd: CrowdState | null = null;
+  /** Изнанка темы: офис стал подвалом (themes.ts › twist). */
+  twist = false;
   private pending: WorldEvent[] = [];
   /** Журнал применённых событий (для повтора и клипа). */
   log: WorldEvent[] = [];
@@ -109,6 +113,7 @@ export class World {
     this.stars.clear();
     this.zone = null;
     this.crowd = null;
+    this.twist = false;
     this.pending = [];
     this.log = [];
     this.keyframes = [];
@@ -248,6 +253,9 @@ export class World {
       case 'crowd':
         this.crowd = { kind: ev.kind, warnAt: ev.at, showAt: ev.showAt, resumeAt: ev.resumeAt, windowEnd: ev.windowEnd };
         break;
+      case 'twist':
+        this.twist = ev.on;
+        break;
       case 'hit':
         break;
     }
@@ -290,6 +298,7 @@ export class World {
       stars: [...this.stars.values()].map((s) => ({ ...s })),
       zone: this.zone ? { ...this.zone } : null,
       crowd: this.crowd ? { ...this.crowd } : null,
+      twist: this.twist,
       pending: this.pending.slice(),
     };
   }
@@ -301,6 +310,7 @@ export class World {
     this.stars = new Map(s.stars.map((st) => [st.id, { ...st }]));
     this.zone = s.zone ? { ...s.zone } : null;
     this.crowd = s.crowd ? { ...s.crowd } : null;
+    this.twist = !!s.twist;
     this.pending = s.pending.slice();
   }
 }

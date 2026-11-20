@@ -9,7 +9,7 @@ export function ogLang(v: string | string[] | null | undefined): Lang {
 }
 
 /** Сколько тем (и локаций) у превью: кепки/парк, повара/кухня, пингвины/льдина, космонавты/луна. */
-export const OG_THEMES = 4;
+export const OG_THEMES = 5;
 
 /** Тема превью из параметра ?t= картинки; без него — случайная. */
 export function ogTheme(v: string | null | undefined): number {

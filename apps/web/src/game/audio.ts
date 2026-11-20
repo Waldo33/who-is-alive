@@ -1,4 +1,5 @@
 import { Music } from './music';
+import { themePack } from './themes';
 import type { MusicMode } from './music';
 
 /**
@@ -8,7 +9,7 @@ import type { MusicMode } from './music';
  */
 export type Sfx =
   | 'step' | 'hitPlayer' | 'hitBot' | 'poof' | 'starTake' | 'starSpawn' | 'crowd' | 'tick'
-  | 'click' | 'ready' | 'accuseRight' | 'accuseWrong' | 'fanfare' | 'sad' | 'hedge' | 'pigeon' | 'drum' | 'denied' | 'count' | 'swing';
+  | 'click' | 'ready' | 'accuseRight' | 'accuseWrong' | 'fanfare' | 'sad' | 'hedge' | 'pigeon' | 'drum' | 'denied' | 'count' | 'swing' | 'flicker';
 
 const STORAGE_KEY = 'kto:sound';
 const MUSIC_KEY = 'kto:music';
@@ -42,6 +43,7 @@ export class Audio {
   private duck: GainNode | null = null;
   private noiseBuf: AudioBuffer | null = null;
   private music: Music | null = null;
+  private twist = false;
   /** Звуки игры (эффекты). */
   enabled = true;
   /** Музыка. */
@@ -147,7 +149,16 @@ export class Audio {
       m.stop();
       return;
     }
-    if (force || m.mode !== mode || (!m.running && !m.paused)) m.start(mode, theme);
+    if (force || m.mode !== mode || (!m.running && !m.paused)) {
+      m.start(mode, themePack(theme).music);
+      m.setTwist(this.twist);
+    }
+  }
+
+  /** Изнанка темы (офис → подвал): песня темы меняет подачу. */
+  setTwist(on: boolean): void {
+    this.twist = on;
+    this.music?.setTwist(on);
   }
 
   /** «Море волнуется»: оборвать музыку (зажёванная плёнка). */
@@ -236,6 +247,8 @@ export class Audio {
       case 'denied': this.tone('square', 200, 160, 0.12, 0.15); break;
       // замах: короткий свист — звучит сразу по нажатию, итог удара приходит следом
       case 'swing': this.noise(0.07, 0.2, 1500); this.noise(0.06, 0.12, 3400, 0.03); break;
+      // свет мигает: щелчки выключателя и гудение лампы
+      case 'flicker': [0, 0.09, 0.2].forEach((d) => this.noise(0.03, 0.22, 2600, d)); this.tone('sawtooth', 100, 100, 0.35, 0.05, 0.05); break;
     }
   }
 

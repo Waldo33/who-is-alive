@@ -2,7 +2,7 @@ import { en } from './en';
 import { ru } from './ru';
 import type { Dict, Plural } from './ru';
 
-export type { AwardId, Dict, Plural } from './ru';
+export type { AwardId, Dict, Plural, ThemeText } from './ru';
 export { ru, en };
 
 export type Lang = 'ru' | 'en';

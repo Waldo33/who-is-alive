@@ -2,7 +2,7 @@ import { PAL } from '@kto/assets';
 import type { Dict } from '@kto/game-core';
 import { tint } from '../game/art';
 import { canvas } from '../game/pixels';
-import { CH_H, CH_W, F, OL_H, OL_W, THEMES, makeCharacterSheets, makeIcons, makeMark, makeStar } from '../game/sprites';
+import { CH_H, CH_W, F, OL_H, OL_W, PARK_CHARS, makeCharacterSheets, makeIcons, makeMark, makeStar } from '../game/sprites';
 
 /**
  * «Как играть»: каждый пункт правил — отдельная строка с пиксельной картинкой из игры:
@@ -15,7 +15,7 @@ let icons: string[] | null = null;
 function makeRuleIcons(): string[] {
   const S = 20; // логический размер клетки иконки; на экране — ×2 (CSS, без сглаживания)
   const cell = () => canvas(S, S);
-  const sheets = makeCharacterSheets(THEMES[0]);
+  const sheets = makeCharacterSheets(PARK_CHARS);
   const glow = tint(sheets.outline, PAL.yellow);
   const ic = makeIcons();
   const iconAt = (g: CanvasRenderingContext2D, name: string, x: number, y: number) => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DICTS, LANGS, fmt, pickLang, tp } from '../src';
+import { DICTS, LANGS, THEME_COUNT, fmt, pickLang, tp } from '../src';
 import type { Dict, Lang } from '../src';
 
 function shape(o: unknown): unknown {
@@ -36,7 +36,10 @@ describe('i18n', () => {
         g.accuseChange, g.reveal, g.revealReplay, g.revealFinal, g.guessed, g.missed, g.caught, g.killedBy, g.noAccuse,
         tp(lang, g.resultsTitle, 5), ...Object.values(g.endReason), g.noAwards, tp(lang, g.nextIn, 10),
         g.youWon, g.winner, g.tooAlive, tp(lang, g.roundTheme, 5, { theme: t.themes.reduce((a, b) => (a.length > b.length ? a : b)) }),
+        ...Object.values(t.themeText).flatMap((x) => Object.values(x ?? {}) as string[]),
       ];
+      // у каждой темы есть название
+      expect(t.themes.length).toBe(THEME_COUNT);
       for (const s of flat) expect(s.length, `${lang}: «${s}»`).toBeLessThanOrEqual(21);
       // заголовок выбывания рисуется вдвое крупнее
       expect(g.outTitle.length * 16, g.outTitle).toBeLessThanOrEqual(176);

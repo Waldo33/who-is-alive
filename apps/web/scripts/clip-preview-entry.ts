@@ -2,15 +2,21 @@
 import { createLocalSession, findBestMoment, makeConfig, recordRound } from '@kto/game-core';
 import { DICTS } from '@kto/game-core';
 import { ClipPlayerScene } from '../src/game/clip';
+import { loadTheme } from '../src/game/themes';
 
 const out: { name: string; url: string }[] = [];
-const seeds = (globalThis as unknown as { __seeds: number[] }).__seeds;
+const G = globalThis as unknown as { __seeds: number[]; __theme?: number; __out: unknown };
+const seeds = G.__seeds;
+// третий аргумент — тема всех дублей (как ?dev&theme=N в песочнице)
+const cfg = makeConfig(G.__theme !== undefined && G.__theme >= 0 ? { fixedTheme: G.__theme } : {});
+void (async () => {
 for (const seed of seeds) {
   const players = ['me', 'b', 'c', 'd'].map((pid, i) => ({ pid, name: ['Быстрый Енот', 'Тихий Батон', 'Злой Пиксель', 'Шустрый Кот'][i], color: i }));
-  const s = createLocalSession(makeConfig(), players, seed, 'me');
+  const s = createLocalSession(cfg, players, seed, 'me');
   for (let i = 0; i < 20 * 200 && s.phase !== 'reveal'; i++) s.tick();
   const sum = s.summary!;
   const rec = recordRound(s.world, { round: s.round, theme: s.theme, players: sum.reveal, playEnd: sum.replayTo });
+  await loadTheme(s.theme);
   const self = sum.reveal.find((r) => r.pid === 'me')!.eid;
   const moment = findBestMoment({ ...rec, kills: sum.kills }, self)!;
   const cp = sum.reveal.map((r) => ({ eid: r.eid, name: players.find((p) => p.pid === r.pid)!.name, color: players.find((p) => p.pid === r.pid)!.color }));
@@ -23,4 +29,5 @@ for (const seed of seeds) {
   }
   out.push({ name: `s${seed}_info`, url: 'data:text/plain,' + encodeURIComponent(JSON.stringify({ moment, dur: scene.duration })) });
 }
-(globalThis as unknown as { __out: unknown }).__out = out;
+G.__out = out;
+})();

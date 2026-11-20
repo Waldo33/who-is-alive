@@ -26,6 +26,11 @@ export function frameFor(e: Entity, t: number): CharFrame {
         return { frame: F.STARTLE + (dt < 150 ? 0 : 1), flip: false, yoff: dt < 150 ? -2 : 0 };
       case 'stun':
         return { frame: F.STUN, flip: false, yoff: 0 };
+      case 'jab': {
+        // бой с тенью: стойка — удар, каждые две серии разворот
+        const n = Math.floor(dt / 115);
+        return { frame: n % 2 ? F.JAB : F.GUARD, flip: Math.floor(n / 4) % 2 === 1, yoff: 0 };
+      }
     }
   }
   if (e.moving || e.pi < e.path.length) return { frame: base + 2 + (Math.floor(e.walk / 2.25) % 4), flip, yoff: 0 };

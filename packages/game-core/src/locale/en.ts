@@ -1,4 +1,5 @@
-import type { Dict } from './ru';
+import type { ThemeId } from '../themes';
+import type { Dict, ThemeText } from './ru';
 
 /** English strings. Same structure as ru.ts (enforced by the Dict type). Canvas strings ≤ 21 chars. */
 export const en: Dict = {
@@ -23,7 +24,10 @@ export const en: Dict = {
     noun: ['Pixel', 'Toaster', 'Pigeon', 'Raccoon', 'Penguin', 'Gizmo', 'Noodle', 'Sprite', 'Bagel', 'Cactus'],
   },
   colors: ['Red', 'Blue', 'Yellow', 'Green'],
-  themes: ['Caps', 'Chefs', 'Penguins', 'Astronauts'],
+  themes: ['Caps', 'Chefs', 'Penguins', 'Astronauts', 'Clerks'],
+  themeText: {
+    office: { intro: 'Rule 1: blend in', twistOn: 'Lights out. Basement!', twistOff: 'Back to the office' },
+  } as Partial<Record<ThemeId, ThemeText>>,
   start: {
     aria: 'Start',
     rules: [

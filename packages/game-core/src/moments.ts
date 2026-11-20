@@ -37,6 +37,18 @@ export interface Moment {
 export const MOMENT_MIN_MS = 5000;
 export const MOMENT_MS = 6000;
 export const MOMENT_MAX_MS = 8000;
+/**
+ * Подход к событию можно подрезать, но не короче этого (мс до удара): два выбивания подряд
+ * с длинными подходами не помещаются в 8 с целиком — лучше показать оба с коротким подходом.
+ */
+export const MOMENT_CORE_MS = 1500;
+/** Штраф за подрезанный подход. */
+const TRIM_PENALTY = 1;
+
+/** С какого момента событие нельзя резать: подход — не короче MOMENT_CORE_MS. */
+export function coreFrom(e: { from: number; at: number }): number {
+  return Math.max(e.from, e.at - MOMENT_CORE_MS);
+}
 const STEP_MS = 250;
 const CLOSE_PX = 20;
 /** Штраф за каждую секунду сверх 6 с: длинное окно берём, только если оно правда насыщеннее. */
@@ -228,6 +240,7 @@ export function findBestMoment(rec: RoundRecording, selfEid?: number): Moment | 
       if (e.kind === 'close') continue;
       froms.add(e.from);
       froms.add(e.to - len);
+      froms.add(coreFrom(e));
     }
     for (const from of froms) {
       const to = from + len;
@@ -243,11 +256,12 @@ export function findBestMoment(rec: RoundRecording, selfEid?: number): Moment | 
           if (!main) main = e;
           continue;
         }
-        if (e.from < from || e.to > to) {
+        if (coreFrom(e) < from || e.to > to) {
           // событие задето краем окна (виден подход, а удара нет, или наоборот) — хуже, чем не показать вовсе
           cut += e.pts;
           continue;
         }
+        if (e.from < from) cut += TRIM_PENALTY; // подход подрезан, но удар виден целиком
         pts += e.pts;
         if (!main || main.kind === 'close' || e.pts > main.pts || (e.pts === main.pts && e.at > main.at)) main = e;
       }

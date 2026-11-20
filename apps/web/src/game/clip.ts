@@ -97,7 +97,7 @@ export class ClipPlayerScene {
   private wc: HTMLCanvasElement;
   private wg: CanvasRenderingContext2D;
   private art: Art;
-  private hedge: CanvasPattern | null;
+  private hedges = new Map<number, CanvasPattern | null>();
   private part1Dur: number;
   private part2Dur: number;
   private speed1: number;
@@ -122,7 +122,6 @@ export class ClipPlayerScene {
     this.wc = wc.c;
     this.wg = wc.g;
     this.art = getArt(inp.arena);
-    this.hedge = this.wg.createPattern(this.art.loc(inp.rec.theme).hedge, 'repeat');
     const m = inp.moment;
     const len = m.to - m.from;
     this.speed1 = Math.max(PART1_SPEED, len / PART1_MAX_MS);
@@ -241,11 +240,13 @@ export class ClipPlayerScene {
     const g = this.wg;
     const a = this.art;
     const m = this.inp.moment;
-    const theme = Math.min(this.inp.rec.theme, a.body.length - 1);
     const t = w.time - TICK_MS + alpha * TICK_MS;
     const W = this.inp.arena.width;
     const H = this.inp.arena.height;
-    const loc = a.loc(this.inp.rec.theme);
+    // облик темы — как в кадре: в изнанке (подвал) и толпа, и локация другие
+    const look = w.twist ? 1 : 0;
+    const loc = a.loc(this.inp.rec.theme, look);
+    const ch = a.chars(this.inp.rec.theme, look);
     g.drawImage(loc.arena, 0, 0);
 
     // следы живых во второй части
@@ -284,10 +285,10 @@ export class ClipPlayerScene {
         draw: () => {
           g.globalAlpha = dim ? 0.4 : 1;
           g.drawImage(a.shadow, x - 5, y - 2);
-          if (lit) frame(g, a.outline[theme][1 + col!], OL_W, OL_H, fr.frame, x - 7, y + fr.yoff - 17, fr.flip);
-          else if (zoomed && actor) frame(g, a.outline[theme][0], OL_W, OL_H, fr.frame, x - 7, y + fr.yoff - 17, fr.flip);
+          if (lit) frame(g, ch.outline[1 + col!], OL_W, OL_H, fr.frame, x - 7, y + fr.yoff - 17, fr.flip);
+          else if (zoomed && actor) frame(g, ch.outline[0], OL_W, OL_H, fr.frame, x - 7, y + fr.yoff - 17, fr.flip);
           g.globalAlpha = dim ? 0.45 : 1;
-          frame(g, a.body[theme], CH_W, CH_H, fr.frame, x - 6, y + fr.yoff - CH_H, fr.flip);
+          frame(g, ch.body, CH_W, CH_H, fr.frame, x - 6, y + fr.yoff - CH_H, fr.flip);
           g.globalAlpha = 1;
           if (e.act === 'stun' && t < e.actEnd) frame(g, a.stun, 12, 5, Math.floor(t / 120) % 3, x - 6, y - CH_H - 6);
           if (e.markUntil > t) g.drawImage(a.mark, x - 2, y - CH_H - 12 - (Math.floor(t / 150) % 2));
@@ -304,12 +305,14 @@ export class ClipPlayerScene {
     // изгородь сжимающейся зоны
     const z = w.zoneRect();
     const full = this.inp.arena.walk;
-    if (z && this.hedge && z.w < full.w - 1) {
+    if (!this.hedges.has(look)) this.hedges.set(look, g.createPattern(loc.hedge, 'repeat'));
+    const hedge = this.hedges.get(look);
+    if (z && hedge && z.w < full.w - 1) {
       const x0 = Math.round(z.x) - 4;
       const y0 = Math.round(z.y) - 6;
       const x1 = Math.round(z.x + z.w) + 4;
       const y1 = Math.round(z.y + z.h) + 2;
-      g.fillStyle = this.hedge;
+      g.fillStyle = hedge;
       for (const [rx, ry, rw, rh] of [
         [0, 0, W, y0],
         [0, y1, W, H - y1],
@@ -455,7 +458,7 @@ export class ClipPlayerScene {
     g.globalAlpha = appear;
     text(g, t.meta.title, LW / 2, 92, PAL.yellow, font, { size: 1.25 });
     // хоровод вдвое крупнее: живые в цветах игроков, между ними бот
-    const theme = Math.min(this.inp.rec.theme, a.body.length - 1);
+    const ch = a.chars(this.inp.rec.theme);
     g.save();
     g.scale(2, 2);
     const cols = [0, 1, -1, 2, 3];
@@ -464,8 +467,8 @@ export class ClipPlayerScene {
       const y = 82 + ((i + Math.floor(ms / 320)) % 2);
       const fr = F.DANCE + (Math.floor((ms + i * 90) / 160) % 4);
       g.drawImage(a.shadow, x - 5, y - 2);
-      if (col >= 0) frame(g, a.outline[theme][1 + col], OL_W, OL_H, fr, x - 7, y - 17);
-      frame(g, a.body[theme], CH_W, CH_H, fr, x - 6, y - CH_H);
+      if (col >= 0) frame(g, ch.outline[1 + col], OL_W, OL_H, fr, x - 7, y - 17);
+      frame(g, ch.body, CH_W, CH_H, fr, x - 6, y - CH_H);
     });
     g.restore();
     text(g, t.clip.cta, LW / 2, 196, PAL.white, font);

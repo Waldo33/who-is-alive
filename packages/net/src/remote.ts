@@ -1,4 +1,4 @@
-import { CROWD_ACT, NavGrid, TICK_MS, World, clampToRect, crowdActDur, emoteDur, makeConfig, planPath, plazaArena } from '@kto/game-core';
+import { CROWD_ACT, NavGrid, TICK_MS, World, clampToRect, crowdActDur, emoteDur, makeConfig, planPath, plazaArena, twistEmote } from '@kto/game-core';
 import type {
   ArenaDef,
   AwardCard,
@@ -552,7 +552,7 @@ export class RemoteSession implements ClientSession {
         this.pushLocal({ t: 'stop', eid: me!.eid, at: this.world.time });
         this.lastPredClock = this.clock();
       } else if (it.k === 'emote') {
-        const kind = it.kind ?? EMOTES[Math.floor(Math.random() * EMOTES.length)];
+        const kind = twistEmote(this.theme, this.world.twist) ?? it.kind ?? EMOTES[Math.floor(Math.random() * EMOTES.length)];
         this.pushLocal({ t: 'act', eid: me!.eid, kind, dur: emoteDur(kind), at: this.world.time });
         this.emotePred = { kind, until: this.clock() + 3000 };
         this.lastPredClock = this.clock();

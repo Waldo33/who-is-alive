@@ -19,7 +19,7 @@ const ROOT = 57;
 
 export type MusicMode = 'off' | 'menu' | 'play' | 'accuse';
 
-interface Flavor {
+export interface Flavor {
   /** Сдвиг тональности, полутоны. */
   transpose: number;
   bpm: number;
@@ -34,15 +34,41 @@ interface Flavor {
 }
 
 /**
- * Характер по темам раунда (индекс = тема): кепки в парке — исходник, повара на кухне — свинг,
- * пингвины на льдине — холодные колокольчики, космонавты на луне — квадратный «бип» с эхом и арпеджио.
+ * Характер темы раунда задаёт её пакет (themes/*.ts › music): тембры, темп, свинг общей темы —
+ * или своя песня (Song). Кепки в парке — исходник.
  */
-const FLAVORS: Flavor[] = [
-  { transpose: 0, bpm: 120, swing: 0, lead: 'triangle', bass: 'square', arp: false, echo: false },
-  { transpose: 5, bpm: 128, swing: 0.28, lead: 'pulse', bass: 'square', arp: false, echo: false },
-  { transpose: -3, bpm: 112, swing: 0, lead: 'sine', bass: 'triangle', arp: true, echo: true },
-  { transpose: 2, bpm: 116, swing: 0, lead: 'square', bass: 'pulse', arp: true, echo: true },
-];
+const PARK_FLAVOR: Flavor = { transpose: 0, bpm: 120, swing: 0, lead: 'triangle', bass: 'square', arp: false, echo: false };
+
+/** Инструменты секвенсора для своей песни темы. */
+export interface SongApi {
+  voice(type: OscillatorType | 'pulse', midi: number, when: number, dur: number, vol: number): void;
+  kick(when: number, vol?: number, from?: number): void;
+  /** Шум через полосовой фильтр: хэт, малый, тарелка. */
+  hit(dur: number, vol: number, freq: number, when: number): void;
+  /** Перегруженный квинтаккорд («пауэр-корд» гитары). */
+  power(midi: number, when: number, dur: number, vol: number): void;
+  rng(): number;
+}
+
+/** Шестнадцатая песни: где мы в такте и что творится в игре. */
+export interface SongStep {
+  /** Шестнадцатая в такте 0–15 и номер такта с начала дубля. */
+  s16: number;
+  bar: number;
+  /** Время ноты (AudioContext) и длина шестнадцатой, с. */
+  t: number;
+  dt: number;
+  /** Напряжение конца раунда 0–2. */
+  intensity: number;
+  /** Изнанка темы включена (themes.ts › twist) и сколько тактов назад переключилась. */
+  twist: boolean;
+  barsSinceTwist: number;
+}
+
+/** Своя песня темы: вместо общего мотива — свой шаг секвенсора. */
+export interface Song {
+  step(api: SongApi, st: SongStep): void;
+}
 
 /** Меню и лобби: та же тема «лаунжем» — медленно, мягко, с эхом. */
 const MENU: Flavor = { transpose: 0, bpm: 92, swing: 0.18, lead: 'sine', bass: 'triangle', arp: false, echo: true };
@@ -95,7 +121,18 @@ export class Music {
   private sec: Section;
   private queue: Section[] = [];
   private rng = rngFrom(1);
-  private flavor: Flavor = FLAVORS[0];
+  private flavor: Flavor = PARK_FLAVOR;
+  private song: Song | null = null;
+  private twist = false;
+  private twistBar = 0;
+  private drive: AudioNode | null = null;
+  private readonly api: SongApi = {
+    voice: (type, midi, when, dur, vol) => this.voice(type, midi, when, dur, vol),
+    kick: (when, vol, from) => this.kick(when, vol, from),
+    hit: (dur, vol, freq, when) => this.hit(dur, vol, freq, when),
+    power: (midi, when, dur, vol) => this.power(midi, when, dur, vol),
+    rng: () => this.rng(),
+  };
   private intensity = 0;
   private tempoMul = 1;
   private live: Live[] = [];
@@ -124,12 +161,14 @@ export class Music {
   }
 
   /** Новый раунд (или новая фаза): тема раунда задаёт характер, вариации — новые. */
-  start(mode: MusicMode, theme = 0): void {
+  start(mode: MusicMode, style?: { flavor: Flavor; song?: Song }): void {
     this.hardStop();
     this.mode = mode;
     this.paused = false;
+    this.twist = false;
     if (mode === 'off') return;
-    this.flavor = mode === 'menu' ? MENU : FLAVORS[((theme % FLAVORS.length) + FLAVORS.length) % FLAVORS.length];
+    this.flavor = mode === 'menu' ? MENU : (style?.flavor ?? PARK_FLAVOR);
+    this.song = mode === 'play' ? (style?.song ?? null) : null;
     this.rng = rngFrom((Math.random() * 2 ** 31) | 0);
     this.intensity = 0;
     this.tempoMul = 1;
@@ -141,6 +180,13 @@ export class Music {
     this.openBus();
     this.next = this.ctx.currentTime + 0.06;
     this.run();
+  }
+
+  /** Изнанка темы: своя песня меняет подачу (тихий куплет → громкий припев). */
+  setTwist(on: boolean): void {
+    if (on === this.twist) return;
+    this.twist = on;
+    this.twistBar = this.bar;
   }
 
   /** Уровень напряжения 0–2 (меняется на следующей доле). */
@@ -208,6 +254,7 @@ export class Music {
     this.bus = this.ctx.createGain();
     this.bus.gain.value = 0.32;
     this.bus.connect(this.out);
+    this.drive = null;
     this.echo = null;
     if (this.flavor.echo) {
       const d = this.ctx.createDelay(1);
@@ -291,6 +338,22 @@ export class Music {
   }
 
   private stepPlay(): void {
+    if (this.song) {
+      const dt = this.sixteenth();
+      this.song.step(this.api, {
+        s16: this.s16,
+        bar: this.bar,
+        t: this.next,
+        dt,
+        intensity: this.intensity,
+        twist: this.twist,
+        barsSinceTwist: this.bar - this.twistBar,
+      });
+      this.next += dt;
+      this.s16 = (this.s16 + 1) % 16;
+      if (this.s16 === 0) this.bar++;
+      return;
+    }
     const f = this.flavor;
     const dt = this.sixteenth();
     const s = this.s16;
@@ -416,6 +479,46 @@ export class Music {
     o.start(when);
     o.stop(when + dur + 0.02);
     this.live.push({ src: o, until: when + dur });
+  }
+
+  /** Перегруз: квинта + октава пилой через «овердрайв» и фильтр — гитара 90-х из синтезатора. */
+  private power(midi: number, when: number, dur: number, vol: number): void {
+    const bus = this.bus;
+    if (!bus) return;
+    const ctx = this.ctx;
+    if (!this.drive) {
+      const shaper = ctx.createWaveShaper();
+      const n = 1024;
+      const curve = new Float32Array(n);
+      for (let i = 0; i < n; i++) {
+        const x = (i / (n - 1)) * 2 - 1;
+        curve[i] = Math.tanh(x * 6) * 0.8;
+      }
+      shaper.curve = curve;
+      const lp = ctx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = 2600;
+      const out = ctx.createGain();
+      out.gain.value = 0.55;
+      shaper.connect(lp).connect(out).connect(bus);
+      this.drive = shaper;
+    }
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, when);
+    g.gain.exponentialRampToValueAtTime(vol, when + 0.008);
+    g.gain.setValueAtTime(vol, when + dur * 0.7);
+    g.gain.exponentialRampToValueAtTime(0.0001, when + dur);
+    g.connect(this.drive);
+    for (const [iv, det] of [[0, -6], [7, 5], [12, 0]] as const) {
+      const o = ctx.createOscillator();
+      o.type = 'sawtooth';
+      o.frequency.setValueAtTime(mtf(midi + iv + this.flavor.transpose), when);
+      o.detune.value = det;
+      o.connect(g);
+      o.start(when);
+      o.stop(when + dur + 0.02);
+      this.live.push({ src: o, until: when + dur });
+    }
   }
 
   private kick(when: number, vol = 0.3, from = 150): void {

@@ -7,10 +7,12 @@ import type { GameConfig } from './config';
 import { TICK_MS, accuseMs, crowdPauseMs, revealMs } from './config';
 import type { ActKind, CrowdKind, Dir, EmoteKind, EntitySpawn, WorldEvent } from './events';
 
-const EMOTES: EmoteKind[] = ['wave', 'dance', 'jump'];
 import { NavGrid } from './nav';
 import { Rng } from './rng';
+import { THEME_COUNT, themeRules, twistEmote } from './themes';
 import { World } from './world';
+
+const EMOTES: EmoteKind[] = ['wave', 'dance', 'jump'];
 
 export interface PlayerInfo {
   pid: string;
@@ -97,7 +99,6 @@ export interface AiAgent {
   update(sim: MatchSim): void;
 }
 
-export const THEME_COUNT = 4;
 /** Насколько поздно может прийти по сети нажатие, чтобы его засчитали по времени экрана игрока. */
 export const LAG_GRACE_MS = 600;
 
@@ -136,6 +137,8 @@ export class MatchSim {
   agents: AiAgent[] = [];
 
   playStart = 0;
+  private nextTwistAt = Infinity;
+  private twistLeft = 0;
   plannedPlayEnd = 0;
   playEnd = 0;
   endReason: RoundSummary['endReason'] = 'time';
@@ -285,7 +288,7 @@ export class MatchSim {
       crowdAnswered: -1,
       crowdQueued: null,
     }));
-    this.bots = new BotBrain(this.world, this.cfg, new Rng(rng.fork()), (ev) => this.emit(ev));
+    this.bots = new BotBrain(this.world, this.cfg, new Rng(rng.fork()), (ev) => this.emit(ev), themeRules(this.theme).twist);
     const pset = new Set(playerEids);
     for (const s of spawns) if (!pset.has(s.eid)) this.bots.add(s.eid, t0 + this.cfg.countdownSec * 1000);
     this.crowdShowTimes = [];
@@ -312,6 +315,25 @@ export class MatchSim {
     this.plannedPlayEnd = this.playStart + this.cfg.roundSec * 1000;
     this.nextCrowdAt = this.playStart + this.crowdInterval();
     for (let i = 0; i < this.cfg.maxStars; i++) this.spawnStar();
+    // изнанка темы: расписание на дубль (зерно — общее, поэтому повтор совпадает)
+    const tw = themeRules(this.theme).twist;
+    this.twistLeft = tw ? tw.max : 0;
+    this.nextTwistAt = tw ? this.playStart + this.rng.range(tw.firstSec[0], tw.firstSec[1]) * 1000 : Infinity;
+  }
+
+  /** Включить или выключить изнанку темы, когда подошло время (не в стоп-кадре и не во время сужения). */
+  private twistTick(t: number): void {
+    const tw = themeRules(this.theme).twist;
+    if (!tw || t < this.nextTwistAt || this.world.isFrozen(t)) return;
+    const on = !this.world.twist;
+    if (on && (this.twistLeft <= 0 || this.zoneStarted)) {
+      this.nextTwistAt = Infinity;
+      return;
+    }
+    this.emit({ t: 'twist', on, at: t });
+    if (on) this.twistLeft--;
+    const [a, b] = on ? tw.onSec : tw.gapSec;
+    this.nextTwistAt = t + this.rng.range(a, b) * 1000;
   }
 
   private crowdInterval(): number {
@@ -326,6 +348,7 @@ export class MatchSim {
   private playTick(): void {
     const t = this.world.time;
     const cfg = this.cfg;
+    this.twistTick(t);
 
     // «Море волнуется»
     // (не во время сужения: зона зависит от времени, а в стоп-кадре никто не может уйти)
@@ -454,6 +477,8 @@ export class MatchSim {
   private beginAccuse(): void {
     this.playEnd = this.world.time;
     for (const e of this.world.alive()) this.world.push({ t: 'stop', eid: e.eid, at: this.world.time });
+    // свет обратно: обвинение — в обычном облике темы
+    if (this.world.twist) this.emit({ t: 'twist', on: false, at: this.world.time });
     this.world.step(); // применить остановку
     this.setPhase('accuse', accuseMs(this.cfg));
   }
@@ -552,6 +577,11 @@ export class MatchSim {
 
   private shuffleThemes(): void {
     const last = this.theme;
+    const fixed = this.cfg.fixedTheme;
+    if (fixed >= 0 && fixed < THEME_COUNT) {
+      this.themeOrder = Array.from({ length: THEME_COUNT }, () => fixed);
+      return;
+    }
     const order = this.rng.shuffle(Array.from({ length: THEME_COUNT }, (_, i) => i));
     // реванш не начинается с той же темы, которой закончился прошлый матч
     if (this.round > 0 && order[0] === last) order.push(order.shift()!);
@@ -665,7 +695,8 @@ export class MatchSim {
         this.emit({ t: 'stop', eid: p.eid, at: t });
         return;
       case 'emote': {
-        const kind: ActKind = it.kind && EMOTES.includes(it.kind) ? it.kind : this.rng.pick<ActKind>(EMOTES);
+        // в изнанке темы эмоция у всех одна (бой с тенью в подвале) — игрок не выделяется
+        const kind: ActKind = twistEmote(this.theme, this.world.twist) ?? (it.kind && EMOTES.includes(it.kind) ? it.kind : this.rng.pick<ActKind>(EMOTES));
         this.emit({ t: 'act', eid: p.eid, kind, dur: emoteDur(kind), at: t });
         return;
       }

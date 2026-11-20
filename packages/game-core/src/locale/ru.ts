@@ -3,6 +3,17 @@
  * Строки, которые выводятся на canvas шириной 180 пикс., — не длиннее 21 символа.
  */
 
+import type { ThemeId } from '../themes';
+
+/** Тексты темы: показываются тостом на поле (≤ 21 символа). */
+export interface ThemeText {
+  /** В начале игры дубля. */
+  intro?: string;
+  /** Изнанка включилась / выключилась (themes.ts › twist). */
+  twistOn?: string;
+  twistOff?: string;
+}
+
 /** Формы множественного числа по Intl.PluralRules: one / few / many / other. */
 export interface Plural {
   one: string;
@@ -36,7 +47,11 @@ export const ru = {
     noun: ['Пиксель', 'Кот-8бит', 'Голубь', 'Батон', 'Пингвин', 'Тостер', 'Енот', 'Джойстик', 'Пельмень', 'Спрайт'],
   },
   colors: ['Красный', 'Синий', 'Жёлтый', 'Зелёный'],
-  themes: ['Кепки', 'Повара', 'Пингвины', 'Космонавты'],
+  themes: ['Кепки', 'Повара', 'Пингвины', 'Космонавты', 'Клерки'],
+  /** Свои текстовки тем (по id из themes.ts) — необязательно. */
+  themeText: {
+    office: { intro: 'Правило 1: не светись', twistOn: 'Свет мигнул… подвал!', twistOff: 'Обратно в офис' },
+  } as Partial<Record<ThemeId, ThemeText>>,
   start: {
     aria: 'Начало',
     rules: [

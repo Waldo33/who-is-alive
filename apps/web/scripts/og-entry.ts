@@ -4,10 +4,11 @@
  * Над одним человечком — «?»: кто из них живой?
  */
 import { PAL } from '@kto/assets';
-import { Rng, plazaArena, rectContains } from '@kto/game-core';
+import { Rng, THEME_COUNT, plazaArena, rectContains } from '@kto/game-core';
 import { frame, getArt } from '../src/game/art';
 import { canvas } from '../src/game/pixels';
-import { CH_H, CH_W, F, THEMES, makeMark } from '../src/game/sprites';
+import { CH_H, CH_W, F, makeMark } from '../src/game/sprites';
+import { loadTheme } from '../src/game/themes';
 
 const W = 1200;
 const H = 630;
@@ -42,7 +43,7 @@ function scene(theme: number): HTMLCanvasElement {
       y: p.y,
       draw: () => {
         g.drawImage(art.shadow, p.x - 5, p.y - 2);
-        frame(g, art.body[theme], CH_W, CH_H, p.f, p.x - 6, p.y - CH_H, p.flip);
+        frame(g, art.chars(theme).body, CH_W, CH_H, p.f, p.x - 6, p.y - CH_H, p.flip);
       },
     });
   }
@@ -79,4 +80,7 @@ function og(theme: number): string {
   return c.toDataURL('image/png');
 }
 
-(globalThis as unknown as { __og: string[] }).__og = THEMES.map((_, i) => og(i));
+// пакеты тем грузятся по требованию — сначала все, потом рисуем
+void Promise.all(Array.from({ length: THEME_COUNT }, (_, i) => loadTheme(i))).then(() => {
+  (globalThis as unknown as { __og: string[] }).__og = Array.from({ length: THEME_COUNT }, (_, i) => og(i));
+});

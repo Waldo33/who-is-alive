@@ -1,8 +1,9 @@
 import { PAL } from '@kto/assets';
 import type { ArenaDef } from '@kto/game-core';
-import { locBackground, locCritter, locProp, locWall } from './locations';
 import { canvas, dither, ellipse, grid, outlineOf, px } from './pixels';
 import type { Ctx } from './pixels';
+import { BASE_MAP } from './themes/base';
+import type { CharStyle, Look, View } from './themes/types';
 
 /**
  * Процедурные заглушки ассетов (раздел 9). Размеры и имена кадров совпадают с таблицей ассетов,
@@ -24,12 +25,14 @@ export const F = {
   DANCE: 24,
   STUN: 28,
   JUMP: 29,
-  COUNT: 30,
+  /** Бой с тенью (эмоция изнанки): стойка и удар, вид сбоку. */
+  GUARD: 30,
+  JAB: 31,
+  COUNT: 32,
 } as const;
 
-type View = 'D' | 'U' | 'S';
 type Legs = 'idle' | 'liftL' | 'liftR';
-type Arms = 'down' | 'up' | 'waveA' | 'waveB' | 'leftUp' | 'rightUp';
+type Arms = 'down' | 'up' | 'waveA' | 'waveB' | 'leftUp' | 'rightUp' | 'guard' | 'jab';
 type Face = 'normal' | 'blink' | 'wide' | 'dizzy' | 'happy';
 
 interface FrameSpec {
@@ -89,79 +92,15 @@ const LEGS: Record<Legs, string[]> = {
   liftR: ['..ollLLllo..', '..ollo.oo...', '...oo.......'],
 };
 
-export interface Theme {
-  name: string;
-  map: Record<string, string>;
-  /** Особые правки поверх кадра (например, высокий колпак повара). */
-  patch?: (m: string[][], view: View) => void;
-}
-
-const BASE_MAP: Record<string, string> = {
-  o: PAL.ink,
-  e: PAL.ink,
-  w: PAL.white,
-  d: PAL.cyan,
-  c: PAL.coral,
+/** Кепки в парке — облик по умолчанию: чего тема не задала, берётся отсюда. */
+export const PARK_CHARS: CharStyle = {
+  map: {
+    ...BASE_MAP,
+    h: PAL.blue, H: PAL.navy, k: PAL.cyan, r: PAL.umber, R: PAL.plum,
+    s: PAL.peach, S: PAL.fawn, a: PAL.peach, m: PAL.fawn,
+    b: PAL.orange, B: PAL.rust, v: PAL.orange, l: PAL.dusk, L: PAL.night,
+  },
 };
-
-export const THEMES: Theme[] = [
-  {
-    name: 'caps',
-    map: {
-      ...BASE_MAP,
-      h: PAL.blue, H: PAL.navy, k: PAL.cyan, r: PAL.umber, R: PAL.plum,
-      s: PAL.peach, S: PAL.fawn, a: PAL.peach, m: PAL.fawn,
-      b: PAL.orange, B: PAL.rust, v: PAL.orange, l: PAL.dusk, L: PAL.night,
-    },
-  },
-  {
-    name: 'chefs',
-    map: {
-      ...BASE_MAP,
-      h: PAL.white, H: PAL.mist, k: PAL.white, r: PAL.umber, R: PAL.plum,
-      s: PAL.peach, S: PAL.fawn, a: PAL.peach, m: PAL.fawn,
-      b: PAL.white, B: PAL.mist, v: PAL.red, l: PAL.night, L: PAL.ink,
-    },
-    patch: (m) => {
-      // колпак пышнее: светлые «облачка» на макушке
-      m[0] = '..oooooooo..'.split('');
-      m[1][2] = 'h';
-      m[1][9] = 'h';
-    },
-  },
-  {
-    name: 'penguins',
-    map: {
-      ...BASE_MAP,
-      h: PAL.night, H: PAL.ink, k: PAL.dusk, r: PAL.night, R: PAL.ink,
-      s: PAL.white, S: PAL.mist, a: PAL.night, m: PAL.amber, c: PAL.coral,
-      b: PAL.night, B: PAL.ink, v: PAL.white, l: PAL.amber, L: PAL.orange,
-    },
-  },
-  {
-    name: 'cosmonauts',
-    map: {
-      ...BASE_MAP,
-      h: PAL.white, H: PAL.slate, k: PAL.cyan, r: PAL.white, R: PAL.mist,
-      s: PAL.peach, S: PAL.fawn, a: PAL.mist, m: PAL.fawn,
-      b: PAL.white, B: PAL.mist, v: PAL.blue, l: PAL.mist, L: PAL.slate,
-    },
-    patch: (m, view) => {
-      // круглый шлем вокруг лица: шире головы на пиксель с каждой стороны
-      const set = (y: number, x: number, ch: string) => {
-        m[y][x] = ch;
-      };
-      set(0, 2, 'o'); set(0, 9, 'o');
-      set(1, 1, 'o'); set(1, 2, 'h'); set(1, 9, 'h'); set(1, 10, 'o');
-      for (let y = 2; y <= 7; y++) {
-        set(y, 0, 'o'); set(y, 1, y < 4 ? 'h' : 'H'); set(y, 10, y < 4 ? 'h' : 'H'); set(y, 11, 'o');
-      }
-      set(8, 1, 'o'); set(8, 2, 'H'); set(8, 9, 'H'); set(8, 10, 'o');
-      // ранец со спины
-      if (view === 'U') for (let y = 9; y <= 11; y++) for (let x = 4; x <= 7; x++) set(y, x, 'H');
-    },
-  },
-];
 
 function buildMatrix(spec: FrameSpec): string[][] {
   const rows = [...HEAD[spec.view], ...BODY[spec.view], ...LEGS[spec.legs ?? 'idle']];
@@ -200,6 +139,13 @@ function buildMatrix(spec: FrameSpec): string[][] {
       }
     }
   }
+  if (spec.view === 'S' && arms === 'guard') {
+    // кулак у подбородка
+    set(9, 8, 'a'); set(9, 9, 'b'); set(8, 9, 'b');
+  } else if (spec.view === 'S' && arms === 'jab') {
+    // рука вперёд до упора
+    set(9, 10, 'b'); set(10, 10, 'b'); set(11, 10, 'a'); set(11, 9, 'a');
+  }
   if (spec.sweat) {
     set(11, 2, 'd'); set(11, 3, 'd');
   }
@@ -236,6 +182,7 @@ const FRAMES: FrameSpec[] = (() => {
   );
   out.push({ view: 'D', face: 'dizzy' });
   out.push({ view: 'D', arms: 'up', face: 'happy', legs: 'liftL' });
+  out.push({ view: 'S', arms: 'guard', legs: 'liftL' }, { view: 'S', arms: 'jab', legs: 'liftR' });
   return out;
 })();
 
@@ -244,7 +191,7 @@ export interface CharSheets {
   outline: HTMLCanvasElement;
 }
 
-export function makeCharacterSheets(theme: Theme): CharSheets {
+export function makeCharacterSheets(theme: CharStyle): CharSheets {
   const body = canvas(CH_W * F.COUNT, CH_H);
   const outline = canvas(OL_W * F.COUNT, OL_H);
   FRAMES.forEach((spec, i) => {
@@ -395,9 +342,8 @@ const PIGEON_FRAMES = [
 ];
 
 /** Зверёк локации (6 кадров 6×6): голубь в парке, мышь на кухне, чайка на льдине, дрон на луне. */
-export function makePigeon(theme = 0): HTMLCanvasElement {
-  const loc = locCritter(theme, PIGEON_FRAMES);
-  if (loc) return loc;
+export function makePigeon(look?: Look): HTMLCanvasElement {
+  if (look?.critter) return look.critter(PIGEON_FRAMES);
   const { c, g } = canvas(36, 6);
   const map = { o: PAL.ink, b: PAL.slate, h: PAL.steel, w: PAL.mist, y: PAL.amber };
   PIGEON_FRAMES.forEach((f, i) => grid(g, i * 6, 0, f, map));
@@ -405,9 +351,8 @@ export function makePigeon(theme = 0): HTMLCanvasElement {
 }
 
 /** Стенка сужающейся зоны (плитка 8×8): живая изгородь в парке, ящики, лёд, камни. */
-export function makeHedge(theme = 0): HTMLCanvasElement {
-  const loc = locWall(theme);
-  if (loc) return loc;
+export function makeHedge(look?: Look): HTMLCanvasElement {
+  if (look?.wall) return look.wall();
   const { c, g } = canvas(8, 8);
   px(g, 0, 0, PAL.pine, 8, 8);
   const leaves = ['.gG..gG.', 'gGGggGGg', 'GGfGGGfG', '.gG.fgG.', 'gGGgGGg.', 'GfGGGfGG', '.gGg.gGg', 'gG.fgG.f'];
@@ -434,10 +379,9 @@ function hash(x: number, y: number): number {
   return ((h ^ (h >> 16)) >>> 0) / 4294967296;
 }
 
-/** Земля арены по теме раунда: парк (здесь), кухня, льдина, луна (locations.ts). */
-export function makeArenaBackground(arena: ArenaDef, theme = 0): HTMLCanvasElement {
-  const loc = locBackground(theme, arena);
-  if (loc) return loc;
+/** Земля арены: облик темы (themes/) или парк. */
+export function makeArenaBackground(arena: ArenaDef, look?: Look): HTMLCanvasElement {
+  if (look?.ground) return look.ground(arena);
   const { width: w, height: h } = arena;
   const { c, g } = canvas(w, h);
   // брусчатка
@@ -503,8 +447,8 @@ export function makeArenaBackground(arena: ArenaDef, theme = 0): HTMLCanvasEleme
 }
 
 /** Пропсы: кадры по горизонтали. Возвращает [canvas, frameW, frameH, frames]. */
-export function makeProp(kind: string, theme = 0): [HTMLCanvasElement, number, number, number] {
-  const loc = locProp(theme, kind);
+export function makeProp(kind: string, look?: Look): [HTMLCanvasElement, number, number, number] {
+  const loc = look?.prop?.(kind);
   if (loc) return loc;
   switch (kind) {
     case 'fountain': {

@@ -166,6 +166,9 @@ export function mountSandbox(root: HTMLElement, opts: ShellOptions): () => void 
   };
   const gameOpts = (): Partial<TopBarOptions> => ({ onLang: undefined, onBack: undefined, onExit: exitToMenu, noGear: true });
   let overrides: Partial<GameConfig> = {};
+  // ?dev&theme=N — все дубли в одной теме (посмотреть новую площадку)
+  const themeQ = dev ? new URLSearchParams(location.search).get('theme') : null;
+  if (themeQ !== null && Number.isInteger(Number(themeQ))) overrides = { fixedTheme: Number(themeQ) };
 
   const toast = (s: string) => {
     toastEl.textContent = s;
@@ -242,7 +245,7 @@ export function mountSandbox(root: HTMLElement, opts: ShellOptions): () => void 
     });
     const keys = Object.entries(DEFAULT_CONFIG).filter(([, v]) => typeof v === 'number') as [keyof GameConfig, number][];
     form.innerHTML =
-      keys.map(([k, v]) => `<label>${k}<input name="${k}" type="number" step="any" value="${v}"></label>`).join('') +
+      keys.map(([k, v]) => `<label>${k}<input name="${k}" type="number" step="any" value="${overrides[k] ?? v}"></label>`).join('') +
       `<label>attackConfirm<select name="attackConfirm"><option>tap</option><option>hold</option></select></label>
        <button class="kto-btn" style="font-size:10px;margin-top:8px">${t.start.devApply}</button>`;
     form.addEventListener('submit', (e) => {

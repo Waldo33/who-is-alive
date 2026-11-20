@@ -2,7 +2,6 @@ import { PAL, PLAYER_COLORS } from '@kto/assets';
 import type { ArenaDef } from '@kto/game-core';
 import { canvas } from './pixels';
 import {
-  THEMES,
   makeArenaBackground,
   makeCharacterSheets,
   makeHedge,
@@ -15,10 +14,12 @@ import {
   makeStunStars,
   makeVignette,
 } from './sprites';
+import { isThemeLoaded, themeLook } from './themes';
 
 /**
  * Те же процедурные спрайты, что в игре, но как обычные canvas — для рисования клипа
- * и карточки результата без Phaser. Строятся один раз при первом обращении.
+ * и карточки результата без Phaser. Строятся при первом обращении; облик темы — только когда
+ * пакет темы загружен (themes/index.ts › loadTheme), до того — парк.
  */
 export interface LocArt {
   arena: HTMLCanvasElement;
@@ -26,12 +27,17 @@ export interface LocArt {
   hedge: HTMLCanvasElement;
 }
 
+export interface CharArt {
+  body: HTMLCanvasElement;
+  /** Контуры: [0 — белый, 1..4 — цвета игроков]. */
+  outline: HTMLCanvasElement[];
+}
+
 export interface Art {
-  /** Локация темы раунда (земля, предметы, стенка зоны) — строится при первом обращении. */
-  loc(theme: number): LocArt;
-  body: HTMLCanvasElement[];
-  /** Контуры по темам: [тема][0 — белый, 1..4 — цвета игроков]. */
-  outline: HTMLCanvasElement[][];
+  /** Локация темы раунда (земля, предметы, стенка зоны); look 1 — изнанка темы. */
+  loc(theme: number, look?: number): LocArt;
+  /** Костюм толпы темы; look 1 — изнанка темы. */
+  chars(theme: number, look?: number): CharArt;
   shadow: HTMLCanvasElement;
   poof: HTMLCanvasElement;
   star: HTMLCanvasElement;
@@ -45,27 +51,40 @@ let cache: { arenaId: string; art: Art } | null = null;
 
 export function getArt(arena: ArenaDef): Art {
   if (cache?.arenaId === arena.id) return cache.art;
-  const locs = new Map<number, LocArt>();
-  const loc = (theme: number): LocArt => {
-    const th = Math.max(0, Math.min(THEMES.length - 1, theme));
-    let l = locs.get(th);
+  // пока пакет темы не загружен — рисуем парк (и не кешируем подмену под ключом темы)
+  const key = (theme: number, look: number) => (isThemeLoaded(theme) ? `${theme}:${look}` : '0:0');
+  const locs = new Map<string, LocArt>();
+  const loc = (theme: number, look = 0): LocArt => {
+    const k = key(theme, look);
+    let l = locs.get(k);
     if (!l) {
+      const lk = k === '0:0' ? themeLook(0, 0) : themeLook(theme, look);
       const props = new Map<string, { c: HTMLCanvasElement; fw: number; fh: number; frames: number }>();
       for (const p of arena.props) {
         if (props.has(p.kind)) continue;
-        const [c, fw, fh, frames] = makeProp(p.kind, th);
+        const [c, fw, fh, frames] = makeProp(p.kind, lk);
         props.set(p.kind, { c, fw, fh, frames });
       }
-      l = { arena: makeArenaBackground(arena, th), props, hedge: makeHedge(th) };
-      locs.set(th, l);
+      l = { arena: makeArenaBackground(arena, lk), props, hedge: makeHedge(lk) };
+      locs.set(k, l);
     }
     return l;
   };
-  const sheets = THEMES.map((th) => makeCharacterSheets(th));
+  const sheets = new Map<string, CharArt>();
+  const chars = (theme: number, look = 0): CharArt => {
+    const k = key(theme, look);
+    let a = sheets.get(k);
+    if (!a) {
+      const lk = k === '0:0' ? themeLook(0, 0) : themeLook(theme, look);
+      const s = makeCharacterSheets(lk.chars);
+      a = { body: s.body, outline: [s.outline, ...PLAYER_COLORS.map((col) => tint(s.outline, col))] };
+      sheets.set(k, a);
+    }
+    return a;
+  };
   const art: Art = {
     loc,
-    body: sheets.map((s) => s.body),
-    outline: sheets.map((s) => [s.outline, ...PLAYER_COLORS.map((col) => tint(s.outline, col))]),
+    chars,
     shadow: makeShadow(),
     poof: makePoof(),
     star: makeStar(),

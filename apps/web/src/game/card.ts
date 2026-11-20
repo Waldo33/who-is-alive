@@ -48,12 +48,12 @@ export function drawResultCard(inp: CardInput): HTMLCanvasElement {
   frame(g, art.icons.canvas, 8, 8, Math.max(0, crown), 0, 0);
   g.restore();
   // по бокам короны — два танцующих: один с цветным контуром живого, другой — бот
-  const theme = Math.min(inp.theme, art.body.length - 1);
+  const ch = art.chars(inp.theme);
   [[30, 0], [150, -1]].forEach(([x, col], i) => {
     const fr = F.DANCE + i * 2;
     g.drawImage(art.shadow, x - 5, 40);
-    if (col >= 0) frame(g, art.outline[theme][1 + col], OL_W, OL_H, fr, x - 7, 42 - 17);
-    frame(g, art.body[theme], CH_W, CH_H, fr, x - 6, 42 - CH_H);
+    if (col >= 0) frame(g, ch.outline[1 + col], OL_W, OL_H, fr, x - 7, 42 - 17);
+    frame(g, ch.body, CH_W, CH_H, fr, x - 6, 42 - CH_H);
   });
 
   const byColor = (pid: string) => inp.players.find((p) => p.pid === pid);

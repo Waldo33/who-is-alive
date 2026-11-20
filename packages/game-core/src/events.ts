@@ -4,9 +4,10 @@ import type { Rect } from './arena';
 export type Dir = 0 | 1 | 2 | 3;
 
 /** Эмоции и реакции. Боты и живые игроки используют одни и те же. */
-export type ActKind = 'wave' | 'dance' | 'jump' | 'freeze' | 'startle' | 'stun';
+/** jab — удар в воздух (бой с тенью): эмоция толпы в изнанке темы «Офис» (themes.ts). */
+export type ActKind = 'wave' | 'dance' | 'jump' | 'freeze' | 'startle' | 'stun' | 'jab';
 export type CrowdKind = 'freeze' | 'jump' | 'dance';
-export type EmoteKind = 'wave' | 'dance' | 'jump';
+export type EmoteKind = 'wave' | 'dance' | 'jump' | 'jab';
 
 /**
  * События мира. Всё, что видно на поле, выражается ими; позиции каждый кадр не передаются.
@@ -26,7 +27,9 @@ export type WorldEvent =
   | { t: 'star_taken'; id: number; eid: number; at: number }
   | { t: 'zone'; startAt: number; endAt: number; from: Rect; to: Rect; at: number }
   /** showAt..resumeAt — стоп-кадр (мир стоит), resumeAt..windowEnd — ещё можно нажать, но с опозданием. */
-  | { t: 'crowd'; kind: CrowdKind; showAt: number; resumeAt: number; windowEnd: number; at: number };
+  | { t: 'crowd'; kind: CrowdKind; showAt: number; resumeAt: number; windowEnd: number; at: number }
+  /** Изнанка темы (themes.ts › twist): включилась или выключилась. Ничего не говорит об игроках. */
+  | { t: 'twist'; on: boolean; at: number };
 
 export interface EntitySpawn {
   eid: number;

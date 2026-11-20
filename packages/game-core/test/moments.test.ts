@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { WorldEvent } from '../src';
-import { MOMENT_MAX_MS, MOMENT_MIN_MS, createLocalSession, findBestMoment, makeConfig, makeReplay, momentEvents, recordRound, worldOf } from '../src';
+import { MOMENT_MAX_MS, MOMENT_MIN_MS, coreFrom, createLocalSession, findBestMoment, makeConfig, makeReplay, momentEvents, recordRound, worldOf } from '../src';
 
 const players = ['me', 'b', 'c', 'd'].map((pid, i) => ({ pid, name: pid, color: i }));
 
@@ -22,7 +22,7 @@ describe('лучший момент', () => {
       for (const e of momentEvents(rec, self)) {
         if (e.kind !== 'knockout') continue;
         const overlaps = e.to > m.from && e.from < m.to;
-        if (overlaps) expect(e.from >= m.from && e.to <= m.to, `knockout at ${e.at} cut by window ${m.from}..${m.to}`).toBe(true);
+        if (overlaps) expect(coreFrom(e) >= m.from && e.to <= m.to, `knockout at ${e.at} cut by window ${m.from}..${m.to}`).toBe(true);
       }
       expect(m.from).toBeGreaterThanOrEqual(rec.keyframes[0].time);
       expect(m.to).toBeLessThanOrEqual(sum.replayTo);

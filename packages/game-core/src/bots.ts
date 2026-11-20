@@ -3,6 +3,7 @@ import { rectContains } from './arena';
 import type { GameConfig } from './config';
 import type { ActKind, CrowdKind, Dir, WorldEvent } from './events';
 import type { Rng } from './rng';
+import type { TwistRules } from './themes';
 import type { World } from './world';
 
 interface BotState {
@@ -43,7 +44,7 @@ export function crowdJitter(rng: Rng, a: number, b: number): number {
 }
 
 export function emoteDur(kind: ActKind): number {
-  return kind === 'wave' ? 900 : kind === 'dance' ? 1200 : kind === 'jump' ? 600 : 500;
+  return kind === 'wave' ? 900 : kind === 'dance' ? 1200 : kind === 'jump' ? 600 : kind === 'jab' ? 700 : 500;
 }
 
 /**
@@ -58,6 +59,8 @@ export class BotBrain {
     private cfg: GameConfig,
     private rng: Rng,
     private emit: (ev: WorldEvent) => void,
+    /** Изнанка темы: какой эмоцией и насколько чаще толпа «живёт» в ней. */
+    private twist?: TwistRules,
   ) {}
 
   /** Для отладки и тестов: сколько эпизодов чудачеств было. */
@@ -159,7 +162,7 @@ export class BotBrain {
       }
       if (s.emoteAt && now >= s.emoteAt) {
         s.emoteAt = 0;
-        const kind = this.rng.pick<ActKind>(['wave', 'dance', 'jump']);
+        const kind = this.world.twist && this.twist?.emote ? this.twist.emote : this.rng.pick<ActKind>(['wave', 'dance', 'jump']);
         const dur = emoteDur(kind);
         this.emit({ t: 'act', eid: s.eid, kind, dur, at: now });
         s.pauseUntil = Math.max(s.pauseUntil, now + dur + 200);
@@ -246,7 +249,7 @@ export class BotBrain {
           break;
         }
         q.left--;
-        const kind = this.rng.pick<ActKind>(['wave', 'dance', 'jump']);
+        const kind = this.world.twist && this.twist?.emote ? this.twist.emote : this.rng.pick<ActKind>(['wave', 'dance', 'jump']);
         this.emit({ t: 'act', eid: s.eid, kind, dur: emoteDur(kind), at: now });
         q.nextAt = now + emoteDur(kind) + this.rng.range(100, 300);
         break;
@@ -262,7 +265,8 @@ export class BotBrain {
     const dur = this.rng.range(a, b) * 1000;
     s.pauseUntil = now + dur;
     s.turnAt = this.rng.chance(this.cfg.botTurnChance) ? now + this.rng.range(0.2, 0.8) * dur : 0;
-    s.emoteAt = this.rng.chance(this.cfg.botEmoteChance) ? now + this.rng.range(0.1, 0.5) * dur : 0;
+    const mul = this.world.twist ? (this.twist?.emoteMul ?? 1) : 1;
+    s.emoteAt = this.rng.chance(Math.min(0.9, this.cfg.botEmoteChance * mul)) ? now + this.rng.range(0.1, 0.5) * dur : 0;
   }
 
   private goInside(s: BotState, zone: Rect, now: number): void {

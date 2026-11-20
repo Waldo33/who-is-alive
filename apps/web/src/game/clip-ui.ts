@@ -1,6 +1,7 @@
 import { fmt } from '@kto/game-core';
 import type { Dict } from '@kto/game-core';
 import { ClipPlayerScene, pickClipMime, recordClip } from './clip';
+import { loadTheme } from './themes';
 import type { ClipInput, ClipResult } from './clip';
 
 /**
@@ -93,6 +94,7 @@ export function clipSupported(): boolean {
 export async function recordClipInBackground(input: ClipInput, onProgress?: (p: number) => void): Promise<File | null> {
   const mime = pickClipMime();
   if (!mime) return null;
+  await loadTheme(input.rec.theme); // облик темы — до первого кадра
   const holder = document.createElement('div');
   holder.setAttribute('aria-hidden', 'true');
   holder.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;overflow:hidden;opacity:0;pointer-events:none;z-index:-1';

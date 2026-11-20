@@ -28,6 +28,8 @@ export const DEFAULT_CONFIG = {
   // 8, а не 5 из ТЗ: по симуляции при 5 матч кончался за 2 раунда, при 8 — около 3,5 раунда и ~5 минут
   scoreToWin: 8,
   maxRounds: 5,
+  // тема всех дублей: -1 — случайный порядок (themes.ts); песочница: ?dev&theme=4
+  fixedTheme: -1,
 
   // боты
   botWanderRadius: [20, 80] as [number, number],

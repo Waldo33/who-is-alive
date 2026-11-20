@@ -38,11 +38,11 @@ pnpm --filter web build               # прод-сборка Next.js — гон
 pnpm --filter web live-e2e            # живой прогон через настоящий Supabase (нужна сеть до supabase.co)
 pnpm --filter web icons               # перерисовать иконки PWA из спрайтов (нужен Playwright)
 pnpm --filter web og-bg               # фоны превью ссылок по темам: apps/web/assets/og/bg-N.png
-pnpm --filter web clip-preview <папка> 11,12   # кадры клипа «Лучший момент» по зернам — проверить глазами
+pnpm --filter web clip-preview <папка> 11,12 [тема]   # кадры клипа «Лучший момент» по зернам — проверить глазами
 pnpm --filter web standalone          # песочница одним HTML-файлом: apps/web/dist/sandbox.html
 ```
 
-Песочница: `?dev` — панель конфига, `?dev&speed=8` — ускорение времени, в консоли `window.__kto` (сцена: `__kto.game.scene.getScene('game')`), `?lang=en`.
+Песочница: `?dev` — панель конфига, `?dev&speed=8` — ускорение времени, `?dev&theme=4` — все дубли в одной теме, в консоли `window.__kto` (сцена: `__kto.game.scene.getScene('game')`), `?lang=en`.
 
 CI (`.github/workflows/ci.yml`): lint, typecheck, test, `sim --rounds 200`.
 
@@ -63,6 +63,7 @@ CI (`.github/workflows/ci.yml`): lint, typecheck, test, `sim --rounds 200`.
 | Где | Что |
 |---|---|
 | `packages/game-core/src/config.ts` | все числа баланса (`DEFAULT_CONFIG`, `makeConfig`) |
+| `…/themes.ts` | реестр тем (`THEME_RULES`, индекс уходит в сеть) и их правила: изнанка (`twist`), эмоция толпы в ней |
 | `…/match.ts` | `MatchSim` — авторитетный матч: фазы, намерения (`Intent`), удары, звёзды, «Море волнуется», очки, итоги; `LAG_GRACE_MS` |
 | `…/world.ts` | `World` — воспроизводимое состояние, шаг 50 мс, события с `at`, ключевые кадры, `makeReplay`, `filter` |
 | `…/events.ts` | `WorldEvent` — всё видимое на поле |
@@ -77,7 +78,7 @@ CI (`.github/workflows/ci.yml`): lint, typecheck, test, `sim --rounds 200`.
 | `apps/web/src/net/room.ts` | `Room`: вход по RPC, состав, Presence, старт матча, смена хоста |
 | `apps/web/src/app/` | страницы: `/` (`HomeClient`), `/r/[code]` (`RoomClient`: лобби + игра), `/sandbox`; превью ссылок `og.tsx` + маршрут `og/route.tsx` (язык отправителя из `?l=`); `manifest.ts`, `PwaRegister.tsx` |
 | `apps/web/src/game/scene.ts` | сцена Phaser (~1400 строк): рендер, HUD, оверлеи фаз, ввод, музыка по фазам |
-| `…/game/locations.ts` | локации тем: кухня, льдина, луна (парк — в `sprites.ts`); та же раскладка, другой облик |
+| `…/game/themes/` | пакеты тем («площадки»): облик толпы, локация, музыка; каждый — свой файл, грузится по требованию (`index.ts › loadTheme`). Парк — в `sprites.ts`. Как добавить тему — `docs/architecture.md › Темы` |
 | `…/game/sprites.ts`, `art.ts`, `frames.ts`, `pixels.ts`, `font.ts` | процедурный арт, битмап-шрифт, выбор кадра персонажа |
 | `…/game/audio.ts`, `music.ts` | звук: `getAudio()` (один на приложение), эффекты, музыкальный секвенсор |
 | `…/game/clip.ts`, `clip-ui.ts`, `card.ts` | клип «Лучший момент» (MediaRecorder), экран монтажа, карточка результата |

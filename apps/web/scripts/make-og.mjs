@@ -12,6 +12,7 @@ const browser = await chromium.launch();
 const page = await browser.newPage();
 await page.setContent('<!doctype html><body></body>');
 await page.addScriptTag({ content: out.outputFiles[0].text });
+await page.waitForFunction(() => globalThis.__og);
 const list = await page.evaluate(() => globalThis.__og);
 await browser.close();
 list.forEach((url, i) => {

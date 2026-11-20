@@ -10,7 +10,10 @@ import {
   pickRoundAwards,
   plazaArena,
   planPath,
+  THEME_COUNT,
+  themeRules,
 } from '../src';
+import type { WorldEvent } from '../src';
 
 const players = ['a', 'b', 'c', 'd'].map((pid, i) => ({ pid, name: pid, color: i }));
 
@@ -293,9 +296,55 @@ describe('MatchSim', () => {
     for (let seed = 1; seed <= 12; seed++) {
       const sim = new MatchSim(makeConfig(), players, seed);
       firsts.add(sim.theme);
-      expect([...sim.themeOrder].sort()).toEqual([0, 1, 2, 3]);
+      expect([...sim.themeOrder].sort()).toEqual(Array.from({ length: THEME_COUNT }, (_, i) => i));
     }
     expect(firsts.size).toBeGreaterThan(1);
+  });
+
+  it('изнанка темы: включается и выключается, толпа и кнопка эмоции бьют в воздух, повтор совпадает', () => {
+    const office = themeRules(4);
+    expect(office.id).toBe('office');
+    const sim = new MatchSim(makeConfig({ fixedTheme: 4 }), players, 5);
+    expect(sim.theme).toBe(4);
+    const twists: WorldEvent[] = [];
+    const acts: { kind: string; on: boolean; eid: number; at: number }[] = [];
+    sim.world.listeners.push((ev) => {
+      if (ev.t === 'twist') twists.push(ev);
+      // команды «Море волнуется» (танец, прыжок) не считаем — они бывают и в изнанке
+      const c = sim.world.crowd;
+      const crowdAct = !!c && ev.at >= c.showAt && ev.at <= c.windowEnd + 2500;
+      if (ev.t === 'act' && !crowdAct && ['jab', 'wave', 'dance', 'jump'].includes(ev.kind)) acts.push({ kind: ev.kind, on: sim.world.twist, eid: ev.eid, at: ev.at });
+    });
+    runUntil(sim, () => sim.phase === 'play');
+    let pressed = false;
+    runUntil(sim, () => {
+      if (sim.world.twist && !pressed) {
+        pressed = true;
+        sim.intent('a', { k: 'emote', kind: 'wave' });
+      }
+      return sim.phase !== 'play';
+    });
+    const ons = twists.filter((e) => e.t === 'twist' && e.on).length;
+    expect(ons).toBeGreaterThanOrEqual(1);
+    expect(ons).toBeLessThanOrEqual(office.twist!.max);
+    // к обвинению свет обратно
+    expect(sim.world.twist).toBe(false);
+    // в изнанке — только удары в воздух, вне её — ни одного
+    // (эмоция, начатая в тот же шаг, что и смена, может быть ещё прежней — шаг в 50 мс не считаем)
+    const edge = (at: number) => twists.some((e) => Math.abs(e.at - at) <= 50);
+    const inside = acts.filter((a) => a.on && !edge(a.at));
+    expect(inside.length).toBeGreaterThan(3);
+    expect(inside.every((a) => a.kind === 'jab')).toBe(true);
+    expect(acts.filter((a) => !a.on && !edge(a.at)).every((a) => a.kind !== 'jab')).toBe(true);
+    // кнопка эмоции игрока в изнанке — тоже удар в воздух
+    const me = sim.playerRound('a')!.eid;
+    expect(acts.some((a) => a.eid === me && a.kind === 'jab')).toBe(true);
+    // повтор из журнала видит изнанку там же
+    const ev = twists.find((e) => e.t === 'twist' && e.on)!;
+    const r = makeReplay(sim.world, ev.at - 2000, ev.at + 1000)!;
+    expect(r.twist).toBe(false);
+    while (r.time < ev.at + 500) r.step();
+    expect(r.twist).toBe(true);
   });
 
   it('матч заканчивается, счёт сходится', () => {
