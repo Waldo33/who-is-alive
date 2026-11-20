@@ -2,8 +2,19 @@ import type { Metadata, Viewport } from 'next';
 import '@fontsource/press-start-2p/400.css';
 import './globals.css';
 import PwaRegister from './PwaRegister';
+import { SITE_URL } from '@/lib/env';
 
 export const metadata: Metadata = {
+  metadataBase: new URL(SITE_URL),
+  openGraph: {
+    type: 'website',
+    siteName: 'Кто тут живой? · Who’s Alive?',
+    title: 'Кто тут живой? · Who’s Alive?',
+    description: 'Пиксельная игра для компании: найди живых среди 32 одинаковых человечков и не выдай себя.',
+    locale: 'ru_RU',
+    alternateLocale: ['en_US'],
+  },
+  twitter: { card: 'summary_large_image' },
   title: 'Кто тут живой? · Who’s Alive?',
   description: 'Найди живых. Не выдай себя. Find the living. Don’t give yourself away.',
   applicationName: 'Кто тут живой? · Who’s Alive?',

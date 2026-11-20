@@ -2,10 +2,7 @@
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
-// Публичные значения проекта (publishable key предназначен для браузера, права режут RLS-политики).
-// Переменные окружения перекрывают их — например, для отдельного тестового проекта.
-const URL = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://wivildtgfkpuxvqoamqg.supabase.co';
-const KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'sb_publishable_H7jmJUYfYmVIPXF15mr1gQ_PYNXmtdN';
+import { SUPABASE_KEY as KEY, SUPABASE_URL as URL } from './env';
 
 let client: SupabaseClient | null = null;
 
