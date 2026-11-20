@@ -265,7 +265,7 @@ export class ClipPlayerScene {
       list.push({ y: p.y, draw: () => frame(g, pr.c, pr.fw, pr.fh, f, p.x - pr.fw / 2, p.y - pr.fh) });
     }
     const pos = new Map<number, { x: number; y: number }>();
-    for (const e of w.entities) {
+    for (const [idx, e] of w.entities.entries()) {
       const x = Math.round(e.px + (e.x - e.px) * alpha);
       const y = Math.round(e.py + (e.y - e.py) * alpha);
       pos.set(e.eid, { x, y });
@@ -275,6 +275,7 @@ export class ClipPlayerScene {
         continue;
       }
       const fr = frameFor(e, t, ch.acts);
+      const ce = a.charsFor(this.inp.rec.theme, look, idx); // свой костюм фигуры
       const col = this.colors.get(e.eid);
       const lit = reveal && col !== undefined;
       // на разборе тусклые все, кроме участников события и живых игроков
@@ -285,10 +286,10 @@ export class ClipPlayerScene {
         draw: () => {
           g.globalAlpha = dim ? 0.4 : 1;
           g.drawImage(a.shadow, x - 5, y - 2);
-          if (lit) frame(g, ch.outline[1 + col!], OL_W, OL_H, fr.frame, x - 7, y + fr.yoff - 17, fr.flip);
-          else if (zoomed && actor) frame(g, ch.outline[0], OL_W, OL_H, fr.frame, x - 7, y + fr.yoff - 17, fr.flip);
+          if (lit) frame(g, ce.outline[1 + col!], OL_W, OL_H, fr.frame, x - 7, y + fr.yoff - 17, fr.flip);
+          else if (zoomed && actor) frame(g, ce.outline[0], OL_W, OL_H, fr.frame, x - 7, y + fr.yoff - 17, fr.flip);
           g.globalAlpha = dim ? 0.45 : 1;
-          frame(g, ch.body, CH_W, CH_H, fr.frame, x - 6, y + fr.yoff - CH_H, fr.flip);
+          frame(g, ce.body, CH_W, CH_H, fr.frame, x - 6, y + fr.yoff - CH_H, fr.flip);
           g.globalAlpha = 1;
           if (e.act === 'stun' && t < e.actEnd) frame(g, a.stun, 12, 5, Math.floor(t / 120) % 3, x - 6, y - CH_H - 6);
           if (e.markUntil > t) g.drawImage(a.mark, x - 2, y - CH_H - 12 - (Math.floor(t / 150) % 2));

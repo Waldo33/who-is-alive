@@ -52,6 +52,11 @@ export interface CharStyle {
 
 export interface Look {
   chars: CharStyle;
+  /**
+   * Ещё костюмы толпы в этом облике: у каждой фигуры свой, по её номеру (`variantOf`) — одинаково
+   * у ботов и у игроков, поэтому никого не выдаёт. Позы (`poses`) общие для всех костюмов.
+   */
+  variants?: CharStyle[];
   /** Земля арены целиком (arena.width × arena.height). */
   ground?: (arena: ArenaDef) => HTMLCanvasElement;
   /** Предмет арены по виду (fountain, tree, lamp, benchH, benchV, stall, planter). */

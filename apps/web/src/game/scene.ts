@@ -26,7 +26,7 @@ import {
   makeArenaBackground, makeArrow, makeCharacterSheets, makeHedge, makeIconSheet, makeIcons, makeMark, makePigeon,
   makePoof, makeProp, makeRing, makeShadow, makeStar, makeStarFlash, makeStunStars, makeVignette,
 } from './sprites';
-import { isThemeLoaded, loadTheme, lookCount, preloadThemes, themeLook, themePack } from './themes';
+import { isThemeLoaded, loadTheme, lookCount, preloadThemes, themeLook, themePack, variantOf } from './themes';
 import type { Look } from './themes';
 
 const AY = 24; // верх арены на экране
@@ -388,6 +388,11 @@ export class GameScene extends Phaser.Scene {
     const s = makeCharacterSheets(look.chars, look.poses);
     this.addSheet('ch' + key, s.body, CH_W, CH_H);
     this.addSheet('ol' + key, s.outline, OL_W, OL_H);
+    (look.variants ?? []).forEach((style, i) => {
+      const v = makeCharacterSheets(style, look.poses);
+      this.addSheet(`ch${key}v${i + 1}`, v.body, CH_W, CH_H);
+      this.addSheet(`ol${key}v${i + 1}`, v.outline, OL_W, OL_H);
+    });
     this.textures.addCanvas('arena' + key, makeArenaBackground(this.sim.arena, look));
     this.textures.addCanvas('hedge' + key, makeHedge(look));
     this.addSheet('pigeon' + key, makePigeon(look), 6, 6);
@@ -943,6 +948,14 @@ export class GameScene extends Phaser.Scene {
     if (k > 300) this.flicker = 0;
   }
 
+  /** Текстура фигуры в облике key («тема_облик»): свой костюм из `Look.variants` по порядковому номеру. */
+  private charKey(key: string, index: number): string {
+    const [t, l] = key.split('_').map(Number);
+    if (key === '0_0' || !isThemeLoaded(t)) return key;
+    const i = variantOf(index, themeLook(t, l));
+    return i ? `${key}v${i}` : key;
+  }
+
   /** «25-й кадр»: в обычном облике темы на миг (кадр-два) мелькает кто-то из изнанки. */
   private subliminalKey(eid: number): string | null {
     const f = this.flash25;
@@ -1120,8 +1133,9 @@ export class GameScene extends Phaser.Scene {
         }
       }
       const flashKey = mode === 'live' && !(e.act && t < e.actEnd) ? this.subliminalKey(e.eid) : null;
-      const chKey = 'ch' + (flashKey ?? this.lookKey);
-      if (v.spr.texture.key !== chKey) v.spr.setTexture(chKey, frame);
+      const fig = this.charKey(flashKey ?? this.lookKey, i);
+      if (v.spr.texture.key !== 'ch' + fig) v.spr.setTexture('ch' + fig, frame);
+      if (v.ol.texture.key !== 'ol' + fig) v.ol.setTexture('ol' + fig, frame);
       v.spr.setVisible(true).setFrame(frame).setFlipX(flip).setPosition(x + lx, sy + jumpOff + ly).setDepth(sy);
       // цель замаха на миг вспыхивает белым
       if (mode === 'live' && this.swingFx.some((s) => s.eid === e.eid && s.t < 90)) v.spr.setTintFill(0xffffff);

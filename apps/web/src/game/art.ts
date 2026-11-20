@@ -14,7 +14,7 @@ import {
   makeStunStars,
   makeVignette,
 } from './sprites';
-import { isThemeLoaded, themeLook } from './themes';
+import { isThemeLoaded, themeLook, variantOf } from './themes';
 import type { Look } from './themes';
 
 /**
@@ -39,8 +39,10 @@ export interface CharArt {
 export interface Art {
   /** Локация темы раунда (земля, предметы, стенка зоны); look 1 — изнанка темы. */
   loc(theme: number, look?: number): LocArt;
-  /** Костюм толпы темы; look 1 — изнанка темы. */
-  chars(theme: number, look?: number): CharArt;
+  /** Костюм толпы темы; look 1 — изнанка темы; variant — разные костюмы облика (`Look.variants`). */
+  chars(theme: number, look?: number, variant?: number): CharArt;
+  /** Костюм конкретной фигуры (по её порядковому номеру в мире). */
+  charsFor(theme: number, look: number, index: number): CharArt;
   shadow: HTMLCanvasElement;
   poof: HTMLCanvasElement;
   star: HTMLCanvasElement;
@@ -74,20 +76,27 @@ export function getArt(arena: ArenaDef): Art {
     return l;
   };
   const sheets = new Map<string, CharArt>();
-  const chars = (theme: number, look = 0): CharArt => {
-    const k = key(theme, look);
+  const chars = (theme: number, look = 0, variant = 0): CharArt => {
+    const base = key(theme, look);
+    const lk = base === '0:0' ? themeLook(0, 0) : themeLook(theme, look);
+    const style = (variant > 0 && lk.variants?.[variant - 1]) || lk.chars;
+    const k = style === lk.chars ? base : `${base}:${variant}`;
     let a = sheets.get(k);
     if (!a) {
-      const lk = k === '0:0' ? themeLook(0, 0) : themeLook(theme, look);
-      const s = makeCharacterSheets(lk.chars, lk.poses);
+      const s = makeCharacterSheets(style, lk.poses);
       a = { acts: lk.acts, body: s.body, outline: [s.outline, ...PLAYER_COLORS.map((col) => tint(s.outline, col))] };
       sheets.set(k, a);
     }
     return a;
   };
+  const charsFor = (theme: number, look: number, index: number): CharArt => {
+    const lk = isThemeLoaded(theme) ? themeLook(theme, look) : themeLook(0, 0);
+    return chars(theme, look, variantOf(index, lk));
+  };
   const art: Art = {
     loc,
     chars,
+    charsFor,
     shadow: makeShadow(),
     poof: makePoof(),
     star: makeStar(),

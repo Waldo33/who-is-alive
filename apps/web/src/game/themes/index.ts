@@ -84,6 +84,16 @@ export function themeLook(theme: number, look: number): Look {
   return p.looks[look] ?? p.looks[0];
 }
 
+/**
+ * Костюм фигуры в облике: 0 — основной (`chars`), 1.. — `variants`. По порядковому номеру сущности
+ * в мире (порядок появления одинаков у всех и в повторе; места на поле случайны) — костюмы
+ * поровну и вперемешку, у ботов и игроков одинаково.
+ */
+export function variantOf(index: number, look: Look): number {
+  const n = 1 + (look.variants?.length ?? 0);
+  return n === 1 ? 0 : index % n;
+}
+
 /** Сколько обликов у загруженной темы. */
 export function lookCount(theme: number): number {
   return themePack(theme).looks.length;

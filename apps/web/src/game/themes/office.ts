@@ -40,7 +40,19 @@ const CLERK: CharStyle = {
   },
 };
 
-/** Боец: голый торс, «фингал», джинсы. */
+/** Общее у всех бойцов: бинты на кулаках, фингал, ссадина. */
+function fighterMarks(m: string[][], view: View): void {
+  if (view === 'D') {
+    m[6][2] = 'x'; // фингал под глазом
+    if (m[11][2] === 'a') m[11][2] = 'T';
+    if (m[11][9] === 'a') m[11][9] = 'T';
+  } else if (view === 'U') {
+    if (m[11][2] === 'a') m[11][2] = 'T';
+    if (m[11][9] === 'a') m[11][9] = 'T';
+  } else if (m[10][7] === 'a') m[10][7] = 'T';
+}
+
+/** Боец: голый торс, ёжик, джинсы. Остальные бойцы — FIGHTERS ниже. */
 const FIGHTER: CharStyle = {
   map: {
     ...BASE_MAP,
@@ -48,19 +60,58 @@ const FIGHTER: CharStyle = {
     s: PAL.peach, S: PAL.fawn, a: PAL.peach, m: PAL.fawn, c: PAL.coral,
     b: PAL.peach, B: PAL.fawn, v: PAL.tan, l: PAL.navy, L: PAL.ink,
     x: PAL.grape,
+    z: PAL.red, // ссадина
     Q: PAL.red, // скакалка
     T: PAL.white, // бинты на кулаках
   },
   patch: (m: string[][], view: View) => {
-    if (view === 'D') {
-      // фингал под глазом
-      m[6][2] = 'x';
-      m[5][4] = m[5][4] === 's' ? 'x' : m[5][4];
-    }
+    fighterMarks(m, view);
     // ёжик на макушке: без блика, короче
     m[1] = m[1].map((ch) => (ch === 'k' ? 'h' : ch));
+    if (view === 'D') m[10][7] = m[10][7] === 'v' ? 'z' : m[10][7]; // ссадина
   },
 };
+
+/**
+ * Разные бойцы подвала (у каждой фигуры свой — по её номеру, одинаково у ботов и игроков,
+ * поэтому никого не выдаёт): в майке, в капюшоне, боксёр в трусах и с повязкой, бритый в армейских штанах.
+ */
+const FIGHTERS: CharStyle[] = [
+  // в белой майке, загорелый, серые треники
+  {
+    map: { ...FIGHTER.map, h: PAL.umber, H: PAL.plum, k: PAL.brick, r: PAL.umber, R: PAL.plum, s: PAL.tan, S: PAL.fawn, a: PAL.tan, m: PAL.fawn, b: PAL.white, B: PAL.mist, v: PAL.white, l: PAL.steel },
+    patch: (m, view) => {
+      fighterMarks(m, view);
+      m[1] = m[1].map((ch) => (ch === 'k' ? 'h' : ch));
+    },
+  },
+  // в сером капюшоне
+  {
+    map: { ...FIGHTER.map, h: PAL.slate, H: PAL.steel, k: PAL.mist, r: PAL.slate, R: PAL.steel, s: PAL.fawn, S: PAL.brick, a: PAL.slate, m: PAL.brick, c: PAL.clay, b: PAL.slate, B: PAL.steel, v: PAL.steel, l: PAL.night },
+    patch: (m, view) => {
+      fighterMarks(m, view);
+      if (view === 'D') for (let y = 4; y <= 7; y++) { m[y][1] = 'H'; m[y][10] = 'H'; } // капюшон вокруг лица
+      if (view === 'S') for (let y = 4; y <= 7; y++) m[y][1] = 'H';
+    },
+  },
+  // боксёр: смуглый, красная повязка, красные трусы
+  {
+    map: { ...FIGHTER.map, h: PAL.ink, H: PAL.red, k: PAL.night, r: PAL.ink, R: PAL.ink, s: PAL.brick, S: PAL.umber, a: PAL.brick, m: PAL.umber, c: PAL.clay, b: PAL.brick, B: PAL.umber, v: PAL.clay, l: PAL.red, L: PAL.ink },
+    patch: (m, view) => {
+      fighterMarks(m, view);
+      // ноги ниже трусов — голые
+      m[14] = m[14].map((ch) => (ch === 'l' ? 'a' : ch));
+    },
+  },
+  // бритый, чёрная майка, армейские штаны
+  {
+    map: { ...FIGHTER.map, h: PAL.peach, H: PAL.fawn, k: PAL.sand, r: PAL.peach, R: PAL.fawn, s: PAL.peach, S: PAL.fawn, a: PAL.peach, b: PAL.night, B: PAL.ink, v: PAL.night, l: PAL.forest, L: PAL.ink, z: PAL.navy },
+    patch: (m, view) => {
+      fighterMarks(m, view);
+      if (view === 'D') m[10][2] = 'z'; // наколка на плече
+    },
+  },
+];
 
 // ═════════════ действия ═════════════
 // Механика у всех тем одна (game-core: freeze, jump, dance, wave — и у ботов, и у игроков),
@@ -759,6 +810,7 @@ const pack: ThemePack = {
     },
     {
       chars: FIGHTER,
+      variants: FIGHTERS,
       poses: BASEMENT_POSES,
       acts: BASEMENT_ACTS,
       icons: BASEMENT_ICONS,
