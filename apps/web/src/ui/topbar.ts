@@ -2,6 +2,7 @@ import { DICTS, LANGS } from '@kto/game-core';
 import type { Lang } from '@kto/game-core';
 import { LANG_KEY } from '../lib/lang';
 import { getAudio } from '../game/audio';
+import { RULES_CSS, rulesHtml } from './rules';
 
 /**
  * Верхняя панель всех экранов: «← Назад» слева и шестерёнка справа.
@@ -127,7 +128,7 @@ export function mountTopBar(parent: HTMLElement, init: TopBarOptions): TopBar {
         </div></div>
         <section class="kto-howto" id="kto-howto">
           <h3>${t.ui.howTo}</h3>
-          <ul>${t.start.rules.map((r) => `<li>${r}</li>`).join('')}</ul>
+          ${rulesHtml(t)}
         </section>
         <div class="kto-sheet-actions">
           ${o.onExit ? `<button type="button" class="kto-sheet-exit">${t.ui.exit}</button>` : ''}
@@ -248,6 +249,6 @@ export function ensureTopBarCss(): void {
   if (cssAdded || typeof document === 'undefined') return;
   cssAdded = true;
   const s = document.createElement('style');
-  s.textContent = TOPBAR_CSS;
+  s.textContent = TOPBAR_CSS + RULES_CSS;
   document.head.appendChild(s);
 }

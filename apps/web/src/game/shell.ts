@@ -1,6 +1,7 @@
 import { DEFAULT_CONFIG, DICTS } from '@kto/game-core';
 import { detectLang } from '../lib/lang';
 import { download, shareContent, withLang } from '../lib/share';
+import { rulesHtml } from '../ui/rules';
 import { mountTopBar } from '../ui/topbar';
 import type { TopBarOptions } from '../ui/topbar';
 import type { Dict, GameConfig, Lang } from '@kto/game-core';
@@ -24,15 +25,18 @@ const CSS = `
 .kto-stage{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;}
 .kto-stage canvas{image-rendering:pixelated;image-rendering:crisp-edges;
   box-shadow:0 0 0 2px ${PAL.night},0 0 0 4px ${PAL.ink},0 0 0 6px ${PAL.grape},0 0 0 8px ${PAL.ink};}
-.kto-start{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
-  gap:18px;padding:24px;text-align:center;z-index:5;background:${PAL.ink}ee;}
+.kto-start{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;
+  gap:16px;padding:calc(68px + env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom));text-align:center;z-index:5;
+  background:${PAL.ink}ee;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;touch-action:pan-y}
+.kto-start>:first-child{margin-top:auto}.kto-start>:last-child{margin-bottom:auto}
+.kto-root .kto-topbar{padding-bottom:12px;background:linear-gradient(${PAL.ink} 75%, transparent)}
 .kto-logo{font-size:22px;line-height:1.35;color:${PAL.yellow};text-shadow:3px 3px 0 ${PAL.rust},6px 6px 0 ${PAL.ink};margin:0;max-width:12ch}
 .kto-tag{font-size:10px;color:${PAL.coral};margin:0}
-.kto-rules{font-size:9px;line-height:1.9;color:${PAL.mist};max-width:34ch;margin:0;text-align:left}
-.kto-rules b{color:${PAL.sand};font-weight:normal}
-.kto-row{display:flex;gap:10px;align-items:center;font-size:9px}
-.kto-input{font:inherit;font-size:16px;line-height:1.2;max-width:calc(100vw - 120px);background:${PAL.night};color:${PAL.white};border:2px solid ${PAL.dusk};
-  padding:10px;width:14ch;outline:none;border-radius:0;-webkit-appearance:none;appearance:none}
+.kto-rules{width:min(100%,380px);margin:0}
+/* подпись над полем: поле во всю ширину вмещает имя целиком (14 знаков пиксельным шрифтом 16px) */
+.kto-row{display:flex;flex-direction:column;gap:8px;align-items:center;font-size:9px;width:100%}
+.kto-input{font:inherit;font-size:16px;line-height:1.2;max-width:100%;background:${PAL.night};color:${PAL.white};border:2px solid ${PAL.dusk};
+  padding:10px 12px;width:calc(14ch + 32px);text-align:center;outline:none;border-radius:0;-webkit-appearance:none;appearance:none}
 .kto-input:focus-visible,.kto-btn:focus-visible{outline:2px solid ${PAL.yellow};outline-offset:2px}
 .kto-btn{font:inherit;font-size:12px;color:${PAL.ink};background:${PAL.amber};border:0;padding:16px 22px;min-height:56px;
   box-shadow:0 4px 0 ${PAL.rust},0 0 0 2px ${PAL.ink};cursor:pointer;border-radius:0}
@@ -82,7 +86,7 @@ export function mountSandbox(root: HTMLElement, opts: ShellOptions): () => void 
     <section class="kto-start">
       <h1 class="kto-logo"></h1>
       <p class="kto-tag"></p>
-      <p class="kto-rules"></p>
+      <div class="kto-rules"></div>
       <label class="kto-row"><span class="kto-name-label"></span> <input class="kto-input" maxlength="14"></label>
       <label class="kto-check"><input type="checkbox" class="kto-kids"> <span class="kto-kids-label"></span></label>
       <p class="kto-hint kto-kids-hint"></p>
@@ -116,7 +120,7 @@ export function mountSandbox(root: HTMLElement, opts: ShellOptions): () => void 
     $('.kto-start').setAttribute('aria-label', t.start.aria);
     $('.kto-logo').textContent = t.meta.title;
     $('.kto-tag').textContent = t.meta.tagline;
-    $('.kto-rules').innerHTML = t.start.rules.join('<br>');
+    $('.kto-rules').innerHTML = rulesHtml(t);
     $('.kto-name-label').textContent = t.start.name;
     nameInput.setAttribute('aria-label', t.start.nameAria);
     $('.kto-kids-label').textContent = t.start.kids;
@@ -186,7 +190,8 @@ export function mountSandbox(root: HTMLElement, opts: ShellOptions): () => void 
     if (e.touches.length > 1) e.preventDefault();
   };
   const noMove = (e: TouchEvent) => {
-    if (!(e.target instanceof Element && e.target.closest('.kto-dev'))) e.preventDefault();
+    // прокрутка разрешена только в дев-панели и на стартовом экране (если он не помещается)
+    if (!(e.target instanceof Element && e.target.closest('.kto-dev, .kto-start'))) e.preventDefault();
   };
   const gestureEvents = ['gesturestart', 'gesturechange', 'gestureend', 'dblclick'];
   for (const ev of gestureEvents) document.addEventListener(ev, block, { passive: false });
