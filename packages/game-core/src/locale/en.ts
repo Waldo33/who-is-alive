@@ -142,7 +142,7 @@ export const en: Dict = {
       room_not_found: 'No such room. Check the code',
       room_full: 'The room is full',
       room_playing: 'A game is on here. Wait for it to end',
-      kicked: 'The director removed you from this room',
+      kicked: 'The director removed you from the room',
       auth: 'Couldn’t sign in. Try reloading the page',
       network: 'No connection. Check your internet',
       unknown: 'Something went wrong. Try again',

@@ -281,12 +281,10 @@ export class Room {
     void this.sb.rpc('join_room', { p_code: this.state.code, p_name: this.myName }).then(({ error }) => {
       // перечитать состав и роли: пока нас не было, хостом мог стать другой
       if (!error) this.scheduleRefresh();
-      // пока вкладка спала, режиссёр убрал нас из комнаты
-      else if (rpcErrorCode(error) === 'kicked') void this.kicked();
     });
   };
 
-  /** Режиссёр: убрать участника из комнаты (только в лобби). Обратно он войти не сможет. */
+  /** Режиссёр: убрать участника из комнаты (только в лобби) — освободить место. По ссылке он может войти снова. */
   async kick(userId: string): Promise<boolean> {
     if (!this.isHost || userId === this.state.selfId || this.state.status !== 'lobby') return false;
     const { error } = await this.sb.rpc('kick_member', { p_code: this.state.code, p_user: userId });
