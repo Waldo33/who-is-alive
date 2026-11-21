@@ -8,6 +8,8 @@ import { PAL, PLAYER_COLORS } from '@kto/assets';
 import { DICTS, fmt } from '@kto/game-core';
 import type { Dict, Lang } from '@kto/game-core';
 import { getAudio } from '@/game/audio';
+import { tutorialDone } from '@/game/tutorial';
+import { TutorialStage } from '@/ui/TutorialStage';
 import { isBotUA } from '@/lib/bot';
 import { detectLang } from '@/lib/lang';
 import { TopBar } from '@/ui/TopBarView';
@@ -214,6 +216,11 @@ export function Lobby({
   const [editing, setEditing] = useState(false);
   /** Режиссёр нажал «✕» у участника — второе нажатие («Убрать?») подтверждает. */
   const [kickAsk, setKickAsk] = useState('');
+  /** Пробный дубль, пока ждём: новичкам — кнопка, по ней — обучение поверх лобби (матч начнётся — закроется само). */
+  const [newbie, setNewbie] = useState(false);
+  const [tutOpen, setTutOpen] = useState(false);
+  useEffect(() => setNewbie(!tutorialDone()), [tutOpen]);
+  const lang = (Object.keys(DICTS) as Lang[]).find((l) => DICTS[l] === t) ?? 'ru';
   const me = state.members.find((m) => m.userId === state.selfId);
   const isHost = state.hostId === state.selfId;
   const online = state.members.filter((m) => m.online);
@@ -333,6 +340,11 @@ export function Lobby({
       {isHost && <Settings t={t} settings={state.settings} onChange={(s) => void room.updateSettings(s)} />}
 
       <div className="lobby-actions">
+        {newbie && (
+          <button className="btn alt" onClick={() => setTutOpen(true)}>
+            {t.tutorial.lobbyCta}
+          </button>
+        )}
         {!isHost && (
           <button className={`btn ${me?.ready ? 'on' : ''}`} aria-pressed={!!me?.ready} onClick={() => {
               onGesture();
@@ -359,6 +371,7 @@ export function Lobby({
           {toast}
         </div>
       )}
+      {tutOpen && <TutorialStage lang={lang} t={t} inLobby onClose={() => setTutOpen(false)} />}
     </main>
   );
 }

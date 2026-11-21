@@ -12,8 +12,8 @@ export type EmoteKind = 'wave' | 'dance' | 'jump' | 'jab';
 /**
  * События мира. Всё, что видно на поле, выражается ими; позиции каждый кадр не передаются.
  * Хост рассылает их (пакеты cmds/hit/star/zone… в разделе 13), клиенты и повтор воспроизводят.
- * Ни одно событие не говорит, кто из сущностей живой, кроме star_taken и mark,
- * которые и на поле выдают игрока.
+ * Ни одно событие не говорит, кто из сущностей живой: mark выдаёт ударившего по боту,
+ * star_taken и spot — только подозрение (звёзды берут и статисты, прожектор ловит и зазевавшихся ботов).
  */
 export type WorldEvent =
   | { t: 'move'; eid: number; path: number[]; at: number }
@@ -26,8 +26,16 @@ export type WorldEvent =
   | { t: 'star_spawn'; id: number; x: number; y: number; at: number }
   | { t: 'star_taken'; id: number; eid: number; at: number }
   | { t: 'zone'; startAt: number; endAt: number; from: Rect; to: Rect; at: number }
-  /** showAt..resumeAt — стоп-кадр (мир стоит), resumeAt..windowEnd — ещё можно нажать, но с опозданием. */
-  | { t: 'crowd'; kind: CrowdKind; showAt: number; resumeAt: number; windowEnd: number; at: number }
+  /**
+   * showAt..resumeAt — стоп-кадр (мир стоит), resumeAt..windowEnd — ещё можно нажать, но с опозданием.
+   * vote — «Толпа решает»: жест не называется, kind — жест большинства (часть ботов делает другой).
+   */
+  | { t: 'crowd'; kind: CrowdKind; showAt: number; resumeAt: number; windowEnd: number; at: number; vote?: boolean }
+  /**
+   * Прожектор режиссёра: кто-то в круге не повторил жест (игрок или зазевавшийся бот).
+   * Центр смещён от ошибившегося, в круге несколько человечков — это улика, а не указатель.
+   */
+  | { t: 'spot'; x: number; y: number; r: number; until: number; at: number }
   /** Изнанка темы (themes.ts › twist): включилась или выключилась. Ничего не говорит об игроках. */
   | { t: 'twist'; on: boolean; at: number };
 

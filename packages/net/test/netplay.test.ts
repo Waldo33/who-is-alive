@@ -179,6 +179,37 @@ describe('сетевая игра', () => {
     expect(rig.privLog.filter((m) => (m.msg as { t: string }).t === 'atk').every((m) => m.to === 'g1')).toBe(true);
   });
 
+  it('новые механики по сети: условия съёмки доходят до гостей, «Хлопушка» вырезанного гостя подаёт команду', () => {
+    const rig = makeRig([60, 140], 0, 8);
+    const rng = new Rng(8);
+    const sim = (rig.host as unknown as { sim: { playerRound(pid: string): { alive: boolean } | undefined } }).sim;
+    let modChecked = 0;
+    // до второго дубля: условия съёмки у гостей те же, что у хоста
+    for (let i = 0; i < 20 * 60 * 6 && rig.host.round < 3; i++) {
+      rig.step();
+      botFingers(rig, rng);
+      if (rig.host.phase === 'play' && rig.guests[0].phase === 'play' && rig.guests[0].round === rig.host.round) {
+        expect(rig.guests[0].mod).toBe(rig.host.mod);
+        modChecked++;
+      }
+    }
+    expect(modChecked).toBeGreaterThan(100);
+    // вырезанный гость подаёт команду: она приходит всем одинаковой
+    for (let i = 0; i < 20 * 30 && rig.host.phase !== 'play'; i++) rig.step();
+    const g1 = sim.playerRound('g1')!;
+    g1.alive = false;
+    for (let i = 0; i < 20 * 30 && !(rig.host.crowdCanStart() && rig.guests[0].me()?.alive === false); i++) rig.step();
+    const before = rig.host.world.crowd?.warnAt ?? -1;
+    rig.guests[0].intent({ k: 'clap', kind: 'dance' });
+    for (let i = 0; i < 20 * 2; i++) rig.step();
+    const c = rig.host.world.crowd!;
+    expect(c.warnAt).toBeGreaterThan(before);
+    expect(c.kind).toBe('dance');
+    for (let i = 0; i < 20 * 2; i++) rig.step();
+    for (const g of rig.guests) expect(g.world.crowd?.warnAt).toBe(c.warnAt);
+    expect(rig.guests[0].me()!.clapsLeft).toBe(rig.host.cfg.ghostClaps - 1);
+  });
+
   it('нагрузка: не больше 35 доставленных сообщений в секунду на комнату', () => {
     const rig = makeRig([50, 100], 0, 6);
     const rng = new Rng(6);

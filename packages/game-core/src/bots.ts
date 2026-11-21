@@ -20,6 +20,8 @@ interface BotState {
   quirk: Quirk | null;
   /** Следующая команда «Море волнуется» — с опозданием или не та. */
   lateNext: boolean;
+  /** «Разогрев» перед «Толпа решает»: когда показать жест настроения (0 — нет). */
+  moodAt: number;
 }
 
 export type QuirkKind = 'zigzag' | 'stalker' | 'starRun' | 'emoteSpam' | 'late';
@@ -71,6 +73,7 @@ export class BotBrain {
       quirky: opts.quirky ?? true,
       quirk: null,
       lateNext: false,
+      moodAt: 0,
       eid,
       pauseUntil: now + this.rng.range(0, 1500),
       turnAt: 0,
@@ -89,16 +92,53 @@ export class BotBrain {
     return this.bots.has(eid);
   }
 
-  /** «Море волнуется»: после стоп-кадра каждый бот выполнит команду со своей задержкой. */
-  onCrowd(kind: CrowdKind, resumeAt: number, opts: { skip?: Set<number> } = {}): void {
-    const [a, b] = this.cfg.botCrowdReactMs;
+  private mood: { kind: CrowdKind; until: number } | null = null;
+  /** Кто из ботов на последнюю команду опоздал или перепутал (чудачество late) — их тоже ловит прожектор. */
+  lastSlips: number[] = [];
+
+  /**
+   * «Разогрев» перед «Толпа решает»: до until часть толпы показывает жест большинства
+   * (танцует или прыгает), а перед «замри» — затихает и останавливается. Подсказка внимательным.
+   * null — снять настроение.
+   */
+  setMood(kind: CrowdKind | null, now: number, until = now): void {
+    for (const s of this.bots.values()) s.moodAt = 0;
+    this.mood = kind ? { kind, until } : null;
+    if (!kind) return;
     for (const s of this.bots.values()) {
+      const e = this.world.get(s.eid);
+      if (!e || !e.alive || s.quirk) continue;
+      if (kind === 'freeze') {
+        if (!this.rng.chance(0.6)) continue;
+        if (s.walking) this.emit({ t: 'stop', eid: s.eid, at: now });
+        s.walking = false;
+        s.pauseUntil = Math.max(s.pauseUntil, until + this.rng.range(200, 900));
+        s.emoteAt = 0;
+        s.turnAt = 0;
+      } else if (this.rng.chance(0.5)) {
+        s.moodAt = Math.round(now + this.rng.range(0, Math.max(0, until - now - 600)));
+      }
+    }
+  }
+
+  /**
+   * «Море волнуется»: после стоп-кадра каждый бот выполнит команду со своей задержкой.
+   * vote — «Толпа решает»: доля ботов выбирает kind (большинство), остальные — другой жест.
+   */
+  onCrowd(kind: CrowdKind, resumeAt: number, opts: { skip?: Set<number>; vote?: number } = {}): void {
+    const [a, b] = this.cfg.botCrowdReactMs;
+    const others = (['freeze', 'jump', 'dance'] as CrowdKind[]).filter((k) => k !== kind);
+    this.mood = null;
+    this.lastSlips = [];
+    for (const s of this.bots.values()) {
+      s.moodAt = 0;
       if (opts.skip?.has(s.eid)) continue;
-      s.crowdKind = kind;
+      s.crowdKind = opts.vote !== undefined && !this.rng.chance(opts.vote) ? this.rng.pick(others) : kind;
       s.crowdReactAt = resumeAt + crowdJitter(this.rng, a, b);
       if (s.lateNext) {
         // опоздал, как зазевавшийся игрок; иногда ещё и перепутал команду
         s.lateNext = false;
+        this.lastSlips.push(s.eid);
         s.crowdReactAt = resumeAt + crowdJitter(this.rng, 500, 1200);
         if (this.rng.chance(0.25)) s.crowdKind = this.rng.pick<CrowdKind>(['freeze', 'jump', 'dance'].filter((k) => k !== kind) as CrowdKind[]);
       }
@@ -144,6 +184,22 @@ export class BotBrain {
       }
 
       if (this.world.isFrozen(now)) continue;
+      if (s.moodAt && now >= s.moodAt && this.mood) {
+        s.moodAt = 0;
+        const kind = CROWD_ACT[this.mood.kind];
+        const dur = emoteDur(kind);
+        if (s.walking) this.emit({ t: 'stop', eid: s.eid, at: now });
+        s.walking = false;
+        this.emit({ t: 'act', eid: s.eid, kind, dur, at: now });
+        s.pauseUntil = Math.max(s.pauseUntil, now + dur + this.rng.range(200, 600));
+        s.emoteAt = 0;
+        continue;
+      }
+      if (this.mood?.kind === 'freeze' && now < this.mood.until && !s.walking && now >= s.pauseUntil) {
+        // перед «замри» толпа не расходится: кто стоит — стоит
+        s.pauseUntil = now + 250;
+        continue;
+      }
       if (s.quirky && !s.quirk && !zoneNow && this.rng.chance((this.cfg.botQuirkPerMin * 50) / 60000)) this.startQuirk(s, now);
       if (s.quirk) {
         if (this.runQuirk(s, now, zoneFinal ?? zoneNow)) continue;

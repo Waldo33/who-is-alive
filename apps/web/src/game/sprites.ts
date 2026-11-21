@@ -319,6 +319,8 @@ export function makeIcons(): { canvas: HTMLCanvasElement; names: string[] } {
     cross: ['oo....oo', 'owo..owo', '.owoowo.', '..owwo..', '..owwo..', '.owoowo.', 'owo..owo', 'oo....oo'],
     gear: ['...mm...', '.m.mm.m.', '..mmmm..', 'mmm..mmm', 'mmm..mmm', '..mmmm..', '.m.mm.m.', '...mm...'],
     crown: ['o..o..o.', 'oyoyoyo.', 'oyyyyyo.', 'oyyyyyo.', 'oyryryo.', 'ooooooo.', '........', '........'],
+    // «Толпа решает»: жест не назван
+    question: ['.oooooo.', 'oyyyyyyo', 'oyooooyo', 'ooo.oyyo', '...oyyo.', '...oyo..', '...ooo..', '...oyo..'],
   };
   const names = Object.keys(icons);
   const { c, g } = canvas(names.length * 8, 8);

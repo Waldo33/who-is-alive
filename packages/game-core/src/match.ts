@@ -10,6 +10,7 @@ import type { ActKind, CrowdKind, Dir, EmoteKind, EntitySpawn, WorldEvent } from
 import { NavGrid } from './nav';
 import { Rng } from './rng';
 import { THEME_COUNT, themeRules, twistEmote } from './themes';
+import { ROUND_MODS, roundMod } from './mods';
 import { World } from './world';
 
 const EMOTES: EmoteKind[] = ['wave', 'dance', 'jump'];
@@ -30,6 +31,8 @@ export type Intent =
   | { k: 'emote'; kind?: EmoteKind }
   /** wt — время мира на экране игрока в момент нажатия (компенсация задержки сети). */
   | { k: 'crowd'; kind: CrowdKind; wt?: number }
+  /** «Хлопушка»: вырезанный игрок подаёт команду толпе. */
+  | { k: 'clap'; kind: CrowdKind }
   | { k: 'attack'; eid: number; wt?: number }
   | { k: 'autopilot'; on: boolean }
   | { k: 'accuse'; eid: number }
@@ -53,6 +56,13 @@ export interface PlayerRound {
   crowdAnswered: number;
   /** Нажал во время стоп-кадра: команда выполнится в этот момент вместе с толпой. */
   crowdQueued: { kind: CrowdKind; at: number } | null;
+  /** Какой жест выбрал на последнюю команду (для «Жёсткого дубля» и «Толпа решает»). */
+  crowdPick: CrowdKind | null;
+  /** Нажал уже после стоп-кадра — опоздал (это видно на поле). */
+  crowdLate: boolean;
+  /** «Хлопушка» вырезанного: сколько осталось и когда можно снова (время мира). */
+  clapsLeft: number;
+  clapAt: number;
 }
 
 export interface PointsLine {
@@ -85,10 +95,11 @@ export interface MatchSummary {
 }
 
 export type Notice =
-  | { t: 'round_start'; round: number; theme: number }
+  /** mod — «Условия съёмки» дубля (mods.ts), 0 — обычный. */
+  | { t: 'round_start'; round: number; theme: number; mod: number }
   | { t: 'phase'; phase: Phase; at: number }
   | { t: 'score'; pid: string; delta: number; reason: keyof Omit<PointsLine, 'total'> }
-  | { t: 'denied'; pid: string; reason: 'no_attacks' | 'out_of_range' | 'stunned' | 'autopilot' }
+  | { t: 'denied'; pid: string; reason: 'no_attacks' | 'out_of_range' | 'stunned' | 'autopilot' | 'not_now' }
   /** Итог удара — только для того, кто бил (по сети уходит ему лично, чтобы показать результат без задержки показа мира). */
   | { t: 'attack'; pid: string; target: number; result: 'player' | 'bot'; at: number };
 
@@ -118,6 +129,8 @@ export class MatchSim {
   phaseEndsAt = 0;
   round = 0;
   theme = 0;
+  /** «Условия съёмки» текущего дубля (индекс в ROUND_MODS). */
+  mod = 0;
   /** Порядок тем в матче — свой в каждом матче и реванше. */
   themeOrder: number[] = [];
   scores: Record<string, number> = {};
@@ -145,6 +158,13 @@ export class MatchSim {
   endReason: RoundSummary['endReason'] = 'time';
   starWinner: string | null = null;
   nextCrowdAt = 0;
+  /** Следующая команда — «Толпа решает» (жест большинства известен заранее: толпа «разогревается»). */
+  private nextVote: CrowdKind | null = null;
+  /** Жест следующей обычной команды задан сценарием (обучение), иначе — случайный. */
+  private forcedKind: CrowdKind | null = null;
+  private moodOn = false;
+  private crowdCount = 0;
+  private hardChecked = -1;
   crowdShowTimes: number[] = [];
   zoneStarted = false;
   starSpawnQueue: number[] = [];
@@ -247,6 +267,7 @@ export class MatchSim {
   private startRound(): void {
     this.round++;
     this.theme = this.themeOrder[(this.round - 1) % THEME_COUNT];
+    this.pickMod();
     this.summary = null;
     const rng = this.rng;
     // случайные id, новые каждый раунд
@@ -276,7 +297,7 @@ export class MatchSim {
       pid: p.pid,
       eid: playerEids[i],
       alive: true,
-      attacksLeft: this.cfg.attacksPerRound,
+      attacksLeft: roundMod(this.mod) === 'onehit' ? 1 : this.cfg.attacksPerRound,
       stars: 0,
       stunUntil: 0,
       autopilot: false,
@@ -288,19 +309,35 @@ export class MatchSim {
       accusedAsGhost: false,
       crowdAnswered: -1,
       crowdQueued: null,
+      crowdPick: null,
+      crowdLate: false,
+      clapsLeft: this.cfg.ghostClaps,
+      clapAt: 0,
     }));
     this.bots = new BotBrain(this.world, this.cfg, new Rng(rng.fork()), (ev) => this.emit(ev), themeRules(this.theme).twist);
     const pset = new Set(playerEids);
-    for (const s of spawns) if (!pset.has(s.eid)) this.bots.add(s.eid, t0 + this.cfg.countdownSec * 1000);
+    // с «Условиями съёмки» отсчёт на 2 с дольше — успеть прочитать правило дубля
+    const countdownMs = (this.cfg.countdownSec + (this.mod ? 2 : 0)) * 1000;
+    for (const s of spawns) if (!pset.has(s.eid)) this.bots.add(s.eid, t0 + countdownMs);
     this.crowdShowTimes = [];
     this.zoneStarted = false;
     this.starSpawnQueue = [];
+    this.starTouched.clear();
     this.neighbors.clear();
     this.endReason = 'time';
     this.starWinner = null;
-    this.notices.push({ t: 'round_start', round: this.round, theme: this.theme });
-    this.setPhase('countdown', this.cfg.countdownSec * 1000);
+    this.notices.push({ t: 'round_start', round: this.round, theme: this.theme, mod: this.mod });
+    this.setPhase('countdown', countdownMs);
     for (const a of this.agents) a.onRound(this, this.playerRound(a.pid)!.eid);
+  }
+
+  /** «Условия съёмки»: первый дубль матча обычный, дальше — случайное правило (не два одинаковых подряд). */
+  private pickMod(): void {
+    const prev = this.mod;
+    this.mod = 0;
+    if (this.round <= 1 || !this.cfg.roundMods || !this.rng.chance(this.cfg.roundModChance)) return;
+    const pool = ROUND_MODS.map((_, i) => i).filter((i) => i > 0 && i !== prev);
+    this.mod = this.rng.pick(pool);
   }
 
   /** Подключить ИИ-агентов (песочница/симуляция). */
@@ -314,8 +351,10 @@ export class MatchSim {
     this.setPhase('play', this.cfg.roundSec * 1000);
     this.playStart = this.world.time;
     this.plannedPlayEnd = this.playStart + this.cfg.roundSec * 1000;
-    this.nextCrowdAt = this.playStart + this.crowdInterval();
-    for (let i = 0; i < this.cfg.maxStars; i++) this.spawnStar();
+    this.crowdCount = 0;
+    this.hardChecked = -1;
+    this.scheduleCrowd(this.playStart);
+    for (let i = 0; i < this.maxStars(); i++) this.spawnStar();
     // изнанка темы: расписание на дубль (зерно — общее, поэтому повтор совпадает)
     const tw = themeRules(this.theme).twist;
     this.twistLeft = tw ? tw.max : 0;
@@ -356,9 +395,109 @@ export class MatchSim {
     this.nextTwistAt = t + this.rng.range(a, b) * 1000;
   }
 
-  private crowdInterval(): number {
-    const [a, b] = this.cfg.crowdCmdIntervalSec;
-    return Math.round(this.rng.range(a, b) * 20) * 50;
+  /**
+   * Интервал до следующей команды: сжимается по ходу дубля (нарастание) от crowdCmdIntervalSec
+   * к crowdCmdIntervalEndSec к началу сужения; «Шквал команд» — вдвое чаще.
+   */
+  private crowdInterval(from: number): number {
+    const cfg = this.cfg;
+    const span = (cfg.roundSec - cfg.zoneStartBeforeEndSec) * 1000;
+    const k = Math.min(1, Math.max(0, (from - this.playStart) / span));
+    const [a0, b0] = cfg.crowdCmdIntervalSec;
+    const [a1, b1] = cfg.crowdCmdIntervalEndSec;
+    const mul = roundMod(this.mod) === 'rush' ? 0.5 : 1;
+    const sec = this.rng.range(a0 + (a1 - a0) * k, b0 + (b1 - b0) * k) * mul;
+    return Math.round(Math.max(3, sec) * 20) * 50;
+  }
+
+  /** Назначить следующую команду и решить, будет ли она «Толпа решает» (со 2-го дубля, не первой в дубле). */
+  private scheduleCrowd(from: number): void {
+    this.nextCrowdAt = from + this.crowdInterval(from);
+    this.moodOn = false;
+    this.nextVote = null;
+    const chance = this.cfg.crowdVoteChance * (roundMod(this.mod) === 'rush' ? 1.5 : 1);
+    if (this.round >= 2 && this.crowdCount > 0 && this.rng.chance(chance)) this.nextVote = this.rng.pick<CrowdKind>(['freeze', 'jump', 'dance']);
+  }
+
+  /** Можно ли сейчас начать команду (общие условия для расписания и «Хлопушки»). */
+  crowdCanStart(t = this.world.time): boolean {
+    const c = this.world.crowd;
+    if (c && t <= c.windowEnd + 2000) return false;
+    const quiet = (themeRules(this.theme).twist?.quietSec ?? 0) * 1000;
+    // не во время сужения: зона зависит от времени, а в стоп-кадре никто не может уйти
+    return t >= this.lastTwistAt + quiet && !this.zoneStarted && t < this.plannedPlayEnd - this.cfg.zoneStartBeforeEndSec * 1000 - 3000;
+  }
+
+  private fireCrowd(kind: CrowdKind, vote: boolean): void {
+    const t = this.world.time;
+    const cfg = this.cfg;
+    const pause = crowdPauseMs(cfg);
+    const resumeAt = t + pause;
+    this.emit({ t: 'crowd', kind, at: t, showAt: t, resumeAt, windowEnd: resumeAt + cfg.crowdLateMs, ...(vote ? { vote: true } : {}) });
+    this.crowdShowTimes.push(resumeAt);
+    this.crowdCount++;
+    this.plannedPlayEnd += pause; // пауза не съедает время раунда
+    // игроки на автопилоте — это тоже игроки: за них команду никто не выполнит
+    this.bots.onCrowd(kind, resumeAt, { skip: new Set(this.pr.map((p) => p.eid)), ...(vote ? { vote: cfg.crowdVoteMajority } : {}) });
+    this.forcedKind = null;
+    this.scheduleCrowd(resumeAt);
+  }
+
+  // ───────────── сценарий (пробный дубль) ─────────────
+
+  /** Назначить команду через inMs: с названным жестом или «Толпа решает» (с разогревом толпы). */
+  planCrowd(kind: CrowdKind, inMs: number, vote = false): void {
+    this.nextCrowdAt = this.world.time + inMs;
+    this.nextVote = vote ? kind : null;
+    this.forcedKind = vote ? null : kind;
+    this.moodOn = false;
+  }
+
+  /** Положить звезду в точку (ближайшая проходимая клетка). */
+  spawnStarAt(x: number, y: number): void {
+    const i = this.nav.nearestWalkable(this.nav.cellAt(x, y), null);
+    if (i < 0) return;
+    this.emit({ t: 'star_spawn', id: this.starSeq++, x: this.nav.cx(i), y: this.nav.cy(i), at: this.world.time });
+  }
+
+  private maxStars(): number {
+    return this.cfg.maxStars + (roundMod(this.mod) === 'stars' ? 2 : 0);
+  }
+
+  /**
+   * Режиссёр следит за жестами: когда окно ответа (с запасом на сеть) закрылось, над каждым,
+   * кто не повторил названный жест (не нажал, не тот, опоздал), загорается прожектор — круг
+   * со смещённым центром. Зазевавшихся ботов он ловит так же. В «Жёстком дубле» не повторивший
+   * (не нажал или не тот жест) вырезан, опоздавший — только подсвечен. «Толпа решает» не судится: там угадывают, меньшинство видно и так.
+   */
+  private judgeTick(t: number): void {
+    const c = this.world.crowd;
+    if (!c || c.vote || this.hardChecked === c.warnAt || t <= c.windowEnd + LAG_GRACE_MS) return;
+    this.hardChecked = c.warnAt;
+    const cfg = this.cfg;
+    const hard = roundMod(this.mod) === 'hard';
+    const slips: number[] = [];
+    for (const p of this.pr) {
+      if (!p.alive || (p.crowdAnswered === c.warnAt && p.crowdPick === c.kind && !p.crowdLate)) continue;
+      const e = this.world.get(p.eid)!;
+      // опоздавший всё же повторил жест — его только подсвечивают, вырезают не повторивших
+      if (hard && !(p.crowdAnswered === c.warnAt && p.crowdPick === c.kind)) {
+        p.alive = false;
+        p.diedAt = t;
+        if (p.autopilot) this.bots.remove(p.eid);
+        this.emit({ t: 'hit', target: p.eid, result: 'player', x: e.x, y: e.y, at: t });
+        this.emit({ t: 'remove', eid: p.eid, cause: 'player', at: t });
+      } else slips.push(p.eid);
+    }
+    for (const eid of this.bots.lastSlips) if (this.world.get(eid)?.alive) slips.push(eid);
+    for (const eid of this.rng.shuffle(slips)) {
+      const e = this.world.get(eid)!;
+      const a = this.rng.range(0, Math.PI * 2);
+      const d = this.rng.range(0, cfg.spotJitter);
+      const x = Math.round(Math.min(this.arena.walk.x + this.arena.walk.w, Math.max(this.arena.walk.x, e.x + Math.cos(a) * d)));
+      const y = Math.round(Math.min(this.arena.walk.y + this.arena.walk.h, Math.max(this.arena.walk.y, e.y + Math.sin(a) * d)));
+      this.emit({ t: 'spot', x, y, r: cfg.spotRadius, until: t + cfg.spotSec * 1000, at: t });
+    }
   }
 
   private emit(ev: WorldEvent): void {
@@ -370,20 +509,16 @@ export class MatchSim {
     const cfg = this.cfg;
     this.twistTick(t);
 
-    // «Море волнуется»
-    // (не во время сужения: зона зависит от времени, а в стоп-кадре никто не может уйти)
-    const quiet = (themeRules(this.theme).twist?.quietSec ?? 0) * 1000;
-    if (t >= this.nextCrowdAt && t >= this.lastTwistAt + quiet && !this.zoneStarted && t < this.plannedPlayEnd - cfg.zoneStartBeforeEndSec * 1000 - 3000) {
-      const kind = this.rng.pick<CrowdKind>(['freeze', 'jump', 'dance']);
-      const pause = crowdPauseMs(cfg);
-      const resumeAt = t + pause;
-      this.emit({ t: 'crowd', kind, at: t, showAt: t, resumeAt, windowEnd: resumeAt + cfg.crowdLateMs });
-      this.crowdShowTimes.push(resumeAt);
-      this.plannedPlayEnd += pause; // пауза не съедает время раунда
-      // игроки на автопилоте — это тоже игроки: за них команду никто не выполнит
-      this.bots.onCrowd(kind, resumeAt, { skip: new Set(this.pr.map((p) => p.eid)) });
-      this.nextCrowdAt = resumeAt + this.crowdInterval();
+    // «Море волнуется»; перед «Толпа решает» толпа заранее «разогревается» жестом большинства
+    if (this.nextVote && !this.moodOn && t >= this.nextCrowdAt - cfg.crowdMoodLeadMs && this.crowdCanStart(t)) {
+      this.moodOn = true;
+      this.bots.setMood(this.nextVote, t, this.nextCrowdAt);
     }
+    if (t >= this.nextCrowdAt && this.crowdCanStart(t)) {
+      if (this.nextVote) this.fireCrowd(this.nextVote, true);
+      else this.fireCrowd(this.forcedKind ?? this.rng.pick<CrowdKind>(['freeze', 'jump', 'dance']), false);
+    }
+    this.judgeTick(t);
     // нажавшие во время стоп-кадра выполняют команду вместе с толпой, с тем же разбросом, что у ботов
     for (const p of this.pr) {
       if (p.crowdQueued && t >= p.crowdQueued.at) {
@@ -444,11 +579,31 @@ export class MatchSim {
           this.emit({ t: 'star_taken', id: st.id, eid: p.eid, at: t });
           takenNow.add(st.id); // чтобы второй игрок не взял ту же звезду в этом же тике
           p.stars++;
-          this.starSpawnQueue.push(t + cfg.starRespawnSec * 1000);
+          this.starSpawnQueue.push(t + this.starRespawnMs());
           if (p.stars >= cfg.starsToWin && !this.starWinner) {
             this.starWinner = p.pid;
             this.endReason = 'stars';
           }
+          break;
+        }
+      }
+    }
+
+    // статисты тоже хватают звёзды (не каждый раз): подбор звезды — уже не доказательство.
+    // Решение — один раз на пару «бот × звезда», когда бот до неё дотянулся.
+    if (this.world.stars.size) {
+      const playerEids = new Set(this.pr.map((p) => p.eid));
+      for (const e of this.world.alive()) {
+        if (playerEids.has(e.eid) || !this.bots.has(e.eid)) continue;
+        for (const st of this.world.stars.values()) {
+          if (takenNow.has(st.id) || Math.hypot(st.x - e.x, st.y - e.y) > cfg.starPickupRadius) continue;
+          const key = e.eid * 100000 + st.id;
+          if (this.starTouched.has(key)) continue;
+          this.starTouched.add(key);
+          if (!this.rng.chance(cfg.botStarTakeChance)) continue;
+          this.emit({ t: 'star_taken', id: st.id, eid: e.eid, at: t });
+          takenNow.add(st.id);
+          this.starSpawnQueue.push(t + this.starRespawnMs());
           break;
         }
       }
@@ -476,9 +631,15 @@ export class MatchSim {
     this.recordPositions();
 
     const aliveCount = this.pr.filter((p) => p.alive).length;
-    const lastAlive = this.players.length >= 2 && aliveCount <= 1;
+    const lastAlive = cfg.endWhenLastAlive && this.players.length >= 2 && aliveCount <= 1;
     if (lastAlive && this.endReason === 'time') this.endReason = 'last_alive';
     if (this.starWinner || lastAlive || this.world.time >= this.plannedPlayEnd) this.beginAccuse();
+  }
+
+  private starTouched = new Set<number>();
+
+  private starRespawnMs(): number {
+    return this.cfg.starRespawnSec * 1000 * (roundMod(this.mod) === 'stars' ? 0.5 : 1);
   }
 
   private spawnStar(): void {
@@ -665,6 +826,19 @@ export class MatchSim {
       p.accusedAsGhost = !p.alive;
       return;
     }
+    if (it.k === 'clap') {
+      // «Хлопушка»: только вырезанный, с перезарядкой; команда та же, что у режиссёра (не выдаёт никого)
+      if (this.phase !== 'play' || p.alive) return;
+      if (p.clapsLeft <= 0 || t < p.clapAt || !this.crowdCanStart(t)) {
+        this.notices.push({ t: 'denied', pid, reason: 'not_now' });
+        return;
+      }
+      p.clapsLeft--;
+      p.clapAt = t + cfg.ghostClapCooldownSec * 1000;
+      this.bots.setMood(null, t);
+      this.fireCrowd(it.kind, false);
+      return;
+    }
     if (this.phase !== 'play' || !p.alive) return;
     const e = this.world.get(p.eid)!;
 
@@ -686,6 +860,8 @@ export class MatchSim {
         const wt = Math.max(t - LAG_GRACE_MS, Math.min(t, it.wt ?? t));
         if (wt < c.showAt || wt > c.windowEnd || t > c.windowEnd + LAG_GRACE_MS) return;
         p.crowdAnswered = c.warnAt;
+        p.crowdPick = it.kind;
+        p.crowdLate = wt >= c.resumeAt;
         if (wt < c.resumeAt) {
           const [a, b] = cfg.botCrowdReactMs;
           // нажал в стоп-кадре — выполнит вместе с толпой (или сразу, если пакет пришёл уже после паузы)

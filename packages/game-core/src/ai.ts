@@ -85,6 +85,13 @@ export class AiPlayer implements AiAgent {
       }
       return;
     }
+    // вырезанный ИИ иногда подаёт «Хлопушку» — в песочнице тоже видно, как это работает
+    if (sim.phase === 'play' && !me.alive) {
+      if (me.clapsLeft > 0 && t >= me.clapAt && sim.crowdCanStart(t) && this.rng.chance(0.006)) {
+        sim.intent(this.pid, { k: 'clap', kind: this.rng.pick<CrowdKind>(['freeze', 'jump', 'dance']) });
+      }
+      return;
+    }
     if (sim.phase !== 'play' || !me.alive) return;
     const e = w.get(this.eid);
     if (!e || !e.alive) return;
@@ -97,7 +104,9 @@ export class AiPlayer implements AiAgent {
       const pause = c.resumeAt - c.showAt;
       // вовремя: нажимает в стоп-кадре; опоздал: после паузы (видно всем) или вовсе не нажал
       const at = late ? c.resumeAt + this.rng.range(350, 1400) : c.showAt + this.rng.range(250, Math.max(300, pause - 100));
-      this.crowdPlan = { kind: c.kind, at, warnAt: c.warnAt };
+      // «Толпа решает»: ИИ угадывает жест большинства не всегда
+      const kind = c.vote && !this.rng.chance(0.6) ? this.rng.pick((['freeze', 'jump', 'dance'] as CrowdKind[]).filter((k) => k !== c.kind)) : c.kind;
+      this.crowdPlan = { kind, at, warnAt: c.warnAt };
     }
     if (this.crowdPlan && t >= this.crowdPlan.at) {
       sim.intent(this.pid, { k: 'crowd', kind: this.crowdPlan.kind });

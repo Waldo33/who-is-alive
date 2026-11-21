@@ -1,4 +1,4 @@
-import { CROWD_ACT, NavGrid, TICK_MS, World, clampToRect, crowdActDur, emoteDur, makeConfig, planPath, plazaArena, twistEmote } from '@kto/game-core';
+import { CROWD_ACT, NavGrid, TICK_MS, World, clampToRect, crowdActDur, crowdCanStartView, emoteDur, makeConfig, planPath, plazaArena, twistEmote } from '@kto/game-core';
 import type {
   ArenaDef,
   AwardCard,
@@ -63,6 +63,7 @@ export class RemoteSession implements ClientSession {
   phase: Phase = 'countdown';
   round = 0;
   theme = 0;
+  mod = 0;
   now = 0;
   scores: Record<string, number> = {};
   summary: RoundSummary | null = null;
@@ -163,13 +164,14 @@ export class RemoteSession implements ClientSession {
         this.world.init(m.spawns, m.t0);
         this.round = m.round;
         this.theme = m.theme;
+        this.mod = m.mod ?? 0;
         this.summary = null;
         this.snap = null;
         this.resetOwn();
         this.offsets = [];
         this.lastHostWt = m.t0;
         this.noteOffset(m.t0);
-        this.notices.push({ t: 'round_start', round: m.round, theme: m.theme });
+        this.notices.push({ t: 'round_start', round: m.round, theme: m.theme, mod: this.mod });
         break;
       case 'ev': {
         this.lastHostWt = Math.max(this.lastHostWt, m.wt);
@@ -221,13 +223,14 @@ export class RemoteSession implements ClientSession {
         this.resetOwn();
         this.round = m.round;
         this.theme = m.theme;
+        this.mod = m.st.mod ?? 0;
         this.meMsg = m.me;
         this.lastHostWt = m.world.time;
         this.offsets = [];
         this.noteOffset(m.world.time);
         this.players = m.players;
         this.stQueue.push(m.st);
-        this.notices.push({ t: 'round_start', round: m.round, theme: m.theme });
+        this.notices.push({ t: 'round_start', round: m.round, theme: m.theme, mod: this.mod });
         break;
     }
   }
@@ -365,6 +368,7 @@ export class RemoteSession implements ClientSession {
     }
     this.round = st.round;
     this.theme = st.theme;
+    this.mod = st.mod ?? 0;
     this.tl = st.tl;
     this.tlAt = this.clock();
     this.ppe = st.ppe;
@@ -498,6 +502,8 @@ export class RemoteSession implements ClientSession {
       autopilot: ap ?? m.autopilot,
       crowdAnswered: cp && this.world.crowd?.warnAt === cp.warnAt ? cp.warnAt : m.crowdAnswered,
       accused: this.phase === 'accuse' && this.accusePred !== null ? this.accusePred : m.accused,
+      clapsLeft: m.clapsLeft ?? 0,
+      clapAt: m.clapAt ?? 0,
     };
   }
 
@@ -525,6 +531,10 @@ export class RemoteSession implements ClientSession {
   crowdWindowOpen(t = this.world.time): boolean {
     const c = this.world.crowd;
     return !!c && t >= c.showAt && t <= c.windowEnd;
+  }
+
+  crowdCanStart(t = this.world.time): boolean {
+    return crowdCanStartView(this.world, this.cfg, this.ppe, t);
   }
 
   intent(it: Intent): void {

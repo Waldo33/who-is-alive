@@ -2,15 +2,21 @@
  * Безголовая симуляция: N раундов с ботами и ИИ-игроками, проверка инвариантов.
  * Запуск: pnpm sim -- --rounds 1000
  */
-import { AiPlayer, MatchSim, makeConfig, rectContains } from '../src/index';
+import { AiPlayer, MatchSim, ROUND_MODS, makeConfig, rectContains } from '../src/index';
+import type { WorldEvent } from '../src/index';
 
 const argi = process.argv.indexOf('--rounds');
 const target = argi > 0 ? Number(process.argv[argi + 1]) : 1000;
+// --cfg '{"maxStars":3}' — попробовать другие числа баланса
+const cfgi = process.argv.indexOf('--cfg');
+const overrides = cfgi > 0 ? JSON.parse(process.argv[cfgi + 1]) : {};
 
 let rounds = 0;
 let matches = 0;
 let errors = 0;
 const tally = { time: 0, stars: 0, last_alive: 0, kills: 0, botHits: 0, awards: new Map<string, number>() };
+// новые механики: команды (всего / «Толпа решает» / от вырезанных), звёзды (игроки / статисты), вырезанные «Жёстким дублем»
+const mech = { crowd: 0, vote: 0, clap: 0, starP: 0, starB: 0, hardCut: 0, mods: new Map<string, number>(), deadMs: 0 };
 const t0 = Date.now();
 
 function check(cond: boolean, msg: string): void {
@@ -23,8 +29,28 @@ function check(cond: boolean, msg: string): void {
 while (rounds < target) {
   matches++;
   const players = ['a', 'b', 'c', 'd'].map((pid, i) => ({ pid, name: pid, color: i }));
-  const sim = new MatchSim(makeConfig(), players, 1000 + matches, 'a');
+  const sim = new MatchSim(makeConfig(overrides), players, 1000 + matches, 'a');
   players.forEach((p, i) => sim.addAgent(new AiPlayer(p.pid, matches * 10 + i)));
+  let roundEids = new Set<number>();
+  let lastCrowd = -1;
+  let pendingClap = false;
+  const origIntent = sim.intent.bind(sim);
+  sim.intent = (pid, it) => {
+    if (it.k === 'clap') pendingClap = true;
+    origIntent(pid, it);
+  };
+  sim.world.listeners.push((ev: WorldEvent) => {
+    if (ev.t === 'crowd' && ev.at !== lastCrowd) {
+      lastCrowd = ev.at;
+      mech.crowd++;
+      if (ev.vote) mech.vote++;
+      if (pendingClap) mech.clap++;
+      pendingClap = false;
+    } else if (ev.t === 'star_taken') {
+      if (roundEids.has(ev.eid)) mech.starP++;
+      else mech.starB++;
+    } else if (ev.t === 'hit' && ev.result === 'player' && !sim.pr.some((p) => p.kills && p.killTimes.includes(ev.at))) mech.hardCut++;
+  });
   let lastRound = sim.round;
   let guard = 0;
   let scoreSum = 0;
@@ -56,7 +82,12 @@ while (rounds < target) {
       check(Object.values(sim.scores).reduce((a, b) => a + b, 0) === scoreSum, 'сумма очков не сходится');
       check(s.awards.length <= 2, 'больше двух наград');
     }
-    if (sim.phase === 'countdown' && lastRound !== sim.round) lastRound = sim.round;
+    if (sim.phase === 'countdown' && lastRound !== sim.round) {
+      lastRound = sim.round;
+      roundEids = new Set(sim.pr.map((p) => p.eid));
+      mech.mods.set(ROUND_MODS[sim.mod], (mech.mods.get(ROUND_MODS[sim.mod]) ?? 0) + 1);
+    }
+    if (sim.phase === 'play') for (const p of sim.pr) if (!p.alive) mech.deadMs += 50;
   }
 }
 
@@ -65,6 +96,10 @@ console.log(`Раундов: ${rounds}, матчей: ${matches}, ${sec} с`);
 console.log(`Конец раунда: по времени ${tally.time}, звёзды ${tally.stars}, последний живой ${tally.last_alive}`);
 console.log(`Выбиваний на раунд: ${(tally.kills / rounds).toFixed(2)}, ударов по ботам: ${(tally.botHits / rounds).toFixed(2)}`);
 console.log('Награды:', Object.fromEntries(tally.awards));
+console.log(`Команд на раунд: ${(mech.crowd / rounds).toFixed(2)} (из них «Толпа решает» ${(mech.vote / rounds).toFixed(2)}, «Хлопушка» ${(mech.clap / rounds).toFixed(2)})`);
+console.log(`Звёзд взяли на раунд: игроки ${(mech.starP / rounds).toFixed(2)}, статисты ${(mech.starB / rounds).toFixed(2)}; вырезано «Жёстким дублем» ${mech.hardCut}`);
+console.log(`Вырезанный игрок за кадром в среднем ${(mech.deadMs / rounds / 4 / 1000).toFixed(1)} с за раунд`);
+console.log('Условия съёмки:', Object.fromEntries(mech.mods));
 if (errors) {
   console.error(`Ошибок: ${errors}`);
   process.exit(1);

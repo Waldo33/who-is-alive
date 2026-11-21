@@ -60,6 +60,7 @@ export class HostSession implements ClientSession {
   get phase() { return this.local.phase; }
   get round() { return this.local.round; }
   get theme() { return this.local.theme; }
+  get mod() { return this.local.mod; }
   get now() { return this.local.now; }
   get scores() { return this.local.scores; }
   get summary() { return this.local.summary; }
@@ -72,6 +73,7 @@ export class HostSession implements ClientSession {
   info(pid: string) { return this.local.info(pid); }
   timeLeft() { return this.local.timeLeft(); }
   crowdWindowOpen(t?: number) { return this.local.crowdWindowOpen(t); }
+  crowdCanStart(t?: number) { return this.local.crowdCanStart(t); }
   onWorldEvent(fn: (ev: WorldEvent) => void) { this.local.onWorldEvent(fn); }
 
   intent(it: Intent): void {
@@ -130,6 +132,8 @@ export class HostSession implements ClientSession {
       accused: p.accused,
       others: this.sim.pr.filter((o) => o.pid !== pid).map((o) => o.stars).sort((a, b) => b - a),
       kills: this.sim.matchKills[pid] ?? 0,
+      clapsLeft: p.clapsLeft,
+      clapAt: p.clapAt,
     };
   }
 
@@ -140,6 +144,7 @@ export class HostSession implements ClientSession {
       phase: s.phase,
       round: s.round,
       theme: s.theme,
+      mod: s.mod,
       tl: s.timeLeft(),
       ppe: s.plannedPlayEnd,
       scores: { ...s.scores },
@@ -189,6 +194,7 @@ export class HostSession implements ClientSession {
         t: 'round',
         round: s.round,
         theme: s.theme,
+        mod: s.mod,
         t0: s.world.time,
         spawns: s.world.entities.map((e) => ({ eid: e.eid, x: e.x, y: e.y, dir: e.dir })),
       });

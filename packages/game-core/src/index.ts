@@ -8,6 +8,7 @@ export * from './bots';
 export * from './awards';
 export * from './match';
 export * from './themes';
+export * from './mods';
 export * from './ai';
 export * from './session';
 export * from './locale';

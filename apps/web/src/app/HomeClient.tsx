@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from 'react';
 import { DICTS } from '@kto/game-core';
 import type { Lang } from '@kto/game-core';
 import { getAudio } from '@/game/audio';
+import { tutorialDone } from '@/game/tutorial';
 import { detectLang } from '@/lib/lang';
 import { TopBar } from '@/ui/TopBarView';
 import type { TopBar as Bar } from '@/ui/topbar';
@@ -25,6 +26,8 @@ export default function HomeClient() {
   const [showCode, setShowCode] = useState(false);
   const [code, setCode] = useState('');
   const [toast, setToast] = useState('');
+  /** Новичок (не проходил пробный дубль) — первым делом предложить его. */
+  const [newbie, setNewbie] = useState(false);
   const bar = useRef<Bar | null>(null);
   useEffect(() => {
     const l = detectLang();
@@ -33,6 +36,7 @@ export default function HomeClient() {
     document.title = DICTS[l].meta.title;
     // музыка меню: заиграет после первого касания экрана (раньше браузер звук не пустит)
     getAudio().setMusic('menu');
+    setNewbie(!tutorialDone());
   }, []);
   const t = DICTS[lang];
 
@@ -80,6 +84,14 @@ export default function HomeClient() {
       </div>
       <h1>{t.meta.title}</h1>
       <p className="tag">{t.meta.tagline}</p>
+      {newbie && (
+        <div className="newbie">
+          <p>{t.tutorial.newbie}</p>
+          <Link className="btn alt" href="/learn">
+            {t.tutorial.cta}
+          </Link>
+        </div>
+      )}
       <button className="btn" onClick={create} disabled={busy}>
         {busy ? t.lobby.connecting : t.lobby.createGame}
       </button>
@@ -114,6 +126,11 @@ export default function HomeClient() {
       <Link className="link" href="/sandbox">
         {t.start.play}
       </Link>
+      {!newbie && (
+        <Link className="link" href="/learn">
+          {t.tutorial.title}
+        </Link>
+      )}
       <button className="link" onClick={() => bar.current?.openSettings('rules')}>
         {t.ui.howTo}
       </button>

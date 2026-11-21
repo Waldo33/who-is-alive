@@ -32,7 +32,8 @@ describe('i18n', () => {
       const g = t.game;
       const flat: string[] = [
         g.soundOffHint, g.soundOn, g.soundOff, g.outSub, g.outHint, g.ghost, g.ghostHint, g.hedge, ...Object.values(g.denied),
-        ...Object.values(g.crowd), g.withCrowd, g.late, g.watchLate, g.findYourself, g.accuseTitle, g.accuseSub,
+        ...Object.values(g.crowd), g.crowdVote, g.voteMajority, g.voteMinority, g.spotted, g.spottedMe, g.clapHint, g.clapDone, g.cutByCrowd, g.modTitle,
+        ...Object.values(t.mods).flatMap((m) => [m.name, m.desc]), g.withCrowd, g.late, g.watchLate, g.findYourself, g.accuseTitle, g.accuseSub,
         g.accuseChange, g.reveal, g.revealReplay, g.revealFinal, g.guessed, g.missed, g.caught, g.killedBy, g.noAccuse,
         tp(lang, g.resultsTitle, 5), ...Object.values(g.endReason), g.noAwards, tp(lang, g.nextIn, 10),
         g.youWon, g.winner, g.tooAlive, tp(lang, g.roundTheme, 5, { theme: t.themes.reduce((a, b) => (a.length > b.length ? a : b)) }),
@@ -40,6 +41,15 @@ describe('i18n', () => {
           Object.values(x ?? {}).flatMap((v) => (typeof v === 'string' ? [v] : (Object.values(v ?? {}) as string[]))),
         ),
       ];
+      // подписи призрака рядом с «Хлопушкой» — до 62 пикс.
+      for (const x of [g.ghostShort, g.ghostHintShort]) expect(x.length, x).toBeLessThanOrEqual(10);
+      // пробный дубль и подсказки: пары строк на поле
+      const tut = t.tutorial;
+      const pairs = [tut.move, tut.blend, tut.crowdWait, tut.crowdNow, tut.crowdMiss, tut.crowdOk, tut.spot, tut.hunt, tut.huntBot, tut.cut, tut.star, tut.starRisk, tut.voteWait, tut.voteNow, tut.voteOk, tut.voteMiss, tut.ghost, tut.accuse, ...Object.values(tut.tips)];
+      for (const pr of pairs) {
+        expect(pr.length).toBe(2);
+        for (const x of pr) expect(x.length, `${lang}: «${x}»`).toBeLessThanOrEqual(21);
+      }
       // у каждой темы есть название
       expect(t.themes.length).toBe(THEME_COUNT);
       for (const s of flat) expect(s.length, `${lang}: «${s}»`).toBeLessThanOrEqual(21);

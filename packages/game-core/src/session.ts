@@ -17,6 +17,19 @@ export interface MeView {
   /** warnAt команды «Море волнуется», на которую уже ответил (-1 — ни на какую). */
   crowdAnswered: number;
   accused: number | null;
+  /** «Хлопушка» вырезанного: сколько осталось и с какого времени мира можно. */
+  clapsLeft: number;
+  clapAt: number;
+}
+
+/**
+ * Можно ли сейчас начать команду «Море волнуется» — по тому, что видно клиенту
+ * (хост дополнительно ждёт тишины после смены облика темы и может отказать).
+ */
+export function crowdCanStartView(world: World, cfg: GameConfig, plannedPlayEnd: number, t = world.time): boolean {
+  const c = world.crowd;
+  if (c && t <= c.windowEnd + 2000) return false;
+  return !world.zone && t < plannedPlayEnd - cfg.zoneStartBeforeEndSec * 1000 - 3000;
 }
 
 /**
@@ -34,6 +47,8 @@ export interface ClientView {
   readonly phase: Phase;
   readonly round: number;
   readonly theme: number;
+  /** «Условия съёмки» дубля (индекс в ROUND_MODS, 0 — обычный). */
+  readonly mod: number;
   /** Монотонное время клиента, мс (для анимаций фаз). */
   readonly now: number;
   readonly scores: Readonly<Record<string, number>>;
@@ -51,6 +66,8 @@ export interface ClientView {
   info(pid: string): PlayerInfo | undefined;
   timeLeft(): number;
   crowdWindowOpen(t?: number): boolean;
+  /** Можно ли подать «Хлопушку» сейчас (если она есть у вырезанного). */
+  crowdCanStart(t?: number): boolean;
 }
 
 export interface ClientSession extends ClientView {
@@ -87,6 +104,7 @@ export class LocalSession implements ClientSession {
   get phase() { return this.sim.phase; }
   get round() { return this.sim.round; }
   get theme() { return this.sim.theme; }
+  get mod() { return this.sim.mod; }
   get now() { return this.sim.now; }
   get scores() { return this.sim.scores; }
   get summary() { return this.sim.phase === 'accuse' ? null : this.sim.summary; }
@@ -107,6 +125,8 @@ export class LocalSession implements ClientSession {
       autopilot: p.autopilot,
       crowdAnswered: p.crowdAnswered,
       accused: p.accused,
+      clapsLeft: p.clapsLeft,
+      clapAt: p.clapAt,
     };
   }
 
@@ -117,6 +137,7 @@ export class LocalSession implements ClientSession {
   info(pid: string) { return this.sim.info(pid); }
   timeLeft() { return this.sim.timeLeft(); }
   crowdWindowOpen(t?: number) { return this.sim.crowdWindowOpen(t); }
+  crowdCanStart(t?: number) { return this.sim.crowdCanStart(t); }
 
   intent(it: Intent): void {
     this.sim.intent(this.selfPid, it);

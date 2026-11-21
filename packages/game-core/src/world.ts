@@ -44,6 +44,8 @@ export interface ZoneState {
 
 export interface CrowdState {
   kind: CrowdKind;
+  /** «Толпа решает»: жест не назван, kind — жест большинства. */
+  vote?: boolean;
   warnAt: number;
   showAt: number;
   resumeAt: number;
@@ -251,12 +253,13 @@ export class World {
         this.zone = { startAt: ev.startAt, endAt: ev.endAt, from: ev.from, to: ev.to };
         break;
       case 'crowd':
-        this.crowd = { kind: ev.kind, warnAt: ev.at, showAt: ev.showAt, resumeAt: ev.resumeAt, windowEnd: ev.windowEnd };
+        this.crowd = { kind: ev.kind, warnAt: ev.at, showAt: ev.showAt, resumeAt: ev.resumeAt, windowEnd: ev.windowEnd, ...(ev.vote ? { vote: true } : {}) };
         break;
       case 'twist':
         this.twist = ev.on;
         break;
       case 'hit':
+      case 'spot':
         break;
     }
     for (const l of this.listeners) l(ev);
