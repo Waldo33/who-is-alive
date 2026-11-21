@@ -1,29 +1,28 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import type { Dict, GameConfig, Lang } from '@kto/game-core';
 import type { RunningGame } from '@/game/boot';
 import { loadChunk } from '@/lib/chunk';
 import { playerName } from '@/lib/name';
 
 /**
- * «Пробный дубль» поверх страницы: сцена игры со сценарием обучения (game/tutorial.ts),
- * кнопка «Пропустить» и итоговая карточка. Используется на /learn и в лобби, пока ждут режиссёра.
+ * «Пробный дубль» поверх страницы: только сцена игры со сценарием обучения (game/tutorial.ts)
+ * и маленькая «Пропустить» — без текстов и карточек. На /learn и в лобби, пока ждут режиссёра.
  */
 export function TutorialStage({
   lang,
   t,
-  inLobby = false,
   onClose,
 }: {
   lang: Lang;
   t: Dict;
-  inLobby?: boolean;
-  /** bots — сыграть с ботами; close — назад (на главную или в лобби). */
-  onClose: (action: 'bots' | 'close') => void;
+  /** Пройдено или пропущено — назад (на главную или в лобби). */
+  onClose: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
-  const [done, setDone] = useState(false);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
   useEffect(() => {
     let running: RunningGame | null = null;
     let cancelled = false;
@@ -41,7 +40,7 @@ export function TutorialStage({
           tutorial: {
             onDone: () => {
               markTutorialDone();
-              setDone(true);
+              closeRef.current();
             },
           },
         });
@@ -58,39 +57,15 @@ export function TutorialStage({
 
   const skip = () => {
     void import('@/game/tutorial').then(({ markTutorialDone }) => markTutorialDone());
-    onClose('close');
+    onClose();
   };
 
   return (
     <div className="tut-wrap">
       <div ref={ref} className="game-stage" aria-label={t.tutorial.title} />
-      {!done && (
-        <button className="tut-skip" onClick={skip}>
-          {t.tutorial.skip}
-        </button>
-      )}
-      {done && (
-        <div className="tut-done" role="dialog" aria-modal="true" aria-label={t.tutorial.doneTitle}>
-          <div className="tut-done-box">
-            <h2>{t.tutorial.doneTitle}</h2>
-            <p>{t.tutorial.doneText}</p>
-            {inLobby ? (
-              <button className="btn" onClick={() => onClose('close')}>
-                {t.tutorial.backLobby}
-              </button>
-            ) : (
-              <>
-                <button className="btn" onClick={() => onClose('bots')}>
-                  {t.tutorial.playBots}
-                </button>
-                <button className="link" onClick={() => onClose('close')}>
-                  {t.tutorial.back}
-                </button>
-              </>
-            )}
-          </div>
-        </div>
-      )}
+      <button className="tut-skip" onClick={skip}>
+        {t.tutorial.skip}
+      </button>
     </div>
   );
 }

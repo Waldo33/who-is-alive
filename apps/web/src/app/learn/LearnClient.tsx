@@ -7,7 +7,7 @@ import type { Lang } from '@kto/game-core';
 import { detectLang } from '@/lib/lang';
 import { TutorialStage } from '@/ui/TutorialStage';
 
-/** «Пробный дубль» отдельной страницей: с главной и из «Как играть». */
+/** «Пробный дубль» отдельной страницей: при первом запуске и из «Как играть». */
 export default function LearnClient() {
   const router = useRouter();
   const [lang, setLang] = useState<Lang | null>(null);
@@ -18,5 +18,10 @@ export default function LearnClient() {
     document.title = `${DICTS[l].tutorial.title} · ${DICTS[l].meta.title}`;
   }, []);
   if (!lang) return null;
-  return <TutorialStage lang={lang} t={DICTS[lang]} onClose={(a) => router.push(a === 'bots' ? '/sandbox' : '/')} />;
+  // куда вернуться: ?next=/sandbox и т. п. (только свои пути)
+  const back = () => {
+    const next = new URLSearchParams(location.search).get('next') ?? '/';
+    router.replace(next.startsWith('/') && !next.startsWith('//') ? next : '/');
+  };
+  return <TutorialStage lang={lang} t={DICTS[lang]} onClose={back} />;
 }

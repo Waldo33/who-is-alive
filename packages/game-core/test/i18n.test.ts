@@ -45,6 +45,7 @@ describe('i18n', () => {
       for (const x of [g.ghostShort, g.ghostHintShort]) expect(x.length, x).toBeLessThanOrEqual(10);
       // пробный дубль и подсказки: пары строк на поле
       const tut = t.tutorial;
+      expect(tut.doneTitle.length).toBeLessThanOrEqual(21);
       const pairs = [tut.move, tut.blend, tut.crowdWait, tut.crowdNow, tut.crowdMiss, tut.crowdOk, tut.spot, tut.hunt, tut.huntBot, tut.cut, tut.star, tut.starRisk, tut.voteWait, tut.voteNow, tut.voteOk, tut.voteMiss, tut.ghost, tut.accuse, ...Object.values(tut.tips)];
       for (const pr of pairs) {
         expect(pr.length).toBe(2);

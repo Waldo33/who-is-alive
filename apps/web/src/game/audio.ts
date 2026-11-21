@@ -9,7 +9,7 @@ import type { MusicMode } from './music';
  */
 export type Sfx =
   | 'step' | 'hitPlayer' | 'hitBot' | 'poof' | 'starTake' | 'starSpawn' | 'crowd' | 'tick'
-  | 'click' | 'ready' | 'accuseRight' | 'accuseWrong' | 'fanfare' | 'sad' | 'hedge' | 'pigeon' | 'drum' | 'denied' | 'count' | 'swing' | 'flicker' | 'dusk' | 'siren';
+  | 'click' | 'ready' | 'accuseRight' | 'accuseWrong' | 'fanfare' | 'sad' | 'hedge' | 'pigeon' | 'drum' | 'denied' | 'count' | 'swing' | 'flicker' | 'dusk' | 'siren' | 'whack';
 
 const STORAGE_KEY = 'kto:sound';
 const MUSIC_KEY = 'kto:music';
@@ -251,6 +251,8 @@ export class Audio {
       case 'hitPlayer': this.noise(0.18, 0.5, 900); this.tone('square', 420, 60, 0.25, 0.25); break;
       case 'hitBot': this.tone('square', 300, 520, 0.08, 0.2); this.tone('square', 520, 90, 0.35, 0.2, 0.08); break;
       case 'poof': this.noise(0.3, 0.3, 2400); break;
+      // глухой удар (ночью — бита/труба/нож): низкий шум и «тук»
+      case 'whack': this.noise(0.12, 0.55, 380); this.tone('sine', 150, 55, 0.14, 0.5); this.noise(0.06, 0.25, 3200, 0.03); break;
       case 'starTake': [660, 880, 1320].forEach((f, i) => this.tone('square', f, f, 0.08, 0.16, i * 0.06)); break;
       case 'starSpawn': this.tone('triangle', 1200, 1800, 0.12, 0.12); this.tone('triangle', 1800, 2400, 0.1, 0.08, 0.08); break;
       case 'crowd': this.tone('square', 880, 880, 0.12, 0.25); this.tone('square', 660, 660, 0.18, 0.25, 0.14); break;

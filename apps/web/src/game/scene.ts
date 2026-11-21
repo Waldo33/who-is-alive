@@ -25,7 +25,7 @@ import type { CharFrame } from './frames';
 import type { FontColor } from './font';
 import { registerFonts } from './font';
 import {
-  CH_H, CH_W, OL_H, OL_W,
+  CH_H, CH_W, F, OL_H, OL_W,
   makeArenaBackground, makeArrow, makeCharacterSheets, makeHedge, makeIconSheet, makeIcons, makeMark, makePigeon,
   makePoof, makeProp, makeRing, makeShadow, makeStar, makeStarFlash, makeStunStars, makeVignette,
 } from './sprites';
@@ -196,6 +196,17 @@ export class GameScene extends Phaser.Scene {
   /** Подсказка «впервые видишь» в настоящей игре (две строки, до времени). */
   private coachTip: { lines: readonly string[]; until: number } | null = null;
   private clapSentAt = 0;
+  /** Выбивание оружием (облик с kill: 'weapon'): замахи, брызги, пятна и тела — до конца дубля. */
+  private goreG!: Phaser.GameObjects.Graphics;
+  private swings: { x: number; y: number; kind: 0 | 1 | 2; dir: 1 | -1; t: number }[] = [];
+  private drops: { x: number; y: number; vx: number; vy: number; t: number; c: number }[] = [];
+  private stains: { x: number; y: number; c: number }[] = [];
+  private bodies: Phaser.GameObjects.Image[] = [];
+  private noPoof = new Set<number>();
+  /** Переодевание при смене облика (ThemePack.dressUp): когда началось и в какую сторону. */
+  private dress: { at: number; on: boolean } | null = null;
+  private dressTheme = -1;
+  private dressLk = -1;
   /** Прожекторы режиссёра на поле (время мира). */
   private spots: { x: number; y: number; r: number; at: number; until: number }[] = [];
   private wasFrozen = false;
@@ -294,6 +305,7 @@ export class GameScene extends Phaser.Scene {
 
     this.add.image(0, AY, 'vignette').setOrigin(0, 0).setDepth(950).setAlpha(0.35);
     this.fxG = this.add.graphics().setDepth(960);
+    this.goreG = this.add.graphics().setDepth(1);
     this.ui = this.add.graphics().setDepth(1000);
     this.buildHud();
     this.buildButtons();
@@ -438,6 +450,40 @@ export class GameScene extends Phaser.Scene {
     const ic = look.icons;
     if (ic) this.addSheet('icons' + key, makeIconSheet(CROWD_KINDS.map((k) => ic[k] ?? ['........'])), 8, 8);
     return key;
+  }
+
+  /** Текстуры промежуточного облика переодевания темы (ThemePack.dressUp): `chd{тема}[v{i}]`. */
+  private ensureDress(th: number): void {
+    const du = themePack(th).dressUp;
+    if (!du || this.textures.exists('chd' + th)) return;
+    const s = makeCharacterSheets(du.look.chars, du.look.poses);
+    this.addSheet('chd' + th, s.body, CH_W, CH_H);
+    this.addSheet('old' + th, s.outline, OL_W, OL_H);
+    (du.look.variants ?? []).forEach((style, i) => {
+      const v = makeCharacterSheets(style, du.look.poses);
+      this.addSheet(`chd${th}v${i + 1}`, v.body, CH_W, CH_H);
+      this.addSheet(`old${th}v${i + 1}`, v.outline, OL_W, OL_H);
+    });
+  }
+
+  /**
+   * Переодевание волной по толпе: у каждой фигуры своя задержка. До неё — прежний вид
+   * (на закате — ещё без маски), потом позы dressUp, потом новый облик. null — как обычно.
+   */
+  private dressFrame(i: number, acting: boolean): { fig: string; frame: number | null } | null {
+    const d = this.dress;
+    const th = this.sim.theme;
+    const du = d && isThemeLoaded(th) ? themePack(th).dressUp : undefined;
+    if (!d || !du) return null;
+    const total = du.poses.length * du.ms;
+    const k = performance.now() - d.at - ((i * 97) % 700);
+    if (k >= total) return null;
+    const vi = variantOf(i, du.look as Look);
+    const dressFig = `d${th}${vi ? 'v' + vi : ''}`;
+    if (k < 0) return { fig: d.on ? dressFig : this.charKey(`${th}_${du.to}`, i), frame: null };
+    if (acting) return null;
+    const seq = d.on ? du.poses : [...du.poses].reverse();
+    return { fig: dressFig, frame: F.COUNT + seq[Math.min(seq.length - 1, Math.floor(k / du.ms))] };
   }
 
   private icon(name: string): number {
@@ -717,7 +763,8 @@ export class GameScene extends Phaser.Scene {
     switch (ev.t) {
       case 'hit':
         this.audio.play(ev.result === 'player' ? 'hitPlayer' : 'hitBot');
-        this.audio.play('poof');
+        if (this.weaponKills()) this.weaponHit(ev.target, ev.x, ev.y);
+        else this.audio.play('poof');
         this.cameras.main.shake(120, 0.008);
         this.hitStop = 60;
         if (ev.target === myEid || this.sim.world.time - this.lastAttackAt < 200) navigator.vibrate?.(40);
@@ -802,6 +849,7 @@ export class GameScene extends Phaser.Scene {
   private onNotice(n: Notice): void {
     if (n.t === 'round_start') {
       this.clearDeath();
+      this.clearGore();
       this.audio.setTwist(false);
       this.next25 = 0;
       void loadTheme(n.theme);
@@ -844,6 +892,60 @@ export class GameScene extends Phaser.Scene {
       const msg = this.t.game.denied[n.reason];
       this.showToast(msg, 1000);
     }
+  }
+
+  /** Ночь Майами и т. п.: выбивают оружием, а не «пофом» (в детском режиме — всегда «поф»). */
+  private weaponKills(): boolean {
+    if (this.cfg.kidsMode || this.sim.phase !== 'play') return false;
+    const [t, l] = this.lookKey.split('_').map(Number);
+    return this.lookKey !== '0_0' && isThemeLoaded(t) && themeLook(t, l).kill === 'weapon';
+  }
+
+  /** Замах битой, трубой или ножом над целью (без нападавшего — он не раскрыт), брызги, тело и пятна. */
+  private weaponHit(eid: number, x: number, y: number): void {
+    this.audio.play('whack');
+    const kind = (eid % 3) as 0 | 1 | 2;
+    const dir: 1 | -1 = eid % 2 ? 1 : -1;
+    this.swings.push({ x: Math.round(x), y: Math.round(y), kind, dir, t: 0 });
+    const reds = [hexToInt(PAL.red), hexToInt(PAL.magenta), hexToInt(PAL.red), hexToInt(PAL.plum)];
+    for (let i = 0; i < 30; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const v = 0.03 + Math.random() * 0.07;
+      this.drops.push({ x, y: y - 7, vx: Math.cos(a) * v + dir * 0.02, vy: Math.sin(a) * v - 0.05, t: 0, c: reds[i % reds.length] });
+    }
+    // лужа под телом и брызги вокруг
+    // лужа: плотное пятно под телом (по 2×2 пикселя) и брызги веером в сторону удара
+    for (let i = 0; i < 40; i++) {
+      const r = Math.random() * 5;
+      const a = Math.random() * Math.PI * 2;
+      const sx = Math.round(x + Math.cos(a) * r * 1.6);
+      const sy = Math.round(y - 1 + Math.sin(a) * r * 0.7);
+      const c = reds[i % 4];
+      this.stains.push({ x: sx, y: sy, c }, { x: sx + 1, y: sy, c }, { x: sx, y: sy + 1, c });
+    }
+    for (let i = 0; i < 24; i++) {
+      const r = 6 + Math.random() * 12;
+      const a = (dir > 0 ? 0 : Math.PI) + (Math.random() - 0.5) * 1.6;
+      this.stains.push({ x: Math.round(x + Math.cos(a) * r), y: Math.round(y - 3 + Math.sin(a) * r * 0.5), c: reds[i % 3] });
+    }
+    // тело остаётся лежать (тот же костюм, на боку)
+    const w = this.sim.world;
+    const i = w.entities.findIndex((e) => e.eid === eid);
+    if (i >= 0) {
+      const body = this.add.image(Math.round(x), AY + Math.round(y) - 4, 'ch' + this.charKey(this.lookKey, i), F.D).setAngle(dir * 90).setDepth(AY + y - 6);
+      this.bodies.push(body);
+    }
+    this.noPoof.add(eid);
+  }
+
+  private clearGore(): void {
+    for (const b of this.bodies) b.destroy();
+    this.bodies = [];
+    this.stains = [];
+    this.drops = [];
+    this.swings = [];
+    this.noPoof.clear();
+    this.goreG?.clear();
   }
 
   /** Крупно и сразу понятно: тебя выбили, теперь ты призрак. */
@@ -1172,6 +1274,19 @@ export class GameScene extends Phaser.Scene {
       }
       lk = this.duskShown;
     }
+    // переодевание (маски на закате): заметить смену облика в живой игре
+    const du = isThemeLoaded(th) ? themePack(th).dressUp : undefined;
+    if (th !== this.dressTheme || world !== this.sim.world || this.sim.phase !== 'play') {
+      if (th !== this.dressTheme || this.sim.phase !== 'play') this.dress = null;
+      this.dressTheme = th;
+      this.dressLk = lk;
+    } else if (lk !== this.dressLk) {
+      if (du) {
+        this.ensureDress(th);
+        this.dress = { at: performance.now(), on: lk === du.to };
+      }
+      this.dressLk = lk;
+    }
     const key = this.ensureLook(th, lk);
     if (key === this.lookKey) return;
     this.lookKey = key;
@@ -1286,12 +1401,17 @@ export class GameScene extends Phaser.Scene {
         v.stun.setVisible(false);
         v.mark.setVisible(false);
         v.q.setVisible(false);
-        if (since >= 0 && since < 360) v.poof.setVisible(true).setFrame(Math.min(5, Math.floor(since / 60))).setPosition(x, sy - 8).setDepth(sy + 1);
+        if (since >= 0 && since < 360 && !this.noPoof.has(e.eid)) v.poof.setVisible(true).setFrame(Math.min(5, Math.floor(since / 60))).setPosition(x, sy - 8).setDepth(sy + 1);
         else v.poof.setVisible(false);
         return;
       }
       v.poof.setVisible(false);
-      const { frame, flip, yoff } = this.frameFor(e, t);
+      const acting = !!e.act && t < e.actEnd;
+      const dz = mode === 'live' ? this.dressFrame(i, acting) : null;
+      const base = this.frameFor(e, t);
+      const frame = dz?.frame ?? base.frame;
+      const flip = dz?.frame != null ? false : base.flip;
+      const yoff = dz?.frame != null ? 0 : base.yoff;
       let jumpOff = yoff;
       if (mode === 'final' && highlight?.has(e.eid)) jumpOff = -Math.abs(Math.round(Math.sin(performance.now() / 140) * 5));
       // замах своего персонажа (только на своём экране)
@@ -1306,7 +1426,7 @@ export class GameScene extends Phaser.Scene {
         }
       }
       const flashKey = mode === 'live' && !(e.act && t < e.actEnd) ? this.subliminalKey(e.eid) : null;
-      const fig = this.charKey(flashKey ?? this.lookKey, i);
+      const fig = dz?.fig ?? this.charKey(flashKey ?? this.lookKey, i);
       if (v.spr.texture.key !== 'ch' + fig) v.spr.setTexture('ch' + fig, frame);
       if (v.ol.texture.key !== 'ol' + fig) v.ol.setTexture('ol' + fig, frame);
       v.spr.setVisible(true).setFrame(frame).setFlipX(flip).setPosition(x + lx, sy + jumpOff + ly).setDepth(sy);
@@ -1532,6 +1652,28 @@ export class GameScene extends Phaser.Scene {
       g.fillStyle(hexToInt(fr === 0 ? PAL.white : PAL.sand), 1);
       for (const [ax, ay] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) g.fillRect(Math.round(s.x + ax * r), Math.round(AY + s.y - 8 + ay * r), 1, 1);
       return true;
+    });
+    // оружие: замах над целью, брызги; пятна — на полу под всеми
+    const gore = this.sim.phase === 'play' || this.sim.phase === 'accuse';
+    for (const b of this.bodies) b.setVisible(gore);
+    const gg = this.goreG;
+    gg.clear();
+    if (gore) for (const st of this.stains) gg.fillStyle(st.c, 1).fillRect(st.x, AY + st.y, 1, 1);
+    this.swings = this.swings.filter((sw) => {
+      sw.t += delta;
+      if (sw.t > 220) return false;
+      drawWeapon(g, sw.x, AY + sw.y, sw.kind, sw.dir, sw.t / 220);
+      return true;
+    });
+    this.drops = this.drops.filter((d) => {
+      d.t += delta;
+      d.x += d.vx * delta;
+      d.y += d.vy * delta;
+      d.vy += 0.0004 * delta;
+      g.fillStyle(d.c, 1).fillRect(Math.round(d.x), Math.round(AY + d.y), 1, 1);
+      if (d.t < 420) return true;
+      this.stains.push({ x: Math.round(d.x), y: Math.round(d.y), c: d.c });
+      return false;
     });
     // прожекторы режиссёра: круг света с мерцающей шахматкой, первые 0,6 с контур мигает
     const wt0 = this.sim.world.time;
@@ -2069,4 +2211,38 @@ function spotPixels(r: number): { ring: [number, number][]; fill: [number, numbe
   v = { ring, fill };
   SPOT_CACHE.set(r, v);
   return v;
+}
+
+/**
+ * Оружие при выбивании ночью — пиксельная линия, без поворота спрайтов: 0 бита, 1 труба, 2 нож.
+ * k — доля замаха (0..1): бита и труба описывают дугу сверху вниз, нож бьёт тычком.
+ */
+function drawWeapon(g: Phaser.GameObjects.Graphics, x: number, y: number, kind: 0 | 1 | 2, dir: 1 | -1, k: number): void {
+  const ink = hexToInt(PAL.ink);
+  if (kind === 2) {
+    // нож: рукоять и клинок летят в цель
+    const off = Math.round((1 - k) * 8);
+    const bx = x - dir * (4 + off);
+    const by = y - 9;
+    g.fillStyle(ink, 1).fillRect(bx - dir * 3, by, 3, 2);
+    g.fillStyle(hexToInt(PAL.white), 1).fillRect(dir > 0 ? bx : bx - 4, by, 5, 1);
+    g.fillStyle(hexToInt(PAL.mist), 1).fillRect(dir > 0 ? bx : bx - 4, by + 1, 4, 1);
+    return;
+  }
+  const len = kind === 0 ? 10 : 11;
+  const a = -2.4 + k * 2.0; // от «над головой» до «вниз у цели»
+  const px = x - dir * 6;
+  const py = y - 14;
+  const body = hexToInt(kind === 0 ? PAL.fawn : PAL.steel);
+  const tip = hexToInt(kind === 0 ? PAL.umber : PAL.mist);
+  for (let i = 0; i <= len; i++) {
+    const cx = Math.round(px + dir * Math.cos(a) * i);
+    const cy = Math.round(py - Math.sin(a) * i);
+    g.fillStyle(ink, 1).fillRect(cx - 1, cy - 1, 3, 3);
+  }
+  for (let i = 0; i <= len; i++) {
+    const cx = Math.round(px + dir * Math.cos(a) * i);
+    const cy = Math.round(py - Math.sin(a) * i);
+    g.fillStyle(i > len - 4 ? tip : body, 1).fillRect(cx, cy, kind === 0 && i > len - 4 ? 2 : 1, kind === 0 && i > len - 4 ? 2 : 1);
+  }
 }

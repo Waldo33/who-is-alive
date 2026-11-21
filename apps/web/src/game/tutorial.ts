@@ -172,13 +172,15 @@ export class Tutorial {
         break;
       case 'accuse':
         lines = t.accuse as [string, string];
-        if (now - this.at > 3500) {
-          this.go('done', now);
+        if (now - this.at > 3500) this.go('done', now);
+        break;
+      case 'done':
+        // «Готово!» — и сразу дальше: на главную или обратно в лобби
+        lines = [t.doneTitle, ''];
+        if (now - this.at > 1800) {
           this.done = true;
           this.onDone();
         }
-        break;
-      case 'done':
         break;
     }
     if (this.note && now < this.note.until) lines = this.note.lines;

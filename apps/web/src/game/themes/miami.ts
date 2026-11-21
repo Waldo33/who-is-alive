@@ -165,6 +165,25 @@ const MASKED: CharStyle[] = (
   patch: mask(kind),
 }));
 
+/**
+ * Те же люди ночью, но ещё без маски — для анимации «натянуть маску» на закате (и снять на
+ * рассвете): маска в руках над головой → натянута до глаз → надета (обычный ночной облик).
+ */
+const UNMASKED: CharStyle[] = MASKED.map((st) => ({ map: st.map }));
+
+/** Маска закрывает голову сверху до строки `to` (контур остаётся); на 5-й строке — прорези глаз. */
+const maskTo = (to: number) => (m: string[][]) => {
+  for (let y = 0; y <= to; y++) for (let x = 0; x < 12; x++) if (m[y][x] !== '.' && m[y][x] !== 'o') m[y][x] = y === to ? 'N' : 'M';
+  if (to >= 5) { set(m, 3, 5, 'K'); set(m, 8, 5, 'K'); }
+};
+
+const MASKING_POSES: Pose[] = [
+  // 0 маска в поднятых руках, на макушке
+  { view: 'D', arms: 'up', patch: maskTo(2) },
+  // 1 натянута до подбородка — ещё видно рот
+  { view: 'D', arms: 'up', patch: maskTo(6) },
+];
+
 // ═════════════ действия ═════════════
 
 const rightArmUp = (m: string[][]) => { set(m, 9, 10, 'b'); set(m, 9, 11, 'B'); };
@@ -636,8 +655,11 @@ const pack: ThemePack = {
       acts: NIGHT_ACTS,
       icons: NIGHT_ICONS,
       pulse: { colors: [PAL.orchid, PAL.cyan], ms: Math.round(60000 / 118), alpha: 0.1 },
+      // ночью выбивают по-взрослому: бита, труба, нож, брызги и тело на полу (не в детском режиме)
+      kill: 'weapon',
     },
   ],
+  dressUp: { to: 1, look: { chars: UNMASKED[0], variants: UNMASKED.slice(1), poses: MASKING_POSES }, poses: [0, 1], ms: 230 },
   // bass: 'sawtooth' — бас без эха; всё остальное (колокольчики, арпеджио, мелодия) тянет эхо-шлейф
   music: { flavor: { transpose: 0, bpm: 118, swing: 0, lead: 'square', bass: 'sawtooth', arp: false, echo: true }, song },
   transition: 'dusk',

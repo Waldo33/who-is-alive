@@ -2,7 +2,6 @@ import { DICTS, LANGS } from '@kto/game-core';
 import type { Lang } from '@kto/game-core';
 import { LANG_KEY } from '../lib/lang';
 import { getAudio } from '../game/audio';
-import { RULES_CSS, rulesHtml } from './rules';
 
 /**
  * Верхняя панель всех экранов: «← Назад» слева и шестерёнка справа.
@@ -53,6 +52,8 @@ export interface TopBarOptions {
   floating?: boolean;
   /** Скрыть шестерёнку (в игре её роль играет кнопка на холсте). */
   noGear?: boolean;
+  /** «Как играть» — открыть пробный дубль поверх страницы (лобби); без него — ссылка на /learn, в игре — нет. */
+  onHowTo?: () => void;
   /** Квадратная кнопка «Поделиться» рядом с шестерёнкой (только главная). Вызывается из click — свежий жест. */
   onShare?: () => void;
 }
@@ -150,17 +151,23 @@ export function mountTopBar(parent: HTMLElement, init: TopBarOptions): TopBar {
           <button type="button" data-sound="on" aria-pressed="${on}">${t.ui.on}</button>
           <button type="button" data-sound="off" aria-pressed="${!on}">${t.ui.off}</button>
         </div></div>
-        <section class="kto-howto" id="kto-howto">
-          <h3>${t.ui.howTo}</h3>
-          ${o.onExit || location.pathname === '/learn' ? '' : `<a class="kto-learn" href="/learn">${t.tutorial.cta}</a>`}
-          ${rulesHtml(t)}
-        </section>
+        ${
+          o.onExit || location.pathname === '/learn'
+            ? ''
+            : o.onHowTo
+              ? `<button type="button" class="kto-learn" data-howto>${t.ui.howTo}</button>`
+              : `<a class="kto-learn" href="/learn">${t.ui.howTo}</a>`
+        }
         <div class="kto-sheet-actions">
           ${o.onExit ? `<button type="button" class="kto-sheet-exit">${t.ui.exit}</button>` : ''}
           <button type="button" class="kto-sheet-close">${t.ui.close}</button>
         </div>
         <p class="kto-credit">${t.ui.author} · <a href="https://t.me/waldente" target="_blank" rel="noopener">@waldente</a></p>
       </div>`;
+    sheet.querySelector<HTMLButtonElement>('[data-howto]')?.addEventListener('click', () => {
+      close();
+      o.onHowTo?.();
+    });
     sheet.querySelectorAll<HTMLButtonElement>('[data-lang]').forEach((b) =>
       b.addEventListener('click', () => {
         const l = b.dataset.lang as Lang;
@@ -265,7 +272,7 @@ export const TOPBAR_CSS = `
 .kto-howto{margin-top:20px;border-top:2px solid #181425;padding-top:16px}
 .kto-howto ul{margin:0;padding:0 0 0 14px;font-size:9px;line-height:1.9;color:#c0cbdc}
 .kto-howto li{margin-bottom:8px}
-.kto-learn{display:flex;align-items:center;justify-content:center;min-height:48px;margin:0 0 16px;background:#2ce8f5;color:#181425;
+.kto-learn{display:flex;width:100%;border:0;font:inherit;cursor:pointer;align-items:center;justify-content:center;min-height:48px;margin:8px 0 16px;background:#2ce8f5;color:#181425;
   font-size:10px;text-decoration:none;box-shadow:0 4px 0 #0095e9,0 0 0 2px #181425}
 .kto-learn:focus-visible{outline:2px solid #fee761;outline-offset:2px}
 .kto-howto b{color:#ead4aa;font-weight:normal}
@@ -282,6 +289,6 @@ export function ensureTopBarCss(): void {
   if (cssAdded || typeof document === 'undefined') return;
   cssAdded = true;
   const s = document.createElement('style');
-  s.textContent = TOPBAR_CSS + RULES_CSS;
+  s.textContent = TOPBAR_CSS;
   document.head.appendChild(s);
 }

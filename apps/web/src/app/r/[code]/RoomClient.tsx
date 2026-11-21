@@ -89,6 +89,15 @@ export default function RoomClient({ code, bot = false }: { code: string; bot?: 
   };
 
   const inGame = state?.status === 'game' && !!roomRef.current?.session;
+  // обучение поверх лобби: новичку — сразу, остальным — из «Как играть»; матч начнётся — закроется само
+  const [tutOpen, setTutOpen] = useState(false);
+  const inLobby = state?.status === 'lobby';
+  const autoTut = useRef(false);
+  useEffect(() => {
+    if (!inLobby || autoTut.current) return;
+    autoTut.current = true;
+    if (!tutorialDone()) setTutOpen(true);
+  }, [inLobby]);
   // в лобби — музыка меню; в игре музыкой управляет сцена
   useEffect(() => {
     if (!inGame) getAudio().setMusic('menu');
@@ -111,6 +120,7 @@ export default function RoomClient({ code, bot = false }: { code: string; bot?: 
               document.documentElement.lang = l;
             }
       }
+      onHowTo={inGame ? undefined : () => setTutOpen(true)}
       onBack={inGame ? undefined : goHome}
       onExit={inGame ? goHome : undefined}
       noGear={inGame}
@@ -133,6 +143,7 @@ export default function RoomClient({ code, bot = false }: { code: string; bot?: 
     <>
       {topBar}
       {screen}
+      {tutOpen && inLobby && <TutorialStage lang={lang} t={t} onClose={() => setTutOpen(false)} />}
     </>
   );
 }
@@ -216,11 +227,6 @@ export function Lobby({
   const [editing, setEditing] = useState(false);
   /** Режиссёр нажал «✕» у участника — второе нажатие («Убрать?») подтверждает. */
   const [kickAsk, setKickAsk] = useState('');
-  /** Пробный дубль, пока ждём: новичкам — кнопка, по ней — обучение поверх лобби (матч начнётся — закроется само). */
-  const [newbie, setNewbie] = useState(false);
-  const [tutOpen, setTutOpen] = useState(false);
-  useEffect(() => setNewbie(!tutorialDone()), [tutOpen]);
-  const lang = (Object.keys(DICTS) as Lang[]).find((l) => DICTS[l] === t) ?? 'ru';
   const me = state.members.find((m) => m.userId === state.selfId);
   const isHost = state.hostId === state.selfId;
   const online = state.members.filter((m) => m.online);
@@ -340,11 +346,6 @@ export function Lobby({
       {isHost && <Settings t={t} settings={state.settings} onChange={(s) => void room.updateSettings(s)} />}
 
       <div className="lobby-actions">
-        {newbie && (
-          <button className="btn alt" onClick={() => setTutOpen(true)}>
-            {t.tutorial.lobbyCta}
-          </button>
-        )}
         {!isHost && (
           <button className={`btn ${me?.ready ? 'on' : ''}`} aria-pressed={!!me?.ready} onClick={() => {
               onGesture();
@@ -371,7 +372,6 @@ export function Lobby({
           {toast}
         </div>
       )}
-      {tutOpen && <TutorialStage lang={lang} t={t} inLobby onClose={() => setTutOpen(false)} />}
     </main>
   );
 }

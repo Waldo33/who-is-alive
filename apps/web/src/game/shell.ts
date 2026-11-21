@@ -1,7 +1,6 @@
 import { DEFAULT_CONFIG, DICTS } from '@kto/game-core';
 import { detectLang } from '../lib/lang';
 import { download, shareContent, withLang } from '../lib/share';
-import { rulesHtml } from '../ui/rules';
 import { mountTopBar } from '../ui/topbar';
 import type { TopBarOptions } from '../ui/topbar';
 import type { Dict, GameConfig, Lang } from '@kto/game-core';
@@ -32,7 +31,6 @@ const CSS = `
 .kto-root .kto-topbar{padding-bottom:12px;background:linear-gradient(${PAL.ink} 75%, transparent)}
 .kto-logo{font-size:22px;line-height:1.35;color:${PAL.yellow};text-shadow:3px 3px 0 ${PAL.rust},6px 6px 0 ${PAL.ink};margin:0;max-width:12ch}
 .kto-tag{font-size:10px;color:${PAL.coral};margin:0}
-.kto-rules{width:min(100%,380px);margin:0}
 /* подпись над полем: поле во всю ширину вмещает имя целиком (14 знаков пиксельным шрифтом 16px) */
 .kto-row{display:flex;flex-direction:column;gap:8px;align-items:center;font-size:9px;width:100%}
 .kto-input{font:inherit;font-size:16px;line-height:1.2;max-width:100%;background:${PAL.night};color:${PAL.white};border:2px solid ${PAL.dusk};
@@ -90,7 +88,6 @@ export function mountSandbox(root: HTMLElement, opts: ShellOptions): () => void 
     <section class="kto-start">
       <h1 class="kto-logo"></h1>
       <p class="kto-tag"></p>
-      <div class="kto-rules"></div>
       <label class="kto-row"><span class="kto-name-label"></span> <input class="kto-input" maxlength="14"></label>
       <label class="kto-check"><input type="checkbox" class="kto-kids"> <span class="kto-kids-label"></span></label>
       <p class="kto-hint kto-kids-hint"></p>
@@ -124,7 +121,6 @@ export function mountSandbox(root: HTMLElement, opts: ShellOptions): () => void 
     $('.kto-start').setAttribute('aria-label', t.start.aria);
     $('.kto-logo').textContent = t.meta.title;
     $('.kto-tag').textContent = t.meta.tagline;
-    $('.kto-rules').innerHTML = rulesHtml(t);
     $('.kto-name-label').textContent = t.start.name;
     nameInput.setAttribute('aria-label', t.start.nameAria);
     $('.kto-kids-label').textContent = t.start.kids;
