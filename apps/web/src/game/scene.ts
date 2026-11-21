@@ -59,7 +59,7 @@ export interface SceneInit {
   /** Только для отладки (?dev&speed=4): ускорение времени. */
   timeScale?: number;
   /** «Пробный дубль»: сценарий обучения поверх песочницы без ИИ (tutorial.ts). */
-  tutorial?: { onDone: () => void };
+  tutorial?: { onDone: () => void; onSkip: () => void };
 }
 
 interface EntityView {
@@ -191,6 +191,8 @@ export class GameScene extends Phaser.Scene {
   private crowdChoice: CrowdKind | null = null;
   private tut: Tutorial | null = null;
   private coachG!: Phaser.GameObjects.Graphics;
+  private focusG!: Phaser.GameObjects.Graphics;
+  private plateG!: Phaser.GameObjects.Graphics;
   private coachL1!: Phaser.GameObjects.BitmapText;
   private coachL2!: Phaser.GameObjects.BitmapText;
   /** Подсказка «впервые видишь» в настоящей игре (две строки, до времени). */
@@ -198,6 +200,7 @@ export class GameScene extends Phaser.Scene {
   private clapSentAt = 0;
   /** Выбивание оружием (облик с kill: 'weapon'): замахи, брызги, пятна и тела — до конца дубля. */
   private goreG!: Phaser.GameObjects.Graphics;
+  private spotG!: Phaser.GameObjects.Graphics;
   private swings: { x: number; y: number; kind: 0 | 1 | 2; dir: 1 | -1; t: number }[] = [];
   private drops: { x: number; y: number; vx: number; vy: number; t: number; c: number }[] = [];
   private stains: { x: number; y: number; c: number }[] = [];
@@ -306,12 +309,15 @@ export class GameScene extends Phaser.Scene {
     this.add.image(0, AY, 'vignette').setOrigin(0, 0).setDepth(950).setAlpha(0.35);
     this.fxG = this.add.graphics().setDepth(960);
     this.goreG = this.add.graphics().setDepth(1);
+    // прожектор: темнота и луч поверх фигур, под эффектами и интерфейсом
+    this.spotG = this.add.graphics().setDepth(955);
     this.ui = this.add.graphics().setDepth(1000);
     this.buildHud();
     this.buildButtons();
     this.crowdIcon = this.add.image(90, AY + 46, 'icons', 0).setScale(3).setDepth(1500).setVisible(false);
     this.crowdText = this.txt(90, AY + 64, '', 'yellow').setOrigin(0.5, 0).setDepth(1500).setVisible(false);
     this.toast = this.txt(90, PANEL_Y - 14, '', 'sand').setOrigin(0.5, 0).setDepth(1600).setVisible(false);
+    this.plateG = this.add.graphics().setDepth(1599);
     this.ui2 = this.add.graphics().setDepth(2050);
     this.dim = this.add.rectangle(0, AY, 180, 260, hexToInt(PAL.ink), 0.45).setOrigin(0, 0).setDepth(39).setVisible(false);
     this.blackout = this.add.rectangle(0, AY, 180, 260, hexToInt(PAL.ink), 0.92).setOrigin(0, 0).setDepth(1000).setVisible(false);
@@ -321,14 +327,16 @@ export class GameScene extends Phaser.Scene {
     this.sirenVeil = this.add.rectangle(0, AY, 180, 260, 0, 0).setOrigin(0, 0).setDepth(999).setVisible(false);
     // подсказки сверху поля: шаги пробного дубля и «впервые видишь» в настоящей игре
     this.coachG = this.add.graphics().setDepth(1600);
+    // затемнение поля вокруг того, что выделяет обучение (на основной камере — под кнопками и подсказкой)
+    this.focusG = this.add.graphics().setDepth(1450);
     this.coachL1 = this.txt(90, AY + 5, '', 'white').setDepth(1601);
     this.coachL2 = this.txt(90, AY + 15, '', 'sand').setDepth(1601);
     this.setupFreezeFrame();
     // постоянная пометка в нижней панели, пока ты призрак
     this.ghostUi = [
       this.add.image(16, PANEL_Y + 19, 'qmark').setScale(2).setDepth(1101),
-      this.txt(30, PANEL_Y + 7, this.t.game.ghost, 'mist').setDepth(1101),
-      this.txt(30, PANEL_Y + 19, this.t.game.ghostHint, 'sand').setDepth(1101),
+      this.txt(25, PANEL_Y + 7, this.t.game.ghost, 'mist').setDepth(1101),
+      this.txt(25, PANEL_Y + 19, this.t.game.ghostHint, 'sand').setDepth(1101),
     ];
     for (const o of this.ghostUi) (o as Phaser.GameObjects.Image).setVisible(false);
     this.buildDeathClipButton();
@@ -543,7 +551,7 @@ export class GameScene extends Phaser.Scene {
     };
     kinds.forEach(([kind, icon], i) => {
       this.buttons.push({
-        id: 'clap-' + kind, x: 95 + i * 28, y: PANEL_Y + 3, w: 27, h: 30, icon, accent: PAL.orchid, visible: clapVis,
+        id: 'clap-' + kind, x: 98 + i * 27, y: PANEL_Y + 3, w: 26, h: 30, icon, accent: PAL.orchid, visible: clapVis,
         onDown: () => {
           if (!this.clapReady()) {
             this.audio.play('denied');
@@ -556,6 +564,11 @@ export class GameScene extends Phaser.Scene {
         },
       });
     });
+    // обучение: крестик «пропустить» в левом углу шапки (вместо номера дубля)
+    if (this.init0.tutorial) {
+      const skip = this.init0.tutorial.onSkip;
+      this.buttons.push({ id: 'tut-skip', x: 2, y: 2, w: 20, h: 20, icon: 'cross', visible: () => true, onUp: () => skip() });
+    }
     // шестерёнка: звук, правила и выход — в листе настроек поверх игры (язык меняется вне матча)
     this.buttons.push({
       id: 'sound', x: 166, y: 3, w: 12, h: 18, icon: this.init0.onSettings ? 'gear' : this.audio.enabled ? 'soundOn' : 'soundOff', visible: () => true,
@@ -936,6 +949,69 @@ export class GameScene extends Phaser.Scene {
       this.bodies.push(body);
     }
     this.noPoof.add(eid);
+  }
+
+  /**
+   * Прожектор как на съёмке: поле притухает (кроме пятен света), из-за верхнего края кадра
+   * к каждому пятну тянется конус (шахматкой — полупрозрачно), пятно на полу — эллипс
+   * (вид сверху под углом). Первые 0,3 с свет набирает силу, последние 0,5 с — гаснет.
+   */
+  private renderSpots(wt: number): void {
+    const g = this.spotG;
+    g.clear();
+    if (!this.spots.length) return;
+    const ell = this.spots.map((p) => {
+      const age = wt - p.at;
+      const k = Math.min(1, age / 300, (p.until - wt) / 500);
+      // площадка темнеет только на первые 2,5 с, луч светит до конца
+      const dk = Math.min(1, age / 300, (p.at + 2500 - wt) / 500);
+      return { cx: p.x, cy: p.y, rx: p.r, ry: Math.round(p.r * 0.5), k, dk };
+    });
+    const k = Math.max(0, ...ell.map((e) => e.dk));
+    const ink = hexToInt(PAL.ink);
+    // темнота вокруг: по строкам поля, с дырами-эллипсами
+    g.fillStyle(ink, 0.42 * k);
+    for (let y = 0; k > 0 && y < 260; y++) {
+      const holes: [number, number][] = [];
+      for (const e of ell) {
+        const dy = (y - e.cy) / e.ry;
+        if (Math.abs(dy) >= 1) continue;
+        const w = Math.round(e.rx * Math.sqrt(1 - dy * dy));
+        holes.push([e.cx - w, e.cx + w]);
+      }
+      holes.sort((a, b) => a[0] - b[0]);
+      let x = 0;
+      for (const [a, b] of holes) {
+        if (a > x) g.fillRect(x, AY + y, a - x, 1);
+        x = Math.max(x, b + 1);
+      }
+      if (x < 180) g.fillRect(x, AY + y, 180 - x, 1);
+    }
+    // лучи: от узкого у верхнего края до ширины пятна, мерцающая шахматка
+    const ph = Math.floor(performance.now() / 120) % 2;
+    for (const e of ell) {
+      const sx = e.cx + (e.cx < 90 ? 14 : -14); // источник чуть в стороне — луч наклонный
+      const top = 0;
+      const bot = e.cy;
+      g.fillStyle(hexToInt(PAL.white), 0.3 * e.k);
+      for (let y = top; y <= bot; y++) {
+        const u = (y - top) / Math.max(1, bot - top);
+        const cx = Math.round(sx + (e.cx - sx) * u);
+        const w = Math.round(3 + (e.rx - 3) * u);
+        for (let x = cx - w; x <= cx + w; x++) if ((x + y + ph) % 2 === 0) g.fillRect(x, AY + y, 1, 1);
+      }
+      // пятно на полу: светлый эллипс и тёплый край
+      g.fillStyle(hexToInt(PAL.white), 0.22 * e.k);
+      for (let y = -e.ry; y <= e.ry; y++) {
+        const w = Math.round(e.rx * Math.sqrt(1 - (y * y) / (e.ry * e.ry)));
+        g.fillRect(e.cx - w, AY + e.cy + y, w * 2 + 1, 1);
+      }
+      g.fillStyle(hexToInt(PAL.yellow), 0.7 * e.k);
+      for (let a = 0; a < 64; a++) {
+        const t = (a / 64) * Math.PI * 2;
+        g.fillRect(Math.round(e.cx + Math.cos(t) * e.rx), Math.round(AY + e.cy + Math.sin(t) * e.ry), 1, 1);
+      }
+    }
   }
 
   private clearGore(): void {
@@ -1367,6 +1443,16 @@ export class GameScene extends Phaser.Scene {
     this.updateOverlay(delta);
     this.syncUiCamera();
     if (this.toast.visible && performance.now() > this.toastUntil) this.toast.setVisible(false);
+    // подсказка внизу поля — выше кнопки клипа, если та видна; под ней тёмная подложка
+    const clipBtn = this.buttons.find((b) => b.id === 'deathclip');
+    const ty = clipBtn && clipBtn.visible() && this.sim.phase !== 'results' ? PANEL_Y - 40 : PANEL_Y - 14;
+    if (this.toast.y !== ty) this.toast.y = ty;
+    const pg = this.plateG;
+    pg.clear();
+    if (this.toast.visible && this.toast.text) {
+      const w = Math.min(180, this.toast.width + 8);
+      pg.fillStyle(hexToInt(PAL.ink), 0.62).fillRect(Math.round(90 - w / 2), ty - 2, w, 13);
+    }
   }
 
   private frameFor(e: Entity, t: number): CharFrame {
@@ -1675,21 +1761,10 @@ export class GameScene extends Phaser.Scene {
       this.stains.push({ x: Math.round(d.x), y: Math.round(d.y), c: d.c });
       return false;
     });
-    // прожекторы режиссёра: круг света с мерцающей шахматкой, первые 0,6 с контур мигает
+    // прожекторы режиссёра: свет на площадке гаснет, сверху падает луч, на полу — светлое пятно
     const wt0 = this.sim.world.time;
     this.spots = this.sim.phase === 'play' ? this.spots.filter((p) => wt0 < p.until) : [];
-    for (const p of this.spots) {
-      const { ring, fill } = spotPixels(p.r);
-      const age = wt0 - p.at;
-      const fade = Math.min(1, (p.until - wt0) / 500);
-      const phase = Math.floor(performance.now() / 160) % 2;
-      g.fillStyle(hexToInt(PAL.white), 0.45 * fade);
-      for (const [dx, dy] of fill) if ((dx + dy + phase) % 2 === 0) g.fillRect(p.x + dx, AY + p.y + dy, 1, 1);
-      if (age > 600 || Math.floor(age / 120) % 2 === 0) {
-        g.fillStyle(hexToInt(PAL.yellow), fade);
-        for (const [dx, dy] of ring) g.fillRect(p.x + dx, AY + p.y + dy, 1, 1);
-      }
-    }
+    this.renderSpots(wt0);
     // вспышки звёзд
     this.flashes = this.flashes.filter((f) => {
       f.t += delta;
@@ -1754,6 +1829,8 @@ export class GameScene extends Phaser.Scene {
       }
       this.crowdText.x = Math.round(90 - this.crowdText.width / 2);
       this.crowdText.setOrigin(0, 0);
+      const pw = this.crowdText.width + 8;
+      this.crowdG.fillStyle(hexToInt(PAL.ink), 0.62).fillRect(Math.round(90 - pw / 2), this.crowdText.y - 2, pw, 13);
     }
   }
 
@@ -1761,6 +1838,7 @@ export class GameScene extends Phaser.Scene {
   private renderCoach(): void {
     const g = this.coachG;
     g.clear();
+    this.renderFocus();
     let lines: readonly string[] = ['', ''];
     if (this.tut) lines = this.tut.lines;
     else if (this.coachTip && performance.now() < this.coachTip.until && this.sim.phase === 'play') lines = this.coachTip.lines;
@@ -1789,6 +1867,45 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  /**
+   * Обучение выделяет важное: поле вокруг цели притушено, вокруг цели пульсирует рамка
+   * (свой персонаж, кнопки жестов, круг прожектора, звезда).
+   */
+  private renderFocus(): void {
+    const fg = this.focusG;
+    fg.clear();
+    const f = this.tut?.focus;
+    if (!f || this.sim.phase !== 'play') return;
+    let r: { x: number; y: number; w: number; h: number };
+    if (f === 'buttons') r = { x: 43, y: PANEL_Y + 1, w: 95, h: 34 };
+    else if (f === 'me') {
+      const e = this.sim.world.get(this.me()?.eid ?? -1);
+      if (!e) return;
+      r = { x: Math.round(e.x) - 11, y: AY + Math.round(e.y) - 22, w: 22, h: 26 };
+    } else r = { x: Math.round(f.x - f.r), y: AY + Math.round(f.y - f.r), w: Math.round(f.r * 2), h: Math.round(f.r * 2) };
+    // притушить поле вне рамки (панель снизу — только когда выделены кнопки: там и так тёмное)
+    const top = AY;
+    const bot = PANEL_Y;
+    const ink = hexToInt(PAL.ink);
+    fg.fillStyle(ink, 0.55);
+    if (f === 'buttons') fg.fillRect(0, top, 180, bot - top);
+    else {
+      const y0 = Math.max(top, r.y);
+      const y1 = Math.min(bot, r.y + r.h);
+      fg.fillRect(0, top, 180, Math.max(0, y0 - top));
+      fg.fillRect(0, y1, 180, Math.max(0, bot - y1));
+      fg.fillRect(0, y0, Math.max(0, r.x), y1 - y0);
+      fg.fillRect(r.x + r.w, y0, Math.max(0, 180 - r.x - r.w), y1 - y0);
+    }
+    // рамка — поверх всего (на камере интерфейса), мигает
+    const on = Math.floor(performance.now() / 260) % 2 === 0;
+    const g = this.coachG;
+    g.fillStyle(ink, 1);
+    g.fillRect(r.x - 2, r.y - 2, r.w + 4, 1).fillRect(r.x - 2, r.y + r.h + 1, r.w + 4, 1).fillRect(r.x - 2, r.y - 2, 1, r.h + 4).fillRect(r.x + r.w + 1, r.y - 2, 1, r.h + 4);
+    g.fillStyle(hexToInt(on ? PAL.yellow : PAL.amber), 1);
+    g.fillRect(r.x - 1, r.y - 1, r.w + 2, 1).fillRect(r.x - 1, r.y + r.h, r.w + 2, 1).fillRect(r.x - 1, r.y - 1, 1, r.h + 2).fillRect(r.x + r.w, r.y - 1, 1, r.h + 2);
+  }
+
   /** «Впервые видишь»: подсказка из двух строк, один раз на устройство для каждого случая. */
   private tip(key: 'vote' | 'spot' | 'star'): void {
     if (this.tut) return;
@@ -1813,7 +1930,7 @@ export class GameScene extends Phaser.Scene {
     const left = sim.timeLeft();
     const sec = Math.ceil(left / 1000);
     const showTimer = !this.tut && (sim.phase === 'play' || sim.phase === 'accuse' || sim.phase === 'countdown');
-    this.hud.timer.setText(showTimer ? `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}` : tp(this.lang, this.t.game.roundShort, sim.round));
+    this.hud.timer.setText(this.tut ? '' : showTimer ? `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}` : tp(this.lang, this.t.game.roundShort, sim.round));
     this.hud.timer.setFont(sim.phase === 'play' && sec <= 10 ? 'px-red' : 'px-sand');
     const me = this.me();
     this.hudIcons.forEach((ic, i) => ic.setFrame(this.icon(me && i < me.attacksLeft ? 'fist' : 'fistOff')));
@@ -1837,6 +1954,11 @@ export class GameScene extends Phaser.Scene {
     const keep = new Set(this.buttons.filter((b) => b.keep).map((b) => b.id));
     this.buttons = this.buttons.filter((b) => !b.label || b.keep);
     for (const [id, o] of this.btnObjs) if (o.text && !keep.has(id)) this.btnObjs.delete(id);
+  }
+
+  /** Тёмная подложка под текстом поверх поля: читается на любом фоне (снег, пляж, неон). */
+  private ovPlate(y: number, h: number): void {
+    this.ov(this.add.rectangle(0, y, 180, h, hexToInt(PAL.ink), 0.62).setOrigin(0, 0), 2099);
   }
 
   private ovText(x: number, y: number, s: string, color: FontColor = 'white', center = true): Phaser.GameObjects.BitmapText {
@@ -1872,6 +1994,8 @@ export class GameScene extends Phaser.Scene {
         this.ovDyn.count = this.ovText(90, AY + 92, String(Math.max(1, Math.ceil(sim.timeLeft() / 1000))), 'yellow');
         this.ovDyn.count.setScale(3);
         this.centerScaled(this.ovDyn.count);
+        const modOn = roundMod(sim.mod) !== 'none';
+        this.ovPlate(AY + 122, modOn ? 76 : 30);
         this.ovText(90, AY + 126, this.t.game.findYourself, 'sand');
         this.ovText(90, AY + 138, tp(this.lang, this.t.game.roundTheme, sim.round, { theme: this.t.themes[sim.theme] }), 'mist');
         const mod = roundMod(sim.mod);
@@ -1883,14 +2007,17 @@ export class GameScene extends Phaser.Scene {
         break;
       }
       case 'accuse': {
+        this.ovPlate(AY + 2, 28);
         this.ovText(90, AY + 6, this.t.game.accuseTitle, 'yellow');
         this.ovDyn.sub = this.ovText(90, AY + 18, this.t.game.accuseSub, 'sand');
         this.ovDyn.timer = this.ovText(90, PANEL_Y + 13, '5', 'red');
         break;
       }
       case 'reveal': {
+        this.ovPlate(AY + 2, 16);
         this.ovDyn.title = this.ovText(90, AY + 6, this.t.game.reveal, 'yellow');
-        this.ovDyn.speed = this.ovText(176, AY + 248, '×2.5', 'mist', false).setOrigin(1, 0).setVisible(false);
+        // слева внизу: справа там кнопка клипа
+        this.ovDyn.speed = this.ovText(4, AY + 248, '×2.5', 'mist', false).setVisible(false);
         const s = sim.summary!;
         this.ovDyn.final = this.ovText(90, PANEL_Y + 13, '', 'sand').setVisible(false);
         this.ovDyn.caught = this.ovText(90, PANEL_Y + 20, this.t.game.caught, 'red').setVisible(false);
@@ -2047,12 +2174,25 @@ export class GameScene extends Phaser.Scene {
       if (inReplay) this.ovDyn.title?.setText(this.t.game.revealReplay);
       if (final) {
         this.ovDyn.title?.setText(this.t.game.revealFinal);
-        s.reveal.forEach((r, i) => {
+        // имена над живыми; если подписи налезают друг на друга — верхнюю поднимаем
+        const placed: { x: number; y: number; w: number }[] = [];
+        const order = s.reveal.map((r, i) => ({ r, i })).sort((a, b) => b.r.y - a.r.y);
+        for (const { r, i } of order) {
           const t = this.ovDyn['name' + i];
-          if (!t) return;
+          if (!t) continue;
           t.setVisible(r.alive);
-          if (r.alive) t.setPosition(Math.round(Math.min(178 - t.width, Math.max(2, r.x - t.width / 2))), AY + r.y - CH_H - 16);
-        });
+          if (!r.alive) continue;
+          const x = Math.round(Math.min(178 - t.width, Math.max(2, r.x - t.width / 2)));
+          let y = AY + r.y - CH_H - 16;
+          for (let k = 0; k < 4; k++) {
+            const hit = placed.find((q) => x < q.x + q.w && q.x < x + t.width && Math.abs(q.y - y) < 10);
+            if (!hit) break;
+            y = hit.y - 10;
+          }
+          y = Math.max(AY + 18, y);
+          placed.push({ x, y, w: t.width });
+          t.setPosition(x, y);
+        }
         const mine = s.accusations.find((a) => a.pid === this.sim.selfPid);
         this.ovDyn.final?.setText(mine ? (mine.correct ? this.t.game.guessed : this.t.game.missed) : this.t.game.noAccuse).setVisible(true);
         this.ovDyn.final.x = Math.round(90 - this.ovDyn.final.width / 2);
@@ -2192,26 +2332,6 @@ function requestWakeLock(): void {
     .catch(() => undefined);
 }
 
-/** Пиксели круга прожектора (контур и заливка) — считаются один раз на радиус. */
-const SPOT_CACHE = new Map<number, { ring: [number, number][]; fill: [number, number][] }>();
-function spotPixels(r: number): { ring: [number, number][]; fill: [number, number][] } {
-  let v = SPOT_CACHE.get(r);
-  if (v) return v;
-  const ring: [number, number][] = [];
-  const fill: [number, number][] = [];
-  for (let y = -r; y <= r; y++) {
-    for (let x = -r; x <= r; x++) {
-      const d = x * x + y * y;
-      if (d > r * r) continue;
-      // контур — пиксели внутри круга, у которых сосед снаружи
-      const edge = (x + 1) ** 2 + y * y > r * r || (x - 1) ** 2 + y * y > r * r || x * x + (y + 1) ** 2 > r * r || x * x + (y - 1) ** 2 > r * r;
-      (edge ? ring : fill).push([x, y]);
-    }
-  }
-  v = { ring, fill };
-  SPOT_CACHE.set(r, v);
-  return v;
-}
 
 /**
  * Оружие при выбивании ночью — пиксельная линия, без поворота спрайтов: 0 бита, 1 труба, 2 нож.

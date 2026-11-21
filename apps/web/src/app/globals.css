@@ -123,10 +123,5 @@ button.btn { border: 0; cursor: pointer; border-radius: 0; }
 .clip-actions[hidden], .clip-progress[hidden] { display: none; }
 .clip-close { background: var(--night); color: var(--sand); box-shadow: 0 4px 0 var(--ink), 0 0 0 2px var(--steel); }
 
-/* пробный дубль: только сцена и маленькая «Пропустить» */
+/* пробный дубль: только сцена (крестик «пропустить» — в шапке самой сцены) */
 .tut-wrap { position: fixed; inset: 0; z-index: 40; }
-.tut-skip { position: fixed; z-index: 45; top: calc(8px + env(safe-area-inset-top)); left: calc(8px + env(safe-area-inset-left));
-  font: inherit; font-family: var(--font-pixel), monospace; font-size: 10px; min-height: 44px; padding: 0 14px; border: 0; border-radius: 0;
-  background: var(--night); color: var(--sand); box-shadow: 0 0 0 2px var(--ink), 0 3px 0 var(--ink); cursor: pointer; }
-.tut-skip:active { transform: translateY(2px); box-shadow: 0 0 0 2px var(--ink); }
-.tut-skip:focus-visible { outline: 2px solid var(--yellow); outline-offset: 2px; }

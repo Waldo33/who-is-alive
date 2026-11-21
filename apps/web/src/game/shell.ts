@@ -1,6 +1,7 @@
 import { DEFAULT_CONFIG, DICTS } from '@kto/game-core';
 import { detectLang } from '../lib/lang';
 import { download, shareContent, withLang } from '../lib/share';
+import { tutorialDone } from './tutorial';
 import { mountTopBar } from '../ui/topbar';
 import type { TopBarOptions } from '../ui/topbar';
 import type { Dict, GameConfig, Lang } from '@kto/game-core';
@@ -73,6 +74,11 @@ export interface ShellOptions {
 }
 
 export function mountSandbox(root: HTMLElement, opts: ShellOptions): () => void {
+  // новичок — сначала обучение на практике, без нажатий (не в автономном файле и не в ?dev)
+  if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('dev') && !tutorialDone()) {
+    location.replace('/learn?next=/sandbox');
+    return () => {};
+  }
   const style = document.createElement('style');
   style.textContent = CSS;
   document.head.appendChild(style);

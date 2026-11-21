@@ -74,7 +74,7 @@ export const en: Dict = {
     outHint: 'Mark actors with “?”',
     ghost: 'Off-screen',
     ghostHint: 'Tap to mark “?”',
-    ghostShort: 'Off-screen',
+    ghostShort: 'Offscreen',
     ghostHintShort: 'Tap: “?”',
     hedge: 'The frame closes in!',
     denied: { no_attacks: 'No hits left', out_of_range: 'Too far', stunned: 'Stunned!', autopilot: 'On autopilot', not_now: 'Not now' },

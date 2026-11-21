@@ -41,8 +41,8 @@ describe('i18n', () => {
           Object.values(x ?? {}).flatMap((v) => (typeof v === 'string' ? [v] : (Object.values(v ?? {}) as string[]))),
         ),
       ];
-      // подписи призрака рядом с «Хлопушкой» — до 62 пикс.
-      for (const x of [g.ghostShort, g.ghostHintShort]) expect(x.length, x).toBeLessThanOrEqual(10);
+      // подписи призрака рядом с «Хлопушкой» — до 9 знаков (x 25…94)
+      for (const x of [g.ghostShort, g.ghostHintShort]) expect(x.length, x).toBeLessThanOrEqual(9);
       // пробный дубль и подсказки: пары строк на поле
       const tut = t.tutorial;
       expect(tut.doneTitle.length).toBeLessThanOrEqual(21);

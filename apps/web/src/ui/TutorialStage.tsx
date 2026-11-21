@@ -8,7 +8,7 @@ import { playerName } from '@/lib/name';
 
 /**
  * «Пробный дубль» поверх страницы: только сцена игры со сценарием обучения (game/tutorial.ts)
- * и маленькая «Пропустить» — без текстов и карточек. На /learn и в лобби, пока ждут режиссёра.
+ * (пропустить — крестик в шапке сцены) — без текстов и карточек. На /learn и в лобби, пока ждут режиссёра.
  */
 export function TutorialStage({
   lang,
@@ -42,6 +42,11 @@ export function TutorialStage({
               markTutorialDone();
               closeRef.current();
             },
+            // крестик в шапке сцены: пропустить — и больше не показывать сам
+            onSkip: () => {
+              markTutorialDone();
+              closeRef.current();
+            },
           },
         });
         if (cancelled) running.destroy();
@@ -55,17 +60,9 @@ export function TutorialStage({
     };
   }, [lang, t]);
 
-  const skip = () => {
-    void import('@/game/tutorial').then(({ markTutorialDone }) => markTutorialDone());
-    onClose();
-  };
-
   return (
     <div className="tut-wrap">
       <div ref={ref} className="game-stage" aria-label={t.tutorial.title} />
-      <button className="tut-skip" onClick={skip}>
-        {t.tutorial.skip}
-      </button>
     </div>
   );
 }

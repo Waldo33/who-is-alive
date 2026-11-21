@@ -23,7 +23,7 @@ export const TUTORIAL_CFG: Partial<GameConfig> = {
   fixedTheme: 0,
   attacksPerRound: 3,
   endWhenLastAlive: false,
-  spotSec: 30,
+  spotSec: 12,
 };
 
 type Step = 'move' | 'blend' | 'crowd' | 'spot' | 'hunt' | 'cut' | 'star' | 'starRisk' | 'vote' | 'voteResult' | 'ghost' | 'accuse' | 'done';
@@ -34,6 +34,11 @@ export class Tutorial {
   lines: [string, string] = ['', ''];
   /** Куда показать стрелкой (координаты поля), если нужно. */
   arrow: { x: number; y: number } | null = null;
+  /**
+   * Что выделить: остальное поле притушено, вокруг цели — рамка. 'me' — свой персонаж,
+   * 'buttons' — кнопки жестов внизу, точка поля с радиусом — круг прожектора, звезда, «актёр».
+   */
+  focus: 'me' | 'buttons' | { x: number; y: number; r: number } | null = null;
   done = false;
   private at = 0;
   private start: { x: number; y: number } | null = null;
@@ -56,6 +61,7 @@ export class Tutorial {
     this.step = step;
     this.at = now;
     this.arrow = null;
+    this.focus = null;
   }
 
   /** Короткая реплика поверх текущего шага (ошибка, похвала). */
@@ -81,6 +87,7 @@ export class Tutorial {
     switch (this.step) {
       case 'move':
         lines = t.move as [string, string];
+        this.focus = 'me';
         if (!this.start) this.start = { x: e.x, y: e.y };
         if (Math.hypot(e.x - this.start.x, e.y - this.start.y) > 10) this.go('blend', now);
         break;
@@ -96,6 +103,7 @@ export class Tutorial {
         const c = sim.world.crowd;
         const mine = c && c.warnAt >= this.plannedAt;
         lines = (mine && sim.world.isFrozen() ? t.crowdNow : t.crowdWait) as [string, string];
+        this.focus = mine && c && now <= c.windowEnd ? 'buttons' : null;
         if (mine && c && now > c.windowEnd + 700) {
           const ok = me.crowdAnswered === c.warnAt && me.crowdPick === c.kind && !me.crowdLate;
           if (ok) {
@@ -108,10 +116,13 @@ export class Tutorial {
         }
         break;
       }
-      case 'spot':
+      case 'spot': {
         lines = t.spot as [string, string];
+        const a = sim.world.get(this.actorEid());
+        this.focus = a ? { x: a.x, y: a.y - 6, r: 30 } : null;
         if (now - this.at > 3500) this.go('hunt', now);
         break;
+      }
       case 'hunt': {
         lines = t.hunt as [string, string];
         const actor = sim.playerByEid(this.actorEid())!;
@@ -122,7 +133,10 @@ export class Tutorial {
         // долго не находит — подсказка стрелкой
         if (now - this.at > 12000) {
           const a = sim.world.get(actor.eid);
-          if (a) this.arrow = { x: a.x, y: a.y };
+          if (a) {
+            this.arrow = { x: a.x, y: a.y };
+            this.focus = { x: a.x, y: a.y - 6, r: 22 };
+          }
         }
         if (!actor.alive) {
           this.say(t.cut as [string, string], now, 3000);
@@ -141,6 +155,7 @@ export class Tutorial {
         lines = t.star as [string, string];
         const st = [...sim.world.stars.values()][0];
         this.arrow = st ? { x: st.x, y: st.y } : null;
+        this.focus = st ? { x: st.x, y: st.y - 2, r: 16 } : null;
         if (me.stars >= 1) this.go('starRisk', now);
         break;
       }
@@ -156,6 +171,7 @@ export class Tutorial {
         const c = sim.world.crowd;
         const mine = c && c.warnAt >= this.plannedAt && c.vote;
         lines = (mine && sim.world.isFrozen() ? t.voteNow : t.voteWait) as [string, string];
+        this.focus = mine && sim.world.isFrozen() ? 'buttons' : null;
         if (mine && c && now > c.resumeAt + 600) {
           const ok = me.crowdAnswered === c.warnAt && me.crowdPick === c.kind;
           this.say((ok ? t.voteOk : t.voteMiss) as [string, string], now, 3000);
@@ -204,7 +220,8 @@ export class Tutorial {
         const a = (k / 12) * Math.PI * 2;
         const i = nav.cellAt(me.x + Math.cos(a) * r, me.y + Math.sin(a) * r);
         // не под подсказкой сверху поля: круг прожектора должно быть видно
-        if (!nav.walkable(i) || nav.cy(i) < 64) continue;
+        const x = nav.cx(i);
+        if (!nav.walkable(i) || nav.cy(i) < 64 || x < 34 || x > 146) continue;
         actor.x = nav.cx(i);
         actor.y = nav.cy(i);
         actor.path = [];
