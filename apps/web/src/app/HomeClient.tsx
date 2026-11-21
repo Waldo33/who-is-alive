@@ -10,6 +10,7 @@ import { detectLang } from '@/lib/lang';
 import { TopBar } from '@/ui/TopBarView';
 import type { TopBar as Bar } from '@/ui/topbar';
 import { playerName } from '@/lib/name';
+import { shareContent, withLang } from '@/lib/share';
 import { AuthError, ensureAnonymousUser, supabase } from '@/lib/supabase';
 import { createRoom } from '@/net/room';
 
@@ -23,6 +24,7 @@ export default function HomeClient() {
   const [error, setError] = useState('');
   const [showCode, setShowCode] = useState(false);
   const [code, setCode] = useState('');
+  const [toast, setToast] = useState('');
   const bar = useRef<Bar | null>(null);
   useEffect(() => {
     const l = detectLang();
@@ -45,6 +47,15 @@ export default function HomeClient() {
       const key = e instanceof AuthError ? 'auth' : ((e as Error).message as keyof typeof t.lobby.errors);
       setError(t.lobby.errors[key] ?? t.lobby.errors.unknown);
       setBusy(false);
+    }
+  };
+
+  /** Ссылка на игру — из PWA адресной строки нет, поэтому своя кнопка. Вызывать прямо из нажатия. */
+  const shareGame = async () => {
+    const r = await shareContent({ text: t.lobby.shareGameText, url: withLang(`${location.origin}/`) });
+    if (r === 'copied' || r === 'failed') {
+      setToast(r === 'copied' ? t.lobby.copied : location.origin);
+      setTimeout(() => setToast(''), 2000);
     }
   };
 
@@ -105,6 +116,14 @@ export default function HomeClient() {
       <button className="link" onClick={() => bar.current?.openSettings('rules')}>
         {t.ui.howTo}
       </button>
+      <button className="link" onClick={() => void shareGame()}>
+        {t.lobby.shareGame}
+      </button>
+      {toast && (
+        <div className="toast" role="status">
+          {toast}
+        </div>
+      )}
       {error && (
         <p className="error" role="alert">
           {error}

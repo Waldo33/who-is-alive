@@ -142,6 +142,8 @@ export const ru = {
     invite: 'Позвать в массовку',
     inviteText: '{name} зовёт тебя в массовку',
     copied: 'Ссылка скопирована',
+    shareGame: 'Поделиться игрой',
+    shareGameText: 'Сыграем в «Массовку»? Спрячься в толпе и вычисли живых',
     players: 'Игроки {n}/4',
     emptySlot: 'ждём…',
     you: 'ты',

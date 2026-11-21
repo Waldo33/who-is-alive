@@ -115,6 +115,8 @@ export const en: Dict = {
     invite: 'Cast your friends',
     inviteText: '{name} cast you as an extra',
     copied: 'Link copied',
+    shareGame: 'Share the game',
+    shareGameText: 'Up for Be Nobody? Blend into the crowd and spot who’s alive',
     players: 'Players {n}/4',
     emptySlot: 'waiting…',
     you: 'you',
