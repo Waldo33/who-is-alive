@@ -66,6 +66,7 @@ export default function HomeClient() {
       <TopBar
         lang={lang}
         barRef={bar}
+        onShare={() => void shareGame()}
         onLang={(l) => {
           setLang(l);
           document.documentElement.lang = l;
@@ -115,9 +116,6 @@ export default function HomeClient() {
       </Link>
       <button className="link" onClick={() => bar.current?.openSettings('rules')}>
         {t.ui.howTo}
-      </button>
-      <button className="link" onClick={() => void shareGame()}>
-        {t.lobby.shareGame}
       </button>
       {toast && (
         <div className="toast" role="status">

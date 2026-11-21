@@ -53,6 +53,8 @@ export interface TopBarOptions {
   floating?: boolean;
   /** Скрыть шестерёнку (в игре её роль играет кнопка на холсте). */
   noGear?: boolean;
+  /** Квадратная кнопка «Поделиться» рядом с шестерёнкой (только главная). Вызывается из click — свежий жест. */
+  onShare?: () => void;
 }
 
 export interface TopBar {
@@ -80,12 +82,31 @@ const GEAR = `<svg viewBox="0 0 12 12" width="24" height="24" aria-hidden="true"
   (r, y) => [...r].map((c, x) => (c === '#' ? `<rect x="${x}" y="${y}" width="1" height="1"/>` : '')),
 ).join('')}</svg>`;
 
+/** Пиксельный значок «Поделиться» 12×12: стрелка вверх из коробки. */
+const SHARE_ROWS = [
+  '.....##.....',
+  '....####....',
+  '...######...',
+  '..##.##.##..',
+  '.....##.....',
+  '.##..##..##.',
+  '.##..##..##.',
+  '.##..##..##.',
+  '.##......##.',
+  '.##########.',
+  '.##########.',
+  '............',
+];
+const SHARE = `<svg viewBox="0 0 12 12" width="24" height="24" aria-hidden="true" shape-rendering="crispEdges" fill="currentColor">${SHARE_ROWS.flatMap(
+  (r, y) => [...r].map((c, x) => (c === '#' ? `<rect x="${x}" y="${y}" width="1" height="1"/>` : '')),
+).join('')}</svg>`;
+
 export function mountTopBar(parent: HTMLElement, init: TopBarOptions): TopBar {
   ensureTopBarCss();
   let o: TopBarOptions = { ...init };
   const bar = document.createElement('div');
   bar.className = 'kto-topbar' + (o.floating ? ' floating' : '');
-  bar.innerHTML = `<button type="button" class="kto-back"></button><button type="button" class="kto-gear">${GEAR}</button>`;
+  bar.innerHTML = `<button type="button" class="kto-back"></button><button type="button" class="kto-share">${SHARE}</button><button type="button" class="kto-gear">${GEAR}</button>`;
   const sheet = document.createElement('div');
   sheet.className = 'kto-sheet';
   sheet.hidden = true;
@@ -95,6 +116,7 @@ export function mountTopBar(parent: HTMLElement, init: TopBarOptions): TopBar {
   document.body.appendChild(sheet);
   const back = bar.querySelector<HTMLButtonElement>('.kto-back')!;
   const gear = bar.querySelector<HTMLButtonElement>('.kto-gear')!;
+  const share = bar.querySelector<HTMLButtonElement>('.kto-share')!;
   // не пускать касания к игре под панелью и листом
   for (const el of [bar, sheet]) for (const ev of ['pointerdown', 'pointerup', 'touchstart', 'touchend']) el.addEventListener(ev, (e) => e.stopPropagation());
 
@@ -104,6 +126,8 @@ export function mountTopBar(parent: HTMLElement, init: TopBarOptions): TopBar {
     back.textContent = `< ${t.ui.back}`; // стрелки «←» нет в пиксельном шрифте
     gear.hidden = !!o.noGear;
     gear.setAttribute('aria-label', t.ui.settings);
+    share.hidden = !o.onShare;
+    share.setAttribute('aria-label', t.lobby.shareGame);
     if (sheet.hidden) return;
     const on = soundEnabled();
     const mus = musicEnabled();
@@ -196,6 +220,7 @@ export function mountTopBar(parent: HTMLElement, init: TopBarOptions): TopBar {
   document.addEventListener('keydown', onKey);
   back.addEventListener('click', () => o.onBack?.());
   gear.addEventListener('click', () => open());
+  share.addEventListener('click', () => o.onShare?.());
   render();
 
   return {
@@ -220,7 +245,8 @@ export const TOPBAR_CSS = `
   border:0;border-radius:0;background:#262b44;color:#ead4aa;box-shadow:0 0 0 2px #181425,0 3px 0 #181425;cursor:pointer;padding:0 12px;
   display:inline-flex;align-items:center;justify-content:center;gap:6px}
 .kto-topbar button[hidden]{display:none}
-.kto-topbar .kto-gear{margin-left:auto;padding:0;width:44px;color:#c0cbdc}
+.kto-topbar .kto-gear,.kto-topbar .kto-share{margin-left:auto;padding:0;width:44px;color:#c0cbdc}
+.kto-topbar .kto-share:not([hidden])+.kto-gear{margin-left:12px}
 .kto-topbar button:active{transform:translateY(2px);box-shadow:0 0 0 2px #181425}
 .kto-topbar button:focus-visible{outline:2px solid #fee761;outline-offset:2px}
 .kto-sheet{position:fixed;inset:0;z-index:60;background:rgba(24,20,37,.86);display:flex;align-items:flex-end;justify-content:center;
