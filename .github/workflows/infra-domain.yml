@@ -1,0 +1,46 @@
+# Домен игры в DNS Timeweb Cloud: смотрим делегирование (NS) снаружи,
+# добавляем домен в аккаунт Cloud, если его там нет, и показываем записи.
+# Логи публичные: печатаем только имена серверов, статусы и DNS-записи (они и так публичны).
+name: infra-domain
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/infra-domain.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  domain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      TWC_TOKEN: ${{ secrets.TWC_TOKEN }}
+      API: https://api.timeweb.cloud/api/v1
+      DOMAIN: benobody.app
+    steps:
+      - name: Делегирование снаружи
+        run: |
+          echo "NS у реестра (.app):"; dig +short NS "$DOMAIN" @8.8.8.8 || true
+          echo "SOA:"; dig +short SOA "$DOMAIN" @1.1.1.1 || true
+          echo "A:"; dig +short A "$DOMAIN" @8.8.8.8 || true
+          echo "whois (статус и NS):"; whois "$DOMAIN" 2>/dev/null | grep -iE '^(domain status|name server|registrar:|creation date|registry expiry)' | head -20 || true
+
+      - name: Домен в Timeweb Cloud
+        run: |
+          code=$(curl -sS -o /tmp/d.json -w '%{http_code}' -H "Authorization: Bearer $TWC_TOKEN" "$API/domains/$DOMAIN")
+          echo "domains/$DOMAIN: HTTP $code"
+          if [ "$code" = 404 ]; then
+            code=$(curl -sS -o /tmp/add.json -w '%{http_code}' -X POST -H "Authorization: Bearer $TWC_TOKEN" -H 'Content-Type: application/json' -d '{}' "$API/add-domain/$DOMAIN")
+            echo "add-domain: HTTP $code"; jq -r '.message // .error_code // "ok"' /tmp/add.json 2>/dev/null || true
+            sleep 3
+            curl -sS -o /tmp/d.json -H "Authorization: Bearer $TWC_TOKEN" "$API/domains/$DOMAIN"
+          fi
+          jq -r '.domain? // . | "fqdn: \(.fqdn // "?")\nстатус: \(.domain_status // "?")\nтехнический: \(.is_technical // "?")\nпровайдер: \(.provider // "?")\nNS: \(.nameservers? // [] | tostring)"' /tmp/d.json 2>/dev/null || true
+          echo "поля:"; jq -c '.domain? // . | keys' /tmp/d.json 2>/dev/null || true
+
+      - name: DNS-записи в Cloud
+        run: |
+          curl -sS -H "Authorization: Bearer $TWC_TOKEN" "$API/domains/$DOMAIN/dns-records" | jq -r '.dns_records[]? | "\(.type)\t\(.data.subdomain // "@")\t\(.data.value // "")"' || true
