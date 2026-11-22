@@ -7,7 +7,7 @@
  *
  * Сейчас за флагом:
  * - `casting` — «Кастинг дня» (/daily): карточка на главной, ссылки `startapp=daily`, страница /daily.
- *   Бот прячет кастинг своим флагом — секрет функции `FEATURES=casting` (supabase/functions/tg-bot).
+ *   Бот прячет кастинг своим флагом — переменная `FEATURES=casting` сервера бота (apps/server/src/bot.ts).
  */
 export type Feature = 'casting';
 

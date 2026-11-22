@@ -8,12 +8,12 @@
  *  - имя и язык игрока из профиля Telegram — по умолчанию, если своё не задано;
  *  - ссылки `t.me/<бот>/<приложение>?startapp=…` ведут сразу в комнату (`r_КОД`) или в загадку дня (`daily`);
  *  - «Поделиться» и «Позвать» — карточкой с кнопкой «Играть» (8.0, `shareMessage`: её готовит сервер бота,
- *    `supabase/functions/tg-bot`), иначе родным окном выбора чата (`t.me/share/url`);
+ *    `apps/server/src/bot.ts` на сервере в Нидерландах, через api.<домен>/tg), иначе родным окном выбора чата (`t.me/share/url`);
  *  - рейтинг загадки дня «в этом чате» (по `chat_instance`, подпись initData проверяет сервер бота).
  *
  * Вне Telegram всё здесь — пустые вызовы. Скрипт Telegram грузится только внутри Telegram.
  */
-import { TG_APP } from './env';
+import { GAME_API, TG_APP } from './env';
 import { featureOn } from './features';
 import { LANG_KEY } from './lang';
 import { savedName, saveName } from './name';
@@ -277,11 +277,10 @@ export async function telegramReady(): Promise<TgWebApp | null> {
 }
 
 /**
- * Сервер бота — Supabase Edge Function `tg-bot` (Франкфурт). На своём сервере в Москве бот есть
- * (apps/server/src/bot.ts, /tg/*), но оттуда закрыт api.telegram.org (проверено 23.11.2026) — переедет,
- * когда появится сервер или прокси за границей.
+ * Сервер бота: api.<домен>/tg/* — Москва пересылает их по туннелю на сервер в Нидерландах
+ * (apps/server/src/bot.ts; из России api.telegram.org закрыт, а телефоны ходят только в Москву).
  */
-const BOT_FN = 'https://wivildtgfkpuxvqoamqg.supabase.co/functions/v1/tg-bot';
+const BOT_FN = `${GAME_API}/tg`;
 
 async function botPost<T>(path: string, body: Record<string, unknown>): Promise<T | null> {
   const w = await bootTelegram();
