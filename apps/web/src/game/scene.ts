@@ -112,6 +112,23 @@ interface Button {
    * при самом мелком масштабе (×1,5, SE в Safari) это 45×45 CSS px, минимум Apple 44×44.
    */
   hit?: [number, number, number, number];
+  /** Кнопка экрана итогов: главная (янтарь), вторая (night + рамка amber), плашка (неактивная). */
+  kind?: 'primary' | 'secondary' | 'plate';
+  /** Заливка главной кнопки 0…1 (обратный отсчёт до следующего дубля). */
+  fill?: () => number;
+}
+
+/** Кнопка в ряду итогов: ширина — по тексту (поля ≥ 6 px), остаток ряда — кнопке с flex. */
+interface RowButton {
+  id: string;
+  kind: 'primary' | 'secondary' | 'plate';
+  label?: string;
+  icon?: string;
+  flex?: boolean;
+  onTap?: () => void;
+  /** Системное меню «Поделиться» — только по отпусканию пальца. */
+  release?: boolean;
+  fill?: () => number;
 }
 
 interface Pigeon {
@@ -763,6 +780,13 @@ export class GameScene extends Phaser.Scene {
         this.drawPanel(b.x, b.y, b.w, b.h, chosen ? PAL.forest : PAL.dusk, b.pressed, chosen ? PAL.green : b.accent, this.crowdG);
         o?.icon?.setAlpha(answered && !chosen ? 0.35 : 1);
         if (o?.icon) o.icon.y = b.y + b.h / 2 + (b.pressed ? 1 : 0);
+        continue;
+      }
+      if (b.kind) {
+        this.drawRowButton(b);
+        const dy = b.pressed && b.kind !== 'plate' ? 1 : 0;
+        if (o?.icon) o.icon.y = b.y + Math.floor(b.h / 2) - 1 + dy;
+        if (o?.text) o.text.y = b.y + Math.floor(b.h / 2) - 6 + dy;
         continue;
       }
       const ap = b.id === 'autopilot' && this.me()?.autopilot;
@@ -2455,7 +2479,7 @@ export class GameScene extends Phaser.Scene {
     this.ovDyn = {};
     this.autoBar = null;
     const keep = new Set(this.buttons.filter((b) => b.keep).map((b) => b.id));
-    this.buttons = this.buttons.filter((b) => !b.label || b.keep);
+    this.buttons = this.buttons.filter((b) => (!b.label && !b.kind) || b.keep);
     for (const [id, o] of this.btnObjs) if (o.text && !keep.has(id)) this.btnObjs.delete(id);
   }
 
@@ -2568,11 +2592,11 @@ export class GameScene extends Phaser.Scene {
     const s = sim.summary!;
     this.ovPanel(8, AY + 8, 164, 244);
     const reason = this.t.game.endReason[s.endReason];
-    this.ovText(90, AY + 16, tp(this.lang, this.t.game.resultsTitle, s.round), 'yellow');
-    this.ovText(90, AY + 28, reason, 'mist');
+    this.ovText(90, AY + 14, tp(this.lang, this.t.game.resultsTitle, s.round), 'yellow');
+    this.ovText(90, AY + 25, reason, 'mist');
     const order = [...sim.players].sort((a, b) => sim.scores[b.pid] - sim.scores[a.pid]);
-    // цель матча над столбцом счёта: видно, что дублей будет несколько
-    const goal = this.ovText(0, AY + 37, fmt(this.t.game.toWin, { n: this.cfg.scoreToWin }), 'mist', false);
+    // цель матча над столбцом счёта (своя строка, не налезает на подзаголовок): дублей будет несколько
+    const goal = this.ovText(0, AY + 36, fmt(this.t.game.toWin, { n: this.cfg.scoreToWin }), 'mist', false);
     goal.x = 171 - goal.width;
     order.forEach((p, i) => {
       const y = AY + 46 + i * 16;
@@ -2589,21 +2613,72 @@ export class GameScene extends Phaser.Scene {
     });
     s.awards.forEach((a, i) => this.awardCard(16, AY + 112 + i * 42, a.id, a.pids, a.value));
     if (!s.awards.length) this.ovText(90, AY + 130, this.t.game.noAwards, 'mist');
-    // «Дальше» решает только режиссёр (хост): у остальных кнопка ничего не делала — им «Поделиться» во всю ширину
-    if (this.init0.spectator) {
-      /* зрителю делиться нечем — счёт не его */
-    } else if (this.amHost()) {
-      this.addOverlayButton('share', 9, AY + 214, 81, 30, this.t.game.share, () => this.share(), undefined, true);
-      this.addOverlayButton('next', 91, AY + 214, 80, 30, this.t.game.next, () => {
-        this.track('next_tap', { round: sim.round });
-        sim.intent({ k: 'next' });
-      }, PAL.amber);
-    } else this.addOverlayButton('share', 9, AY + 214, 162, 30, this.t.game.share, () => this.share(), undefined, true);
-    // следующий дубль начнётся сам: крупный обратный отсчёт и тающая полоска — у всех, не только у режиссёра
-    this.ovDyn.auto = this.ovText(90, AY + 199, '', 'yellow');
-    this.autoBar = this.add.graphics();
-    this.ov(this.autoBar, 2050);
+    // Одна главная кнопка: следующий дубль. Он начнётся сам — отсчёт идёт заливкой кнопки (у всех);
+    // ускорить может только режиссёр (хост), у остальных та же кнопка — неактивной плашкой с секундами.
+    // «Поделиться» — квадратной второй кнопкой с иконкой слева.
     this.autoTotal = Math.max(1, sim.timeLeft());
+    const fill = () => Math.max(0, Math.min(1, sim.timeLeft() / this.autoTotal));
+    const n = sim.round + 1;
+    if (!this.init0.spectator) {
+      const share: RowButton = { id: 'share', kind: 'secondary', icon: 'share', onTap: () => this.share(), release: true };
+      this.addRow(AY + 214, this.amHost()
+        ? [share, { id: 'next', kind: 'primary', flex: true, label: fmt(this.t.game.next, { n }), fill, onTap: () => {
+          this.track('next_tap', { round: sim.round });
+          sim.intent({ k: 'next' });
+        } }]
+        : [share, { id: 'next', kind: 'plate', flex: true, label: fmt(this.t.game.nextTake, { n, s: Math.ceil(sim.timeLeft() / 1000) }) }]);
+    }
+  }
+
+  /** Ряд кнопок итогов от x = 9 до 171 с зазором 2: ширина по тексту, остаток — кнопке с flex. */
+  private addRow(y: number, row: RowButton[]): void {
+    const L = 9;
+    const R = 171;
+    const H = 30;
+    const need = (r: RowButton) => (r.label ? r.label.length * 8 + 12 : 0) + (r.icon ? (r.label ? 20 : 30) : 0);
+    const fixed = row.reduce((s, r) => s + (r.flex ? 0 : need(r)), 0) + (row.length - 1) * 2;
+    let x = L;
+    for (const r of row) {
+      const w = r.flex ? R - L - fixed : need(r);
+      const b: Button = {
+        id: r.id, x, y, w, h: H, label: r.label ?? '', kind: r.kind, fill: r.fill,
+        visible: ((ph) => () => this.sim.phase === ph)(this.sim.phase),
+        ...(r.kind === 'plate' || !r.onTap ? {} : r.release ? { onUp: r.onTap } : { onDown: r.onTap }),
+      };
+      this.buttons = this.buttons.filter((o) => o.id !== r.id);
+      this.buttons.push(b);
+      const font: FontColor = r.kind === 'primary' ? 'ink' : r.kind === 'plate' ? 'mist' : 'sand';
+      const iconW = r.icon ? 16 : 0;
+      const text = r.label ? this.ov(this.txt(0, y + 9, r.label, font).setOrigin(0, 0), 2100) : undefined;
+      // ширина надписи без контура по краям (у тёмного шрифта контура нет)
+      const textW = text ? text.width - (font === 'ink' ? 2 : 0) : 0;
+      const gap = r.icon && r.label ? 4 : 0;
+      const x0 = Math.round(x + (w - iconW - gap - textW) / 2);
+      const icon = r.icon ? this.ov(this.add.image(x0 + 8, y + 14, 'icons', this.icon(r.icon)).setScale(2), 2100) : undefined;
+      if (text) text.x = x0 + iconW + gap - (font === 'ink' ? 1 : 0);
+      this.btnObjs.set(r.id, { text, icon });
+      x += w + 2;
+    }
+  }
+
+  /** Кнопки итогов: главная — янтарь с тенью rust (как в HTML), вторая — night с рамкой amber, плашка — тихая. */
+  private drawRowButton(b: Button): void {
+    const g = this.ui2;
+    const { x, y, w, h } = b;
+    const down = b.pressed && b.kind !== 'plate' ? 1 : 0;
+    g.fillStyle(hexToInt(PAL.ink)).fillRect(x, y, w, h);
+    if (b.kind === 'primary') {
+      g.fillStyle(hexToInt(PAL.rust)).fillRect(x + 1, y + 1 + down, w - 2, h - 2 - down);
+      g.fillStyle(hexToInt(PAL.clay)).fillRect(x + 1, y + 1 + down, w - 2, h - 4);
+      const f = b.fill ? b.fill() : 1;
+      g.fillStyle(hexToInt(PAL.amber)).fillRect(x + 1, y + 1 + down, Math.round((w - 2) * f), h - 4);
+    } else if (b.kind === 'secondary') {
+      g.fillStyle(hexToInt(PAL.amber)).fillRect(x + 1, y + 1 + down, w - 2, h - 2 - down);
+      g.fillStyle(hexToInt(down ? PAL.ink : PAL.night)).fillRect(x + 2, y + 2 + down, w - 4, h - 4 - down);
+    } else {
+      g.fillStyle(hexToInt(PAL.dusk)).fillRect(x + 1, y + 1, w - 2, h - 2);
+      g.fillStyle(hexToInt(PAL.night)).fillRect(x + 2, y + 2, w - 4, h - 4);
+    }
   }
 
   private awardCard(x: number, y: number, id: AwardId, pids: string[], value: number): void {
@@ -2649,29 +2724,33 @@ export class GameScene extends Phaser.Scene {
       total.x = 166 - total.width;
     });
     m.awards.forEach((a, i) => this.awardCard(16, AY + 124 + i * 42, a.id, a.pids, a.value));
-    // реванш тоже запускает только режиссёр; остальным — «Поделиться» во всю ширину
+    // Одна главная: «Ещё раз» у режиссёра. Матч с ИИ — вторая «С друзьями» (настоящая комната),
+    // в комнате — «Поделиться» иконкой; у остальных — «Поделиться» второй кнопкой во всю ширину.
     if (this.init0.spectator) {
       /* зритель после матча сам войдёт в комнату (net/room.ts) */
     } else if (this.amHost()) {
-      this.addOverlayButton('rematch', 9, AY + 214, 81, 30, this.t.game.rematch, () => {
+      const rematch: RowButton = { id: 'rematch', kind: 'primary', label: this.t.game.rematch, onTap: () => {
         this.confetti = [];
         this.track('rematch', { rounds: sim.roundsPlayed });
         // пришли новые игроки (зрители после матча) — комната начинает новый матч с ними
         if (this.init0.onRematch?.()) return;
         sim.intent({ k: 'rematch' });
-      }, PAL.amber);
-      // матч с ИИ: главный следующий шаг — сыграть с друзьями в настоящей комнате
+      } };
       const invite = this.init0.onInvite;
-      if (invite) {
-        this.addOverlayButton('invite', 91, AY + 214, 80, 30, this.t.game.withFriends, () => {
+      this.addRow(AY + 214, invite
+        ? [{ ...rematch, flex: true }, { id: 'invite', kind: 'secondary', label: this.t.game.withFriends, release: true, onTap: () => {
           this.track('invite_tap', { from: 'match_end' });
           invite();
-        }, PAL.amber, true);
-      } else this.addOverlayButton('share2', 91, AY + 214, 80, 30, this.t.game.share, () => this.share(), undefined, true);
-    } else this.addOverlayButton('share2', 9, AY + 214, 162, 30, this.t.game.share, () => this.share(), undefined, true);
-    // открывается касанием: отпускание пальца у нижнего края экрана браузер может забрать себе (Chrome на iPhone);
-    // жест для системного меню не нужен — отправка идёт отдельной кнопкой в окне клипа
-    if (this.best && !this.init0.spectator) this.addOverlayButton('clip', 3, PANEL_Y + 3, 174, 30, this.t.clip.button, () => this.openClip(), PAL.amber);
+        } }]
+        : [{ id: 'share2', kind: 'secondary', icon: 'share', release: true, onTap: () => this.share() }, { ...rematch, flex: true }]);
+    } else this.addRow(AY + 214, [{ id: 'share2', kind: 'secondary', icon: 'share', label: this.t.game.share, flex: true, release: true, onTap: () => this.share() }]);
+    // клип — третьей, тихой кнопкой с кадром плёнки в нижней панели. Открывается касанием: отпускание
+    // у нижнего края экрана браузер может забрать себе (Chrome на iPhone); отправка — кнопкой в окне клипа
+    if (this.best && !this.init0.spectator) {
+      this.addRow(PANEL_Y + 3, [{ id: 'clip', kind: 'secondary', icon: 'film', label: this.t.clip.button, flex: true, onTap: () => this.openClip() }]);
+      const b = this.buttons.find((x) => x.id === 'clip');
+      if (b) Object.assign(b, { x: 3, w: 174 });
+    }
     // карточку рисуем заранее: к нажатию «Поделиться» файл уже готов, и меню откроется без задержки
     void resultCardFile({
       players: sim.players,
@@ -2758,16 +2837,14 @@ export class GameScene extends Phaser.Scene {
         this.drawAccusations();
       }
     }
-    if (phase === 'results' && this.ovDyn.auto) {
-      const left = sim.timeLeft();
-      this.ovDyn.auto.setText(fmt(this.t.game.nextTake, { n: sim.round + 1, s: Math.ceil(left / 1000) }));
-      this.ovDyn.auto.x = Math.round(90 - this.ovDyn.auto.width / 2);
-      const bar = this.autoBar;
-      if (bar) {
-        const w = Math.round((160 * Math.max(0, Math.min(1, left / this.autoTotal))));
-        bar.clear();
-        bar.fillStyle(hexToInt(PAL.ink)).fillRect(10, AY + 209, 160, 3);
-        bar.fillStyle(hexToInt(PAL.amber)).fillRect(10, AY + 210, w, 1);
+    // у гостя на плашке — секунды до следующего дубля (у режиссёра отсчёт идёт заливкой кнопки)
+    const plate = phase === 'results' ? this.buttons.find((b) => b.id === 'next' && b.kind === 'plate') : undefined;
+    const pt = plate && this.btnObjs.get('next')?.text;
+    if (pt) {
+      const s = fmt(this.t.game.nextTake, { n: sim.round + 1, s: Math.max(0, Math.ceil(sim.timeLeft() / 1000)) });
+      if (pt.text !== s) {
+        pt.setText(s);
+        pt.x = Math.round(plate.x + (plate.w - pt.width) / 2);
       }
     }
   }

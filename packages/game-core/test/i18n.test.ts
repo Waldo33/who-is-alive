@@ -62,7 +62,15 @@ describe('i18n', () => {
         expect(a.title.length, `${lang}: ${a.title}`).toBeLessThanOrEqual(16);
         expect(tp(lang, a.text, 12).length, `${lang}: ${tp(lang, a.text, 12)}`).toBeLessThanOrEqual(18);
       }
-      for (const s of [g.share, g.next, g.rematch]) expect(s.length * 8).toBeLessThanOrEqual(80);
+      // кнопки итогов на холсте (scene.ts › addRow): ширина = 8 пикс. на знак + поля по 6, иконка 16 + зазор 4;
+      // ряд — 162 пикс., «Поделиться» иконкой — 30 пикс. + зазор 2
+      const btn = (s: string, icon = false) => s.length * 8 + 12 + (icon ? 20 : 0);
+      expect(btn(fmt(g.next, { n: 9 })), g.next).toBeLessThanOrEqual(162 - 32);
+      expect(btn(fmt(g.nextTake, { n: 9, s: 10 })), g.nextTake).toBeLessThanOrEqual(162 - 32);
+      expect(btn(g.rematch) + 2 + btn(g.withFriends), `${g.rematch} + ${g.withFriends}`).toBeLessThanOrEqual(162);
+      expect(btn(g.rematch), g.rematch).toBeLessThanOrEqual(162 - 32);
+      expect(btn(g.share, true), g.share).toBeLessThanOrEqual(162);
+      expect(btn(t.clip.button, true), t.clip.button).toBeLessThanOrEqual(174);
       // клип и карточка рисуются тем же шрифтом 8 пикс. на ширине 180
       const c = t.clip;
       for (const s of [c.button, fmt(c.making, { n: 100 }), c.ready, c.failed, c.find, c.reveal, fmt(c.round, { n: 7 }), ...Object.values(c.kinds), c.cta, ...Object.values(t.card), c.findMe, c.thatWasMe, c.gotMe, c.whoGotMe, c.deathBtnLong, fmt(c.watch, { name: 'Ш'.repeat(12) }), fmt(c.koOf, { name: 'Ш'.repeat(11) }), c.star3Of, c.botOf]) {

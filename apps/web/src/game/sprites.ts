@@ -329,6 +329,10 @@ export function makeIcons(): { canvas: HTMLCanvasElement; names: string[] } {
     cross: ['oo....oo', 'owo..owo', '.owoowo.', '..owwo..', '..owwo..', '.owoowo.', 'owo..owo', 'oo....oo'],
     gear: ['...mm...', '.m.mm.m.', '..mmmm..', 'mmm..mmm', 'mmm..mmm', '..mmmm..', '.m.mm.m.', '...mm...'],
     crown: ['o..o..o.', 'oyoyoyo.', 'oyyyyyo.', 'oyyyyyo.', 'oyryryo.', 'ooooooo.', '........', '........'],
+    // «поделиться»: стрелка вверх из лотка
+    share: ['...oo...', '..owwo..', '.owwwwo.', 'oooww ooo'.replace(' ', ''), 'o.owwo.o', 'owoooowo', 'owwwwwwo', 'oooooooo'],
+    // кадр плёнки: клип
+    film: ['oooooooo', 'owowowow', 'oooooooo', 'owwwwwwo', 'owwwwwwo', 'oooooooo', 'owowowow', 'oooooooo'],
     // «Толпа решает»: жест не назван
     question: ['.oooooo.', 'oyyyyyyo', 'oyooooyo', 'ooo.oyyo', '...oyyo.', '...oyo..', '...ooo..', '...oyo..'],
   };
