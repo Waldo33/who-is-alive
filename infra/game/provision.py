@@ -28,8 +28,9 @@ TOKEN = os.environ['TWC_TOKEN']
 NAME = os.environ.get('SERVER_NAME', 'massovka-game')
 # по очереди, пока не найдётся свободный: Cloud KZN 50 (Казань), Cloud EKB 50 (Екатеринбург) — 2 vCPU, 4 ГБ,
 # 50 ГБ, 1000 ₽; запасной — Cloud MSK 15 (Москва, 1 vCPU, 1 ГБ, 1180 ₽; хватает одному игровому серверу,
-# размер потом увеличивается без переезда). 22.11.2026 в Казани и Екатеринбурге мест не было.
-PRESETS = [int(x) for x in os.environ.get('SERVER_PRESETS', '6759,6749,4795').split(',')]
+# размер потом увеличивается без переезда); дальше — Санкт-Петербург: Cloud-15 (1180 ₽), SSD-15 (950 ₽).
+# 22.11.2026 в Казани, Екатеринбурге и Москве мест не было.
+PRESETS = [int(x) for x in os.environ.get('SERVER_PRESETS', '6759,6749,4795,2447,2573').split(',')]
 OS_NAME = os.environ.get('SERVER_OS', 'ubuntu')
 OS_VERSION = os.environ.get('SERVER_OS_VERSION', '24.04')
 KEY_NAME = 'massovka-actions'
