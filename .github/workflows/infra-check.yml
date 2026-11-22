@@ -42,6 +42,8 @@ jobs:
       - name: Тарифы серверов в Москве
         run: |
           curl -sS -H "Authorization: Bearer $TWC_TOKEN" "$API/presets/servers" -o /tmp/presets.json
+          echo "все тарифы до 2500 ₽ (id, локация, vCPU/ГБ, диск, цена, имя):"
+          jq -r '.server_presets[] | select(.price <= 2500) | "\(.id)\t\(.location)\t\(.cpu)/\(.ram/1024)\t\(.disk/1024) ГБ \(.disk_type)\t\(.price) ₽\t\(.description_short // "")"' /tmp/presets.json | sort -t$'\t' -k5 -n || true
           echo "тарифы 2 vCPU / 4 ГБ и 4 vCPU / 8 ГБ во всех локациях:"
           jq -r '.server_presets[] | select((.cpu == 2 and .ram == 4096) or (.cpu == 4 and .ram == 8192)) | "\(.id)\t\(.location)\t\(.cpu)/\(.ram/1024)\t\(.disk/1024) ГБ \(.disk_type)\t\(.price) ₽\t\(.cpu_frequency // "?") ГГц\t\(.description_short // "")\t\(.tags // [] | join(","))"' /tmp/presets.json | sort -t$'\t' -k5 -n || true
           echo "поля тарифа:"; jq -c '.server_presets[0] | keys' /tmp/presets.json || true
