@@ -26,13 +26,14 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 API = 'https://api.timeweb.cloud/api/v1'
 TOKEN = os.environ['TWC_TOKEN']
 NAME = os.environ.get('SERVER_NAME', 'massovka-game')
-PRESET = int(os.environ.get('SERVER_PRESET', '6759'))  # Cloud KZN 50: 2 vCPU, 4 ГБ, 50 ГБ, Казань
+# по очереди, пока не найдётся свободный: Cloud KZN 50 (Казань), Cloud EKB 50 (Екатеринбург) — 2 vCPU, 4 ГБ, 50 ГБ, 1000 ₽
+PRESETS = [int(x) for x in os.environ.get('SERVER_PRESETS', '6759,6749').split(',')]
 OS_NAME = os.environ.get('SERVER_OS', 'ubuntu')
 OS_VERSION = os.environ.get('SERVER_OS_VERSION', '24.04')
 KEY_NAME = 'massovka-actions'
 
 
-def api(method, path, body=None):
+def api(method, path, body=None, soft=False):
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(API + path, data=data, method=method, headers={
         'Authorization': f'Bearer {TOKEN}',
@@ -44,6 +45,8 @@ def api(method, path, body=None):
             return json.loads(raw) if raw else {}
     except urllib.error.HTTPError as e:
         msg = e.read().decode(errors='replace')[:400]
+        if soft:
+            return {'_error': e.code, '_msg': msg}
         print(f'::error::{method} {path}: HTTP {e.code}: {msg}')
         sys.exit(1)
 
@@ -101,16 +104,27 @@ def main():
         s = servers[0]
         print(f'сервер есть: id={s["id"]}, статус={s.get("status")}')
     else:
-        body = {
-            'name': NAME,
-            'preset_id': PRESET,
-            'os_id': find_os(),
-            'ssh_keys_ids': [key_id],
-            'is_ddos_guard': False,
-            'comment': 'Массовка: игровой сервер (создан из GitHub Actions)',
-        }
-        s = api('POST', '/servers', body)['server']
-        print(f'сервер создан: id={s["id"]}')
+        os_id = find_os()
+        s = None
+        for preset in PRESETS:
+            body = {
+                'name': NAME,
+                'preset_id': preset,
+                'os_id': os_id,
+                'ssh_keys_ids': [key_id],
+                'is_ddos_guard': False,
+                'comment': 'Массовка: игровой сервер (создан из GitHub Actions)',
+            }
+            r = api('POST', '/servers', body, soft=True)
+            if '_error' in r:
+                print(f'тариф {preset}: отказ ({r["_msg"][:160]})')
+                continue
+            s = r['server']
+            print(f'сервер создан: id={s["id"]}, тариф {preset}')
+            break
+        if s is None:
+            print('::error::ни один тариф не свободен:', PRESETS)
+            sys.exit(1)
     sid = s['id']
     ip = None
     for _ in range(90):
