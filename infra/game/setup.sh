@@ -4,7 +4,8 @@
 # в /tmp/deploy: из России часть зарубежных сайтов (nodejs.org на Cloudflare) режется.
 #
 #   HOST=api.benobody.app [ALT_HOST=1-2-3-4.sslip.io] SHA=<коммит> bash setup.sh
-# HOST — основной адрес (в нём WebSocket для клиентов), ALT_HOST — запасной, обслуживается так же.
+# HOST — основной адрес (в нём WebSocket для клиентов): api.benobody.app, если DNS уже смотрит на сервер;
+# ALT_HOST — запасной <IP>.sslip.io, обслуживается так же.
 set -euo pipefail
 
 : "${HOST:?нужен HOST}"
