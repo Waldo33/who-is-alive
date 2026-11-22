@@ -120,6 +120,8 @@ interface Pigeon {
 interface DeathClip {
   eid: number;
   at: number;
+  /** Дубль, в котором выбили: клип, который уже монтируется или готов, переживает конец дубля и следующий. */
+  round: number;
   status: 'offer' | 'rendering' | 'ready';
   progress: number;
   file: File | null;
@@ -987,7 +989,9 @@ export class GameScene extends Phaser.Scene {
       this.applyTheme();
       this.ghostMarks.clear();
       this.replay = null;
-      this.deathClip = null;
+      // клип выбывшего, который уже монтируется или готов, не теряем: кнопка остаётся до конца следующего дубля
+      const dc = this.deathClip;
+      if (!dc || dc.status === 'offer' || dc.round < n.round - 1) this.deathClip = null;
       if (n.round === 1) {
         // реванш: новый матч — новые лучший момент и карточка
         this.best = null;
@@ -1384,7 +1388,7 @@ export class GameScene extends Phaser.Scene {
       // в игре — в углу поля, на итогах — во всю ширину нижней панели (кнопки итогов выше)
       visible: () => {
         const ph = this.sim.phase;
-        const ok = !!this.deathClip && (ph === 'play' || ph === 'accuse' || ph === 'reveal' || ph === 'results');
+        const ok = !!this.deathClip && (ph === 'countdown' || ph === 'play' || ph === 'accuse' || ph === 'reveal' || ph === 'results');
         if (ok) this.placeDeathClipButton(b, ph === 'results');
         return ok;
       },
@@ -1402,8 +1406,10 @@ export class GameScene extends Phaser.Scene {
     // после баннера «Ты выбит!» (он гаснет через ~3,3 с)
     this.time.delayedCall(3400, () => {
       if (this.sim.round !== round || this.me()?.alive) return;
+      // прошлый клип ещё монтируется — не сбиваем его
+      if (this.deathClip?.status === 'rendering') return;
       // кто выбил, известно сразу только ночью в Майами (его замах видели все)
-      this.deathClip = { eid, at, status: 'offer', progress: 0, file: null, killer };
+      this.deathClip = { eid, at, round, status: 'offer', progress: 0, file: null, killer };
       this.updateDeathClipLabel();
       this.audio.play('ready');
     });
@@ -1413,9 +1419,15 @@ export class GameScene extends Phaser.Scene {
   private upgradeDeathClip(): void {
     const dc = this.deathClip;
     const k = this.sim.summary?.kills?.find((x) => dc && x.victim === dc.eid);
-    if (!dc || !k) return;
+    if (!dc || !k || dc.round !== this.sim.round) return;
+    // игрок уже нажал «Клип» — монтаж идёт или готов: не начинаем заново (иначе прогресс сбрасывался
+    // на конце дубля), только узнаём, кто выбил, — для подписи при отправке
+    if (dc.status !== 'offer') {
+      dc.killer ??= k.by;
+      return;
+    }
     // полную версию — с выбившим и всеми живыми в их цветах — монтируем сразу, без нажатия
-    const next: DeathClip = { eid: dc.eid, at: dc.at, status: 'offer', progress: 0, file: null, killer: k.by };
+    const next: DeathClip = { eid: dc.eid, at: dc.at, round: dc.round, status: 'offer', progress: 0, file: null, killer: k.by };
     this.deathClip = next;
     this.updateDeathClipLabel();
     this.renderDeathClip(next);
