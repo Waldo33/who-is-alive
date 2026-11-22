@@ -42,8 +42,15 @@ jobs:
       - name: Тарифы серверов в Москве
         run: |
           curl -sS -H "Authorization: Bearer $TWC_TOKEN" "$API/presets/servers" -o /tmp/presets.json
-          jq -r '.server_presets[] | select((.location // "") | test("msk|ru-1|ru-3"; "i")) | "\(.id)\t\(.location)\t\(.cpu) vCPU\t\(.ram/1024) ГБ\t\(.disk/1024) ГБ \(.disk_type)\t\(.price) ₽/мес"' /tmp/presets.json | sort -t$'\t' -k6 -n | head -20 || true
-          echo "локации всех тарифов:"; jq -r '[.server_presets[].location] | unique | join(", ")' /tmp/presets.json || true
+          echo "тарифы 2 vCPU / 4 ГБ и 4 vCPU / 8 ГБ во всех локациях:"
+          jq -r '.server_presets[] | select((.cpu == 2 and .ram == 4096) or (.cpu == 4 and .ram == 8192)) | "\(.id)\t\(.location)\t\(.cpu)/\(.ram/1024)\t\(.disk/1024) ГБ \(.disk_type)\t\(.price) ₽\t\(.cpu_frequency // "?") ГГц\t\(.description_short // "")\t\(.tags // [] | join(","))"' /tmp/presets.json | sort -t$'\t' -k5 -n || true
+          echo "поля тарифа:"; jq -c '.server_presets[0] | keys' /tmp/presets.json || true
+          echo "локации:"
+          curl -sS -H "Authorization: Bearer $TWC_TOKEN" "https://api.timeweb.cloud/api/v2/locations" | jq -r '.locations[]? | "\(.location)\t\(.location_code // "")\t\(.zones // [] | join(","))\t\(.location_name // .name // "")"' || true
+          echo "конфигуратор (свои параметры):"
+          curl -sS -H "Authorization: Bearer $TWC_TOKEN" "$API/configurator/servers" | jq -r '.server_configurators[]? | "\(.id)\t\(.location)\t\(.disk_type)\t\(.description // "")"' || true
+          echo "цены конфигуратора:"
+          curl -sS -H "Authorization: Bearer $TWC_TOKEN" "$API/configurator/servers" | jq -c '.server_configurators[0]?' | head -c 1500; echo
 
       - name: Домены в аккаунте
         run: |
