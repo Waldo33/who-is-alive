@@ -32,6 +32,11 @@ export interface RemoteOptions {
   clock?: () => number;
   /** Сразу запросить снимок у хоста (переподключение). */
   resync?: boolean;
+  /**
+   * Зритель (опоздал к матчу): своей сущности нет, мир строится с начала следующего дубля —
+   * до первого сообщения 'round' всё остальное пропускаем (собрать мир с середины не из чего).
+   */
+  spectator?: boolean;
 }
 
 /** Запас поверх интервала пакетов: насколько отстаёт отрисовка от последних данных хоста. */
@@ -122,6 +127,9 @@ export class RemoteSession implements ClientSession {
   stalls = 0;
   /** Запас задержки: растёт, если данные хоста не успевают, и медленно сокращается. */
   private jitter = JITTER_MS;
+  readonly spectator: boolean;
+  /** Зритель уже видит дубль с начала (пришло 'round'). */
+  watching = false;
 
   constructor(o: RemoteOptions) {
     this.t = o.transport;
@@ -132,6 +140,7 @@ export class RemoteSession implements ClientSession {
     this.arena = plazaArena(this.cfg.arenaWidth, this.cfg.arenaHeight);
     this.world = new World(new NavGrid(this.arena, this.cfg.navCellSize), this.cfg.entitySpeed);
     this.clock = o.clock ?? (() => performance.now());
+    this.spectator = !!o.spectator;
     this.world.filter = (ev) => this.keepEvent(ev);
     for (const p of this.players) this.scores[p.pid] = 0;
     this.unsub = this.t.onMessage((ch, msg, from) => {
@@ -159,6 +168,10 @@ export class RemoteSession implements ClientSession {
   }
 
   private onRoom(m: RoomMsg): void {
+    if (this.spectator) {
+      if (m.t === 'round') this.watching = true;
+      else if (!this.watching) return;
+    }
     switch (m.t) {
       case 'round':
         this.world.init(m.spawns, m.t0);

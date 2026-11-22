@@ -232,7 +232,10 @@ export function mountSandbox(root: HTMLElement, opts: ShellOptions): () => void 
     if (running) running.restart({ playerName, cfg, lang });
     else {
       const speed = dev ? Number(new URLSearchParams(location.search).get('speed')) || 1 : 1;
+      // ?dev&watch — стенд зрителя без сети: хост с четырьмя ИИ на петле в памяти, ты смотришь с задержкой
+      const watch = dev && new URLSearchParams(location.search).has('watch') ? await devSpectator(cfg) : undefined;
       running = await bootGame(stage, {
+        ...watch,
         playerName,
         fontFamily: opts.fontFamily,
         audio,
@@ -284,3 +287,27 @@ export function mountSandbox(root: HTMLElement, opts: ShellOptions): () => void 
     root.innerHTML = '';
   };
 }
+
+/** Стенд зрителя (?dev&watch): матч ИИ на хосте в этой же вкладке, зритель подключается посреди дубля. */
+async function devSpectator(cfg: Partial<GameConfig>) {
+  const [net, core] = await Promise.all([import('@kto/net'), import('@kto/game-core')]);
+  const hub = new net.LoopbackHub(3);
+  hub.latency = [40, 90];
+  const players = ['h', 'a', 'b', 'c'].map((pid, i) => ({ pid, name: ['Режиссёр', 'Батон', 'Пиксель', 'Кот'][i], color: i }));
+  const tHost = hub.join({ userId: 'h', name: 'h', color: 0, joinedAt: 0 });
+  cfg = { ...cfg, roundSec: 30 }; // короткие дубли — быстрее дождаться следующего
+  const host = new net.HostSession({ transport: tHost, players, cfg, seed: 11, hostPid: 'h' });
+  players.forEach((p, i) => host.sim.addAgent(new core.AiPlayer(p.pid, 100 + i)));
+  setInterval(() => host.tick(), core.TICK_MS);
+  // дубль уже идёт
+  await new Promise((r) => setTimeout(r, 6000));
+  const raw = hub.join({ userId: 'spy', name: 'spy', color: 9, joinedAt: 9 });
+  const delay = 4000;
+  const spy = new net.RemoteSession({ transport: new net.DelayedTransport(raw, delay), selfPid: 'spy', hostPid: 'h', players, cfg, spectator: true });
+  return {
+    createSession: () => spy,
+    spectator: { delaySec: delay / 1000, watching: () => spy.watching },
+    onRematch: () => false,
+  };
+}
+

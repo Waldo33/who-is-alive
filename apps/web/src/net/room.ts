@@ -1,7 +1,7 @@
 'use client';
 
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { HostSession, RemoteSession, SupabaseTransport } from '@kto/net';
+import { DelayedTransport, HostSession, RemoteSession, SupabaseTransport } from '@kto/net';
 import type { PresenceMember, RoomMsg, Transport } from '@kto/net';
 import type { ClientSession, PlayerInfo } from '@kto/game-core';
 import { rpcErrorCode } from '@/lib/supabase';
@@ -14,6 +14,12 @@ export interface RoomSettings {
 
 export const DEFAULT_SETTINGS: RoomSettings = { roundSec: 75, maxRounds: 5, kidsMode: false };
 
+/**
+ * Задержка трансляции для зрителя: опоздавший обычно сидит рядом с игроками — всё, что он видит,
+ * они уже видели, подсказать «вон тот живой» поздно.
+ */
+export const SPECTATE_DELAY_MS = 10_000;
+
 export interface Member {
   userId: string;
   name: string;
@@ -24,7 +30,8 @@ export interface Member {
 }
 
 export interface RoomState {
-  status: 'connecting' | 'lobby' | 'error' | 'game';
+  /** watch — зритель: матч уже шёл, смотрит трансляцию, после матча войдёт в комнату сам. */
+  status: 'connecting' | 'lobby' | 'error' | 'game' | 'watch';
   /** Номер игровой сессии: меняется при старте и смене хоста — экран игры пересоздаётся. */
   gameId?: number;
   error?: string;
@@ -65,6 +72,11 @@ export class Room {
   private hostMissingSince = 0;
   private statusTimer: ReturnType<typeof setInterval> | null = null;
   private lastStatus = '';
+  /** Зритель: задержка поверх транспорта, опрос «кончился ли матч», когда кончился у игроков. */
+  private delayed: DelayedTransport | null = null;
+  private watchTimer: ReturnType<typeof setInterval> | null = null;
+  private watchEndAt = 0;
+  private spectateTries = 0;
 
   constructor(private sb: SupabaseClient, code: string, selfId: string) {
     this.state = { status: 'connecting', code: code.toUpperCase(), selfId, hostId: '', members: [], settings: DEFAULT_SETTINGS };
@@ -89,9 +101,13 @@ export class Room {
     this.myName = name;
     const { data, error } = await this.sb.rpc('join_room', { p_code: this.state.code, p_name: name });
     if (error) {
-      this.set({ status: 'error', error: rpcErrorCode(error) });
+      const code = rpcErrorCode(error);
+      // матч уже идёт — смотреть трансляцию, а когда он кончится, войти в комнату
+      if (code === 'room_playing' && this.spectateTries++ < 5) await this.spectate();
+      else this.set({ status: 'error', error: code });
       return;
     }
+    this.spectateTries = 0;
     const r = data as { code: string; color: number; host_id: string; status: string; settings: Partial<RoomSettings> };
     this.set({ code: r.code, hostId: r.host_id, settings: { ...DEFAULT_SETTINGS, ...(r.settings ?? {}) } });
     await this.loadMembers();
@@ -199,6 +215,118 @@ export class Room {
   private cfgFromSettings() {
     const s = this.state.settings;
     return { roundSec: s.roundSec, maxRounds: s.maxRounds, kidsMode: s.kidsMode };
+  }
+
+  /** Зритель: право читать общий канал (spectate_room), трансляция с задержкой, опрос конца матча. */
+  private async spectate(): Promise<void> {
+    const { data, error } = await this.sb.rpc('spectate_room', { p_code: this.state.code, p_name: this.myName });
+    if (error) {
+      this.set({ status: 'error', error: rpcErrorCode(error) });
+      return;
+    }
+    const r = data as {
+      code: string;
+      host_id: string;
+      status: string;
+      settings: Partial<RoomSettings>;
+      members: { user_id: string; name: string; color: number }[];
+    };
+    this.set({ code: r.code, hostId: r.host_id, settings: { ...DEFAULT_SETTINGS, ...(r.settings ?? {}) } });
+    // матч успел кончиться — сразу в комнату
+    if (r.status !== 'playing') {
+      void this.sb.rpc('unspectate_room', { p_code: r.code });
+      await this.join(this.myName);
+      return;
+    }
+    const t = new SupabaseTransport(this.sb, r.code, this.state.selfId);
+    this.transport = t;
+    t.onMessage((channel, msg) => {
+      if (channel !== 'room') return;
+      // писать в общий канал может только хост (RLS) — значит, это от него
+      const m = msg as { t?: string };
+      if (m.t === 'match_start') {
+        const ms = msg as Extract<RoomMsg, { t: 'match_start' }>;
+        // новый матч (смена хоста, реванш с новым составом) — со своей задержкой, старый досмотреть
+        setTimeout(() => this.state.status === 'watch' && this.startWatching(ms.players, ms.hostId), SPECTATE_DELAY_MS);
+      } else if (m.t === 'lobby') {
+        const lm = msg as Extract<LobbyMsg, { t: 'lobby' }>;
+        this.set({ hostId: lm.hostId, settings: lm.settings });
+      }
+    });
+    try {
+      await t.watch();
+    } catch {
+      this.set({ status: 'error', error: 'network' });
+      return;
+    }
+    this.startWatching(
+      r.members.map((m) => ({ pid: m.user_id, name: m.name, color: m.color })),
+      r.host_id,
+    );
+    this.watchEndAt = 0;
+    this.watchTimer = setInterval(() => void this.checkMatchOver(), 3000);
+  }
+
+  private startWatching(players: PlayerInfo[], hostId: string): void {
+    if (!this.transport) return;
+    this.session?.dispose();
+    void this.delayed?.close();
+    this.delayed = new DelayedTransport(this.transport, SPECTATE_DELAY_MS);
+    this.matchPlayers = players;
+    this.session = new RemoteSession({
+      transport: this.delayed,
+      selfPid: this.state.selfId,
+      hostPid: hostId,
+      players,
+      cfg: this.cfgFromSettings(),
+      spectator: true,
+    });
+    this.set({ status: 'watch', hostId, gameId: ++this.gameSeq });
+  }
+
+  /** Зритель: кончился ли матч у игроков. Досмотреть его (задержка) — и войти в комнату к реваншу. */
+  private async checkMatchOver(): Promise<void> {
+    const { data, error } = await this.sb.rpc('room_status', { p_code: this.state.code });
+    if (error || this.state.status !== 'watch') return;
+    if (data === null) {
+      await this.stopWatching();
+      this.set({ status: 'error', error: 'closed' });
+      return;
+    }
+    if (data !== 'lobby') {
+      this.watchEndAt = 0;
+      return;
+    }
+    this.watchEndAt ||= Date.now() + SPECTATE_DELAY_MS + 4000;
+    if (Date.now() < this.watchEndAt && this.session?.phase !== 'match_end') return;
+    await this.stopWatching();
+    void this.sb.rpc('unspectate_room', { p_code: this.state.code });
+    this.set({ status: 'connecting' });
+    await this.join(this.myName);
+  }
+
+  private async stopWatching(): Promise<void> {
+    if (this.watchTimer) clearInterval(this.watchTimer);
+    this.watchTimer = null;
+    this.session?.dispose();
+    this.session = null;
+    await this.delayed?.close();
+    this.delayed = null;
+    await this.transport?.close();
+    this.transport = null;
+  }
+
+  /**
+   * Режиссёр жмёт «Ещё дубль»: если после матча в комнату вошли новые игроки (досмотрели как
+   * зрители) — новый матч со всеми, кто сейчас в комнате; иначе — обычный реванш в той же сессии.
+   */
+  rematchWithNewcomers(): boolean {
+    if (!this.isHost || this.state.status !== 'game') return false;
+    const now = this.membersAsPlayers();
+    const same = now.length === this.matchPlayers.length && now.every((p) => this.matchPlayers.some((q) => q.pid === p.pid));
+    if (same || now.length < 2) return false;
+    void this.startMatch();
+    return true;
   }
 
   /** Хост: начать матч с теми, кто сейчас в комнате. */
@@ -317,8 +445,9 @@ export class Room {
   /** Уйти насовсем (кнопка «Назад» / «Выйти в меню»): освободить место сразу. */
   async quit(): Promise<void> {
     const code = this.state.code;
+    const watching = this.state.status === 'watch';
     await this.leave();
-    await this.sb.rpc('leave_room', { p_code: code });
+    await this.sb.rpc(watching ? 'unspectate_room' : 'leave_room', { p_code: code });
   }
 
   async setReady(ready: boolean): Promise<void> {
@@ -341,6 +470,10 @@ export class Room {
 
   async leave(): Promise<void> {
     if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', this.onVisible);
+    if (this.watchTimer) clearInterval(this.watchTimer);
+    this.watchTimer = null;
+    await this.delayed?.close();
+    this.delayed = null;
     if (this.touchTimer) clearInterval(this.touchTimer);
     if (this.statusTimer) clearInterval(this.statusTimer);
     this.session?.dispose();

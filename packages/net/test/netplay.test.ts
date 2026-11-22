@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Rng, killerExposed } from '@kto/game-core';
 import type { PlayerInfo } from '@kto/game-core';
-import { HostSession, LoopbackHub, RemoteSession } from '../src';
+import { DelayedTransport, HostSession, LoopbackHub, RemoteSession } from '../src';
 import type { RoomMsg } from '../src';
 
 /**
@@ -120,6 +120,57 @@ describe('сетевая игра', () => {
     expect(g.match).not.toBeNull();
     expect(g.scores).toEqual(rig.host.scores);
     expect(g.match!.winners).toEqual(rig.host.match!.winners);
+  });
+
+  it('зритель: подключился посреди дубля — смотрит со следующего, с задержкой, ничего не шлёт и не знает игроков', () => {
+    const rig = makeRig([40, 90], 0, 7);
+    const rng = new Rng(7);
+    // первый дубль уже идёт
+    for (let i = 0; i < 20 * 20; i++) {
+      rig.step();
+      botFingers(rig, rng);
+    }
+    const raw = rig.hub.join({ userId: 'spy', name: 'spy', color: 9, joinedAt: 9 });
+    const sent: unknown[] = [];
+    const origSend = raw.send.bind(raw);
+    raw.send = async (c, m, to) => {
+      sent.push(m);
+      return origSend(c, m, to);
+    };
+    const DELAY = 3000;
+    const spy = new RemoteSession({ transport: new DelayedTransport(raw, DELAY), selfPid: 'spy', hostPid: 'h', players, cfg: {}, clock: rig.now, spectator: true });
+    const round0 = rig.host.round;
+    for (let i = 0; i < 20 * 200 && rig.host.round === round0; i++) {
+      rig.step();
+      botFingers(rig, rng);
+      spy.tick();
+      // пока не начался новый дубль, зритель ничего не видит
+      expect(spy.watching).toBe(false);
+    }
+    expect(rig.host.round).toBe(round0 + 1);
+    for (let i = 0; i < 20 * 20; i++) {
+      rig.step();
+      botFingers(rig, rng);
+      spy.tick();
+    }
+    expect(spy.watching).toBe(true);
+    expect(spy.round).toBe(rig.host.round);
+    expect(spy.me()).toBeUndefined();
+    // отстаёт примерно на задержку
+    const lag = rig.host.world.time - spy.world.time;
+    expect(lag).toBeGreaterThan(DELAY - 500);
+    expect(lag).toBeLessThan(DELAY + 1500);
+    // мир зрителя совпадает с прошлым хоста
+    const past = rig.history.get(spy.world.time);
+    expect(past).toBeDefined();
+    let far = 0;
+    for (const e of spy.world.entities) {
+      const p = past!.get(e.eid);
+      if (e.alive && p && Math.hypot(p[0] - e.x, p[1] - e.y) > 2) far++;
+    }
+    expect(far).toBeLessThanOrEqual(2);
+    expect(sent).toHaveLength(0);
+    spy.dispose();
   });
 
   it('по сети не узнать, кто живой: ни события мира, ни ключевые кадры не содержат игроков', () => {

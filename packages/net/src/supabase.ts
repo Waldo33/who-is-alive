@@ -84,6 +84,15 @@ export class SupabaseTransport implements Transport {
     await this.setRole(isHost, playerIds, true);
   }
 
+  /**
+   * Зритель: только читает общий канал (право даёт spectate_room). Себя в Presence не ставит,
+   * личного канала нет — игроки зрителя не видят и он им ничего не шлёт.
+   */
+  async watch(): Promise<void> {
+    await this.sb.realtime.setAuth();
+    this.room = await this.open(this.topic(), { presence: true, receive: 'room' });
+  }
+
   async setRole(isHost: boolean, playerIds: string[], force = false): Promise<void> {
     if (!force && isHost === this.isHost && (!isHost || playerIds.every((id) => id === this.selfId || this.privCh.has(id)))) return;
     this.isHost = isHost;

@@ -19,7 +19,8 @@ import { loadChunk } from '@/lib/chunk';
 import { setTrackContext, shareKind, track } from '@/lib/analytics';
 import { download, shareContent, withLang } from '@/lib/share';
 import { AuthError, ensureAnonymousUser, supabase } from '@/lib/supabase';
-import { Room } from '@/net/room';
+import { Room, SPECTATE_DELAY_MS } from '@/net/room';
+import type { RemoteSession } from '@kto/net';
 import type { Audio as GameAudio } from '@/game/audio';
 import type { RunningGame } from '@/game/boot';
 import type { RoomSettings, RoomState } from '@/net/room';
@@ -103,10 +104,13 @@ export default function RoomClient({ code, bot = false }: { code: string; bot?: 
     if (state.status === 'lobby' && !joinedRef.current) {
       joinedRef.current = true;
       track('room_join', { members: state.members.length, tutorial: tutorialDone() });
-    } else if (state.status === 'error' && state.error) track('room_error', { error: state.error });
+    } else if (state.status === 'watch') track('room_spectate');
+    else if (state.status === 'error' && state.error) track('room_error', { error: state.error });
   }, [state?.status, state?.error]);
 
-  const inGame = state?.status === 'game' && !!roomRef.current?.session;
+  // зритель (опоздал к матчу) видит ту же сцену, только смотрит
+  const watching = state?.status === 'watch';
+  const inGame = (state?.status === 'game' || watching) && !!roomRef.current?.session;
   // обучение поверх лобби: новичку — сразу, остальным — из «Как играть»; матч начнётся — закроется само
   const [tutOpen, setTutOpen] = useState(false);
   const inLobby = state?.status === 'lobby';
@@ -156,7 +160,9 @@ export default function RoomClient({ code, bot = false }: { code: string; bot?: 
       </main>
     );
   } else if (inGame) {
-    screen = <GameView key={state.gameId} room={roomRef.current!} lang={lang} audio={audioRef} t={t} onSettings={() => bar.current?.openSettings()} />;
+    screen = (
+      <GameView key={state.gameId} room={roomRef.current!} lang={lang} audio={audioRef} t={t} spectator={watching} onSettings={() => bar.current?.openSettings()} />
+    );
   } else screen = <Lobby t={t} state={state} room={roomRef.current!} onGesture={unlockAudio} />;
   return (
     <>
@@ -173,12 +179,14 @@ function GameView({
   lang,
   audio,
   t,
+  spectator,
   onSettings,
 }: {
   room: Room;
   lang: Lang;
   audio: React.RefObject<GameAudio | null>;
   t: Dict;
+  spectator: boolean;
   onSettings: () => void;
 }) {
   const settingsRef = useRef(onSettings);
@@ -204,7 +212,10 @@ function GameView({
           const result = await shareContent({ text, url: withLang(`${location.origin}/`, kind), files });
           track('share', { what: kind, result });
         },
-        onEvent: track,
+        onEvent: spectator ? undefined : track,
+        spectator: spectator ? { delaySec: SPECTATE_DELAY_MS / 1000, watching: () => (session as RemoteSession).watching } : undefined,
+        // «Ещё дубль» у режиссёра: вошли новые игроки (досмотрели как зрители) — новый матч с ними
+        onRematch: () => room.rematchWithNewcomers(),
         onSave: (file: File) => download(file),
         onSettings: () => settingsRef.current(),
       });
@@ -214,7 +225,7 @@ function GameView({
       cancelled = true;
       running?.destroy();
     };
-  }, [room, lang, audio]);
+  }, [room, lang, audio, spectator]);
   return <div ref={ref} className="game-stage" aria-label={t.meta.title} />;
 }
 

@@ -65,6 +65,13 @@ export interface SceneInit {
   tutorial?: { onDone: () => void; onSkip: () => void };
   /** Аналитика (lib/analytics › track): ход матча глазами этого игрока. В обучении молчит. */
   onEvent?: (name: string, props?: Record<string, string | number | boolean | null>) => void;
+  /**
+   * Зритель (опоздал к матчу): смотрит с задержкой, ничего не нажимает, своего персонажа нет.
+   * watching — трансляция уже идёт (виден дубль с начала).
+   */
+  spectator?: { delaySec: number; watching: () => boolean };
+  /** Режиссёр жмёт «Ещё дубль»: true — комната сама начала новый матч (пришли новые игроки). */
+  onRematch?: () => boolean;
 }
 
 interface EntityView {
@@ -201,6 +208,9 @@ export class GameScene extends Phaser.Scene {
   private coachL1!: Phaser.GameObjects.BitmapText;
   private coachL2!: Phaser.GameObjects.BitmapText;
   private coachNext!: Phaser.GameObjects.BitmapText;
+  /** Зритель: «Ты зритель» и задержка / «ждём новый дубль» в нижней панели. */
+  private specL1: Phaser.GameObjects.BitmapText | null = null;
+  private specL2: Phaser.GameObjects.BitmapText | null = null;
   /** Подсказка «впервые видишь» в настоящей игре (две строки, до времени). */
   private coachTip: { lines: readonly string[]; until: number } | null = null;
   private clapSentAt = 0;
@@ -528,6 +538,12 @@ export class GameScene extends Phaser.Scene {
   private buildHud(): void {
     this.hud.timer = this.txt(3, 7, '0:00', 'sand').setDepth(1100);
     this.hud.round = this.txt(3, -1, '', 'mist').setDepth(1100).setVisible(false);
+    // зритель: ни ударов, ни звёзд (звёзды игроков приходят только им лично) — пометка «Ты зритель»
+    if (this.init0.spectator) {
+      this.specL1 = this.txt(90, PANEL_Y + 7, this.t.game.spectator, 'yellow').setOrigin(0.5, 0).setDepth(1101);
+      this.specL2 = this.txt(90, PANEL_Y + 19, '', 'mist').setOrigin(0.5, 0).setDepth(1101);
+      return;
+    }
     for (let i = 0; i < this.cfg.attacksPerRound; i++) {
       this.hudIcons.push(this.add.image(48 + i * 10, 12, 'icons', this.icon('fist')).setDepth(1100));
     }
@@ -616,10 +632,12 @@ export class GameScene extends Phaser.Scene {
         this.showToast(on ? this.t.game.soundOn : this.t.game.soundOff, 1200);
       },
     });
+    // зрителю — только шестерёнка: нажимать в чужом матче нечего
+    if (this.init0.spectator) this.buttons = this.buttons.filter((b) => b.id === 'sound');
     for (const b of this.buttons) {
       const icon = b.icon ? this.add.image(b.x + b.w / 2, b.y + b.h / 2, 'icons', this.icon(b.icon)).setDepth(1101) : undefined;
       if (icon && b.id !== 'sound') icon.setScale(2);
-      this.btnObjs.set(b.id, { icon });
+      this.btnObjs.set(b.id, { ...this.btnObjs.get(b.id), icon });
     }
   }
 
@@ -714,6 +732,7 @@ export class GameScene extends Phaser.Scene {
     this.audio.unlock();
     requestWakeLock();
     const b = this.hitButton(p.x, p.y);
+    if (this.init0.spectator && !b) return;
     // обучение ждёт «дальше»: любой тап (кроме крестика «пропустить») листает шаг
     if (this.tut?.waitTap && b?.id !== 'tut-skip') {
       this.tut.tap();
@@ -988,7 +1007,7 @@ export class GameScene extends Phaser.Scene {
         this.upgradeDeathClip();
         this.audio.play('drum');
       }
-      if (n.phase === 'results') this.trackRound();
+      if (n.phase === 'results' && !this.init0.spectator) this.trackRound();
       if (n.phase === 'match_end') {
         this.audio.play(this.sim.match?.tooAlive ? 'sad' : 'fanfare');
         this.spawnConfetti();
@@ -2292,6 +2311,11 @@ export class GameScene extends Phaser.Scene {
     const me = this.me();
     this.hudIcons.forEach((ic, i) => ic.setFrame(this.icon(me && i < me.attacksLeft ? 'fist' : 'fistOff')));
     this.hud.starsMe?.setText(String(me?.stars ?? 0));
+    const spec = this.init0.spectator;
+    if (spec && this.specL2) {
+      const s = spec.watching() ? fmt(this.t.game.spectatorDelay, { n: spec.delaySec }) : this.t.game.spectatorWait;
+      if (this.specL2.text !== s) this.specL2.setText(s);
+    }
     const others = sim.otherStars();
     others.forEach((n, i) => this.hud['starsOther' + (i + 1)]?.setText(String(n)).setFont(n >= this.cfg.starsToWin - 1 ? 'px-amber' : 'px-mist'));
   }
@@ -2341,6 +2365,17 @@ export class GameScene extends Phaser.Scene {
   }
 
   private buildOverlay(): void {
+    // зритель до начала следующего дубля: мира ещё нет — только «Матч уже идёт»
+    const spec = this.init0.spectator;
+    if (spec && !spec.watching()) {
+      if (this.overlayPhase === 'spec-wait') return;
+      this.overlayPhase = 'spec-wait';
+      this.clearOverlay();
+      this.ovPlate(AY + 112, 30);
+      this.ovText(90, AY + 116, this.t.game.spectatorLive, 'yellow');
+      this.ovText(90, AY + 128, this.t.game.spectatorWait, 'sand');
+      return;
+    }
     const phase = this.sim.phase;
     if (phase === this.overlayPhase && phase !== 'countdown') return;
     this.overlayPhase = phase;
@@ -2368,7 +2403,7 @@ export class GameScene extends Phaser.Scene {
         this.ovText(90, AY + 6, this.t.game.accuseTitle, 'yellow');
         this.ovDyn.sub = this.ovText(90, AY + 18, this.t.game.accuseSub, 'sand');
         // в обучении обвинение ждёт игрока — отсчёта нет
-        if (!this.tut) this.ovDyn.timer = this.ovText(90, PANEL_Y + 13, '5', 'red');
+        if (!this.tut && !spec) this.ovDyn.timer = this.ovText(90, PANEL_Y + 13, '5', 'red');
         break;
       }
       case 'reveal': {
@@ -2431,7 +2466,9 @@ export class GameScene extends Phaser.Scene {
     s.awards.forEach((a, i) => this.awardCard(16, AY + 112 + i * 42, a.id, a.pids, a.value));
     if (!s.awards.length) this.ovText(90, AY + 130, this.t.game.noAwards, 'mist');
     // «Дальше» решает только режиссёр (хост): у остальных кнопка ничего не делала — им «Поделиться» во всю ширину
-    if (this.amHost()) {
+    if (this.init0.spectator) {
+      /* зрителю делиться нечем — счёт не его */
+    } else if (this.amHost()) {
       this.addOverlayButton('share', 9, AY + 214, 81, 30, this.t.game.share, () => this.share(), undefined, true);
       this.addOverlayButton('next', 91, AY + 214, 80, 30, this.t.game.next, () => {
         this.track('next_tap', { round: sim.round });
@@ -2477,17 +2514,21 @@ export class GameScene extends Phaser.Scene {
     });
     m.awards.forEach((a, i) => this.awardCard(16, AY + 124 + i * 42, a.id, a.pids, a.value));
     // реванш тоже запускает только режиссёр; остальным — «Поделиться» во всю ширину
-    if (this.amHost()) {
+    if (this.init0.spectator) {
+      /* зритель после матча сам войдёт в комнату (net/room.ts) */
+    } else if (this.amHost()) {
       this.addOverlayButton('rematch', 9, AY + 214, 81, 30, this.t.game.rematch, () => {
         this.confetti = [];
         this.track('rematch', { rounds: sim.roundsPlayed });
+        // пришли новые игроки (зрители после матча) — комната начинает новый матч с ними
+        if (this.init0.onRematch?.()) return;
         sim.intent({ k: 'rematch' });
       }, PAL.amber);
       this.addOverlayButton('share2', 91, AY + 214, 80, 30, this.t.game.share, () => this.share(), undefined, true);
     } else this.addOverlayButton('share2', 9, AY + 214, 162, 30, this.t.game.share, () => this.share(), undefined, true);
     // открывается касанием: отпускание пальца у нижнего края экрана браузер может забрать себе (Chrome на iPhone);
     // жест для системного меню не нужен — отправка идёт отдельной кнопкой в окне клипа
-    if (this.best) this.addOverlayButton('clip', 3, PANEL_Y + 3, 174, 30, this.t.clip.button, () => this.openClip(), PAL.amber);
+    if (this.best && !this.init0.spectator) this.addOverlayButton('clip', 3, PANEL_Y + 3, 174, 30, this.t.clip.button, () => this.openClip(), PAL.amber);
     // карточку рисуем заранее: к нажатию «Поделиться» файл уже готов, и меню откроется без задержки
     void resultCardFile({
       players: sim.players,
