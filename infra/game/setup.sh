@@ -147,7 +147,8 @@ TG_APP_NAME=play
 TRUST_PROXY=1
 LOG_LEVEL=info
 EOF
-# ключ Telegram-бота привозит выкладка из GitHub Secrets (в /tmp/deploy/bot.env), на диске — только root
+# ключ Telegram-бота привозит выкладка из GitHub Secrets TELEGRAM_BOT_TOKEN (в /tmp/deploy/bot.env),
+# на диске — /etc/massovka/bot.env, только root; читает его systemd при запуске игрового сервера
 if [ -s "$D/bot.env" ]; then install -m 600 "$D/bot.env" /etc/massovka/bot.env; rm -f "$D/bot.env"; fi
 envsum_after=$(cat /etc/massovka/*.env 2>/dev/null | sha256sum)
 
