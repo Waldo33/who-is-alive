@@ -7,7 +7,9 @@ import { canvas } from './pixels';
 import type { Art } from './art';
 import { frameFor } from './frames';
 import { CH_H, CH_W, F, OL_H, OL_W } from './sprites';
-import { themePack } from './themes';
+import { bodyPose, drawAir, drawFloor, killsFromLog, weaponSfx } from './gore';
+import type { Kill, Px } from './gore';
+import { isThemeLoaded, themeLook, themePack } from './themes';
 
 /**
  * Клип «Лучший момент» (раздел 11 ТЗ): 1080×1920, ~11 с.
@@ -45,6 +47,8 @@ export interface ClipInput {
   site: string;
   /** Подписи вместо стандартных (клип выбывшего посреди раунда: «Найдёшь меня?» → «Это был я!»). */
   captions?: { find: string; findSub?: string; reveal: string; kind: string };
+  /** Без крови (детский режим): выбивание — «поф» и в теме с оружием. */
+  noGore?: boolean;
 }
 
 export interface ClipResult {
@@ -126,6 +130,10 @@ export class ClipPlayerScene {
   private lastLook = -1;
   private lookAt = -Infinity;
   private faded = false;
+  /** Удары оружием (ночь Майами) по журналу дубля: eid жертвы → удар. */
+  private kills = new Map<number, Kill>();
+  /** Удар момента: в стоп-кадре брызги ещё летят (замедленно). */
+  private focusKill: Kill | null = null;
 
   constructor(private inp: ClipInput) {
     const { c, g } = scaledCanvas(LW, LH, CLIP_SCALE);
@@ -161,6 +169,12 @@ export class ClipPlayerScene {
       cms += d;
     }
     this.part2Dur = cms;
+    const th = inp.rec.theme;
+    if (!inp.noGore) {
+      for (const k of killsFromLog(inp.rec.log, (tw) => isThemeLoaded(th) && themeLook(th, tw ? 1 : 0).kill === 'weapon')) this.kills.set(k.eid, k);
+    }
+    const fk = m.victim !== undefined ? this.kills.get(m.victim) : undefined;
+    if (fk && fk.at === m.at && this.hitClip !== Infinity) this.focusKill = fk;
     this.part1Dur = len / this.speed1;
     this.duration = this.part1Dur + this.part2Dur + OUTRO_MS;
     // наезд камеры — если есть на кого: за CUT_BEFORE до удара, но сначала дать увидеть всех
@@ -230,11 +244,11 @@ export class ClipPlayerScene {
       g.fillRect(0, 0, LW, LH);
       g.globalAlpha = 1;
     }
-    // вспышка на самом ударе
+    // вспышка на самом ударе (оружием — красная)
     const sinceHit = local - this.hitClip;
     if (part === 2 && sinceHit >= 0 && sinceHit < 140) {
-      g.fillStyle = PAL.white;
-      g.globalAlpha = 0.6 * (1 - sinceHit / 140);
+      g.fillStyle = this.focusKill ? PAL.red : PAL.white;
+      g.globalAlpha = (this.focusKill ? 0.4 : 0.6) * (1 - sinceHit / 140);
       g.fillRect(0, AY, LW, PANEL_Y - AY);
       g.globalAlpha = 1;
     }
@@ -245,10 +259,17 @@ export class ClipPlayerScene {
     const s = this.sound;
     if (!s) return;
     switch (ev.t) {
-      case 'hit':
+      case 'hit': {
+        const k = this.kills.get(ev.target);
+        if (k && k.at === ev.at) {
+          s.play(weaponSfx(k));
+          s.play('hitPlayer');
+          break;
+        }
         s.play(ev.result === 'player' ? 'hitPlayer' : 'hitBot');
         s.play('poof');
         break;
+      }
       case 'star_taken':
         s.play('starTake');
         if (themePack(this.inp.rec.theme).starSiren) s.play('siren');
@@ -319,6 +340,17 @@ export class ClipPlayerScene {
       }
     }
 
+    // кровь и оружие: время удара момента в стоп-кадре идёт дальше — замедленно
+    const hold = reveal && this.focusKill ? Math.max(0, Math.min(local - this.hitClip, HOLD_MS)) * 0.3 : 0;
+    const gt = (k: Kill) => t - k.at + (k === this.focusKill ? hold : 0);
+    const px: Px = (x, y, pw, ph, c, al = 1) => {
+      g.globalAlpha = al;
+      g.fillStyle = c;
+      g.fillRect(x, y, pw, ph);
+      g.globalAlpha = 1;
+    };
+    for (const k of this.kills.values()) drawFloor(px, k, gt(k));
+
     type D = { y: number; draw: () => void };
     const list: D[] = [];
     for (const p of this.inp.arena.props) {
@@ -331,6 +363,23 @@ export class ClipPlayerScene {
       const x = Math.round(e.px + (e.x - e.px) * alpha);
       const y = Math.round(e.py + (e.y - e.py) * alpha);
       pos.set(e.eid, { x, y });
+      const kill = this.kills.get(e.eid);
+      if (!e.alive && kill && w.time >= kill.at) {
+        // выбит оружием — лежит на месте удара
+        const ce = a.charsFor(this.inp.rec.theme, look, idx);
+        const b = bodyPose(kill);
+        list.push({
+          y: kill.y - 6,
+          draw: () => {
+            g.save();
+            g.translate(b.x, b.y);
+            g.rotate((b.angle * Math.PI) / 180);
+            frame(g, ce.body, CH_W, CH_H, F.D, -6, -8);
+            g.restore();
+          },
+        });
+        continue;
+      }
       if (!e.alive) {
         const since = w.time - e.removedAt;
         if (since >= 0 && since < 360) list.push({ y: y + 1, draw: () => frame(g, a.poof, 24, 24, Math.min(5, Math.floor(since / 60)), x - 12, y - 20) });
@@ -364,6 +413,7 @@ export class ClipPlayerScene {
     }
     list.sort((p, q) => p.y - q.y);
     for (const d of list) d.draw();
+    for (const k of this.kills.values()) drawAir(px, k, gt(k));
 
     // плавная тема (закат): после смены облика лиловые сумерки тают ~0,9 с
     if (look !== this.lastLook) {

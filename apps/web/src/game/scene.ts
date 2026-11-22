@@ -17,6 +17,8 @@ import {
 import type { AwardId, ClientSession, CrowdKind, Dict, Entity, GameConfig, Lang, Moment, Notice, RoundRecording, ThemeText, World, WorldEvent } from '@kto/game-core';
 import { resultCardFile } from './card';
 import { Tutorial } from './tutorial';
+import { SWING_HIT, bodyPose, drawAir, drawFloor, killsFromLog, makeKill, weaponSfx } from './gore';
+import type { Kill, Px } from './gore';
 import { clipSupported, openClipOverlay, recordClipInBackground } from './clip-ui';
 import type { ClipPlayer } from './clip';
 import { Audio } from './audio';
@@ -202,10 +204,12 @@ export class GameScene extends Phaser.Scene {
   /** Выбивание оружием (облик с kill: 'weapon'): замахи, брызги, пятна и тела — до конца дубля. */
   private goreG!: Phaser.GameObjects.Graphics;
   private spotG!: Phaser.GameObjects.Graphics;
-  private swings: { x: number; y: number; kind: 0 | 1 | 2; dir: 1 | -1; t: number }[] = [];
-  private drops: { x: number; y: number; vx: number; vy: number; t: number; c: number }[] = [];
-  private stains: { x: number; y: number; c: number }[] = [];
+  private kills: LiveKill[] = [];
   private bodies: Phaser.GameObjects.Image[] = [];
+  /** Повтор на разоблачении: удары оружием по журналу дубля и время повтора (null — повтор не идёт). */
+  private replayKills = new Map<number, Kill>();
+  private replayT: number | null = null;
+  private pxCache = new Map<string, number>();
   private noPoof = new Set<number>();
   /** Переодевание при смене облика (ThemePack.dressUp): когда началось и в какую сторону. */
   private dress: { at: number; on: boolean } | null = null;
@@ -533,14 +537,16 @@ export class GameScene extends Phaser.Scene {
 
   private buildButtons(): void {
     const play = () => this.sim.phase === 'play' && !!this.me()?.alive;
+    // в обучении нет автопилота и эмоций — там внизу кнопка «Пропустить»
+    const extra = () => play() && !this.init0.tutorial;
     const crowdOpen = () => play() && this.sim.crowdWindowOpen(this.sim.world.time);
     this.buttons.push(
       {
-        id: 'autopilot', x: 3, y: PANEL_Y + 3, w: 38, h: 30, icon: 'robot', visible: play,
+        id: 'autopilot', x: 3, y: PANEL_Y + 3, w: 38, h: 30, icon: 'robot', visible: extra,
         onDown: () => this.sim.intent({ k: 'autopilot', on: true }),
         onUp: () => this.sim.intent({ k: 'autopilot', on: false }),
       },
-      { id: 'emote', x: 139, y: PANEL_Y + 3, w: 38, h: 30, icon: 'smile', visible: play, onDown: () => this.sim.intent({ k: 'emote' }) },
+      { id: 'emote', x: 139, y: PANEL_Y + 3, w: 38, h: 30, icon: 'smile', visible: extra, onDown: () => this.sim.intent({ k: 'emote' }) },
     );
     const kinds: [CrowdKind, string][] = [['freeze', 'hand'], ['jump', 'jump'], ['dance', 'dance']];
     kinds.forEach(([kind, icon], i) => {
@@ -574,10 +580,17 @@ export class GameScene extends Phaser.Scene {
         },
       });
     });
-    // обучение: крестик «пропустить» в левом углу шапки (вместо номера дубля)
+    // обучение: «Пропустить» внизу слева (пока не идёт команда толпы — там её кнопки)
     if (this.init0.tutorial) {
       const skip = this.init0.tutorial.onSkip;
-      this.buttons.push({ id: 'tut-skip', x: 2, y: 2, w: 20, h: 20, icon: 'cross', visible: () => true, onUp: () => skip() });
+      const b: Button = {
+        id: 'tut-skip', x: 3, y: PANEL_Y + 3, w: 84, h: 30, label: this.t.tutorial.skip,
+        visible: () => !this.sim.crowdWindowOpen(this.sim.world.time),
+        onUp: () => skip(),
+      };
+      this.buttons.push(b);
+      const text = this.txt(b.x + b.w / 2, b.y + 10, b.label!, 'white').setOrigin(0.5, 0).setDepth(1102);
+      this.btnObjs.set(b.id, { text });
     }
     // шестерёнка: звук, правила и выход — в листе настроек поверх игры (язык меняется вне матча)
     this.buttons.push({
@@ -797,11 +810,14 @@ export class GameScene extends Phaser.Scene {
     const myEid = this.me()?.eid;
     switch (ev.t) {
       case 'hit':
-        this.audio.play(ev.result === 'player' ? 'hitPlayer' : 'hitBot');
+        // ночью Майами — удар оружием: звук, тряска и стоп-кадр — в момент удара (weaponImpact)
         if (this.weaponKills()) this.weaponHit(ev.target, ev.x, ev.y);
-        else this.audio.play('poof');
-        this.cameras.main.shake(120, 0.008);
-        this.hitStop = 60;
+        else {
+          this.audio.play(ev.result === 'player' ? 'hitPlayer' : 'hitBot');
+          this.audio.play('poof');
+          this.cameras.main.shake(120, 0.008);
+          this.hitStop = 60;
+        }
         if (ev.target === myEid || this.sim.world.time - this.lastAttackAt < 200) navigator.vibrate?.(40);
         if (ev.target === myEid) {
           // «Жёсткий дубль»: вырезал режиссёр — сразу после окна команды, без удара
@@ -912,6 +928,7 @@ export class GameScene extends Phaser.Scene {
         this.finalSoundsPlayed = false;
         const s = this.sim.summary!;
         this.replay = makeReplay(this.sim.world, s.replayFrom, this.sim.world.time);
+        this.replayKills = new Map(this.cfg.kidsMode ? [] : killsFromLog(this.sim.world.log, (tw) => this.weaponLook(tw)).map((k) => [k.eid, k]));
         this.trails.clear();
         this.noteMoment();
         this.upgradeDeathClip();
@@ -936,41 +953,51 @@ export class GameScene extends Phaser.Scene {
     return this.lookKey !== '0_0' && isThemeLoaded(t) && themeLook(t, l).kill === 'weapon';
   }
 
-  /** Замах битой, трубой или ножом над целью (без нападавшего — он не раскрыт), брызги, тело и пятна. */
+  /** Облик темы дубля (обычный или изнанка) выбивает оружием. */
+  private weaponLook(twist: boolean): boolean {
+    const th = this.sim.theme;
+    return isThemeLoaded(th) && themeLook(th, twist ? 1 : 0).kill === 'weapon';
+  }
+
+  /**
+   * Удар битой, трубой или ножом над целью (нападавший не раскрыт: оружие — по жертве).
+   * Замах (0,11 с) → удар (0,06 с) → в момент удара: звук оружия, стоп-кадр, тряска, красная
+   * вспышка, искры, брызги, тело падает, оружие остаётся лежать рядом (рисует gore.ts).
+   */
   private weaponHit(eid: number, x: number, y: number): void {
-    this.audio.play('whack');
-    const kind = (eid % 3) as 0 | 1 | 2;
-    const dir: 1 | -1 = eid % 2 ? 1 : -1;
-    this.swings.push({ x: Math.round(x), y: Math.round(y), kind, dir, t: 0 });
-    const reds = [hexToInt(PAL.red), hexToInt(PAL.magenta), hexToInt(PAL.red), hexToInt(PAL.plum)];
-    for (let i = 0; i < 30; i++) {
-      const a = Math.random() * Math.PI * 2;
-      const v = 0.03 + Math.random() * 0.07;
-      this.drops.push({ x, y: y - 7, vx: Math.cos(a) * v + dir * 0.02, vy: Math.sin(a) * v - 0.05, t: 0, c: reds[i % reds.length] });
-    }
-    // лужа под телом и брызги вокруг
-    // лужа: плотное пятно под телом (по 2×2 пикселя) и брызги веером в сторону удара
-    for (let i = 0; i < 40; i++) {
-      const r = Math.random() * 5;
-      const a = Math.random() * Math.PI * 2;
-      const sx = Math.round(x + Math.cos(a) * r * 1.6);
-      const sy = Math.round(y - 1 + Math.sin(a) * r * 0.7);
-      const c = reds[i % 4];
-      this.stains.push({ x: sx, y: sy, c }, { x: sx + 1, y: sy, c }, { x: sx, y: sy + 1, c });
-    }
-    for (let i = 0; i < 24; i++) {
-      const r = 6 + Math.random() * 12;
-      const a = (dir > 0 ? 0 : Math.PI) + (Math.random() - 0.5) * 1.6;
-      this.stains.push({ x: Math.round(x + Math.cos(a) * r), y: Math.round(y - 3 + Math.sin(a) * r * 0.5), c: reds[i % 3] });
-    }
-    // тело остаётся лежать (тот же костюм, на боку)
+    this.audio.play('swing');
     const w = this.sim.world;
     const i = w.entities.findIndex((e) => e.eid === eid);
-    if (i >= 0) {
-      const body = this.add.image(Math.round(x), AY + Math.round(y) - 4, 'ch' + this.charKey(this.lookKey, i), F.D).setAngle(dir * 90).setDepth(AY + y - 6);
-      this.bodies.push(body);
-    }
+    const tex = i >= 0 ? 'ch' + this.charKey(this.lookKey, i) : '';
+    const k = makeKill(eid, x, y, w.time);
+    // до удара жертва ещё стоит
+    const standIn = tex ? this.add.image(k.x, AY + k.y - 8, tex, F.D).setDepth(AY + k.y) : null;
+    this.kills.push({ k, t: 0, hit: false, tex, standIn });
     this.noPoof.add(eid);
+  }
+
+  /** Момент удара: всё, что должно случиться разом. */
+  private weaponImpact(lk: LiveKill): void {
+    this.audio.play(weaponSfx(lk.k));
+    this.audio.play('hitPlayer');
+    this.hitStop = 70;
+    this.cameras.main.shake(180, 0.016);
+    navigator.vibrate?.(30);
+    const flash = this.add.rectangle(0, AY, 180, 260, hexToInt(PAL.red), 0.22).setOrigin(0, 0).setDepth(970);
+    this.tweens.add({ targets: flash, alpha: 0, duration: 160, onComplete: () => flash.destroy() });
+    lk.standIn?.destroy();
+    lk.standIn = null;
+    const b = bodyPose(lk.k);
+    if (lk.tex) this.bodies.push(this.add.image(b.x, AY + b.y, lk.tex, F.D).setAngle(b.angle).setDepth(AY + lk.k.y - 6));
+  }
+
+  /** Рисовалка gore.ts поверх Graphics (координаты поля). */
+  private pxOf(g: Phaser.GameObjects.Graphics): Px {
+    return (x, y, w, h, c, a = 1) => {
+      let n = this.pxCache.get(c);
+      if (n === undefined) this.pxCache.set(c, (n = hexToInt(c)));
+      g.fillStyle(n, a).fillRect(x, AY + y, w, h);
+    };
   }
 
   /**
@@ -1039,9 +1066,9 @@ export class GameScene extends Phaser.Scene {
   private clearGore(): void {
     for (const b of this.bodies) b.destroy();
     this.bodies = [];
-    this.stains = [];
-    this.drops = [];
-    this.swings = [];
+    for (const lk of this.kills) lk.standIn?.destroy();
+    this.kills = [];
+    this.replayKills.clear();
     this.noPoof.clear();
     this.goreG?.clear();
   }
@@ -1204,6 +1231,7 @@ export class GameScene extends Phaser.Scene {
         font: this.init0.fontFamily,
         site: location.host,
         captions: known ? { find: c.whoGotMe, reveal: c.reveal, kind: c.gotMe } : { find: c.findMe, reveal: c.thatWasMe, kind: c.whoGotMe },
+        noGore: this.cfg.kidsMode,
       },
       (p) => {
         if (this.deathClip !== dc) return;
@@ -1444,6 +1472,7 @@ export class GameScene extends Phaser.Scene {
     this.tickSubliminal();
     this.renderFlicker();
     this.renderVeils();
+    this.replayT = null;
     if (phase === 'reveal') this.renderReveal(alpha);
     else this.renderWorld(this.sim.world, phase === 'countdown' || phase === 'play' ? alpha : 1, 'live');
 
@@ -1507,6 +1536,16 @@ export class GameScene extends Phaser.Scene {
       const sy = AY + y;
       // «поф» при выбивании
       const since = w.time - e.removedAt;
+      // повтор: выбитый оружием лежит на месте удара
+      const body = mode === 'replay' && since >= 0 ? this.replayKills.get(e.eid) : undefined;
+      if (!e.alive && body) {
+        const b = bodyPose(body);
+        const tex = 'ch' + this.charKey(this.lookKey, i);
+        if (v.spr.texture.key !== tex) v.spr.setTexture(tex, F.D);
+        v.spr.setVisible(true).setFrame(F.D).setFlipX(false).setAngle(b.angle).setPosition(b.x, AY + b.y).setDepth(AY + body.y - 6).setAlpha(highlight && !highlight.has(e.eid) ? 0.45 : 1).clearTint();
+        for (const o of [v.ol, v.shadow, v.stun, v.mark, v.q, v.poof]) o.setVisible(false);
+        return;
+      }
       if (!e.alive) {
         v.spr.setVisible(false);
         v.ol.setVisible(false);
@@ -1542,7 +1581,7 @@ export class GameScene extends Phaser.Scene {
       const fig = dz?.fig ?? this.charKey(flashKey ?? this.lookKey, i);
       if (v.spr.texture.key !== 'ch' + fig) v.spr.setTexture('ch' + fig, frame);
       if (v.ol.texture.key !== 'ol' + fig) v.ol.setTexture('ol' + fig, frame);
-      v.spr.setVisible(true).setFrame(frame).setFlipX(flip).setPosition(x + lx, sy + jumpOff + ly).setDepth(sy);
+      v.spr.setVisible(true).setFrame(frame).setFlipX(flip).setAngle(0).setPosition(x + lx, sy + jumpOff + ly).setDepth(sy);
       // цель замаха на миг вспыхивает белым
       if (mode === 'live' && this.swingFx.some((s) => s.eid === e.eid && s.t < 90)) v.spr.setTintFill(0xffffff);
       else v.spr.clearTint();
@@ -1655,6 +1694,7 @@ export class GameScene extends Phaser.Scene {
           if (!last || Math.hypot(last.x - en.x, last.y - en.y) >= 2) tr.push({ x: Math.round(en.x), y: Math.round(en.y) });
         }
       }
+      this.replayT = this.replay.time - TICK_MS + alpha * TICK_MS;
       this.renderWorld(this.replay, alpha, 'replay', colors);
       return;
     }
@@ -1767,27 +1807,32 @@ export class GameScene extends Phaser.Scene {
       return true;
     });
     // оружие: замах над целью, брызги; пятна — на полу под всеми
-    const gore = this.sim.phase === 'play' || this.sim.phase === 'accuse';
-    for (const b of this.bodies) b.setVisible(gore);
     const gg = this.goreG;
     gg.clear();
-    if (gore) for (const st of this.stains) gg.fillStyle(st.c, 1).fillRect(st.x, AY + st.y, 1, 1);
-    this.swings = this.swings.filter((sw) => {
-      sw.t += delta;
-      if (sw.t > 220) return false;
-      drawWeapon(g, sw.x, AY + sw.y, sw.kind, sw.dir, sw.t / 220);
-      return true;
-    });
-    this.drops = this.drops.filter((d) => {
-      d.t += delta;
-      d.x += d.vx * delta;
-      d.y += d.vy * delta;
-      d.vy += 0.0004 * delta;
-      g.fillStyle(d.c, 1).fillRect(Math.round(d.x), Math.round(AY + d.y), 1, 1);
-      if (d.t < 420) return true;
-      this.stains.push({ x: Math.round(d.x), y: Math.round(d.y), c: d.c });
-      return false;
-    });
+    for (const lk of this.kills) {
+      lk.t += delta;
+      if (!lk.hit && lk.t >= SWING_HIT) {
+        lk.hit = true;
+        this.weaponImpact(lk);
+      }
+    }
+    const floor = this.pxOf(gg);
+    const air = this.pxOf(g);
+    // на повторе разоблачения — удары повтора по его времени, живые тела и пятна спрятаны
+    const rt = this.replayT;
+    const gore = this.sim.phase === 'play' || this.sim.phase === 'accuse' || this.sim.phase === 'reveal';
+    for (const b of this.bodies) b.setVisible(gore && rt === null);
+    if (rt !== null) {
+      for (const k of this.replayKills.values()) {
+        drawFloor(floor, k, rt - k.at);
+        drawAir(air, k, rt - k.at);
+      }
+    } else if (gore) {
+      for (const lk of this.kills) {
+        drawFloor(floor, lk.k, lk.t - SWING_HIT);
+        drawAir(air, lk.k, lk.t - SWING_HIT);
+      }
+    }
     // прожекторы режиссёра: свет на площадке гаснет, сверху падает луч, на полу — светлое пятно
     const wt0 = this.sim.world.time;
     this.spots = this.sim.phase === 'play' ? this.spots.filter((p) => wt0 < p.until) : [];
@@ -2341,7 +2386,7 @@ export class GameScene extends Phaser.Scene {
     try {
       this.closeClip = openClipOverlay(
         document.body,
-        { ...best, arena: this.sim.arena, t: this.t, font: this.init0.fontFamily, site: location.host },
+        { ...best, arena: this.sim.arena, t: this.t, font: this.init0.fontFamily, site: location.host, noGore: this.cfg.kidsMode },
         this.t,
         async (file) => {
           const m = best.moment;
@@ -2375,36 +2420,11 @@ function requestWakeLock(): void {
 }
 
 
-/**
- * Оружие при выбивании ночью — пиксельная линия, без поворота спрайтов: 0 бита, 1 труба, 2 нож.
- * k — доля замаха (0..1): бита и труба описывают дугу сверху вниз, нож бьёт тычком.
- */
-function drawWeapon(g: Phaser.GameObjects.Graphics, x: number, y: number, kind: 0 | 1 | 2, dir: 1 | -1, k: number): void {
-  const ink = hexToInt(PAL.ink);
-  if (kind === 2) {
-    // нож: рукоять и клинок летят в цель
-    const off = Math.round((1 - k) * 8);
-    const bx = x - dir * (4 + off);
-    const by = y - 9;
-    g.fillStyle(ink, 1).fillRect(bx - dir * 3, by, 3, 2);
-    g.fillStyle(hexToInt(PAL.white), 1).fillRect(dir > 0 ? bx : bx - 4, by, 5, 1);
-    g.fillStyle(hexToInt(PAL.mist), 1).fillRect(dir > 0 ? bx : bx - 4, by + 1, 4, 1);
-    return;
-  }
-  const len = kind === 0 ? 10 : 11;
-  const a = -2.4 + k * 2.0; // от «над головой» до «вниз у цели»
-  const px = x - dir * 6;
-  const py = y - 14;
-  const body = hexToInt(kind === 0 ? PAL.fawn : PAL.steel);
-  const tip = hexToInt(kind === 0 ? PAL.umber : PAL.mist);
-  for (let i = 0; i <= len; i++) {
-    const cx = Math.round(px + dir * Math.cos(a) * i);
-    const cy = Math.round(py - Math.sin(a) * i);
-    g.fillStyle(ink, 1).fillRect(cx - 1, cy - 1, 3, 3);
-  }
-  for (let i = 0; i <= len; i++) {
-    const cx = Math.round(px + dir * Math.cos(a) * i);
-    const cy = Math.round(py - Math.sin(a) * i);
-    g.fillStyle(i > len - 4 ? tip : body, 1).fillRect(cx, cy, kind === 0 && i > len - 4 ? 2 : 1, kind === 0 && i > len - 4 ? 2 : 1);
-  }
+/** Удар оружием в живой игре: часы замаха и жертва, которая стоит до удара. */
+interface LiveKill {
+  k: Kill;
+  t: number;
+  hit: boolean;
+  tex: string;
+  standIn: Phaser.GameObjects.Image | null;
 }

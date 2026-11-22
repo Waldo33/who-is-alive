@@ -8,7 +8,7 @@ import { playerName } from '@/lib/name';
 
 /**
  * «Пробный дубль» поверх страницы: только сцена игры со сценарием обучения (game/tutorial.ts)
- * (пропустить — крестик в шапке сцены) — без текстов и карточек. На /learn и в лобби, пока ждут режиссёра.
+ * (пропустить — кнопка «Пропустить» внизу сцены) — без текстов и карточек. На /learn и в лобби, пока ждут режиссёра.
  */
 export function TutorialStage({
   lang,
@@ -42,7 +42,7 @@ export function TutorialStage({
               markTutorialDone();
               closeRef.current();
             },
-            // крестик в шапке сцены: пропустить — и больше не показывать сам
+            // кнопка «Пропустить»: больше не показывать сам
             onSkip: () => {
               markTutorialDone();
               closeRef.current();

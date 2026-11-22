@@ -9,7 +9,7 @@ import type { MusicMode } from './music';
  */
 export type Sfx =
   | 'step' | 'hitPlayer' | 'hitBot' | 'poof' | 'starTake' | 'starSpawn' | 'crowd' | 'tick'
-  | 'click' | 'ready' | 'accuseRight' | 'accuseWrong' | 'fanfare' | 'sad' | 'hedge' | 'pigeon' | 'drum' | 'denied' | 'count' | 'swing' | 'flicker' | 'dusk' | 'siren' | 'whack';
+  | 'click' | 'ready' | 'accuseRight' | 'accuseWrong' | 'fanfare' | 'sad' | 'hedge' | 'pigeon' | 'drum' | 'denied' | 'count' | 'swing' | 'flicker' | 'dusk' | 'siren' | 'whack' | 'clang' | 'stab';
 
 const STORAGE_KEY = 'kto:sound';
 const MUSIC_KEY = 'kto:music';
@@ -252,7 +252,10 @@ export class Audio {
       case 'hitBot': this.tone('square', 300, 520, 0.08, 0.2); this.tone('square', 520, 90, 0.35, 0.2, 0.08); break;
       case 'poof': this.noise(0.3, 0.3, 2400); break;
       // глухой удар (ночью — бита/труба/нож): низкий шум и «тук»
-      case 'whack': this.noise(0.12, 0.55, 380); this.tone('sine', 150, 55, 0.14, 0.5); this.noise(0.06, 0.25, 3200, 0.03); break;
+      // ночь Майами: бита — глухой деревянный удар, труба — звон металла, нож — свист и тычок
+      case 'whack': this.noise(0.14, 0.7, 320); this.tone('sine', 170, 50, 0.16, 0.6); this.tone('square', 220, 160, 0.03, 0.2); break;
+      case 'clang': this.noise(0.08, 0.45, 2600); [1180, 1770, 2360].forEach((f, i) => this.tone('square', f, f * 0.97, 0.38 - i * 0.08, 0.1)); this.tone('sine', 140, 60, 0.12, 0.4); break;
+      case 'stab': this.noise(0.09, 0.35, 5200); this.noise(0.07, 0.5, 700, 0.05); this.tone('sine', 120, 70, 0.08, 0.4, 0.05); break;
       case 'starTake': [660, 880, 1320].forEach((f, i) => this.tone('square', f, f, 0.08, 0.16, i * 0.06)); break;
       case 'starSpawn': this.tone('triangle', 1200, 1800, 0.12, 0.12); this.tone('triangle', 1800, 2400, 0.1, 0.08, 0.08); break;
       case 'crowd': this.tone('square', 880, 880, 0.12, 0.25); this.tone('square', 660, 660, 0.18, 0.25, 0.14); break;
