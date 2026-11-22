@@ -606,7 +606,7 @@ export const HUD_FISTS: Record<string, string[]> = {
   c: ['....o.....', '.o.owo.o..', '..owwwo...', '.owwwwwoo.', 'owwwwwwwwo', '.oowwwwwo.', '..owwwwo..', '.owo.owo..', '.oo...oo..', '..........'],
 };
 export function makeHudIcons(fist: keyof typeof HUD_FISTS = 'a'): HTMLCanvasElement {
-  const { c, g } = canvas(40, 10);
+  const { c, g } = canvas(50, 10);
   const rows = HUD_FISTS[fist];
   grid(g, 0, 0, rows, { o: PAL.ink, s: PAL.peach, f: PAL.fawn, w: PAL.white, m: PAL.mist });
   // пустой слот: тот же силуэт без деталей, тёмный — «удар истрачен»
@@ -614,6 +614,8 @@ export function makeHudIcons(fist: keyof typeof HUD_FISTS = 'a'): HTMLCanvasElem
   const star = ['...oo...', '...oyo..', 'oooyyooo', 'oyyyyyyo', '.oyyyyo.', '.oyooyo.', '.oo..oo.', '........'];
   grid(g, 21, 1, star, { o: PAL.ink, y: PAL.yellow });
   grid(g, 31, 1, star, { o: PAL.ink, y: PAL.dusk });
+  // шестерёнка настроек 10×10 с контуром ink: восемь зубцов и отверстие — видна на любом фоне
+  grid(g, 40, 0, ['...o..o...', '..owoowo..', '.owwwwwwo.', 'owwwmmwwwo', '.owm..mwo.', '.owm..mwo.', 'owwwmmwwwo', '.owwwwwwo.', '..owoowo..', '...o..o...'], { o: PAL.ink, w: PAL.white, m: PAL.mist });
   return c;
 }
 

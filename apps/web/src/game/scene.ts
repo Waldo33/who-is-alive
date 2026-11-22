@@ -40,6 +40,8 @@ import { haptic, setClosingConfirmation } from '../lib/telegram';
 const HUD_EXTRAS = false;
 /** Черновик макета: вариант значка удара (?fist=a|b|c). */
 const HUD_FIST = ((typeof location !== 'undefined' && new URLSearchParams(location.search).get('fist')) || 'a') as 'a' | 'b' | 'c';
+/** Черновик макета: вид кнопки настроек (?gear=a — кнопка с рамкой, b — крупная шестерёнка, c — как сейчас). */
+const GEAR = ((typeof location !== 'undefined' && new URLSearchParams(location.search).get('gear')) || 'a') as 'a' | 'b' | 'c';
 const AY = 24; // верх арены на экране
 const CROWD_KINDS: CrowdKind[] = ['freeze', 'jump', 'dance'];
 /** Половина заката/рассвета: столько сгущаются сумерки, столько же проступает новый облик. */
@@ -596,6 +598,7 @@ export class GameScene extends Phaser.Scene {
   // ───────────── HUD и кнопки ─────────────
 
   private buildHud(): void {
+    if (!this.textures.exists('hud')) this.addSheet('hud', makeHudIcons(HUD_FIST), 10, 10);
     this.hud.timer = this.txt(3, 7, '0:00', 'sand').setDepth(1100);
     this.hud.round = this.txt(3, -1, '', 'mist').setDepth(1100).setVisible(false);
     // зритель: ни ударов, ни звёзд (звёзды игроков приходят только им лично) — пометка «Ты зритель»
@@ -605,7 +608,6 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     // Шапка — три группы через разделители dusk: время | моё (удары, свои звёзды ★★☆) | чужие звёзды.
-    if (!this.textures.exists('hud')) this.addSheet('hud', makeHudIcons(HUD_FIST), 10, 10);
     const sep = this.add.graphics().setDepth(1100);
     sep.fillStyle(hexToInt(PAL.dusk)).fillRect(37, 5, 1, 14).fillRect(105, 5, 1, 14);
     this.hudSep = sep;
@@ -688,8 +690,11 @@ export class GameScene extends Phaser.Scene {
       this.btnObjs.set(b.id, { text });
     }
     // шестерёнка: звук, правила и выход — в листе настроек поверх игры (язык меняется вне матча)
+    // вариант A: настоящая кнопка 21×20 с рамкой и янтарной кромкой (как кнопки команд), шестерёнка 10×10;
+    // B: шестерёнка ×2 без рамки; C: как было (8×8 цвета mist)
+    const gearBox: [number, number, number, number] = GEAR === 'a' ? [157, 2, 21, 20] : GEAR === 'b' ? [158, 2, 20, 20] : [166, 3, 12, 18];
     this.buttons.push({
-      id: 'sound', x: 166, y: 3, w: 12, h: 18, icon: this.init0.onSettings ? 'gear' : this.audio.enabled ? 'soundOn' : 'soundOff', visible: () => true,
+      id: 'sound', x: gearBox[0], y: gearBox[1], w: gearBox[2], h: gearBox[3], icon: this.init0.onSettings ? 'gear' : this.audio.enabled ? 'soundOn' : 'soundOff', visible: () => true,
       // рисунок 12×18, а палец — шире: угол 30×30 (заходит на 6 px в поле, там почти не стоят)
       hit: [150, 0, 30, 30],
       onUp: () => {
@@ -707,7 +712,10 @@ export class GameScene extends Phaser.Scene {
     // зрителю — только шестерёнка: нажимать в чужом матче нечего
     if (this.init0.spectator) this.buttons = this.buttons.filter((b) => b.id === 'sound');
     for (const b of this.buttons) {
-      const icon = b.icon ? this.add.image(b.x + b.w / 2, b.y + b.h / 2, 'icons', this.icon(b.icon)).setDepth(1101) : undefined;
+      const cog = b.id === 'sound' && b.icon === 'gear' && GEAR !== 'c';
+      const icon = cog
+        ? this.add.image(b.x + b.w / 2, b.y + b.h / 2, 'hud', 4).setDepth(1101).setScale(GEAR === 'b' ? 2 : 1)
+        : b.icon ? this.add.image(b.x + b.w / 2, b.y + b.h / 2, 'icons', this.icon(b.icon)).setDepth(1101) : undefined;
       if (icon && b.id !== 'sound') icon.setScale(2);
       this.btnObjs.set(b.id, { ...this.btnObjs.get(b.id), icon });
     }
@@ -762,6 +770,11 @@ export class GameScene extends Phaser.Scene {
       const o = this.btnObjs.get(b.id);
       o?.icon?.setVisible(vis);
       o?.text?.setVisible(vis);
+      if (b.id === 'sound' && vis && GEAR === 'a') {
+        this.drawPanel(b.x, b.y, b.w, b.h, PAL.dusk, b.pressed, PAL.amber);
+        if (o?.icon) o.icon.y = b.y + b.h / 2 + (b.pressed ? 1 : 0);
+        continue;
+      }
       if (!vis || b.id === 'sound') continue;
       if (b.id.startsWith('clap-')) {
         const ready = this.clapReady();
