@@ -34,7 +34,8 @@ jobs:
         run: |
           ssh $SSH_OPTS root@$IP "MSK=$MSK bash -s" <<'SH'
           systemctl is-active massovka-tunnel massovka-game caddy postgresql || true
-          journalctl -u massovka-tunnel -n 15 --no-pager -o cat
+          journalctl -u massovka-tunnel -n 15 --no-pager -o cat | tail -6
+          echo "перезапусков туннеля за час: $(journalctl -u massovka-tunnel --since "1 hour ago" --no-pager -o cat | grep -c "Started")"
           timeout 8 bash -c "</dev/tcp/$MSK/22" && echo "порт 22 Москвы: открыт" || echo "порт 22 Москвы: нет"
           timeout 8 bash -c "</dev/tcp/$MSK/443" && echo "порт 443 Москвы: открыт" || echo "порт 443 Москвы: нет"
           free -m | head -2
@@ -50,3 +51,7 @@ jobs:
           sshd -T 2>/dev/null | grep -E "allowtcpforwarding|permitlisten|gatewayports" 
           free -m | head -2
           SH
+      - name: Снаружи
+        run: |
+          for i in 1 2 3; do curl -s -m 10 -w " %{http_code} %{time_total}s\n" https://api.benobody.app/tg/info; sleep 2; done
+          curl -s -m 10 -o /dev/null -w "benobody.app: %{http_code}\n" https://benobody.app/
