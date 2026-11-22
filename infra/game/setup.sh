@@ -128,10 +128,10 @@ if [ -f "$D/caddy" ]; then
 fi
 
 # ───────────── секреты (рождаются на сервере и не покидают его) ─────────────
-if [ ! -f /etc/massovka/secrets.env ]; then
+if ! grep -q '^AUTH_SIGNING_KEY=' /etc/massovka/secrets.env 2>/dev/null; then
   say "ключ подписи токенов игроков"
   # umask — только для этого файла, иначе конфиги ниже станут нечитаемыми для служб
-  ( umask 077; echo "AUTH_SIGNING_KEY=$(openssl rand -hex 32)" > /etc/massovka/secrets.env )
+  ( umask 077; echo "AUTH_SIGNING_KEY=$(openssl rand -hex 32)" >> /etc/massovka/secrets.env )
 fi
 chmod 600 /etc/massovka/secrets.env
 
