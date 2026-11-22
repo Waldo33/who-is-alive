@@ -589,6 +589,35 @@ export const ICON_MAP: Record<string, string> = {
   b: PAL.blue, g: PAL.green, u: PAL.umber, f: PAL.orange, a: PAL.amber, s: PAL.peach,
 };
 
+/**
+ * Значки шапки дубля 10×10: кулак (удар есть), пустой слот (удар истрачен), своя звезда и пустая ячейка.
+ * Кулак спереди — пальцы, большой палец поперёк, контур ink: читается на 1× как ✊, а не как зубы.
+ */
+const HUD_FIST = ['..oooooo..', '.osososoo.', 'ososososso', 'ososososso', 'ofofofosso', 'ooooooosso', 'osssssofso', '.offffosso', '..ossssso.', '..oooooo..'];
+export function makeHudIcons(): HTMLCanvasElement {
+  const { c, g } = canvas(40, 10);
+  grid(g, 0, 0, HUD_FIST, { o: PAL.ink, s: PAL.peach, f: PAL.fawn });
+  // пустой слот: тот же силуэт без деталей, тёмный — «удар истрачен»
+  grid(g, 10, 0, HUD_FIST.map((r) => r.replace(/[^.o]/g, 'n')), { o: PAL.ink, n: PAL.dusk });
+  const star = ['...oo...', '...oyo..', 'oooyyooo', 'oyyyyyyo', '.oyyyyo.', '.oyooyo.', '.oo..oo.', '........'];
+  grid(g, 21, 1, star, { o: PAL.ink, y: PAL.yellow });
+  grid(g, 31, 1, star, { o: PAL.ink, y: PAL.dusk });
+  return c;
+}
+
+/**
+ * Шестерёнка настроек в шапке дубля, 14×14 без рамки: восемь зубцов, отверстие, контур ink и тень
+ * mist справа снизу — читается как шестерёнка и видна на любом фоне (была 8×8 серая — терялась).
+ */
+export function makeGear(): HTMLCanvasElement {
+  const { c, g } = canvas(14, 14);
+  grid(g, 0, 0, [
+    '......oo......', '..oo.owwo.oo..', '.owwoowwoowwo.', '.owwwwwwwwwwo.', '..owwwwwwwwo..', '.oowwwoowwwoo.', 'owwwwo..owwwmo',
+    'owwwwo..owwmmo', '.oowwwoowwmoo.', '..owwwwwwmmo..', '.owwwwwwmmmmo.', '.owwoowmoommo.', '..oo.ommo.oo..', '......oo......',
+  ], { o: PAL.ink, w: PAL.white, m: PAL.mist });
+  return c;
+}
+
 /** Лист иконок 8×8 из строк (иконки команд темы). */
 export function makeIconSheet(list: string[][]): HTMLCanvasElement {
   const { c, g } = canvas(list.length * 8, 8);

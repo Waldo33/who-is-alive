@@ -29,7 +29,7 @@ import type { FontColor } from './font';
 import { registerFonts } from './font';
 import {
   CH_H, CH_W, F, OL_H, OL_W,
-  makeArenaBackground, makeArrow, makeCharacterSheets, makeHedge, makeIconSheet, makeIcons, makeMark, makePigeon,
+  makeArenaBackground, makeArrow, makeGear, makeHudIcons, makeCharacterSheets, makeHedge, makeIconSheet, makeIcons, makeMark, makePigeon,
   makePoof, makeProp, makeRing, makeShadow, makeStar, makeStarFlash, makeStunStars, makeVignette,
 } from './sprites';
 import { isThemeLoaded, loadTheme, lookCount, preloadThemes, themeLook, themePack, variantOf } from './themes';
@@ -189,6 +189,9 @@ export class GameScene extends Phaser.Scene {
   private triumphShown = false;
   private hud: Record<string, Phaser.GameObjects.BitmapText> = {};
   private hudIcons: Phaser.GameObjects.Image[] = [];
+  private hudStars: Phaser.GameObjects.Image[] = [];
+  private hudThreat?: Phaser.GameObjects.Image;
+  private hudSep?: Phaser.GameObjects.Graphics;
   private buttons: Button[] = [];
   private btnObjs = new Map<string, { icon?: Phaser.GameObjects.Image; text?: Phaser.GameObjects.BitmapText }>();
   private ovObjs: Phaser.GameObjects.GameObject[] = [];
@@ -291,6 +294,7 @@ export class GameScene extends Phaser.Scene {
     this.btnObjs.clear();
     this.hud = {};
     this.hudIcons = [];
+    this.hudStars = [];
     this.overlayPhase = '';
     this.ghostMarks.clear();
     this.replay = null;
@@ -573,6 +577,8 @@ export class GameScene extends Phaser.Scene {
   // ───────────── HUD и кнопки ─────────────
 
   private buildHud(): void {
+    if (!this.textures.exists('hud')) this.addSheet('hud', makeHudIcons(), 10, 10);
+    if (!this.textures.exists('gear')) this.textures.addCanvas('gear', makeGear());
     this.hud.timer = this.txt(3, 7, '0:00', 'sand').setDepth(1100);
     this.hud.round = this.txt(3, -1, '', 'mist').setDepth(1100).setVisible(false);
     // зритель: ни ударов, ни звёзд (звёзды игроков приходят только им лично) — пометка «Ты зритель»
@@ -581,17 +587,23 @@ export class GameScene extends Phaser.Scene {
       this.specL2 = this.txt(90, PANEL_Y + 19, '', 'mist').setOrigin(0.5, 0).setDepth(1101);
       return;
     }
+    // Шапка — три группы через разделители dusk: время | моё (удары, свои звёзды ★★☆) | чужие звёзды.
+    const sep = this.add.graphics().setDepth(1100);
+    sep.fillStyle(hexToInt(PAL.dusk)).fillRect(37, 5, 1, 14).fillRect(105, 5, 1, 14);
+    this.hudSep = sep;
     for (let i = 0; i < this.cfg.attacksPerRound; i++) {
-      this.hudIcons.push(this.add.image(48 + i * 10, 12, 'icons', this.icon('fist')).setDepth(1100));
+      this.hudIcons.push(this.add.image(40 + i * 11, 7, 'hud', 0).setOrigin(0, 0).setDepth(1100));
     }
-    // Свои звёзды — своим цветом; чужие — без цветов и имён, по убыванию:
-    // видно, что кто-то близок к победе, но не видно, кто именно (раздел 5).
-    const mine = this.sim.info(this.sim.selfPid)!;
-    this.add.image(86, 12, 'icons', this.icon('star')).setDepth(1100);
-    this.hud.starsMe = this.txt(91, 7, '0', COLOR_FONT[mine.color]).setDepth(1100);
+    // свои звёзды — ячейками до цели дубля: цель «3 звезды» видна без слов
+    for (let i = 0; i < this.cfg.starsToWin; i++) {
+      this.hudStars.push(this.add.image(74 + i * 9, 7, 'hud', 3).setOrigin(0, 0).setDepth(1100));
+    }
+    // Чужие — без цветов и имён, по убыванию, под общей пометкой «?»: видно, что кто-то близок
+    // к победе (звёздочка мигает), но не видно, кто именно (раздел 5).
+    this.txt(108, 7, '?', 'mist').setDepth(1100);
+    this.hudThreat = this.add.image(114, 7, 'hud', 2).setOrigin(0, 0).setDepth(1100).setAlpha(0.45);
     for (let i = 1; i < this.sim.players.length; i++) {
-      this.add.image(90 + i * 19, 12, 'icons', this.icon('star')).setDepth(1100).setAlpha(0.6);
-      this.hud['starsOther' + i] = this.txt(95 + i * 19, 7, '0', 'mist').setDepth(1100);
+      this.hud['starsOther' + i] = this.txt(116 + i * 10, 7, '0', 'mist').setDepth(1100);
     }
   }
 
@@ -658,9 +670,10 @@ export class GameScene extends Phaser.Scene {
       this.btnObjs.set(b.id, { text });
     }
     // шестерёнка: звук, правила и выход — в листе настроек поверх игры (язык меняется вне матча)
+    // шестерёнка 14×14 без рамки (решение владельца: крупнее и похожей на шестерёнку)
     this.buttons.push({
-      id: 'sound', x: 166, y: 3, w: 12, h: 18, icon: this.init0.onSettings ? 'gear' : this.audio.enabled ? 'soundOn' : 'soundOff', visible: () => true,
-      // рисунок 12×18, а палец — шире: угол 30×30 (заходит на 6 px в поле, там почти не стоят)
+      id: 'sound', x: 159, y: 5, w: 14, h: 14, icon: this.init0.onSettings ? 'gear' : this.audio.enabled ? 'soundOn' : 'soundOff', visible: () => true,
+      // рисунок 14×14, а палец — шире: угол 30×30 (заходит на 6 px в поле, там почти не стоят)
       hit: [150, 0, 30, 30],
       onUp: () => {
         if (this.init0.onSettings) {
@@ -677,7 +690,10 @@ export class GameScene extends Phaser.Scene {
     // зрителю — только шестерёнка: нажимать в чужом матче нечего
     if (this.init0.spectator) this.buttons = this.buttons.filter((b) => b.id === 'sound');
     for (const b of this.buttons) {
-      const icon = b.icon ? this.add.image(b.x + b.w / 2, b.y + b.h / 2, 'icons', this.icon(b.icon)).setDepth(1101) : undefined;
+      const cog = b.id === 'sound' && b.icon === 'gear';
+      const icon = cog
+        ? this.add.image(b.x + b.w / 2, b.y + b.h / 2, 'gear').setDepth(1101)
+        : b.icon ? this.add.image(b.x + b.w / 2, b.y + b.h / 2, 'icons', this.icon(b.icon)).setDepth(1101) : undefined;
       if (icon && b.id !== 'sound') icon.setScale(2);
       this.btnObjs.set(b.id, { ...this.btnObjs.get(b.id), icon });
     }
@@ -732,6 +748,8 @@ export class GameScene extends Phaser.Scene {
       const o = this.btnObjs.get(b.id);
       o?.icon?.setVisible(vis);
       o?.text?.setVisible(vis);
+      // шестерёнка без рамки: при нажатии чуть проседает, как кнопки
+      if (b.id === 'sound' && o?.icon) o.icon.y = b.y + b.h / 2 + (b.pressed ? 1 : 0);
       if (!vis || b.id === 'sound') continue;
       if (b.id.startsWith('clap-')) {
         const ready = this.clapReady();
@@ -2349,8 +2367,8 @@ export class GameScene extends Phaser.Scene {
     let r: { x: number; y: number; w: number; h: number };
     if (f === 'buttons') r = { x: 43, y: PANEL_Y + 1, w: 95, h: 34 };
     else if (f === 'claps') r = { x: 97, y: PANEL_Y + 1, w: 82, h: 34 };
-    else if (f === 'fists') r = { x: 42, y: 4, w: 32, h: 16 };
-    else if (f === 'stars') r = { x: 80, y: 4, w: 22, h: 16 };
+    else if (f === 'fists') r = { x: 38, y: 4, w: 35, h: 16 };
+    else if (f === 'stars') r = { x: 72, y: 4, w: 32, h: 16 };
     else if (f === 'me') {
       const e = this.sim.world.get(this.me()?.eid ?? -1);
       if (!e) return;
@@ -2404,10 +2422,13 @@ export class GameScene extends Phaser.Scene {
     const sec = Math.ceil(left / 1000);
     const showTimer = !this.tut && (sim.phase === 'play' || sim.phase === 'accuse' || sim.phase === 'countdown');
     this.hud.timer.setText(this.tut ? '' : showTimer ? `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}` : tp(this.lang, this.t.game.roundShort, sim.round));
-    this.hud.timer.setFont(sim.phase === 'play' && sec <= 10 ? 'px-red' : 'px-sand');
+    // последние 10 с — coral и мигание в такт секунде
+    const hurry = sim.phase === 'play' && sec <= 10 && !this.tut;
+    this.hud.timer.setFont(hurry ? 'px-coral' : 'px-sand').setVisible(!hurry || left % 1000 > 350);
+    // «Дубль N» вместо таймера — между дублями; разделитель после времени тогда не нужен
     const me = this.me();
-    this.hudIcons.forEach((ic, i) => ic.setFrame(this.icon(me && i < me.attacksLeft ? 'fist' : 'fistOff')));
-    this.hud.starsMe?.setText(String(me?.stars ?? 0));
+    this.hudIcons.forEach((ic, i) => ic.setFrame(me && i < me.attacksLeft ? 0 : 1));
+    this.hudStars.forEach((ic, i) => ic.setFrame(me && i < me.stars ? 2 : 3));
     const spec = this.init0.spectator;
     if (spec && this.specL2) {
       const s = spec.watching() ? fmt(this.t.game.spectatorDelay, { n: spec.delaySec }) : this.t.game.spectatorWait;
@@ -2415,6 +2436,9 @@ export class GameScene extends Phaser.Scene {
     }
     const others = sim.otherStars();
     others.forEach((n, i) => this.hud['starsOther' + (i + 1)]?.setText(String(n)).setFont(n >= this.cfg.starsToWin - 1 ? 'px-amber' : 'px-mist'));
+    // угроза: у кого-то из чужих звёзд на одну меньше цели — звёздочка группы мигает
+    const threat = sim.phase === 'play' && others.some((n) => n >= this.cfg.starsToWin - 1);
+    this.hudThreat?.setAlpha(threat ? (Math.floor(performance.now() / 300) % 2 ? 1 : 0.3) : 0.45);
   }
 
   // ───────────── оверлеи фаз ─────────────
