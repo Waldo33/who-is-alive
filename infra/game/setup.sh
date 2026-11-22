@@ -123,6 +123,7 @@ if [ "${ROLE:-game}" = infra ] && [ -n "${TUNNEL_TO:-}" ]; then
 Description=Массовка: туннель в Москву (бот, логи)
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=0
 
 [Service]
 ExecStart=/usr/bin/ssh -N -i /etc/massovka/tunnel_ed25519 -o ExitOnForwardFailure=yes -o ConnectTimeout=5 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/etc/massovka/tunnel_known_hosts -R 127.0.0.1:9090:127.0.0.1:8080 tunnel@$TUNNEL_TO
@@ -130,7 +131,6 @@ ExecStart=/usr/bin/ssh -N -i /etc/massovka/tunnel_ed25519 -o ExitOnForwardFailur
 # пробуем часто и коротко, а без нужды не переподключаемся
 Restart=always
 RestartSec=2
-StartLimitIntervalSec=0
 
 [Install]
 WantedBy=multi-user.target
