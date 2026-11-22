@@ -121,6 +121,10 @@ button.btn { border: 0; cursor: pointer; border-radius: 0; }
 .setting.check input { width: 22px; height: 22px; accent-color: var(--amber); }
 .setting-hint { margin: -8px 0 0 30px; font-size: 8px; line-height: 1.8; color: var(--slate); }
 .seg { display: flex; box-shadow: 0 0 0 2px var(--ink); }
+/* сложность: подпись сверху, три сегмента во всю ширину (длинные слова не влезают в строку на SE) */
+.setting.stack { flex-direction: column; align-items: stretch; }
+.setting.stack .seg button { flex: 1; min-width: 0; }
+.setting-hint.level-hint { margin: -4px 0 0; text-align: center; }
 .seg button, .lang-switch button { font: inherit; font-size: 9px; min-width: 52px; min-height: 44px; border: 0; border-radius: 0;
   background: var(--ink); color: var(--steel); cursor: pointer; }
 .seg button[aria-pressed='true'], .lang-switch button[aria-pressed='true'] { background: #3a4466; color: var(--yellow); }

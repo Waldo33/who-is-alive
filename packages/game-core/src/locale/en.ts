@@ -64,6 +64,13 @@ export const en: Dict = {
     kidsHint: 'More time to freeze with the crowd and to pick a suspect. For kids and first-timers.',
     strict: 'Strict shoot',
     strictHint: 'Miss a named crowd move and you’re cut from the shot. For players who know the game.',
+    difficulty: 'Difficulty',
+    levels: { easy: 'Easy', normal: 'Normal', hard: 'Hard' },
+    levelHints: {
+      easy: 'More time to copy and to pick',
+      normal: 'As designed. Start here',
+      hard: 'Miss a crowd move — you’re cut',
+    },
     play: 'Play with bots',
     quickPlay: 'Play',
     withFriends: 'With friends',

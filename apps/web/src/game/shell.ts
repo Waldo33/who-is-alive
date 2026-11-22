@@ -104,10 +104,12 @@ export function mountSandbox(root: HTMLElement, opts: ShellOptions): () => void 
       <h1 class="kto-logo"></h1>
       <p class="kto-tag"></p>
       <label class="kto-row"><span class="kto-name-label"></span> <input class="kto-input" maxlength="14"></label>
-      <label class="kto-check"><input type="checkbox" class="kto-kids"> <span class="kto-kids-label"></span></label>
-      <p class="kto-hint kto-kids-hint"></p>
-      <label class="kto-check"><input type="checkbox" class="kto-strict"> <span class="kto-strict-label"></span></label>
-      <p class="kto-hint kto-strict-hint"></p>
+      <div class="kto-row"><span class="kto-diff-label"></span>
+        <div class="kto-seg3" role="radiogroup">
+          <button type="button" role="radio" data-d="easy"></button><button type="button" role="radio" data-d="normal"></button><button type="button" role="radio" data-d="hard"></button>
+        </div>
+      </div>
+      <p class="kto-hint kto-diff-hint"></p>
       <button class="kto-btn kto-play"></button>
       <p class="kto-small"></p>
     </section>
@@ -119,21 +121,35 @@ export function mountSandbox(root: HTMLElement, opts: ShellOptions): () => void 
   const stage = root.querySelector<HTMLElement>('.kto-stage')!;
   const start = root.querySelector<HTMLElement>('.kto-start')!;
   const nameInput = root.querySelector<HTMLInputElement>('.kto-input')!;
-  const kids = root.querySelector<HTMLInputElement>('.kto-kids')!;
-  // «Жёсткие съёмки» запоминаются: «Играть» с главной (?go) пропускает этот экран
-  const strict = root.querySelector<HTMLInputElement>('.kto-strict')!;
+  // Сложность одним переключателем: лёгкая = kidsMode, жёсткая = strictCrowd, обычная — оба выкл.
+  // Запоминается (kto:diff; старый флажок kto:strict = жёсткая): «Играть» с главной (?go) пропускает этот экран
+  type Diff = 'easy' | 'normal' | 'hard';
+  let diff: Diff = 'normal';
   try {
-    strict.checked = localStorage.getItem('kto:strict') === '1';
+    const d = localStorage.getItem('kto:diff');
+    diff = d === 'easy' || d === 'hard' ? d : d === 'normal' ? 'normal' : localStorage.getItem('kto:strict') === '1' ? 'hard' : 'normal';
   } catch {
     /* приватный режим */
   }
-  strict.addEventListener('change', () => {
-    try {
-      localStorage.setItem('kto:strict', strict.checked ? '1' : '0');
-    } catch {
-      /* приватный режим */
-    }
-  });
+  const diffBtns = [...root.querySelectorAll<HTMLButtonElement>('.kto-seg3 button')];
+  const kids = { get checked() { return diff === 'easy'; } };
+  const strict = { get checked() { return diff === 'hard'; } };
+  const showDiff = () => {
+    for (const b of diffBtns) b.setAttribute('aria-checked', String(b.dataset.d === diff));
+    $('.kto-diff-hint').textContent = t.start.levelHints[diff];
+  };
+  for (const b of diffBtns) {
+    b.addEventListener('click', () => {
+      diff = b.dataset.d as Diff;
+      try {
+        localStorage.setItem('kto:diff', diff);
+        localStorage.setItem('kto:strict', diff === 'hard' ? '1' : '0');
+      } catch {
+        /* приватный режим */
+      }
+      showDiff();
+    });
+  }
   const toastEl = root.querySelector<HTMLElement>('.kto-toast')!;
   let saved = '';
   try {
@@ -154,10 +170,9 @@ export function mountSandbox(root: HTMLElement, opts: ShellOptions): () => void 
     $('.kto-tag').textContent = t.meta.tagline;
     $('.kto-name-label').textContent = t.start.name;
     nameInput.setAttribute('aria-label', t.start.nameAria);
-    $('.kto-kids-label').textContent = t.start.kids;
-    $('.kto-kids-hint').textContent = t.start.kidsHint;
-    $('.kto-strict-label').textContent = t.start.strict;
-    $('.kto-strict-hint').textContent = t.start.strictHint;
+    $('.kto-diff-label').textContent = t.start.difficulty;
+    for (const b of diffBtns) b.textContent = t.start.levels[b.dataset.d as Diff];
+    showDiff();
     $('.kto-play').textContent = t.start.play;
     $('.kto-small').textContent = t.start.note;
     $('.kto-rotate').textContent = t.start.rotate;

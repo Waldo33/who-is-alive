@@ -408,7 +408,7 @@ export function Lobby({
         {isHost ? (
           <button className="btn" disabled={!canStart} onClick={() => {
               onGesture();
-              track('lobby_start', { members: state.members.length, online: online.length, kids: !!state.settings.kidsMode, strict: !!state.settings.strictCrowd, aiFill: !!state.settings.aiFill });
+              track('lobby_start', { members: state.members.length, online: online.length, level: levelOf(state.settings), kids: !!state.settings.kidsMode, strict: !!state.settings.strictCrowd, aiFill: !!state.settings.aiFill });
               void room.startMatch();
             }}>
             {t.lobby.start}
@@ -443,7 +443,13 @@ function NameEditor({ initial, label, onDone }: { initial: string; label: string
   );
 }
 
+/** Уровень сложности по полям комнаты: старая комната с обоими флажками — «Жёсткая». */
+export function levelOf(s: Pick<RoomSettings, 'kidsMode' | 'strictCrowd'>): 'easy' | 'normal' | 'hard' {
+  return s.strictCrowd ? 'hard' : s.kidsMode ? 'easy' : 'normal';
+}
+
 function Settings({ t, settings, onChange }: { t: Dict; settings: RoomSettings; onChange: (s: RoomSettings) => void }) {
+  const level = levelOf(settings);
   return (
     <section className="settings" aria-label={t.lobby.settings}>
       <h2>{t.lobby.settings}</h2>
@@ -467,16 +473,19 @@ function Settings({ t, settings, onChange }: { t: Dict; settings: RoomSettings; 
           ))}
         </div>
       </div>
-      <label className="setting check">
-        <input type="checkbox" checked={settings.kidsMode} onChange={(e) => onChange({ ...settings, kidsMode: e.target.checked })} />
-        <span>{t.lobby.kids}</span>
-      </label>
-      <p className="setting-hint">{t.lobby.kidsHint}</p>
-      <label className="setting check">
-        <input type="checkbox" checked={!!settings.strictCrowd} onChange={(e) => onChange({ ...settings, strictCrowd: e.target.checked })} />
-        <span>{t.lobby.strict}</span>
-      </label>
-      <p className="setting-hint">{t.lobby.strictHint}</p>
+      {/* сложность одним переключателем; поля комнаты прежние (kidsMode, strictCrowd) — старые клиенты их понимают */}
+      <div className="setting stack">
+        <span>{t.start.difficulty}</span>
+        <div className="seg" role="radiogroup" aria-label={t.start.difficulty}>
+          {(['easy', 'normal', 'hard'] as const).map((v) => (
+            <button key={v} role="radio" aria-checked={level === v} aria-pressed={level === v}
+              onClick={() => onChange({ ...settings, kidsMode: v === 'easy', strictCrowd: v === 'hard' })}>
+              {t.start.levels[v]}
+            </button>
+          ))}
+        </div>
+      </div>
+      <p className="setting-hint level-hint">{t.start.levelHints[level]}</p>
       <label className="setting check">
         <input type="checkbox" checked={!!settings.aiFill} onChange={(e) => onChange({ ...settings, aiFill: e.target.checked })} />
         <span>{t.lobby.aiFill}</span>

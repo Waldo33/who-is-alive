@@ -1080,7 +1080,7 @@ export class GameScene extends Phaser.Scene {
         // реванш: новый матч — новые лучший момент и карточка
         this.best = null;
         this.cardFile = null;
-        this.track('match_start', { players: this.sim.players.length, ai: this.sim.players.filter((p) => p.ai).length, kids: this.cfg.kidsMode, strict: this.cfg.strictCrowd, rounds: this.cfg.maxRounds, roundSec: this.cfg.roundSec });
+        this.track('match_start', { players: this.sim.players.length, ai: this.sim.players.filter((p) => p.ai).length, level: this.cfg.strictCrowd ? 'hard' : this.cfg.kidsMode ? 'easy' : 'normal', kids: this.cfg.kidsMode, strict: this.cfg.strictCrowd, rounds: this.cfg.maxRounds, roundSec: this.cfg.roundSec });
       }
     } else if (n.t === 'phase') {
       if (n.phase === 'countdown') this.audio.play('count');
