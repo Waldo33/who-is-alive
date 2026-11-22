@@ -40,6 +40,11 @@ jobs:
           t "mirror.yandex.ru" http://mirror.yandex.ru/ubuntu/ls-lR.gz
           t "archive.ubuntu.com" http://archive.ubuntu.com/ubuntu/ls-lR.gz
           t "timeweb s3" https://s3.timeweb.cloud
+          echo "── Москва → Нидерланды (сервер бота)"
+          getent ahosts 72-56-73-184.sslip.io | head -2 || echo "DNS sslip: fail"
+          curl -s -o /dev/null -m 15 -w "https по имени: %{http_code} %{time_total}s\n" https://72-56-73-184.sslip.io/healthz || echo "https по имени: fail"
+          curl -s -o /dev/null -m 15 -w "http по IP: %{http_code} %{time_total}s\n" http://72.56.73.184/ || echo "http по IP: fail"
+          curl -sv -o /dev/null -m 15 https://72-56-73-184.sslip.io/healthz 2>&1 | grep -E "Trying|Connected|SSL|timed out|reset|resolve" | head -5
           echo "── Telegram API"
           getent ahosts api.telegram.org | head -4
           curl -s -o /dev/null -m 15 -w "api.telegram.org (ipv4): %{http_code} %{time_total}s\n" -4 https://api.telegram.org/ || echo "ipv4: fail"
