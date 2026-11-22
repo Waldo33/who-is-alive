@@ -9,7 +9,7 @@ import type { MusicMode } from './music';
  */
 export type Sfx =
   | 'step' | 'hitPlayer' | 'hitBot' | 'poof' | 'starTake' | 'starSpawn' | 'crowd' | 'tick'
-  | 'click' | 'ready' | 'accuseRight' | 'accuseWrong' | 'fanfare' | 'sad' | 'hedge' | 'pigeon' | 'drum' | 'denied' | 'count' | 'swing' | 'flicker' | 'dusk' | 'siren' | 'whack' | 'clang' | 'stab';
+  | 'click' | 'ready' | 'accuseRight' | 'accuseWrong' | 'fanfare' | 'sad' | 'hedge' | 'pigeon' | 'drum' | 'denied' | 'count' | 'swing' | 'flicker' | 'dusk' | 'siren' | 'whack' | 'clang' | 'stab' | 'knockedOut';
 
 const STORAGE_KEY = 'kto:sound';
 const MUSIC_KEY = 'kto:music';
@@ -56,6 +56,8 @@ export class Audio {
   private master: GainNode | null = null;
   private sfx: GainNode | null = null;
   private duck: GainNode | null = null;
+  /** Музыка «как из-под воды» после удара по голове. */
+  private muffle: BiquadFilterNode | null = null;
   private noiseBuf: AudioBuffer | null = null;
   private music: Music | null = null;
   private twist = false;
@@ -115,7 +117,10 @@ export class Audio {
     this.sfx.gain.value = this.enabled ? 1 : 0;
     this.sfx.connect(this.master);
     this.duck = this.ctx.createGain();
-    this.duck.connect(this.master);
+    this.muffle = this.ctx.createBiquadFilter();
+    this.muffle.type = 'lowpass';
+    this.muffle.frequency.value = 20000;
+    this.duck.connect(this.muffle).connect(this.master);
     const len = this.ctx.sampleRate;
     this.noiseBuf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
     const d = this.noiseBuf.getChannelData(0);
@@ -193,6 +198,22 @@ export class Audio {
     this.music?.setIntensity(level);
   }
 
+  /** Сотрясение: музыка глохнет и «уходит под воду», потом постепенно возвращается. */
+  private concuss(): void {
+    const ctx = this.ctx;
+    if (!ctx || !this.duck || !this.muffle) return;
+    const t = ctx.currentTime;
+    const g = this.duck.gain;
+    g.cancelScheduledValues(t);
+    g.setValueAtTime(0.15, t);
+    g.linearRampToValueAtTime(1, t + 2.8);
+    const f = this.muffle.frequency;
+    f.cancelScheduledValues(t);
+    f.setValueAtTime(260, t);
+    f.setValueAtTime(260, t + 0.6);
+    f.exponentialRampToValueAtTime(20000, t + 3.2);
+  }
+
   /** Важный звук — музыку на миг приглушить, чтобы его было слышно. */
   private duckMusic(): void {
     const ctx = this.ctx;
@@ -240,6 +261,7 @@ export class Audio {
 
   play(name: Sfx): void {
     if (!this.ctx || !this.enabled) return;
+    if (name === 'knockedOut') this.concuss();
     if (name === 'hitPlayer' || name === 'hitBot' || name === 'starTake' || name === 'accuseRight' || name === 'accuseWrong') this.duckMusic();
     this.sfxNow(name);
   }
@@ -273,6 +295,14 @@ export class Audio {
       case 'drum': for (let i = 0; i < 14; i++) this.noise(0.05, 0.12 + i * 0.015, 300, i * 0.07); break;
       case 'denied': this.tone('square', 200, 160, 0.12, 0.15); break;
       // замах: короткий свист — звучит сразу по нажатию, итог удара приходит следом
+      // тебя вырезали оружием: глухой удар, звон в ушах, стук сердца
+      case 'knockedOut':
+        this.noise(0.3, 0.8, 160);
+        this.tone('sine', 90, 35, 0.45, 0.7);
+        this.tone('sine', 3100, 3000, 2.4, 0.06, 0.08);
+        this.tone('sine', 3117, 3010, 2.4, 0.04, 0.08);
+        [0.55, 0.78, 1.45, 1.68].forEach((d, i) => this.tone('sine', 72, 42, 0.2, i % 2 ? 0.35 : 0.55, d));
+        break;
       case 'swing': this.noise(0.07, 0.2, 1500); this.noise(0.06, 0.12, 3400, 0.03); break;
       // свет мигает: щелчки выключателя и гудение лампы
       case 'flicker': [0, 0.09, 0.2].forEach((d) => this.noise(0.03, 0.22, 2600, d)); this.tone('sawtooth', 100, 100, 0.35, 0.05, 0.05); break;

@@ -223,6 +223,8 @@ export class GameScene extends Phaser.Scene {
   private spots: { x: number; y: number; r: number; at: number; until: number }[] = [];
   private wasFrozen = false;
   private deathObjs: Phaser.GameObjects.GameObject[] = [];
+  /** Счётчик текстур крови на экране (у каждого удара — своя). */
+  private bloodN = 0;
   private ghostUi: Phaser.GameObjects.GameObject[] = [];
   private starPos = new Map<number, { x: number; y: number }>();
   /** Лучший момент матча для клипа: запись раунда переживает следующий раунд. */
@@ -827,7 +829,11 @@ export class GameScene extends Phaser.Scene {
           // «Жёсткий дубль»: вырезал режиссёр — сразу после окна команды, без удара
           const c = this.sim.world.crowd;
           const byDirector = roundMod(this.sim.mod) === 'hard' && !!c && !c.vote && ev.at > c.windowEnd && ev.at < c.windowEnd + 2000;
-          this.showDeath(byDirector ? this.t.game.cutByCrowd : undefined);
+          const sub = byDirector ? this.t.game.cutByCrowd : undefined;
+          // оружием — баннер в момент удара, с кровью на экране и сотрясением (weaponImpact)
+          const lk = this.kills.find((k) => k.k.eid === ev.target && !k.hit);
+          if (lk) lk.mine = { sub };
+          else this.showDeath(sub);
           if (ev.result === 'player' && myEid !== undefined) this.offerDeathClip(myEid, ev.at);
         }
         break;
@@ -990,6 +996,7 @@ export class GameScene extends Phaser.Scene {
 
   /** Момент удара: всё, что должно случиться разом. */
   private weaponImpact(lk: LiveKill): void {
+    if (lk.mine) this.time.delayedCall(0, () => this.showDeath(lk.mine!.sub, true));
     this.audio.play(weaponSfx(lk.k));
     this.audio.play('hitPlayer');
     this.hitStop = 70;
@@ -1135,8 +1142,9 @@ export class GameScene extends Phaser.Scene {
   }
 
   /** Крупно и сразу понятно: тебя выбили, теперь ты призрак. */
-  private showDeath(subText?: string): void {
+  private showDeath(subText?: string, bloody = false): void {
     this.clearDeath();
+    if (bloody) this.bloodyScreen();
     const flash = this.add.rectangle(0, 0, 180, 320, hexToInt(PAL.red), 0.55).setOrigin(0, 0).setDepth(1690);
     this.tweens.add({ targets: flash, alpha: 0, duration: 500, onComplete: () => flash.destroy() });
     const y = AY + 92;
@@ -1158,13 +1166,158 @@ export class GameScene extends Phaser.Scene {
       ch.x = Math.round(90 - ch.width / 2);
       this.deathObjs.push(ch);
     }
-    this.cameras.main.shake(260, 0.012);
-    navigator.vibrate?.([80, 60, 160]);
+    if (bloody) {
+      // в глазах плывёт: надпись дрожит, пока не придёшь в себя
+      const texts = [title, sub, hint];
+      const base = texts.map((o) => o.x);
+      this.tweens.addCounter({
+        from: 1,
+        to: 0,
+        duration: 800,
+        onUpdate: (tw) => {
+          const dx = Math.round((Math.random() - 0.5) * 5 * tw.getValue()!);
+          texts.forEach((o, i) => o.setX(base[i] + dx));
+        },
+        onComplete: () => texts.forEach((o, i) => o.active && o.setX(base[i])),
+      });
+    } else {
+      this.cameras.main.shake(260, 0.012);
+      navigator.vibrate?.([80, 60, 160]);
+    }
     const objs = this.deathObjs;
     this.time.delayedCall(2800, () => {
       if (this.deathObjs !== objs) return;
       this.tweens.add({ targets: objs, alpha: 0, duration: 450, onComplete: () => this.clearDeath() });
     });
+  }
+
+  /**
+   * Тебя вырезали оружием: кровь брызнула на «объектив» и стекает, в глазах темнеет и веки
+   * моргают, по краям экрана пульсирует красное в такт сердцу, звон в ушах, музыка глохнет.
+   */
+  private bloodyScreen(): void {
+    const W = 180;
+    const H = 320;
+    this.audio.play('knockedOut');
+    this.cameras.main.shake(450, 0.03);
+    navigator.vibrate?.([140, 50, 60, 260, 90, 260]);
+    const objs: Phaser.GameObjects.GameObject[] = [];
+    const key = `blood-${++this.bloodN}`;
+    const tex = this.textures.createCanvas(key, W, H)!;
+    const c = tex.getContext();
+    const put = (x: number, y: number, w: number, h: number, col: string) => {
+      c.fillStyle = col;
+      c.fillRect(Math.round(x), Math.round(y), w, h);
+    };
+    const rnd = (a: number, b: number) => a + Math.random() * (b - a);
+    const drips: { x: number; y: number; w: number; v: number; max: number }[] = [];
+    const n = 11;
+    for (let i = 0; i < n; i++) {
+      const big = i < 2;
+      const r = big ? rnd(12, 18) : i < 5 ? rnd(6, 10) : rnd(2, 6);
+      // крупные — не под баннером «вырезан»: одна сверху, одна снизу
+      const cx = big ? (i === 0 ? rnd(20, 80) : rnd(100, 160)) : rnd(8, W - 8);
+      const cy = big ? (i === 0 ? rnd(AY + 14, AY + 72) : rnd(AY + 185, PANEL_Y - 24)) : rnd(AY + 4, PANEL_Y - 10);
+      const jag = Array.from({ length: 16 }, () => rnd(0.72, 1.25));
+      const R = Math.ceil(r * 1.3);
+      for (let y = -R; y <= R; y++) {
+        for (let x = -R; x <= R; x++) {
+          const d = Math.hypot(x, y);
+          const a = Math.round(((Math.atan2(y, x) + Math.PI) / (Math.PI * 2)) * 16) % 16;
+          const rr = r * jag[a];
+          if (d <= rr) put(cx + x, cy + y, 1, 1, d > rr - 1.3 ? PAL.wine : PAL.red);
+        }
+      }
+      // блик на капле
+      put(cx - r * 0.45, cy - r * 0.45, 2, 1, PAL.coral);
+      put(cx - r * 0.45, cy - r * 0.45 + 1, 1, 1, PAL.coral);
+      if (r > 6) put(cx - r * 0.45 + 1, cy - r * 0.45 - 1, 1, 1, PAL.white);
+      // мелкие брызги вокруг
+      for (let k = 0, m = Math.round(big ? rnd(14, 22) : rnd(5, 11)); k < m; k++) {
+        const a = rnd(0, Math.PI * 2);
+        const d = r + rnd(2, big ? 18 : 10);
+        const sz = Math.random() < 0.35 ? 2 : 1;
+        put(cx + Math.cos(a) * d, cy + Math.sin(a) * d, sz, sz, Math.random() < 0.3 ? PAL.wine : PAL.red);
+      }
+      // потёки вниз
+      if (r >= 5) {
+        for (let k = 0, m = big ? 3 : 1; k < m; k++) {
+          drips.push({ x: Math.round(cx + rnd(-r * 0.5, r * 0.5)), y: Math.round(cy + r * 0.6), w: Math.random() < 0.5 ? 2 : 1, v: rnd(6, 18) / 1000, max: rnd(12, big ? 60 : 30) });
+        }
+      }
+    }
+    tex.refresh();
+    const splat = this.add.image(0, 0, key).setOrigin(0, 0).setDepth(1695);
+    const dripG = this.add.graphics().setDepth(1695);
+    objs.push(splat, dripG);
+    // красное по краям экрана — пульсирует в такт сердцу (звук knockedOut)
+    const vig = this.add.image(0, 0, this.vignetteKey()).setOrigin(0, 0).setDepth(1696).setAlpha(0);
+    // веки: темнеет в глазах, моргнул и пришёл в себя
+    const lids = this.add.graphics().setDepth(2600);
+    objs.push(vig, lids);
+    const lid = (t: number) => {
+      const keys: [number, number][] = [[0, 160], [140, 160], [420, 18], [640, 95], [860, 0]];
+      for (let i = 0; i < keys.length - 1; i++) {
+        const [t0, h0] = keys[i];
+        const [t1, h1] = keys[i + 1];
+        if (t <= t1) return Math.round(h0 + (h1 - h0) * ((t - t0) / (t1 - t0)));
+      }
+      return 0;
+    };
+    const beats = [550, 780, 1450, 1680];
+    const LIFE = 4800;
+    this.tweens.addCounter({
+      from: 0,
+      to: LIFE,
+      duration: LIFE,
+      onUpdate: (tw) => {
+        const t = tw.getValue()!;
+        const h = lid(t);
+        lids.clear();
+        if (h > 0) lids.fillStyle(hexToInt(PAL.ink), 1).fillRect(0, 0, W, h).fillRect(0, H - h, W, h);
+        let v = 0.35;
+        for (const b of beats) if (t >= b) v = Math.max(v, 0.95 - (t - b) / 380);
+        if (t > 2400) v *= Math.max(0, 1 - (t - 2400) / 1200);
+        vig.setAlpha(v);
+        const fade = t < LIFE - 1100 ? 1 : (LIFE - t) / 1100;
+        splat.setAlpha(fade);
+        dripG.clear();
+        for (const d of drips) {
+          const len = Math.min(d.max, Math.max(0, t - 380) * d.v);
+          if (len < 1) continue;
+          dripG.fillStyle(hexToInt(PAL.red), fade).fillRect(d.x, d.y, d.w, Math.round(len));
+          dripG.fillStyle(hexToInt(PAL.wine), fade).fillRect(d.x, d.y + Math.round(len), d.w + 1, 2);
+        }
+      },
+      onComplete: () => {
+        for (const o of objs) o.destroy();
+        this.textures.remove(key);
+      },
+    });
+  }
+
+  /** Красная виньетка с дизерингом (раз на сцену). */
+  private vignetteKey(): string {
+    const key = 'vignette-red';
+    if (this.textures.exists(key)) return key;
+    const W = 180;
+    const H = 320;
+    const tex = this.textures.createCanvas(key, W, H)!;
+    const c = tex.getContext();
+    const bayer = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
+    const band = 26;
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const e = Math.min(x, y, W - 1 - x, H - 1 - y);
+        if (e >= band) continue;
+        const p = (1 - e / band) ** 1.6;
+        if (p * 16 <= bayer[(y % 4) * 4 + (x % 4)]) continue;
+        c.fillStyle = e < band * 0.35 ? PAL.wine : PAL.red;
+        c.fillRect(x, y, 1, 1);
+      }
+    }
+    tex.refresh();
+    return key;
   }
 
   // ───────────── клип выбывшего ─────────────
@@ -2534,6 +2687,8 @@ interface LiveKill {
   tex: string;
   standIn: Phaser.GameObjects.Image | null;
   shadow: Shadow | null;
+  /** Это меня: баннер «вырезан» — в момент удара. */
+  mine?: { sub?: string };
 }
 
 /** Силуэт «тени» с неоновым контуром. */
