@@ -41,10 +41,16 @@ const CSS = `
 .kto-btn{font:inherit;font-size:12px;color:${PAL.ink};background:${PAL.amber};border:0;padding:16px 22px;min-height:56px;
   box-shadow:0 4px 0 ${PAL.rust},0 0 0 2px ${PAL.ink};cursor:pointer;border-radius:0}
 .kto-btn:active{transform:translateY(3px);box-shadow:0 1px 0 ${PAL.rust},0 0 0 2px ${PAL.ink}}
-.kto-small{font-size:8px;color:${PAL.steel};max-width:36ch;line-height:1.8;margin:0}
+.kto-small{font-size:8px;color:${PAL.slate};max-width:36ch;line-height:1.8;margin:0}
 .kto-check{display:flex;align-items:center;gap:8px;min-height:44px;margin:-9px 0;font-size:9px;color:${PAL.mist}}
-.kto-hint{font-size:8px;line-height:1.8;color:${PAL.steel};max-width:34ch;margin:-10px 0 0;text-align:center}
+.kto-hint{font-size:8px;line-height:1.8;color:${PAL.slate};max-width:34ch;margin:-10px 0 0;text-align:center}
 .kto-check input{width:20px;height:20px;accent-color:${PAL.amber}}
+/* переключатель из трёх сегментов — тот же вид, что «RU / EN» в листе настроек */
+.kto-seg3{display:flex;box-shadow:0 0 0 2px ${PAL.dusk}}
+.kto-seg3 button{font:inherit;font-size:10px;min-width:84px;min-height:44px;padding:0 8px;border:0;border-radius:0;background:${PAL.ink};color:${PAL.slate};cursor:pointer}
+.kto-seg3 button[aria-checked='true']{background:${PAL.dusk};color:${PAL.yellow};box-shadow:inset 0 -3px 0 ${PAL.amber}}
+.kto-seg3 button:focus-visible{outline:2px solid ${PAL.yellow};outline-offset:2px}
+.kto-diff-hint{margin-top:-8px}
 .kto-rotate{position:absolute;inset:0;display:none;align-items:center;justify-content:center;flex-direction:column;gap:16px;
   background:${PAL.ink};z-index:20;font-size:11px;color:${PAL.sand};text-align:center;padding:24px}
 @media (orientation:landscape) and (max-height:500px){.kto-rotate{display:flex}}

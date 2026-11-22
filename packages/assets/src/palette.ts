@@ -39,8 +39,11 @@ export const PAL = {
 
 export type PalName = keyof typeof PAL;
 
-/** Цвета игроков: красный, синий, жёлтый, зелёный. */
-export const PLAYER_COLORS = [PAL.red, PAL.blue, PAL.yellow, PAL.green] as const;
+/**
+ * Цвета игроков: красный, голубой, жёлтый, зелёный. Второй игрок — cyan везде (квадрат в лобби,
+ * обводка в игре, имя): синий blue сливался с тёмным фоном, а имя и так было голубым.
+ */
+export const PLAYER_COLORS = [PAL.red, PAL.cyan, PAL.yellow, PAL.green] as const;
 
 export function hexToInt(hex: string): number {
   return parseInt(hex.slice(1), 16);

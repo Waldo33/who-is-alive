@@ -216,19 +216,25 @@ export function makeShadow(): HTMLCanvasElement {
 }
 
 export function makeRing(): HTMLCanvasElement {
-  // кольцо под своим персонажем: 2 пикселя толщиной, белое (тонируется цветом игрока)
-  const { c, g } = canvas(19, 9);
-  for (let a = 0; a < Math.PI * 2; a += 0.04) {
-    px(g, Math.round(9 + Math.cos(a) * 9), Math.round(4 + Math.sin(a) * 4), PAL.white);
-    px(g, Math.round(9 + Math.cos(a) * 8), Math.round(4 + Math.sin(a) * 3), PAL.white);
+  // кольцо под своим персонажем: 2 пикселя толщиной, белое (тонируется цветом игрока),
+  // с контуром ink снаружи и внутри — читается на кирпиче парка и на светлой льдине
+  const { c, g } = canvas(21, 11);
+  for (let a = 0; a < Math.PI * 2; a += 0.03) {
+    px(g, Math.round(10 + Math.cos(a) * 10), Math.round(5 + Math.sin(a) * 5), PAL.ink);
+    px(g, Math.round(10 + Math.cos(a) * 7), Math.round(5 + Math.sin(a) * 2), PAL.ink);
+  }
+  for (let a = 0; a < Math.PI * 2; a += 0.03) {
+    px(g, Math.round(10 + Math.cos(a) * 9), Math.round(5 + Math.sin(a) * 4), PAL.white);
+    px(g, Math.round(10 + Math.cos(a) * 8), Math.round(5 + Math.sin(a) * 3), PAL.white);
   }
   return c;
 }
 
-export function makeArrow(): HTMLCanvasElement {
-  // стрелка «это ты» над головой: крупная, с чёрным контуром, белая (тонируется цветом игрока)
+export function makeArrow(color: string = PAL.white): HTMLCanvasElement {
+  // стрелка «это ты» над головой: крупная, контур ink, кромка цветом игрока и белая сердцевина —
+  // жёлтая на светлой льдине и красная на кирпиче больше не теряются (не тонируется)
   const { c, g } = canvas(11, 9);
-  grid(g, 0, 0, ['ooooooooooo', 'owwwwwwwwwo', 'owwwwwwwwwo', '.owwwwwwwo.', '..owwwwwo..', '...owwwo...', '....owo....', '.....o.....', '...........'], { o: PAL.ink, w: PAL.white });
+  grid(g, 0, 0, ['ooooooooooo', 'occcccccccc'.slice(0, 10) + 'o', 'occwwwwwcco', '.occwwwcco.', '..occwcco..', '...occco...', '....oco....', '.....o.....', '...........'], { o: PAL.ink, w: PAL.white, c: color });
   return c;
 }
 
@@ -247,7 +253,8 @@ export function makeStar(): HTMLCanvasElement {
     '.oo....oo.',
   ];
   for (let f = 0; f < 4; f++) {
-    grid(g, f * 10, 0, shape, { o: PAL.umber, y: f % 2 ? PAL.amber : PAL.yellow, w: PAL.white });
+    // контур ink (был umber): звезда не тонет в снегу льдины и в конфетти корпоратива
+    grid(g, f * 10, 0, shape, { o: PAL.ink, y: f % 2 ? PAL.amber : PAL.yellow, w: PAL.white });
     const sp = [[2, 1], [8, 2], [8, 8], [1, 7]][f];
     px(g, f * 10 + sp[0], sp[1], PAL.white);
   }

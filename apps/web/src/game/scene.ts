@@ -362,7 +362,10 @@ export class GameScene extends Phaser.Scene {
     const myColor = hexToInt(PLAYER_COLORS[this.sim.info(this.sim.selfPid)?.color ?? 0]);
     this.myColor = myColor;
     this.ring = this.add.image(0, 0, 'ring').setTint(myColor).setVisible(false);
-    this.arrow = this.add.image(0, 0, 'arrow').setOrigin(0.5, 1).setTint(myColor).setDepth(800).setVisible(false);
+    // стрелка рисуется сразу цветом игрока (кромка) с белой сердцевиной — без тонировки
+    const myIdx = this.sim.info(this.sim.selfPid)?.color ?? 0;
+    if (!this.textures.exists('arrow' + myIdx)) this.textures.addCanvas('arrow' + myIdx, makeArrow(PLAYER_COLORS[myIdx]));
+    this.arrow = this.add.image(0, 0, 'arrow' + myIdx).setOrigin(0.5, 1).setDepth(800).setVisible(false);
     this.findMe = this.add.graphics().setDepth(799);
     this.crown = this.add.image(0, 0, 'icons', 0).setOrigin(0.5, 1).setScale(2).setDepth(801).setVisible(false);
 
@@ -484,7 +487,6 @@ export class GameScene extends Phaser.Scene {
     };
     once('shadow', makeShadow);
     once('ring', makeRing);
-    once('arrow', makeArrow);
     once('mark', () => makeMark('!'));
     once('qmark', () => makeMark('?'));
     once('vignette', () => makeVignette(180, 260));
