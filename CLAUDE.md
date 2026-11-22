@@ -14,17 +14,18 @@
 **«Массовка» / «Be Nobody»** (раньше — «Кто тут живой?») — браузерная реалтайм-игра для компании, 2–4 игрока, только телефоны. Тон текстов — съёмочная площадка: раунд — «дубль», выбывший «вырезан» и «за кадром», хост — «режиссёр»; по-английски — extra / actor. Фразы с именами игроков — без падежей и рода (имена бывают любыми). Полный список — Claude Doc «Массовка / Be Nobody — текстовки».
 На пиксельной площади 32 одинаковых человечка: почти все — боты, остальные — игроки. Каждый прячется в толпе, вычисляет живых по поведению и бьёт первым. Удар по живому — выбил, по боту — сам оглушён и раскрыт. Три звезды — победа в раунде. «Море волнуется»: музыка обрывается, мир замирает (стоп-кадр), надо нажать ту же команду, что и толпа. В конце раунда — обвинение («кто тут живой?»), разоблачение с повтором, награды. Матч до 8 очков (~5 минут).
 
-- Прод: https://who-is-alive.vercel.app (песочница с ботами — `/sandbox`, комната — `/r/КОД`).
-- Репозиторий: `Waldo33/who-is-alive`, ветка `main`; **каждый push в `main` сразу деплоится в прод** (Vercel).
+- Прод: **https://benobody.app** (песочница с ботами — `/sandbox`, комната — `/r/КОД`); старый адрес who-is-alive.vercel.app перенаправляет туда.
+- Репозиторий: `Waldo33/who-is-alive` (приватный), ветка `main`; **каждый push в `main` сразу выкатывается в прод** из GitHub Actions: `web-deploy` (сайт), `game-deploy` (игровой сервер).
 - ТЗ — Claude Doc «Кто тут живой? — ТЗ для разработки». При расхождении прав код и `docs/`; ТЗ обновляет владелец.
 - Художника и композитора нет: **весь арт и звук делаются кодом** (процедурные спрайты из палитры, синтез на Web Audio).
 
 ## Стек
 
 - Монорепо **pnpm 10.18.3**, Node 22, TypeScript 5.9 strict, ESLint 9 (flat config в корне), Vitest 3.
-- `apps/web` — **Next.js 15.5** (App Router, React 19) + **Phaser 3.90**. Деплой: Vercel Hobby, проект `who-is-alive` (`prj_J1ZWu5Ncozw0FtcgTVoQGQFLrUNm`, команда `team_KRSpd6ofFYaA171W5rl60kY7`), Root Directory = `apps/web`.
+- `apps/web` — **Next.js 15.5** (App Router, React 19) + **Phaser 3.90**. Работает на своём сервере (Next standalone за Caddy, `.github/workflows/web-deploy.yml`, `infra/game/web.sh`). Vercel (проект `who-is-alive`, `prj_J1ZWu5Ncozw0FtcgTVoQGQFLrUNm`, команда `team_KRSpd6ofFYaA171W5rl60kY7`) — только перенаправление старого адреса (`redirects` в `next.config.ts` при `VERCEL`, пересборка лишь при изменении `next.config.ts`).
 - **Свой игровой сервер** `apps/server` (Timeweb Cloud, Москва, `https://api.benobody.app`, с 22.11.2026): комнаты, лобби и матчи для всех — матч считает сервер, у всех игроков `RemoteSession` поверх `ServerLink`. Выкладка — `.github/workflows/game-deploy.yml` на каждый push в `apps/server`, `packages/*`, `infra/game` (живой прогон четырёх игроков в конце). Адрес для клиента — `GAME_API` в `apps/web/src/lib/env.ts`.
-- **Supabase** (проект `who-is-alive`, ref `wivildtgfkpuxvqoamqg`, Франкфурт): теперь только аналитика, Telegram-бот и «Кастинг дня» (старые комнаты на Realtime остались в коде `packages/net/src/supabase.ts`, но клиент их больше не использует): анонимный вход, Postgres + RLS, Realtime, pg_cron. Публичный URL и publishable key вшиты как запасные значения в `apps/web/src/lib/env.ts` (это нормально: ключ публичный, права режут RLS). Сервисных ключей в репозитории нет и быть не должно.
+- **Свой сервер** (Timeweb Cloud, Москва, 1 vCPU / 1 ГБ, `129.101.104.99`): игровой сервер (`api.benobody.app`), сайт (`benobody.app`), Postgres (аналитика `analytics_events`), Caddy с сертификатами, копия базы раз в сутки. Секреты рождаются на сервере (`/etc/massovka/secrets.env`) или приходят из GitHub Secrets (`TWC_TOKEN`, `TELEGRAM_BOT_TOKEN`).
+- **Supabase** (ref `wivildtgfkpuxvqoamqg`, Франкфурт) — **только Telegram-бот** (Edge Function `supabase/functions/tg-bot`, рейтинг кастинга `tg_daily_scores`): из Москвы `api.telegram.org` закрыт (проверено 23.11.2026), поэтому бот там. Копия бота на Node — `apps/server/src/bot.ts` (`/tg/*`), включится, когда будет выход к Telegram. Старые таблицы комнат и аналитика до 23.11 лежат в Supabase. Сервисных ключей в репозитории нет и быть не должно.
 - `packages/game-core` — правила игры, чистый детерминированный TS.
 - `packages/net` — сетевой слой: транспорт, хост, гость, протокол (zod).
 - `packages/assets` — палитра 32 цвета `PAL`, `PLAYER_COLORS`.
@@ -37,7 +38,8 @@ pnpm dev                              # http://localhost:3000 (песочниц�
 pnpm lint && pnpm typecheck && pnpm test   # то же, что CI
 pnpm sim -- --rounds 1000             # безголовая симуляция с проверкой инвариантов
 pnpm --filter web build               # прод-сборка Next.js — гонять перед каждым push
-pnpm --filter web live-e2e            # живой прогон через настоящий Supabase (нужна сеть до supabase.co)
+pnpm --filter @kto/server dev        # игровой сервер локально (без базы — аналитика в памяти)
+pnpm --filter @kto/server smoke https://api.benobody.app   # живой прогон 4 игроков против сервера
 pnpm --filter web icons               # перерисовать иконки PWA из спрайтов (нужен Playwright)
 pnpm --filter web og-bg               # фоны превью ссылок по темам: apps/web/assets/og/bg-N.png
 pnpm --filter web clip-preview <папка> 11,12 [тема]   # кадры клипа «Лучший момент» по зернам — проверить глазами
@@ -59,9 +61,9 @@ CI (`.github/workflows/ci.yml`): lint, typecheck, test, `sim --rounds 200`.
 4. **Тексты — только в словарях** `packages/game-core/src/locale/{ru,en}.ts` (одна структура, тип `Dict`). Строки на canvas ≤ 21 символа — проверяет `test/i18n.test.ts`; добавляешь строку для canvas — добавь и в тест.
 5. **Мобильный веб**: экраны помещаются без прокрутки (решение владельца) — на iPhone SE и внутри Telegram с его шапкой; не влезает — сжимай поле и второстепенное, а не листай. Не ломать защиту от зума (`touch-action`, поля ≥ 16px, гашение двойного тапа и щипка в `shell.ts`), разблокировку звука по `touchend`/`click`, безопасные зоны (`env(safe-area-inset-*)`). Системное меню «Поделиться» вызывать только из свежего жеста (`pointerup`/`click`, не `pointerdown`).
 6. Phaser импортировать как `import * as Phaser from 'phaser'` (иначе ломается прод-сборка Next).
-7. Не ломать песочницу `/sandbox` — она работает без сети и без Supabase.
+7. Не ломать песочницу `/sandbox` — она работает без сети и без сервера.
 8. Перед push: `pnpm lint && pnpm typecheck && pnpm test` и `pnpm --filter web build`. Изменил игру — пройди матч в браузере (Playwright, см. ниже). Как коммитить и пушить — раздел «Коммиты и push» ниже.
-9. Миграции Supabase: файл в `supabase/migrations/` **и** применить к проекту (MCP `apply_migration`). Функции — `security definer` + `set search_path = ''`, проверка прав внутри; новые таблицы — с RLS.
+9. База своего сервера: схема — `MIGRATIONS` в `apps/server/src/store.ts`, только расширяющие изменения (сервер применяет при старте). Supabase — только для бота: миграции там — файл в `supabase/migrations/` и `apply_migration`.
 
 ## Коммиты и push
 
@@ -83,7 +85,7 @@ CI (`.github/workflows/ci.yml`): lint, typecheck, test, `sim --rounds 200`.
   - Сгенерированные ассеты (иконки, `apps/web/assets/og/bg-N.png`) коммитить можно, но по `git status` проверь, что старые файлы не поменялись случайно.
 - **Никогда:** `git push --force`, переписывание истории `main`, `--amend` или rebase уже запушенного, `--no-verify`. Ошибку исправляй новым коммитом или `git revert`.
 - **После push:**
-  - Vercel `list_deployments` → `READY`;
+  - GitHub Actions: `web-deploy` и `game-deploy` зелёные (`gh run list`); `game-deploy` в конце гоняет живой прогон четырёх игроков;
   - `ERROR` — читай логи сборки и чини следующим коммитом сразу, не оставляй прод сломанным;
   - CI в GitHub Actions тоже должен быть зелёным (`gh run list`).
   - Владельцу после деплоя — совет закрыть и заново открыть страницу или PWA: вкладка может держать старую версию.
@@ -104,7 +106,7 @@ CI (`.github/workflows/ci.yml`): lint, typecheck, test, `sim --rounds 200`.
 | `…/moments.ts` | поиск «лучшего момента» для клипа, `recordRound` |
 | `…/locale/` | словари ru/en, `tp()` (множественное число), `fmt()`, `pickLang()` |
 | `packages/net/src/transport.ts` | интерфейс `Transport`, `LoopbackHub` (петля в памяти для тестов) |
-| `…/supabase.ts` | `SupabaseTransport` — каналы Realtime |
+| `…/wire.ts`, `ws.ts` | протокол своего сервера и `ServerLink` — клиент (лобби + транспорт игры на одном WebSocket) |
 | `…/host.ts`, `remote.ts` | `HostSession` (оборачивает `MatchSim`), `RemoteSession` (гость: прогноз и сверка) |
 | `…/protocol.ts` | типы сообщений и zod-схемы того, что гость шлёт хосту |
 | `apps/web/src/net/room.ts` | `Room`: комната на игровом сервере — вход, состав, «Готов», старт, зритель (опоздал к матчу); `lib/game-server.ts` — анонимный вход (`kto:auth2`), создание комнаты, информация о комнате для превью |
@@ -117,19 +119,19 @@ CI (`.github/workflows/ci.yml`): lint, typecheck, test, `sim --rounds 200`.
 | `…/game/shell.ts`, `boot.ts` | оболочка песочницы, запуск Phaser |
 | `…/game/tutorial.ts`, `apps/web/src/ui/TutorialStage.tsx`, `/learn` | «Пробный дубль» — обучение действием (сценарий поверх песочницы без ИИ) |
 | `apps/web/src/ui/topbar.ts` | верхняя панель «< Назад» + шестерёнка (язык, музыка, звуки, «Как играть») |
-| `apps/web/src/lib/` | `telegram` (Telegram Mini App: SDK, полный экран, родные «Назад», вибрация, ссылки `startapp`, `docs/architecture.md › 4.1`), `features` (флаги фич: `featureOn('casting')` — «Кастинг дня» спрятан), `analytics` (`track` — события воронки в `analytics_events` через RPC `log_events`), `share` (поделиться с запасными путями, `withLang` — `?l=` и метка `?src=` в ссылках), `meta` (метаданные превью по языку), `chunk` (перезагрузка при устаревшей вкладке), `preview` (RPC для OG), `env`, `supabase`, `lang`, `name` |
+| `apps/web/src/lib/` | `telegram` (Telegram Mini App: SDK, полный экран, родные «Назад», вибрация, ссылки `startapp`, `docs/architecture.md › 4.1`), `features` (флаги фич: `featureOn('casting')` — «Кастинг дня» спрятан), `analytics` (`track` — события воронки на свой сервер, `POST /v1/events`), `share` (поделиться с запасными путями, `withLang` — `?l=` и метка `?src=` в ссылках), `meta` (метаданные превью по языку), `chunk` (перезагрузка при устаревшей вкладке), `preview` (комната с сервера для OG), `game-server`, `env`, `lang`, `name` |
 | `apps/web/public/sw.js` | сервис-воркер PWA |
-| `supabase/migrations/` | схема БД, RLS, RPC, политики Realtime |
-| `apps/server/` | свой игровой сервер (этап H, ещё не в проде): `server.ts` — HTTP + WebSocket, лимиты, уборка комнат; `room.ts` — комната и матч (безголовый `HostSession`); `auth.ts` — анонимные токены. Клиент к нему — `ServerLink` (`packages/net/src/ws.ts`), протокол — `wire.ts`. Запуск: `pnpm --filter @kto/server dev` |
+| `supabase/migrations/` | схема Supabase (история; сейчас нужна только боту) |
+| `apps/server/` | свой игровой сервер (в проде с 22.11.2026): `server.ts` — HTTP + WebSocket, лимиты, уборка комнат, `/v1/events` (аналитика); `room.ts` — комната и матч (безголовый `HostSession`); `auth.ts` — анонимные токены; `store.ts` — Postgres; `bot.ts` — бот (пока выключен, см. Supabase). Развёртывание — `infra/game/` (`provision.py`, `setup.sh`, `caddy.sh`, `web.sh`). Клиент к нему — `ServerLink` (`packages/net/src/ws.ts`), протокол — `wire.ts`. Запуск: `pnpm --filter @kto/server dev` |
 | `supabase/functions/tg-bot/` | сервер Telegram-бота (Edge Function): `/start`, инлайн «@бот», карточки `shareMessage`, рейтинг загадки в чате (`docs/architecture.md › 4.2`) |
 
 ## Как проверять
 
 - Юнит и сетевые тесты: `pnpm test` (game-core ~28, net ~10: позиции гостей = хост, нет утечек игроков, нагрузка ≤ 35 сообщений/с, потери 5%, переподключение, смена хоста, «нет откатов своего персонажа» на трёх сетях).
 - Браузер: `pnpm --filter web build && pnpm --filter web start -p 3124`, затем Playwright (Chromium предустановлен; WebKit скачать нельзя — Safari проверяется только у владельца). Пройти матч: `/sandbox?dev&speed=8`, нажать `.kto-play`, ждать `phase === 'match_end'` через `window.__kto`. Эмуляция телефона: `p.devices['Pixel 7']`/`['iPhone 13']`, касания — `page.tap`/`page.touchscreen.tap`.
-- Живая сеть: `pnpm --filter web live-e2e` (3 анонимных игрока, комната, права каналов, задержка, совпадение мира, смена хоста). Из рабочей среды агента supabase.co может быть недоступен — тогда запускать в Vercel Sandbox (fra1), клонируя публичный репозиторий.
-- После push: проверить деплой (Vercel MCP `list_deployments`, состояние `READY`).
+- Живая сеть: `apps/server/test` (сервер на localhost + настоящие `RemoteSession`) и `smoke` против прода — его гоняет `game-deploy`. Из среды агента benobody.app закрыт прокси: всё про прод — через GitHub Actions (`infra-netcheck.yml`, `infra-check.yml`, `infra-domain.yml`).
+- После push: `gh run list` — `web-deploy`, `game-deploy`, `CI` зелёные.
 
 ## Статус (ноябрь 2026)
 
-Готово: песочница, лобби и комнаты, напряжение (прожектор, «Толпа решает», «Хлопушка», условия съёмки) и «Пробный дубль», сетевая игра через Supabase (хост-клиент, прогноз своего персонажа, переподключение, смена хоста), клип и карточка, превью ссылок (OG), PWA и иконки, верхняя панель с настройками, музыкальный секвенсор с музыкой меню, ru/en. Дальше — арт тем (Этап F), аналитика и плейтесты (Этап G). Подробно — `docs/roadmap.md`.
+Готово: песочница, лобби и комнаты, напряжение (прожектор, «Толпа решает», «Хлопушка», условия съёмки) и «Пробный дубль», сетевая игра через свой сервер (матч считает сервер, прогноз своего персонажа, переподключение, зрители), клип и карточка, превью ссылок (OG), PWA и иконки, верхняя панель с настройками, музыкальный секвенсор с музыкой меню, ru/en. Дальше — арт тем (Этап F), аналитика и плейтесты (Этап G). Подробно — `docs/roadmap.md`.

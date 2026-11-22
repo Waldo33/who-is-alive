@@ -304,6 +304,13 @@ infra/
 
 **Переключение (22.11.2026, решение владельца: сразу и полностью, без флага):** клиент (`apps/web/src/net/room.ts`, `lib/game-server.ts`, `lib/preview.ts`) работает только с `https://api.benobody.app`; Supabase для комнат больше не используется (открытые старые вкладки доживают на нём). Зрители перенесены на сервер (`spectator` в `welcome`, `join` после матча). Сайт пока на Vercel.
 
+**Сделано 23.11.2026:**
+- Сайт на сервере: `benobody.app` (Next standalone за Caddy, `web-deploy.yml`, `infra/game/web.sh`), www → голый домен; who-is-alive.vercel.app перенаправляет на benobody.app.
+- Postgres на сервере (`setup.sh`): только localhost, пароль рождается на сервере, копия базы раз в сутки в `/var/backups/massovka` (14 дней; копия в S3 — следующий шаг). Аналитика: `POST /v1/events` → `analytics_events`. История до 23.11 (~600 событий) осталась в Supabase.
+- Telegram-бот переписан на Node (`apps/server/src/bot.ts`), ключ — GitHub Secret `TELEGRAM_BOT_TOKEN` → `/etc/massovka/bot.env`. **Но из Москвы `api.telegram.org` закрыт** (TCP-таймаут, `infra-netcheck.yml`), поэтому вебхук и бот остаются в Supabase Edge Function. Варианты: маленький сервер или прокси за границей (Timeweb NL/DE), тогда бот включится сам.
+- Клиент без supabase-js; Supabase нужен только боту.
+- Обнаружено: рывки своего персонажа после стоп-кадра (свой персонаж у гостя впереди мира на lead) — исправлено в `remote.ts › syncAtFreeze` и `Intent.crowd.at`.
+
 **Этап 2. Инфраструктура (1–2 дня)**
 - [ ] `infra/tofu`, `infra/ansible`, `infra/compose`, `provision.yml`, `deploy-infra.yml`, `ops.yml`, `watchdog.yml`, `backup-check.yml`.
 - [ ] Создать серверы, подготовить, поднять стек `infra`.
