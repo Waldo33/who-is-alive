@@ -235,7 +235,7 @@ describe('сетевая игра', () => {
     expect(rig.privLog.filter((m) => (m.msg as { t: string }).t === 'atk').every((m) => m.to === 'g1')).toBe(true);
   });
 
-  it('новые механики по сети: условия съёмки доходят до гостей, «Хлопушка» вырезанного гостя подаёт команду', () => {
+  it('новые механики по сети: условия съёмки доходят до гостей, «Хлопушка» вырезанного гостя тайно загадывает жест', () => {
     const rig = makeRig([60, 140], 0, 8);
     const rng = new Rng(8);
     const sim = (rig.host as unknown as { sim: { playerRound(pid: string): { alive: boolean } | undefined } }).sim;
@@ -257,10 +257,13 @@ describe('сетевая игра', () => {
     for (let i = 0; i < 20 * 30 && !(rig.host.crowdCanStart() && rig.guests[0].me()?.alive === false); i++) rig.step();
     const before = rig.host.world.crowd?.warnAt ?? -1;
     rig.guests[0].intent({ k: 'clap', kind: 'dance' });
-    for (let i = 0; i < 20 * 2; i++) rig.step();
+    // жест вырезанного не назван и начинается после разогрева толпы (~3,4 с)
+    for (let i = 0; i < 20 * 5; i++) rig.step();
     const c = rig.host.world.crowd!;
     expect(c.warnAt).toBeGreaterThan(before);
     expect(c.kind).toBe('dance');
+    expect(c.vote).toBe(true);
+    expect(c.ghost).toBe(true);
     for (let i = 0; i < 20 * 2; i++) rig.step();
     for (const g of rig.guests) expect(g.world.crowd?.warnAt).toBe(c.warnAt);
     expect(rig.guests[0].me()!.clapsLeft).toBe(rig.host.cfg.ghostClaps - 1);

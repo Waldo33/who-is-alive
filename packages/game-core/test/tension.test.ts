@@ -120,7 +120,18 @@ describe('Напряжение: новые механики', () => {
     expect(sim.playerRound('d')!.alive).toBe(true);
   });
 
-  it('«Хлопушка»: вырезанный подаёт команду толпе; живой не может; перезарядка', () => {
+  it('«Жёсткие съёмки» (strictCrowd): весь матч не повторил названный жест — вырезан, даже без «Жёсткого дубля»', () => {
+    const sim = new MatchSim(makeConfig({ roundMods: false, strictCrowd: true }), players, 7);
+    runUntil(sim, () => sim.phase === 'play');
+    const a = sim.playerRound('a')!;
+    runUntil(sim, () => !!sim.world.crowd && !sim.world.crowd.vote);
+    const c = sim.world.crowd!;
+    // a не нажал ничего — после окна ответа он вырезан
+    runUntil(sim, () => sim.world.time > c.windowEnd + 1500);
+    expect(a.alive).toBe(false);
+  });
+
+  it('«Хлопушка»: вырезанный тайно загадывает жест (не назван, толпа разогревается); живой не может; перезарядка', () => {
     const sim = new MatchSim(makeConfig({ roundMods: false }), players, 84);
     runUntil(sim, () => sim.phase === 'play');
     const a = sim.playerRound('a')!;
@@ -142,14 +153,21 @@ describe('Напряжение: новые механики', () => {
     expect(crowds).toHaveLength(0);
     sim.intent('b', { k: 'clap', kind: 'jump' });
     sim.tick();
-    expect(crowds).toHaveLength(1);
-    expect((crowds[0] as { kind: string }).kind).toBe('jump');
     expect(b.clapsLeft).toBe(sim.cfg.ghostClaps - 1);
+    // пока загаданный жест не начался, вторую «Хлопушку» не принимают
     sim.notices = [];
     sim.intent('b', { k: 'clap', kind: 'dance' });
     sim.tick();
-    expect(crowds).toHaveLength(1);
     expect(sim.notices.some((n) => n.t === 'denied' && n.reason === 'not_now')).toBe(true);
+    // жест начинается после разогрева толпы — не назван и помечен как загаданный вырезанным
+    const t0 = sim.world.time;
+    runUntil(sim, () => crowds.length > 0);
+    expect(sim.world.time - t0).toBeGreaterThanOrEqual(sim.cfg.crowdMoodLeadMs - 100);
+    const c = crowds[0] as { kind: string; vote?: boolean; ghost?: boolean };
+    expect(c.kind).toBe('jump');
+    expect(c.vote).toBe(true);
+    expect(c.ghost).toBe(true);
+    expect(b.clapsLeft).toBe(sim.cfg.ghostClaps - 1);
   });
 
   it('ночь Майами: кто бил, видно всем (attacker в hit); днём и в детском режиме — тайна', () => {

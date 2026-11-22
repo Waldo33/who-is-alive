@@ -11,6 +11,8 @@ export interface RoomSettings {
   roundSec: 60 | 75 | 90;
   maxRounds: 3 | 5 | 7;
   kidsMode: boolean;
+  /** «Жёсткие съёмки»: не повторил названный жест — вырезан (весь матч). */
+  strictCrowd?: boolean;
   /**
    * ИИ-актёры: свободные места до 4 занимают ИИ (за них играет хост), матч можно начать и одному.
    * Пока владелец проводит плейтесты — по умолчанию выключено (решение 22.11.2026), потом включить.
@@ -245,7 +247,7 @@ export class Room {
 
   private cfgFromSettings() {
     const s = this.state.settings;
-    return { roundSec: s.roundSec, maxRounds: s.maxRounds, kidsMode: s.kidsMode };
+    return { roundSec: s.roundSec, maxRounds: s.maxRounds, kidsMode: s.kidsMode, strictCrowd: !!s.strictCrowd };
   }
 
   /** Зритель: право читать общий канал (spectate_room), трансляция с задержкой, опрос конца матча. */

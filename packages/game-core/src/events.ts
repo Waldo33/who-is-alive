@@ -30,7 +30,8 @@ export type WorldEvent =
    * showAt..resumeAt — стоп-кадр (мир стоит), resumeAt..windowEnd — ещё можно нажать, но с опозданием.
    * vote — «Толпа решает»: жест не называется, kind — жест большинства (часть ботов делает другой).
    */
-  | { t: 'crowd'; kind: CrowdKind; showAt: number; resumeAt: number; windowEnd: number; at: number; vote?: boolean }
+  /** `vote` — жест не назван (угадай по толпе); `ghost` — его тайно загадал вырезанный «Хлопушкой» (вырезанные и так известны всем). */
+  | { t: 'crowd'; kind: CrowdKind; showAt: number; resumeAt: number; windowEnd: number; at: number; vote?: boolean; ghost?: boolean }
   /**
    * Прожектор режиссёра: кто-то в круге не повторил жест (игрок или зазевавшийся бот).
    * Центр смещён от ошибившегося, в круге несколько человечков — это улика, а не указатель.

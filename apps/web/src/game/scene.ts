@@ -872,7 +872,7 @@ export class GameScene extends Phaser.Scene {
         if (ev.target === myEid) {
           // «Жёсткий дубль»: вырезал режиссёр — сразу после окна команды, без удара
           const c = this.sim.world.crowd;
-          const byDirector = roundMod(this.sim.mod) === 'hard' && !!c && !c.vote && ev.at > c.windowEnd && ev.at < c.windowEnd + 2000;
+          const byDirector = (roundMod(this.sim.mod) === 'hard' || this.cfg.strictCrowd) && !!c && !c.vote && ev.at > c.windowEnd && ev.at < c.windowEnd + 2000;
           const sub = byDirector ? this.t.game.cutByCrowd : undefined;
           // оружием — баннер в момент удара, с кровью на экране и сотрясением (weaponImpact)
           const lk = this.kills.find((k) => k.k.eid === ev.target && !k.hit);
@@ -1009,7 +1009,7 @@ export class GameScene extends Phaser.Scene {
         // реванш: новый матч — новые лучший момент и карточка
         this.best = null;
         this.cardFile = null;
-        this.track('match_start', { players: this.sim.players.length, ai: this.sim.players.filter((p) => p.ai).length, kids: this.cfg.kidsMode, rounds: this.cfg.maxRounds, roundSec: this.cfg.roundSec });
+        this.track('match_start', { players: this.sim.players.length, ai: this.sim.players.filter((p) => p.ai).length, kids: this.cfg.kidsMode, strict: this.cfg.strictCrowd, rounds: this.cfg.maxRounds, roundSec: this.cfg.roundSec });
       }
     } else if (n.t === 'phase') {
       if (n.phase === 'countdown') this.audio.play('count');
@@ -2199,7 +2199,7 @@ export class GameScene extends Phaser.Scene {
       if (this.crowdIcon.texture.key !== tex || this.crowdIcon.frame.name !== String(fr)) this.crowdIcon.setTexture(tex, fr);
       const answered = this.me()?.crowdAnswered === cr.warnAt;
       if (frozen) {
-        this.crowdText.setText(cr.vote ? this.t.game.crowdVote : this.crowdLabel(cr.kind)).setFont('px-yellow');
+        this.crowdText.setText(cr.vote ? (cr.ghost ? this.t.game.crowdGhost : this.t.game.crowdVote) : this.crowdLabel(cr.kind)).setFont('px-yellow');
         // полоска оставшегося времени стоп-кадра
         const k = Math.max(0, (cr.resumeAt - wt - this.acc) / (cr.resumeAt - cr.showAt));
         const bw = 64;

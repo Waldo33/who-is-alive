@@ -46,6 +46,8 @@ export interface CrowdState {
   kind: CrowdKind;
   /** «Толпа решает»: жест не назван, kind — жест большинства. */
   vote?: boolean;
+  /** Не названный жест загадал вырезанный («Хлопушка»). */
+  ghost?: boolean;
   warnAt: number;
   showAt: number;
   resumeAt: number;
@@ -253,7 +255,7 @@ export class World {
         this.zone = { startAt: ev.startAt, endAt: ev.endAt, from: ev.from, to: ev.to };
         break;
       case 'crowd':
-        this.crowd = { kind: ev.kind, warnAt: ev.at, showAt: ev.showAt, resumeAt: ev.resumeAt, windowEnd: ev.windowEnd, ...(ev.vote ? { vote: true } : {}) };
+        this.crowd = { kind: ev.kind, warnAt: ev.at, showAt: ev.showAt, resumeAt: ev.resumeAt, windowEnd: ev.windowEnd, ...(ev.vote ? { vote: true } : {}), ...(ev.ghost ? { ghost: true } : {}) };
         break;
       case 'twist':
         this.twist = ev.on;

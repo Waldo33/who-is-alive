@@ -165,6 +165,8 @@ export class MatchSim {
   nextCrowdAt = 0;
   /** Следующая команда — «Толпа решает» (жест большинства известен заранее: толпа «разогревается»). */
   private nextVote: CrowdKind | null = null;
+  /** Следующий «не названный» жест загадал вырезанный («Хлопушка»). */
+  private nextGhost = false;
   /** Жест следующей обычной команды задан сценарием (обучение), иначе — случайный. */
   private forcedKind: CrowdKind | null = null;
   private moodOn = false;
@@ -420,6 +422,7 @@ export class MatchSim {
     this.nextCrowdAt = from + this.crowdInterval(from);
     this.moodOn = false;
     this.nextVote = null;
+    this.nextGhost = false;
     const chance = this.cfg.crowdVoteChance * (roundMod(this.mod) === 'rush' ? 1.5 : 1);
     if (this.round >= 2 && this.crowdCount > 0 && this.rng.chance(chance)) this.nextVote = this.rng.pick<CrowdKind>(['freeze', 'jump', 'dance']);
   }
@@ -433,12 +436,13 @@ export class MatchSim {
     return t >= this.lastTwistAt + quiet && !this.zoneStarted && t < this.plannedPlayEnd - this.cfg.zoneStartBeforeEndSec * 1000 - 3000;
   }
 
-  private fireCrowd(kind: CrowdKind, vote: boolean): void {
+  private fireCrowd(kind: CrowdKind, vote: boolean, ghost = false): void {
     const t = this.world.time;
     const cfg = this.cfg;
     const pause = crowdPauseMs(cfg);
     const resumeAt = t + pause;
-    this.emit({ t: 'crowd', kind, at: t, showAt: t, resumeAt, windowEnd: resumeAt + cfg.crowdLateMs, ...(vote ? { vote: true } : {}) });
+    this.emit({ t: 'crowd', kind, at: t, showAt: t, resumeAt, windowEnd: resumeAt + cfg.crowdLateMs, ...(vote ? { vote: true } : {}), ...(ghost ? { ghost: true } : {}) });
+    this.nextGhost = false;
     this.crowdShowTimes.push(resumeAt);
     this.crowdCount++;
     this.plannedPlayEnd += pause; // пауза не съедает время раунда
@@ -480,7 +484,7 @@ export class MatchSim {
     if (!c || c.vote || this.hardChecked === c.warnAt || t <= c.windowEnd + LAG_GRACE_MS) return;
     this.hardChecked = c.warnAt;
     const cfg = this.cfg;
-    const hard = roundMod(this.mod) === 'hard';
+    const hard = roundMod(this.mod) === 'hard' || cfg.strictCrowd;
     const slips: number[] = [];
     for (const p of this.pr) {
       if (!p.alive || (p.crowdAnswered === c.warnAt && p.crowdPick === c.kind && !p.crowdLate)) continue;
@@ -520,7 +524,7 @@ export class MatchSim {
       this.bots.setMood(this.nextVote, t, this.nextCrowdAt);
     }
     if (t >= this.nextCrowdAt && this.crowdCanStart(t)) {
-      if (this.nextVote) this.fireCrowd(this.nextVote, true);
+      if (this.nextVote) this.fireCrowd(this.nextVote, true, this.nextGhost);
       else this.fireCrowd(this.forcedKind ?? this.rng.pick<CrowdKind>(['freeze', 'jump', 'dance']), false);
     }
     this.judgeTick(t);
@@ -832,16 +836,18 @@ export class MatchSim {
       return;
     }
     if (it.k === 'clap') {
-      // «Хлопушка»: только вырезанный, с перезарядкой; команда та же, что у режиссёра (не выдаёт никого)
+      // «Хлопушка»: вырезанный тайно загадывает жест — он не назван (vote), толпа заранее «разогревается»
+      // им, живые угадывают по толпе. Только вырезанный, с перезарядкой; вырезанные и так известны всем.
       if (this.phase !== 'play' || p.alive) return;
-      if (p.clapsLeft <= 0 || t < p.clapAt || !this.crowdCanStart(t)) {
+      if (p.clapsLeft <= 0 || t < p.clapAt || this.nextGhost || !this.crowdCanStart(t)) {
         this.notices.push({ t: 'denied', pid, reason: 'not_now' });
         return;
       }
       p.clapsLeft--;
       p.clapAt = t + cfg.ghostClapCooldownSec * 1000;
       this.bots.setMood(null, t);
-      this.fireCrowd(it.kind, false);
+      this.planCrowd(it.kind, cfg.crowdMoodLeadMs + 400, true);
+      this.nextGhost = true;
       return;
     }
     if (this.phase !== 'play' || !p.alive) return;

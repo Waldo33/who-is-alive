@@ -100,6 +100,8 @@ export function mountSandbox(root: HTMLElement, opts: ShellOptions): () => void 
       <label class="kto-row"><span class="kto-name-label"></span> <input class="kto-input" maxlength="14"></label>
       <label class="kto-check"><input type="checkbox" class="kto-kids"> <span class="kto-kids-label"></span></label>
       <p class="kto-hint kto-kids-hint"></p>
+      <label class="kto-check"><input type="checkbox" class="kto-strict"> <span class="kto-strict-label"></span></label>
+      <p class="kto-hint kto-strict-hint"></p>
       <button class="kto-btn kto-play"></button>
       <p class="kto-small"></p>
     </section>
@@ -112,6 +114,20 @@ export function mountSandbox(root: HTMLElement, opts: ShellOptions): () => void 
   const start = root.querySelector<HTMLElement>('.kto-start')!;
   const nameInput = root.querySelector<HTMLInputElement>('.kto-input')!;
   const kids = root.querySelector<HTMLInputElement>('.kto-kids')!;
+  // «Жёсткие съёмки» запоминаются: «Играть» с главной (?go) пропускает этот экран
+  const strict = root.querySelector<HTMLInputElement>('.kto-strict')!;
+  try {
+    strict.checked = localStorage.getItem('kto:strict') === '1';
+  } catch {
+    /* приватный режим */
+  }
+  strict.addEventListener('change', () => {
+    try {
+      localStorage.setItem('kto:strict', strict.checked ? '1' : '0');
+    } catch {
+      /* приватный режим */
+    }
+  });
   const toastEl = root.querySelector<HTMLElement>('.kto-toast')!;
   let saved = '';
   try {
@@ -134,6 +150,8 @@ export function mountSandbox(root: HTMLElement, opts: ShellOptions): () => void 
     nameInput.setAttribute('aria-label', t.start.nameAria);
     $('.kto-kids-label').textContent = t.start.kids;
     $('.kto-kids-hint').textContent = t.start.kidsHint;
+    $('.kto-strict-label').textContent = t.start.strict;
+    $('.kto-strict-hint').textContent = t.start.strictHint;
     $('.kto-play').textContent = t.start.play;
     $('.kto-small').textContent = t.start.note;
     $('.kto-rotate').textContent = t.start.rotate;
@@ -228,7 +246,7 @@ export function mountSandbox(root: HTMLElement, opts: ShellOptions): () => void 
     }
     start.style.display = 'none';
     bar.update(gameOpts());
-    const cfg = { ...overrides, kidsMode: kids.checked };
+    const cfg = { ...overrides, kidsMode: kids.checked, strictCrowd: strict.checked };
     if (running) running.restart({ playerName, cfg, lang });
     else {
       const speed = dev ? Number(new URLSearchParams(location.search).get('speed')) || 1 : 1;
@@ -280,7 +298,7 @@ export function mountSandbox(root: HTMLElement, opts: ShellOptions): () => void 
       o.attackConfirm = fd.get('attackConfirm');
       overrides = o as Partial<GameConfig>;
       form.style.display = 'none';
-      running?.restart({ cfg: { ...overrides, kidsMode: kids.checked }, lang });
+      running?.restart({ cfg: { ...overrides, kidsMode: kids.checked, strictCrowd: strict.checked }, lang });
       toast(t.start.devApplied);
     });
   }

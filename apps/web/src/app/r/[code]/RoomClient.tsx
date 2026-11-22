@@ -417,7 +417,7 @@ export function Lobby({
         {isHost ? (
           <button className="btn" disabled={!canStart} onClick={() => {
               onGesture();
-              track('lobby_start', { members: state.members.length, online: online.length, kids: !!state.settings.kidsMode, aiFill: !!state.settings.aiFill });
+              track('lobby_start', { members: state.members.length, online: online.length, kids: !!state.settings.kidsMode, strict: !!state.settings.strictCrowd, aiFill: !!state.settings.aiFill });
               void room.startMatch();
             }}>
             {t.lobby.start}
@@ -481,6 +481,11 @@ function Settings({ t, settings, onChange }: { t: Dict; settings: RoomSettings; 
         <span>{t.lobby.kids}</span>
       </label>
       <p className="setting-hint">{t.lobby.kidsHint}</p>
+      <label className="setting check">
+        <input type="checkbox" checked={!!settings.strictCrowd} onChange={(e) => onChange({ ...settings, strictCrowd: e.target.checked })} />
+        <span>{t.lobby.strict}</span>
+      </label>
+      <p className="setting-hint">{t.lobby.strictHint}</p>
       <label className="setting check">
         <input type="checkbox" checked={!!settings.aiFill} onChange={(e) => onChange({ ...settings, aiFill: e.target.checked })} />
         <span>{t.lobby.aiFill}</span>
