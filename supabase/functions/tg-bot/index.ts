@@ -12,7 +12,7 @@
 //
 // Ключ бота: секрет функции TELEGRAM_BOT_TOKEN или, если его нет, Supabase Vault `telegram_bot_token`
 // (RPC tg_bot_token — только для service_role).
-// Необязательно: TG_APP_NAME (короткое имя прямой ссылки, по умолчанию «play»), SITE_URL.
+// Необязательно: TG_APP_NAME (короткое имя прямой ссылки, по умолчанию «play»), SITE_URL, FEATURES (флаги: casting).
 // SUPABASE_URL и SUPABASE_SERVICE_ROLE_KEY Supabase передаёт сам.
 // JWT не проверяется (Telegram его не шлёт): вебхук проверяет секретный заголовок, Mini App — подпись initData.
 
@@ -21,6 +21,8 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 let TOKEN = Deno.env.get('TELEGRAM_BOT_TOKEN') ?? '';
 const APP = Deno.env.get('TG_APP_NAME') ?? 'play';
 const SITE = Deno.env.get('SITE_URL') ?? 'https://who-is-alive.vercel.app';
+/** Фичи за флагом (как `lib/features.ts` на сайте): секрет функции `FEATURES=casting`. Без флага кастинга бот о нём молчит. */
+const CASTING = (Deno.env.get('FEATURES') ?? '').split(',').map((f) => f.trim()).includes('casting');
 const FN_URL = `${Deno.env.get('SUPABASE_URL')}/functions/v1/tg-bot`;
 const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } });
 
@@ -79,7 +81,8 @@ async function getMe() {
 
 const T = {
   ru: {
-    start: 'Массовка — пиксельная игра для компании: спрячься в толпе ботов и вычисли друзей раньше, чем они тебя. А каждый день — «Кастинг дня»: найди актёра в массовке.',
+    start: 'Массовка — пиксельная игра для компании: спрячься в толпе ботов и вычисли друзей раньше, чем они тебя.',
+    startCasting: ' А каждый день — «Кастинг дня»: найди актёра в массовке.',
     play: '▶ Играть',
     daily: '🎬 Кастинг дня',
     inviteTitle: 'Позвать в «Массовку»',
@@ -96,7 +99,8 @@ const T = {
     openApp: 'Открыть игру',
   },
   en: {
-    start: 'Be Nobody is a pixel party game: hide in a crowd of bots and spot your friends before they spot you. Plus a daily casting: spot the actor among the extras.',
+    start: 'Be Nobody is a pixel party game: hide in a crowd of bots and spot your friends before they spot you.',
+    startCasting: ' Plus a daily casting: spot the actor among the extras.',
     play: '▶ Play',
     daily: '🎬 Daily casting',
     inviteTitle: 'Invite to Be Nobody',
@@ -137,17 +141,17 @@ interface Update {
 async function onStart(msg: NonNullable<Update['message']>): Promise<void> {
   const t = T[langOf(msg.from?.language_code)];
   const param = (msg.text ?? '').split(' ')[1] ?? '';
-  const path = /^r_[A-Z]{4}$/.test(param) ? `/r/${param.slice(2)}` : param === 'daily' ? '/daily' : '/';
+  const path = /^r_[A-Z]{4}$/.test(param) ? `/r/${param.slice(2)}` : param === 'daily' && CASTING ? '/daily' : '/';
   // кнопка web_app — только в личке; в группах — прямая ссылка Mini App
   const priv = msg.chat.type === 'private';
   const web = (text: string, p: string) => ({ text, web_app: { url: `${SITE}${p}?src=tg` } });
   await api('sendMessage', {
     chat_id: msg.chat.id,
-    text: t.start,
+    text: t.start + (CASTING ? t.startCasting : ''),
     reply_markup: {
       inline_keyboard: priv
-        ? [[web(t.play, path)], [web(t.daily, '/daily')]]
-        : [[{ text: t.play, url: await link(param || undefined) }], [{ text: t.daily, url: await link('daily') }]],
+        ? [[web(t.play, path)], ...(CASTING ? [[web(t.daily, '/daily')]] : [])]
+        : [[{ text: t.play, url: await link(param || undefined) }], ...(CASTING ? [[{ text: t.daily, url: await link('daily') }]] : [])],
     },
   });
 }
@@ -185,12 +189,12 @@ async function onInline(q: NonNullable<Update['inline_query']>): Promise<void> {
   const t = T[langOf(q.from.language_code)];
   const query = q.query.trim();
   const room = /^([A-Za-z]{4})$/.exec(query);
-  const daily = /^daily\b\s*(\S*)/u.exec(query);
+  const daily = CASTING ? /^daily\b\s*(\S*)/u.exec(query) : null;
   const squares = daily && SQUARES.test(daily[1]) ? daily[1] : '';
   const results: unknown[] = [];
   if (room) results.push(await roomCard(t, room[1].toUpperCase()));
   if (daily) results.push(await dailyCard(t, squares));
-  if (!room && !daily) results.push(await inviteCard(t), await dailyCard(t, ''));
+  if (!room && !daily) results.push(await inviteCard(t), ...(CASTING ? [await dailyCard(t, '')] : []));
   await api('answerInlineQuery', {
     inline_query_id: q.id,
     results,
@@ -210,7 +214,7 @@ async function onPrepare(body: { initData?: string; kind?: string; code?: string
   const t = T[langOf(init.user.language_code)];
   let result;
   if (body.kind === 'room' && /^[A-Z]{4}$/.test(body.code ?? '')) result = await roomCard(t, body.code!);
-  else if (body.kind === 'daily') result = await dailyCard(t, SQUARES.test(body.squares ?? '') ? body.squares! : '');
+  else if (body.kind === 'daily' && CASTING) result = await dailyCard(t, SQUARES.test(body.squares ?? '') ? body.squares! : '');
   else result = await inviteCard(t);
   const msg = await api<{ id: string }>('savePreparedInlineMessage', {
     user_id: init.user.id,
@@ -287,7 +291,8 @@ async function setupProfile(): Promise<void> {
   const P = {
     ru: {
       description:
-        'Массовка — пиксельная игра для компании на 2–4 телефона. На площади 32 одинаковых человечка: почти все — боты, среди них — вы. Прячься в толпе, вычисляй живых по поведению и бей первым. Матч — 5 минут. А каждый день — «Кастинг дня»: найди актёра в массовке.',
+        'Массовка — пиксельная игра для компании на 2–4 телефона. На площади 32 одинаковых человечка: почти все — боты, среди них — вы. Прячься в толпе, вычисляй живых по поведению и бей первым. Матч — 5 минут.',
+      casting: ' А каждый день — «Кастинг дня»: найди актёра в массовке.',
       short: 'Спрячься в толпе ботов и вычисли друзей первым. 2–4 игрока, 5 минут.',
       name: 'Массовка',
       start: 'Играть в Массовку',
@@ -295,7 +300,8 @@ async function setupProfile(): Promise<void> {
     },
     en: {
       description:
-        'Be Nobody is a pixel party game for 2–4 phones. 32 identical people on the square: almost all are bots, and you are among them. Hide in the crowd, spot the humans by how they move, and strike first. 5-minute matches, plus a daily casting: spot the actor among the extras.',
+        'Be Nobody is a pixel party game for 2–4 phones. 32 identical people on the square: almost all are bots, and you are among them. Hide in the crowd, spot the humans by how they move, and strike first. 5-minute matches.',
+      casting: ' Plus a daily casting: spot the actor among the extras.',
       short: 'Hide in a crowd of bots and spot your friends first. 2–4 players, 5 minutes.',
       name: 'Be Nobody',
       start: 'Play Be Nobody',
@@ -305,7 +311,7 @@ async function setupProfile(): Promise<void> {
   for (const [lang, p] of Object.entries(P)) {
     const language_code = lang === 'en' ? undefined : lang; // английский — по умолчанию для всех языков
     await api('setMyName', { name: p.name, language_code });
-    await api('setMyDescription', { description: p.description, language_code });
+    await api('setMyDescription', { description: p.description + (CASTING ? p.casting : ''), language_code });
     await api('setMyShortDescription', { short_description: p.short, language_code });
     await api('setMyCommands', { commands: [{ command: 'start', description: p.start }], language_code });
   }

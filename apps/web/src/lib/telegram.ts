@@ -14,6 +14,7 @@
  * Вне Telegram всё здесь — пустые вызовы. Скрипт Telegram грузится только внутри Telegram.
  */
 import { SUPABASE_URL, TG_APP } from './env';
+import { featureOn } from './features';
 import { LANG_KEY } from './lang';
 import { savedName, saveName } from './name';
 
@@ -228,7 +229,7 @@ export function telegramStartTarget(): string | null {
     /* приватный режим */
   }
   const room = /^r_([A-Z]{4})$/.exec(start);
-  return room ? `/r/${room[1]}?src=tg` : start === 'daily' ? '/daily?src=tg' : null;
+  return room ? `/r/${room[1]}?src=tg` : start === 'daily' && featureOn('casting') ? '/daily?src=tg' : null;
 }
 
 /** Ссылка, открывающая игру в Telegram с параметром (или null, если бот ещё не настроен). */

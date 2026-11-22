@@ -9,6 +9,7 @@ import { dailyHint } from '@kto/game-core';
 import { track } from '@/lib/analytics';
 import { loadChunk } from '@/lib/chunk';
 import { detectLang } from '@/lib/lang';
+import { featureOn } from '@/lib/features';
 import { shareContent, withLang } from '@/lib/share';
 import { inTelegram, telegramDailyBoard, telegramShareCard } from '@/lib/telegram';
 import type { ChatScore } from '@/lib/telegram';
@@ -79,6 +80,11 @@ export default function DailyClient() {
   const [hinted, setHinted] = useState(false);
 
   useEffect(() => {
+    // «Кастинг дня» пока за флагом (lib/features.ts): без него — на главную
+    if (!featureOn('casting')) {
+      router.replace('/');
+      return;
+    }
     const l = detectLang();
     setLang(l);
     document.documentElement.lang = l;

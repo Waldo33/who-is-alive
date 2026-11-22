@@ -12,6 +12,7 @@ import { TopBar } from '@/ui/TopBarView';
 import type { TopBar as Bar } from '@/ui/topbar';
 import { playerName } from '@/lib/name';
 import { track } from '@/lib/analytics';
+import { featureOn } from '@/lib/features';
 import { telegramStartTarget } from '@/lib/telegram';
 import { Garland, Snow, useNewYear } from '@/ui/Festive';
 import { shareContent, withLang } from '@/lib/share';
@@ -30,7 +31,7 @@ export default function HomeClient() {
   const [code, setCode] = useState('');
   const [toast, setToast] = useState('');
   // кастинг дня: номер и пройден ли сегодня (localStorage — как на /daily)
-  const [daily, setDaily] = useState({ n: 0, done: false });
+  const [daily, setDaily] = useState({ on: false, n: 0, done: false });
   useEffect(() => {
     const n = dailyNumber(localDateKey(new Date()));
     let done = false;
@@ -39,7 +40,7 @@ export default function HomeClient() {
     } catch {
       /* нет записей */
     }
-    setDaily({ n, done });
+    setDaily({ on: featureOn('casting'), n, done });
   }, []);
   const bar = useRef<Bar | null>(null);
   const ny = useNewYear();
@@ -139,13 +140,15 @@ export default function HomeClient() {
         <button className="btn alt" onClick={create} disabled={busy}>
           {busy ? t.lobby.connecting : t.start.withFriends}
         </button>
+{daily.on && (
         <Link className="daily-tile" href="/daily" onClick={() => track('daily_tap', { from: 'home' })}>
-          <span className="daily-tile-title">
-            {t.daily.title}
-            {daily.n > 0 && ` ${fmt(t.daily.numShort, { n: daily.n })}`}
-          </span>
-          <span className="daily-tile-sub">{daily.done ? t.start.dailyDone : t.daily.task}</span>
-        </Link>
+            <span className="daily-tile-title">
+              {t.daily.title}
+              {daily.n > 0 && ` ${fmt(t.daily.numShort, { n: daily.n })}`}
+            </span>
+            <span className="daily-tile-sub">{daily.done ? t.start.dailyDone : t.daily.task}</span>
+          </Link>
+        )}
       </div>
       {showCode ? (
         <form
