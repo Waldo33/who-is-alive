@@ -1,0 +1,425 @@
+import { DICTS, TICK_MS, fmt } from '@kto/game-core';
+import type { GameConfig, PlayerInfo } from '@kto/game-core';
+import { DEFAULT_WIRE_SETTINGS, HostSession } from '@kto/net';
+import type { Channel, PresenceMember, RoomMsg, ServerMsg, Transport, WireError, WireRoom, WireRoomSettings } from '@kto/net';
+import type { Logger } from './log';
+
+/** Одно соединение игрока (WebSocket или тестовая заглушка). */
+export interface Peer {
+  send(text: string): void;
+  close(code?: number, reason?: string): void;
+}
+
+export interface Member {
+  userId: string;
+  name: string;
+  color: number;
+  joinedAt: number;
+  ready: boolean;
+  peer: Peer | null;
+  /** Когда соединение пропало (для освобождения места через HOLD_MS). */
+  offlineSince: number;
+}
+
+/** Сколько держим место за отключившимся (как пульс в Supabase): 75 с. */
+export const HOLD_MS = 75_000;
+/** Режиссёр пропал во время матча — роль у следующего через столько. */
+export const DIRECTOR_GONE_PLAYING_MS = 10_000;
+const SEATS = 4;
+export const SERVER_PID = '$server';
+
+export interface RoomOptions {
+  code: string;
+  directorId: string;
+  directorName: string;
+  settings: WireRoomSettings;
+  lang: 'ru' | 'en';
+  now: () => number;
+  log: Logger;
+  /** Во сколько раз быстрее реального времени идёт матч (только тесты). */
+  speed?: number;
+  onEmpty?: (room: Room) => void;
+}
+
+/**
+ * Транспорт безголового хоста: «общий канал» — все игроки комнаты, «личный» — один игрок.
+ * Общий текст сериализуется один раз на всех.
+ */
+class RoomTransport implements Transport {
+  readonly selfId = SERVER_PID;
+  handlers = new Set<(c: Channel, m: unknown, f: string) => void>();
+  constructor(private readonly room: Room) {}
+  async send(channel: Channel, msg: unknown, to?: string): Promise<void> {
+    if (channel === 'room') this.room.broadcastText(JSON.stringify({ t: 'g', ch: 'room', m: msg } satisfies ServerMsg));
+    else if (channel === 'private' && to) this.room.sendTo(to, { t: 'g', ch: 'private', m: msg });
+  }
+  onMessage(h: (c: Channel, m: unknown, f: string) => void): () => void {
+    this.handlers.add(h);
+    return () => this.handlers.delete(h);
+  }
+  deliver(from: string, m: unknown): void {
+    for (const h of this.handlers) h('host', m, from);
+  }
+  presence(): PresenceMember[] {
+    return [];
+  }
+  onPresence(): () => void {
+    return () => {};
+  }
+  async track(): Promise<void> {}
+  async setRole(): Promise<void> {}
+  async close(): Promise<void> {}
+}
+
+/** Матч на сервере: безголовый хост и часы реального времени (догоняем пачкой, если отстали). */
+export class MatchRunner {
+  readonly host: HostSession;
+  readonly transport: RoomTransport;
+  private startedAt: number;
+  private steps = 0;
+  /** Длительности шагов (мс) — для метрик. */
+  stepMs: number[] = [];
+
+  constructor(
+    room: Room,
+    readonly players: PlayerInfo[],
+    cfg: Partial<GameConfig>,
+    seed: number,
+    private readonly now: () => number,
+    private readonly speed: number,
+  ) {
+    this.transport = new RoomTransport(room);
+    this.host = new HostSession({ transport: this.transport, players, cfg, seed, hostPid: room.directorId, selfPid: SERVER_PID });
+    this.startedAt = now();
+  }
+
+  /** Сделать столько шагов мира, сколько положено к этому моменту. */
+  pump(): void {
+    const due = Math.floor(((this.now() - this.startedAt) * this.speed) / TICK_MS);
+    let todo = due - this.steps;
+    // сервер подвис надолго (>2 с) — не прокручивать матч рывком, а сдвинуть часы
+    if (todo > 40) {
+      this.startedAt += ((todo - 40) * TICK_MS) / this.speed;
+      todo = 40;
+    }
+    for (let i = 0; i < todo; i++) this.step();
+  }
+
+  step(): void {
+    const t0 = performance.now();
+    this.host.tick();
+    this.host.drainNotices();
+    this.steps++;
+    const dt = performance.now() - t0;
+    if (this.stepMs.length >= 600) this.stepMs.shift();
+    this.stepMs.push(dt);
+  }
+
+  stop(): void {
+    this.host.dispose();
+  }
+}
+
+export class Room {
+  readonly code: string;
+  readonly createdAt: number;
+  directorId: string;
+  settings: WireRoomSettings;
+  members = new Map<string, Member>();
+  status: 'lobby' | 'playing' = 'lobby';
+  runner: MatchRunner | null = null;
+  lastActive: number;
+  readonly lang: 'ru' | 'en';
+  private readonly now: () => number;
+  private readonly log: Logger;
+  private readonly speed: number;
+  private directorGoneSince = 0;
+  closed = false;
+
+  constructor(private readonly o: RoomOptions) {
+    this.code = o.code;
+    this.now = o.now;
+    this.log = o.log;
+    this.lang = o.lang;
+    this.speed = o.speed ?? 1;
+    this.createdAt = this.lastActive = o.now();
+    this.directorId = o.directorId;
+    this.settings = { ...DEFAULT_WIRE_SETTINGS, ...o.settings };
+    // создатель занимает место и цвет 0 сразу (как create_room), подключится следом
+    this.members.set(o.directorId, {
+      userId: o.directorId,
+      name: cleanName(o.directorName, 'Host'),
+      color: 0,
+      joinedAt: o.now(),
+      ready: false,
+      peer: null,
+      offlineSince: o.now(),
+    });
+  }
+
+  // ───────────── вход и выход ─────────────
+
+  /** Вход по WebSocket. Возвращает код ошибки или null. */
+  join(userId: string, name: string, peer: Peer): WireError | null {
+    const now = this.now();
+    let m = this.members.get(userId);
+    if (m) {
+      // перезаход: старое соединение (другая вкладка, оборванная сеть) закрываем
+      if (m.peer && m.peer !== peer) m.peer.close(4000, 'replaced');
+      m.peer = peer;
+      m.offlineSince = 0;
+      if (name.trim()) m.name = cleanName(name, m.name);
+    } else {
+      if (this.status === 'playing') return 'room_playing';
+      this.purgeOffline(now);
+      if (this.members.size >= SEATS) return 'room_full';
+      const used = new Set([...this.members.values()].map((x) => x.color));
+      const color = [0, 1, 2, 3].find((c) => !used.has(c)) ?? 0;
+      m = { userId, name: cleanName(name, 'Player'), color, joinedAt: now, ready: false, peer, offlineSince: 0 };
+      this.members.set(userId, m);
+    }
+    this.lastActive = now;
+    this.sendTo(userId, { t: 'welcome', selfId: userId, room: this.view() });
+    this.broadcastRoom();
+    return null;
+  }
+
+  /** Соединение оборвалось: место держится HOLD_MS. */
+  disconnected(userId: string, peer: Peer): void {
+    const m = this.members.get(userId);
+    if (!m || m.peer !== peer) return;
+    m.peer = null;
+    m.offlineSince = this.now();
+    m.ready = false;
+    this.broadcastRoom();
+    if (this.onlineCount() === 0) this.o.onEmpty?.(this);
+  }
+
+  /** Явный уход (кнопка «Назад»): место освобождается сразу. */
+  leave(userId: string): void {
+    const m = this.members.get(userId);
+    if (!m) return;
+    // во время матча место за игроком остаётся до конца матча (его персонаж уже на поле)
+    if (this.status === 'playing' && this.runner?.players.some((p) => p.pid === userId)) {
+      m.peer = null;
+      m.offlineSince = this.now();
+      m.ready = false;
+    } else {
+      this.members.delete(userId);
+    }
+    if (userId === this.directorId) this.passDirector();
+    this.lastActive = this.now();
+    this.broadcastRoom();
+    if (this.onlineCount() === 0) this.o.onEmpty?.(this);
+  }
+
+  private purgeOffline(now: number): void {
+    for (const m of [...this.members.values()]) {
+      if (m.peer || !m.offlineSince || now - m.offlineSince < HOLD_MS) continue;
+      if (m.userId === this.directorId) continue;
+      this.members.delete(m.userId);
+    }
+  }
+
+  /** Раз в секунду: занятые места отключившихся, пропавший режиссёр. */
+  housekeeping(): void {
+    const now = this.now();
+    const before = this.members.size;
+    if (this.status === 'lobby') this.purgeOffline(now);
+    const d = this.members.get(this.directorId);
+    const dOnline = !!d?.peer;
+    if (dOnline) this.directorGoneSince = 0;
+    else {
+      // отсчёт — с момента обрыва, а не с первой проверки
+      this.directorGoneSince ||= d?.offlineSince || now;
+      const limit = this.status === 'playing' ? DIRECTOR_GONE_PLAYING_MS : HOLD_MS;
+      if (now - this.directorGoneSince >= limit && this.onlineCount() > 0) {
+        this.passDirector();
+        if (this.status === 'lobby' && d && !d.peer) this.members.delete(d.userId);
+        this.broadcastRoom();
+      }
+    }
+    if (this.members.size !== before) this.broadcastRoom();
+  }
+
+  /** Роль режиссёра — следующему по порядку входа (сначала тем, кто на связи). */
+  private passDirector(): void {
+    const rest = [...this.members.values()].filter((m) => m.userId !== this.directorId).sort((a, b) => a.joinedAt - b.joinedAt);
+    const next = rest.find((m) => m.peer) ?? rest[0];
+    if (!next) return;
+    this.log('info', 'director_passed', { room: this.code });
+    this.directorId = next.userId;
+    this.directorGoneSince = 0;
+    this.runner?.host.setDirector(next.userId);
+  }
+
+  // ───────────── действия в лобби ─────────────
+
+  setReady(userId: string, on: boolean): void {
+    const m = this.members.get(userId);
+    if (!m) return;
+    m.ready = on;
+    this.broadcastRoom();
+  }
+
+  rename(userId: string, name: string): void {
+    const m = this.members.get(userId);
+    if (!m) return;
+    m.name = cleanName(name, m.name);
+    this.broadcastRoom();
+  }
+
+  updateSettings(userId: string, s: WireRoomSettings): WireError | null {
+    if (userId !== this.directorId) return 'not_director';
+    if (this.status !== 'lobby') return 'not_now';
+    this.settings = s;
+    this.lastActive = this.now();
+    this.broadcastRoom();
+    return null;
+  }
+
+  kick(userId: string, target: string): WireError | null {
+    if (userId !== this.directorId) return 'not_director';
+    if (this.status !== 'lobby' || target === userId) return 'not_now';
+    const m = this.members.get(target);
+    if (!m) return null;
+    this.members.delete(target);
+    if (m.peer) {
+      m.peer.send(JSON.stringify({ t: 'kicked' } satisfies ServerMsg));
+      m.peer.close(4001, 'kicked');
+    }
+    this.broadcastRoom();
+    return null;
+  }
+
+  /** Сколько людей нужно для старта: с ИИ-актёрами хватит одного. */
+  minHumans(): number {
+    return this.settings.aiFill ? 1 : 2;
+  }
+
+  /** Старт матча (или новый матч после конца — с новым составом). */
+  start(userId: string): WireError | null {
+    if (userId !== this.directorId) return 'not_director';
+    if (this.status === 'playing' && this.runner?.host.phase !== 'match_end') return 'not_now';
+    const humans = this.onlineMembers().map((m) => ({ pid: m.userId, name: m.name, color: m.color }));
+    if (humans.length < this.minHumans()) return 'not_enough_players';
+    const players = [...humans, ...this.aiFill(humans)];
+    const cfg: Partial<GameConfig> = {
+      roundSec: this.settings.roundSec,
+      maxRounds: this.settings.maxRounds,
+      kidsMode: this.settings.kidsMode,
+      strictCrowd: !!this.settings.strictCrowd,
+    };
+    const seed = Math.floor(Math.random() * 2 ** 31);
+    this.runner?.stop();
+    this.status = 'playing';
+    // места тех, кто не попал в матч (не на связи), освобождаются
+    for (const m of [...this.members.values()]) if (!players.some((p) => p.pid === m.userId)) this.members.delete(m.userId);
+    this.broadcastRoom();
+    const start: RoomMsg = { t: 'match_start', players, cfg, seed, hostId: this.directorId };
+    this.broadcastText(JSON.stringify({ t: 'g', ch: 'room', m: start } satisfies ServerMsg));
+    this.runner = new MatchRunner(this, players, cfg, seed, this.now, this.speed);
+    this.lastActive = this.now();
+    this.log('info', 'match_start', { room: this.code, humans: humans.length, ai: players.length - humans.length });
+    return null;
+  }
+
+  private aiFill(humans: PlayerInfo[]): PlayerInfo[] {
+    if (!this.settings.aiFill) return [];
+    const t = DICTS[this.lang];
+    const free = [0, 1, 2, 3].filter((c) => !humans.some((h) => h.color === c));
+    const nouns = [...t.names.noun].sort(() => Math.random() - 0.5);
+    return free.slice(0, Math.max(0, SEATS - humans.length)).map((color, i) => ({
+      pid: `ai-${i + 1}`,
+      name: fmt(t.lobby.aiName, { name: nouns[i] }).slice(0, 14),
+      color,
+      ai: true,
+    }));
+  }
+
+  /** Игровое сообщение от игрока — безголовому хосту. «Ещё дубль» с новым составом — новый матч. */
+  game(userId: string, m: unknown): void {
+    const r = this.runner;
+    if (!r) return;
+    const msg = m as { t?: string; i?: { k?: string } };
+    if (msg?.t === 'i' && msg.i?.k === 'rematch' && userId === this.directorId && r.host.phase === 'match_end') {
+      const now = this.onlineMembers().map((x) => x.userId);
+      const before = r.players.filter((p) => !p.ai).map((p) => p.pid);
+      const same = now.length === before.length && now.every((p) => before.includes(p));
+      if (!same && now.length >= this.minHumans()) {
+        this.start(userId);
+        return;
+      }
+    }
+    r.transport.deliver(userId, m);
+  }
+
+  /** Шаги матча к этому моменту. Конец матча → комната снова принимает новых (они войдут к «Ещё дублю»). */
+  pump(): void {
+    this.runner?.pump();
+    if (this.status === 'playing' && this.runner?.host.phase === 'match_end') {
+      this.status = 'lobby';
+      this.broadcastRoom();
+    } else if (this.status === 'lobby' && this.runner && this.runner.host.phase !== 'match_end') {
+      this.status = 'playing';
+      this.broadcastRoom();
+    }
+  }
+
+  // ───────────── рассылка ─────────────
+
+  onlineMembers(): Member[] {
+    return [...this.members.values()].filter((m) => m.peer).sort((a, b) => a.joinedAt - b.joinedAt);
+  }
+
+  onlineCount(): number {
+    let n = 0;
+    for (const m of this.members.values()) if (m.peer) n++;
+    return n;
+  }
+
+  view(): WireRoom {
+    return {
+      code: this.code,
+      status: this.status,
+      directorId: this.directorId,
+      settings: this.settings,
+      members: [...this.members.values()]
+        .sort((a, b) => a.joinedAt - b.joinedAt)
+        .map((m) => ({ userId: m.userId, name: m.name, color: m.color, joinedAt: m.joinedAt, online: !!m.peer, ready: m.ready })),
+    };
+  }
+
+  broadcastRoom(): void {
+    this.broadcastText(JSON.stringify({ t: 'room', room: this.view() } satisfies ServerMsg));
+  }
+
+  broadcastText(text: string): void {
+    for (const m of this.members.values()) m.peer?.send(text);
+  }
+
+  sendTo(userId: string, msg: ServerMsg): void {
+    this.members.get(userId)?.peer?.send(JSON.stringify(msg));
+  }
+
+  close(reason: string): void {
+    if (this.closed) return;
+    this.closed = true;
+    this.runner?.stop();
+    this.runner = null;
+    const text = JSON.stringify({ t: 'closed' } satisfies ServerMsg);
+    for (const m of this.members.values()) {
+      m.peer?.send(text);
+      m.peer?.close(4002, 'closed');
+    }
+    this.members.clear();
+    this.log('info', 'room_closed', { room: this.code, reason });
+  }
+}
+
+/** Имя: без лишних пробелов и управляющих символов, до 14 знаков (как в Supabase). */
+export function cleanName(raw: string, fallback: string): string {
+  // eslint-disable-next-line no-control-regex
+  const s = raw.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 14);
+  return s || fallback;
+}

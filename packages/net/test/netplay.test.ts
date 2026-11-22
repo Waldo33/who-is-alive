@@ -440,5 +440,60 @@ describe('сетевая игра', () => {
     for (const p of players.filter((p) => p.pid !== 'h')) expect(next.scores[p.pid]).toBe(scores[p.pid]);
     expect(next.phase).toBe('countdown');
   });
-});
 
+  it('безголовый хост (игровой сервер): все четверо — гости, матч доходит до конца, режиссёр меняется', () => {
+    let nowMs = 0;
+    const clock = () => nowMs;
+    const hub = new LoopbackHub(11);
+    hub.latency = [30, 90];
+    const four: PlayerInfo[] = ['a', 'b', 'c', 'd'].map((pid, i) => ({ pid, name: pid, color: i }));
+    const tSrv = hub.join({ userId: '$srv', name: 'srv', color: 9, joinedAt: 0 });
+    const tg = four.map((p, i) => {
+      const t = hub.join({ userId: p.pid, name: p.name, color: i, joinedAt: i + 1 });
+      t.authoritative = true;
+      return t;
+    });
+    const host = new HostSession({ transport: tSrv, players: four, cfg: {}, seed: 21, hostPid: 'a', selfPid: '$srv' });
+    const guests = tg.map((t) => new RemoteSession({ transport: t, selfPid: t.selfId, hostPid: 'a', players: four, cfg: {}, clock }));
+    expect(host.me()).toBeUndefined();
+    const rig = { guests } as unknown as Rig;
+    const rng = new Rng(21);
+    let switched = false;
+    for (let i = 0; i < 20 * 60 * 12 && guests[1].phase !== 'match_end'; i++) {
+      nowMs += 50;
+      vi.advanceTimersByTime(50);
+      host.tick();
+      host.drainNotices();
+      for (const g of guests) g.tick();
+      botFingers(rig, rng);
+      // режиссёр ушёл после первого дубля: роль у следующего
+      if (!switched && host.round === 1) {
+        host.setDirector('b');
+        for (const g of guests) g.setHost('b');
+        switched = true;
+      }
+    }
+    expect(switched).toBe(true);
+    expect(guests[1].phase).toBe('match_end');
+    expect(guests[1].scores).toEqual(host.scores);
+    // каждый получил свою сущность лично, хост своей не имеет
+    for (const g of guests) expect(g.me()).toBeDefined();
+    // режиссёр — «b»: реванш от него принимается, от «c» — нет
+    guests[2].intent({ k: 'rematch' });
+    for (let i = 0; i < 20; i++) {
+      nowMs += 50;
+      vi.advanceTimersByTime(50);
+      host.tick();
+    }
+    expect(host.phase).toBe('match_end');
+    guests[1].intent({ k: 'rematch' });
+    for (let i = 0; i < 20; i++) {
+      nowMs += 50;
+      vi.advanceTimersByTime(50);
+      host.tick();
+    }
+    expect(host.phase).not.toBe('match_end');
+    for (const g of guests) g.dispose();
+    host.dispose();
+  });
+});

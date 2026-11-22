@@ -20,6 +20,11 @@ export interface PresenceMember {
 
 export interface Transport {
   readonly selfId: string;
+  /**
+   * Все входящие сообщения — от авторитетного сервера (свой игровой сервер, не телефон хоста):
+   * подпись отправителя не проверяем, её ставит сервер, а не другой участник.
+   */
+  readonly authoritative?: boolean;
   send(channel: Channel, msg: unknown, to?: string): Promise<void>;
   onMessage(handler: (channel: Channel, msg: unknown, from: string) => void): () => void;
   presence(): PresenceMember[];
@@ -98,6 +103,8 @@ export class LoopbackHub {
 export class LoopbackTransport implements Transport {
   private handlers = new Set<(c: Channel, m: unknown, f: string) => void>();
   private presenceHandlers = new Set<(m: PresenceMember[]) => void>();
+  /** Стенд «игровой сервер»: гость принимает всё от безголового хоста. */
+  authoritative = false;
   constructor(private hub: LoopbackHub, readonly selfId: string) {}
   async send(channel: Channel, msg: unknown, to?: string): Promise<void> {
     this.hub.route(this.selfId, channel, msg, to);

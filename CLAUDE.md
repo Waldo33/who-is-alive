@@ -119,6 +119,7 @@ CI (`.github/workflows/ci.yml`): lint, typecheck, test, `sim --rounds 200`.
 | `apps/web/src/lib/` | `telegram` (Telegram Mini App: SDK, полный экран, родные «Назад», вибрация, ссылки `startapp`, `docs/architecture.md › 4.1`), `features` (флаги фич: `featureOn('casting')` — «Кастинг дня» спрятан), `analytics` (`track` — события воронки в `analytics_events` через RPC `log_events`), `share` (поделиться с запасными путями, `withLang` — `?l=` и метка `?src=` в ссылках), `meta` (метаданные превью по языку), `chunk` (перезагрузка при устаревшей вкладке), `preview` (RPC для OG), `env`, `supabase`, `lang`, `name` |
 | `apps/web/public/sw.js` | сервис-воркер PWA |
 | `supabase/migrations/` | схема БД, RLS, RPC, политики Realtime |
+| `apps/server/` | свой игровой сервер (этап H, ещё не в проде): `server.ts` — HTTP + WebSocket, лимиты, уборка комнат; `room.ts` — комната и матч (безголовый `HostSession`); `auth.ts` — анонимные токены. Клиент к нему — `ServerLink` (`packages/net/src/ws.ts`), протокол — `wire.ts`. Запуск: `pnpm --filter @kto/server dev` |
 | `supabase/functions/tg-bot/` | сервер Telegram-бота (Edge Function): `/start`, инлайн «@бот», карточки `shareMessage`, рейтинг загадки в чате (`docs/architecture.md › 4.2`) |
 
 ## Как проверять

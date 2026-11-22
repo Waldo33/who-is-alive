@@ -9,7 +9,13 @@ export interface HostOptions {
   players: PlayerInfo[];
   cfg: Partial<GameConfig>;
   seed: number;
+  /** Режиссёр (жмёт «Дальше» и «Ещё дубль»). */
   hostPid: string;
+  /**
+   * Кто смотрит на этот экран. По умолчанию — режиссёр (хост на телефоне). Безголовый хост
+   * на сервере передаёт id, которого нет среди игроков: тогда все игроки — удалённые.
+   */
+  selfPid?: string;
   /** Продолжение матча после смены хоста. */
   resume?: { scores: Record<string, number>; round: number };
 }
@@ -46,7 +52,7 @@ export class HostSession implements ClientSession {
     opts.players.forEach((p, i) => {
       if (p.ai) this.sim.addAgent(new AiPlayer(p.pid, (opts.seed >>> 0) + 101 + i * 7919));
     });
-    this.local = new LocalSession(this.sim, opts.hostPid, opts.seed, { ai: false });
+    this.local = new LocalSession(this.sim, opts.selfPid ?? opts.hostPid, opts.seed, { ai: false });
     this.sim.world.listeners.push((ev) => this.pending.push(ev));
     this.unsub = this.t.onMessage((ch, msg, from) => {
       if (ch === 'host') this.onGuest(from, msg);
@@ -93,6 +99,11 @@ export class HostSession implements ClientSession {
     const n = this.notices;
     this.notices = [];
     return n;
+  }
+
+  /** Сервер: режиссёр ушёл — роль у следующего. */
+  setDirector(pid: string): void {
+    this.sim.hostPid = pid;
   }
 
   dispose(): void {
@@ -170,7 +181,7 @@ export class HostSession implements ClientSession {
       st: this.stMsg(),
       players: [...this.sim.players],
       cfg: this.cfgOverrides,
-      hostId: this.selfPid,
+      hostId: this.sim.hostPid,
     });
     this.lastMe.delete(pid);
   }

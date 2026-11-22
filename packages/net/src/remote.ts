@@ -150,7 +150,7 @@ export class RemoteSession implements ClientSession {
     this.world.filter = (ev) => this.keepEvent(ev);
     for (const p of this.players) this.scores[p.pid] = 0;
     this.unsub = this.t.onMessage((ch, msg, from) => {
-      if (from !== this.hostPid) return;
+      if (!this.t.authoritative && from !== this.hostPid) return;
       if (ch === 'room') this.onRoom(msg as RoomMsg);
       else if (ch === 'private') this.onPrivate(msg as PrivateMsg);
     });

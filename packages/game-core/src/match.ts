@@ -183,7 +183,8 @@ export class MatchSim {
     readonly cfg: GameConfig,
     readonly players: PlayerInfo[],
     seed: number,
-    readonly hostPid: string = players[0]?.pid ?? '',
+    /** Режиссёр: только он жмёт «Дальше» и «Ещё дубль». На сервере меняется, если режиссёр ушёл. */
+    public hostPid: string = players[0]?.pid ?? '',
   ) {
     this.arena = plazaArena(cfg.arenaWidth, cfg.arenaHeight);
     this.nav = new NavGrid(this.arena, cfg.navCellSize);
