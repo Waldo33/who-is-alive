@@ -1,10 +1,12 @@
-import type { CrowdKind, Dict, GameConfig, LocalSession, MatchSim } from '@kto/game-core';
+import type { CrowdKind, Dict, GameConfig, Intent, LocalSession, MatchSim } from '@kto/game-core';
 
 /**
- * «Пробный дубль» — обучение действием, а не текстом: каждый шаг — одна механика, короткая
- * подсказка из двух строк сверху поля и ожидание, пока игрок сам это сделает.
+ * «Пробный дубль» — обучение на практике, по шагам. Каждый важный момент игры — свой шаг:
+ * мир встаёт на паузу, вокруг того, о чём речь, — рамка (остальное притушено), сверху две
+ * короткие строки, внизу «Тапни — дальше». Шаги-действия ждут, пока игрок сам сделает
+ * (походит, повторит жест, ударит, возьмёт звезду, угадает жест толпы, обвинит).
  *
- * Сценарий идёт поверх обычной симуляции (песочница без ИИ): игрок + «актёр» b, который стоит
+ * Сценарий идёт поверх обычной симуляции (песочница без ИИ): игрок + «актёр», который стоит
  * и не повторяет жесты — его ловит прожектор, его и надо найти. Команды и звёзды ставит сценарий.
  */
 
@@ -26,204 +28,291 @@ export const TUTORIAL_CFG: Partial<GameConfig> = {
   spotSec: 12,
 };
 
-type Step = 'move' | 'blend' | 'crowd' | 'spot' | 'hunt' | 'cut' | 'star' | 'starRisk' | 'vote' | 'voteResult' | 'ghost' | 'accuse' | 'done';
+/** Что выделить рамкой: свой персонаж, кнопки жестов, удары и звёзды в шапке, точка поля. */
+export type TutFocus = 'me' | 'buttons' | 'fists' | 'stars' | { x: number; y: number; r: number } | null;
+
+type Lines = readonly string[];
+
+interface Beat {
+  /** Подсказка шага (две строки). */
+  say: Lines;
+  focus?: TutFocus | (() => TutFocus);
+  /** Пауза: мир стоит, ждём тап. */
+  tap?: boolean;
+  /** Подготовка при входе в шаг. */
+  enter?: () => void;
+  /** Действие выполнено: true — к следующему шагу, строка — к шагу с этой меткой. */
+  done?: () => boolean | string;
+  /** Пока условие истинно — мир на паузе (стоп-кадр, пока игрок не выбрал жест). */
+  hold?: () => boolean;
+  id?: string;
+}
 
 export class Tutorial {
-  step: Step = 'move';
   /** Две строки подсказки сверху поля. */
-  lines: [string, string] = ['', ''];
-  /** Куда показать стрелкой (координаты поля), если нужно. */
+  lines: Lines = ['', ''];
+  focus: TutFocus = null;
+  /** Куда показать стрелкой (координаты поля). */
   arrow: { x: number; y: number } | null = null;
-  /**
-   * Что выделить: остальное поле притушено, вокруг цели — рамка. 'me' — свой персонаж,
-   * 'buttons' — кнопки жестов внизу, точка поля с радиусом — круг прожектора, звезда, «актёр».
-   */
-  focus: 'me' | 'buttons' | { x: number; y: number; r: number } | null = null;
+  /** Мир на паузе (сцена не шагает симуляцию). */
+  paused = false;
+  /** Ждём тап «дальше» (сцена перехватывает касание поля). */
+  waitTap = false;
   done = false;
+
+  private beats: Beat[];
+  private i = -1;
   private at = 0;
   private start: { x: number; y: number } | null = null;
   private plannedAt = 0;
-  private kind: CrowdKind = 'jump';
+  private lastCrowd: { warnAt: number; kind: CrowdKind } | null = null;
+  private accused = false;
   private botHits = 0;
-  private note: { lines: [string, string]; until: number } | null = null;
+  private note: { lines: Lines; until: number } | null = null;
 
   constructor(
     private s: LocalSession,
     private t: Dict['tutorial'],
     private onDone: () => void,
-  ) {}
+  ) {
+    this.beats = this.script();
+  }
 
   private get sim(): MatchSim {
     return this.s.sim;
   }
 
-  private go(step: Step, now: number): void {
-    this.step = step;
-    this.at = now;
+  private me() {
+    return this.sim.playerRound(this.s.selfPid)!;
+  }
+
+  private meE() {
+    return this.sim.world.get(this.me().eid)!;
+  }
+
+  private actor() {
+    return this.sim.pr.find((p) => p.pid !== this.s.selfPid)!;
+  }
+
+  /** Сцена сообщает о каждом намерении игрока (до симуляции). */
+  noteIntent(it: Intent): void {
+    const c = this.sim.world.crowd;
+    if (it.k === 'crowd' && c) this.lastCrowd = { warnAt: c.warnAt, kind: it.kind };
+    if (it.k === 'accuse') this.accused = true;
+  }
+
+  /** Тап по полю, пока ждём «дальше». */
+  tap(): void {
+    // пока видна реплика-итог прошлого шага («Как все!»), листать рано — сначала прочитать
+    if (this.waitTap && !this.note && performance.now() - this.at > 350) this.next();
+  }
+
+  private next(to?: string): void {
+    if (to) this.i = this.beats.findIndex((b) => b.id === to);
+    else this.i++;
+    this.at = performance.now();
     this.arrow = null;
-    this.focus = null;
+    const b = this.beats[this.i];
+    if (!b) {
+      this.lines = [this.t.doneTitle, ''];
+      this.focus = null;
+      this.paused = true;
+      this.waitTap = false;
+      this.done = true;
+      setTimeout(() => this.onDone(), 1600);
+      return;
+    }
+    b.enter?.();
+    this.waitTap = !!b.tap;
+    this.update();
   }
 
-  /** Короткая реплика поверх текущего шага (ошибка, похвала). */
-  private say(lines: [string, string], now: number, ms = 2600): void {
-    this.note = { lines, until: now + ms };
-  }
-
-  private actorEid(): number {
-    return this.sim.pr.find((p) => p.pid !== this.s.selfPid)!.eid;
+  private say(lines: Lines, ms = 2200): void {
+    this.note = { lines, until: performance.now() + ms };
   }
 
   update(): void {
-    const sim = this.sim;
-    if (this.done || sim.phase !== 'play') return;
-    const now = sim.world.time;
-    const me = sim.playerRound(this.s.selfPid)!;
-    const e = sim.world.get(me.eid)!;
-    const t = this.t;
-    let lines: [string, string] = ['', ''];
-    // удары не кончаются, оглушение короткое — это учёба
-    if (me.attacksLeft < 1) me.attacksLeft = 3;
-
-    switch (this.step) {
-      case 'move':
-        lines = t.move as [string, string];
-        this.focus = 'me';
-        if (!this.start) this.start = { x: e.x, y: e.y };
-        if (Math.hypot(e.x - this.start.x, e.y - this.start.y) > 10) this.go('blend', now);
-        break;
-      case 'blend':
-        lines = t.blend as [string, string];
-        if (now - this.at > 2500) {
-          this.placeActor();
-          this.plan('jump', 2500);
-          this.go('crowd', now);
-        }
-        break;
-      case 'crowd': {
-        const c = sim.world.crowd;
-        const mine = c && c.warnAt >= this.plannedAt;
-        lines = (mine && sim.world.isFrozen() ? t.crowdNow : t.crowdWait) as [string, string];
-        this.focus = mine && c && now <= c.windowEnd ? 'buttons' : null;
-        if (mine && c && now > c.windowEnd + 700) {
-          const ok = me.crowdAnswered === c.warnAt && me.crowdPick === c.kind && !me.crowdLate;
-          if (ok) {
-            this.say(t.crowdOk as [string, string], now, 2000);
-            this.go('spot', now);
-          } else {
-            this.say(t.crowdMiss as [string, string], now);
-            this.plan(c.kind === 'jump' ? 'dance' : 'jump', 4500);
-          }
-        }
-        break;
-      }
-      case 'spot': {
-        lines = t.spot as [string, string];
-        const a = sim.world.get(this.actorEid());
-        this.focus = a ? { x: a.x, y: a.y - 6, r: 30 } : null;
-        if (now - this.at > 3500) this.go('hunt', now);
-        break;
-      }
-      case 'hunt': {
-        lines = t.hunt as [string, string];
-        const actor = sim.playerByEid(this.actorEid())!;
-        if (me.botHits > this.botHits) {
-          this.botHits = me.botHits;
-          this.say(t.huntBot as [string, string], now);
-        }
-        // долго не находит — подсказка стрелкой
-        if (now - this.at > 12000) {
-          const a = sim.world.get(actor.eid);
-          if (a) {
-            this.arrow = { x: a.x, y: a.y };
-            this.focus = { x: a.x, y: a.y - 6, r: 22 };
-          }
-        }
-        if (!actor.alive) {
-          this.say(t.cut as [string, string], now, 3000);
-          this.go('cut', now);
-        }
-        break;
-      }
-      case 'cut':
-        if (now - this.at > 3000) {
-          const a = Math.atan2(130 - e.y, 90 - e.x);
-          sim.spawnStarAt(e.x + Math.cos(a) * 28, e.y + Math.sin(a) * 28);
-          this.go('star', now);
-        }
-        break;
-      case 'star': {
-        lines = t.star as [string, string];
-        const st = [...sim.world.stars.values()][0];
-        this.arrow = st ? { x: st.x, y: st.y } : null;
-        this.focus = st ? { x: st.x, y: st.y - 2, r: 16 } : null;
-        if (me.stars >= 1) this.go('starRisk', now);
-        break;
-      }
-      case 'starRisk':
-        lines = t.starRisk as [string, string];
-        if (now - this.at > 3500) {
-          this.kind = 'dance';
-          this.plan('dance', 4200, true);
-          this.go('vote', now);
-        }
-        break;
-      case 'vote': {
-        const c = sim.world.crowd;
-        const mine = c && c.warnAt >= this.plannedAt && c.vote;
-        lines = (mine && sim.world.isFrozen() ? t.voteNow : t.voteWait) as [string, string];
-        this.focus = mine && sim.world.isFrozen() ? 'buttons' : null;
-        if (mine && c && now > c.resumeAt + 600) {
-          const ok = me.crowdAnswered === c.warnAt && me.crowdPick === c.kind;
-          this.say((ok ? t.voteOk : t.voteMiss) as [string, string], now, 3000);
-          this.go('voteResult', now);
-        }
-        break;
-      }
-      case 'voteResult':
-        if (now - this.at > 3000) this.go('ghost', now);
-        break;
-      case 'ghost':
-        lines = t.ghost as [string, string];
-        if (now - this.at > 3500) this.go('accuse', now);
-        break;
-      case 'accuse':
-        lines = t.accuse as [string, string];
-        if (now - this.at > 3500) this.go('done', now);
-        break;
-      case 'done':
-        // «Готово!» — и сразу дальше: на главную или обратно в лобби
-        lines = [t.doneTitle, ''];
-        if (now - this.at > 1800) {
-          this.done = true;
-          this.onDone();
-        }
-        break;
+    if (this.done) return;
+    // начинаем после отсчёта, когда дубль пошёл
+    if (this.i < 0) {
+      if (this.sim.phase === 'play') this.next();
+      return;
     }
-    if (this.note && now < this.note.until) lines = this.note.lines;
-    else this.note = null;
-    this.lines = lines;
+    const b = this.beats[this.i];
+    if (!b) return;
+    const me = this.me();
+    // удары не кончаются — это учёба
+    if (me.attacksLeft < 1) me.attacksLeft = 3;
+    this.focus = typeof b.focus === 'function' ? b.focus() : (b.focus ?? null);
+    const now = performance.now();
+    if (this.note && now >= this.note.until) this.note = null;
+    this.lines = this.note ? this.note.lines : b.say;
+    this.paused = !!b.tap || !!b.hold?.();
+    if (b.tap) return;
+    const r = b.done?.();
+    if (r) this.next(typeof r === 'string' ? r : undefined);
   }
 
   private plan(kind: CrowdKind, inMs: number, vote = false): void {
     this.plannedAt = this.sim.world.time + inMs;
+    this.lastCrowd = null;
     this.sim.planCrowd(kind, inMs, vote);
+  }
+
+  /** Команда сценария уже показана (стоп-кадр или после). */
+  private myCrowd() {
+    const c = this.sim.world.crowd;
+    return c && c.warnAt >= this.plannedAt ? c : null;
+  }
+
+  private actorAt(r: number): TutFocus {
+    const a = this.sim.world.get(this.actor().eid);
+    return a && a.alive ? { x: a.x, y: a.y - 6, r } : null;
+  }
+
+  private script(): Beat[] {
+    const t = this.t;
+    return [
+      // 1. кто ты и кто вокруг
+      { say: t.me, focus: 'me', tap: true },
+      { say: t.crowd, tap: true },
+      { say: t.bots, tap: true },
+      // 2. ходьба
+      {
+        say: t.move,
+        focus: 'me',
+        enter: () => (this.start = { x: this.meE().x, y: this.meE().y }),
+        done: () => Math.hypot(this.meE().x - this.start!.x, this.meE().y - this.start!.y) > 12,
+      },
+      // 3. «Море волнуется»: стоп-кадр держится, пока игрок не выберет жест
+      {
+        id: 'crowd',
+        say: t.crowdSoon,
+        enter: () => {
+          this.placeActor();
+          this.plan('jump', 2200);
+        },
+        done: () => !!this.myCrowd(),
+      },
+      {
+        say: t.crowdNow,
+        focus: () => (this.lastCrowd ? null : 'buttons'),
+        hold: () => !this.lastCrowd && this.sim.world.isFrozen(),
+        done: () => {
+          const c = this.myCrowd();
+          if (!c || this.sim.world.time <= c.windowEnd + 700) return false;
+          const me = this.me();
+          if (me.crowdAnswered === c.warnAt && me.crowdPick === c.kind && !me.crowdLate) {
+            this.say(t.crowdOk, 1600);
+            return true;
+          }
+          this.say(t.crowdMiss, 2600);
+          return 'crowd';
+        },
+      },
+      // 4. прожектор: «актёр» не повторил — его высветило
+      { say: t.spot, tap: true, focus: () => this.actorAt(26) },
+      { say: t.actor, tap: true, focus: () => this.actorAt(14) },
+      // 5. удар
+      {
+        say: t.hunt,
+        enter: () => (this.botHits = this.me().botHits),
+        focus: () => {
+          // долго не находит — рамка и стрелка над ним
+          if (performance.now() - this.at < 9000) return null;
+          const a = this.sim.world.get(this.actor().eid);
+          if (a) this.arrow = { x: a.x, y: a.y };
+          return this.actorAt(14);
+        },
+        done: () => {
+          const me = this.me();
+          if (me.botHits > this.botHits) {
+            this.botHits = me.botHits;
+            this.say(t.huntBot, 2600);
+          }
+          if (this.actor().alive) return false;
+          this.say(t.cut, 1800);
+          return true;
+        },
+      },
+      { say: t.fists, focus: 'fists', tap: true },
+      // 6. звёзды
+      {
+        say: t.star,
+        tap: true,
+        enter: () => {
+          const e = this.meE();
+          const a = Math.atan2(130 - e.y, 90 - e.x);
+          this.sim.spawnStarAt(e.x + Math.cos(a) * 28, e.y + Math.sin(a) * 28);
+        },
+        focus: () => {
+          const st = [...this.sim.world.stars.values()][0];
+          return st ? { x: st.x, y: st.y - 2, r: 12 } : null;
+        },
+      },
+      {
+        say: t.star,
+        focus: () => {
+          const st = [...this.sim.world.stars.values()][0];
+          this.arrow = st ? { x: st.x, y: st.y } : null;
+          return null;
+        },
+        done: () => this.me().stars >= 1,
+      },
+      { say: t.starHud, focus: 'stars', tap: true },
+      // 7. «Толпа решает»: разогрев толпы → стоп-кадр без названия жеста
+      {
+        say: t.voteSoon,
+        enter: () => this.plan('dance', 4200, true),
+        done: () => !!this.myCrowd(),
+      },
+      {
+        say: t.voteNow,
+        focus: () => (this.lastCrowd ? null : 'buttons'),
+        hold: () => !this.lastCrowd && this.sim.world.isFrozen(),
+        done: () => {
+          const c = this.myCrowd();
+          if (!c || this.sim.world.time <= c.resumeAt + 700) return false;
+          const me = this.me();
+          this.say(me.crowdAnswered === c.warnAt && me.crowdPick === c.kind ? t.voteOk : t.voteMiss, 2400);
+          return true;
+        },
+      },
+      // 8. вырезанный не скучает
+      { say: t.ghost, tap: true },
+      // 9. конец дубля: обвинение (таймер обвинения стоит, пока игрок не выбрал)
+      {
+        say: t.accuse,
+        enter: () => {
+          this.accused = false;
+          // конец дубля без сужения кадра: сразу обвинение
+          this.sim.zoneStarted = true;
+          this.sim.plannedPlayEnd = this.sim.world.time;
+        },
+        hold: () => this.sim.phase === 'accuse' && !this.accused,
+        done: () => this.accused,
+      },
+      { say: t.accuseOk, tap: true },
+    ];
   }
 
   /** «Актёр» встаёт неподалёку от игрока (но не вплотную) и дальше стоит: его поймает прожектор. */
   private placeActor(): void {
     const sim = this.sim;
-    const me = sim.world.get(sim.playerRound(this.s.selfPid)!.eid)!;
-    const actor = sim.world.get(this.actorEid())!;
+    const me = this.meE();
+    const actor = sim.world.get(this.actor().eid)!;
     const nav = sim.nav;
     for (let r = 40; r < 90; r += 6) {
       for (let k = 0; k < 12; k++) {
         const a = (k / 12) * Math.PI * 2;
         const i = nav.cellAt(me.x + Math.cos(a) * r, me.y + Math.sin(a) * r);
-        // не под подсказкой сверху поля: круг прожектора должно быть видно
         const x = nav.cx(i);
+        // не под подсказкой сверху поля и не у края: круг прожектора должно быть видно
         if (!nav.walkable(i) || nav.cy(i) < 64 || x < 34 || x > 146) continue;
-        actor.x = nav.cx(i);
+        actor.x = x;
         actor.y = nav.cy(i);
+        actor.px = actor.x;
+        actor.py = actor.y;
         actor.path = [];
         actor.pi = 0;
         return;

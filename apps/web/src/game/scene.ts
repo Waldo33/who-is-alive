@@ -195,6 +195,7 @@ export class GameScene extends Phaser.Scene {
   private plateG!: Phaser.GameObjects.Graphics;
   private coachL1!: Phaser.GameObjects.BitmapText;
   private coachL2!: Phaser.GameObjects.BitmapText;
+  private coachNext!: Phaser.GameObjects.BitmapText;
   /** Подсказка «впервые видишь» в настоящей игре (две строки, до времени). */
   private coachTip: { lines: readonly string[]; until: number } | null = null;
   private clapSentAt = 0;
@@ -268,6 +269,14 @@ export class GameScene extends Phaser.Scene {
     this.sim.onWorldEvent((ev) => this.onWorldEvent(ev));
     this.events.once('shutdown', () => this.sim.dispose());
     this.tut = this.init0.tutorial && this.sim instanceof LocalSession ? new Tutorial(this.sim, this.t.tutorial, this.init0.tutorial.onDone) : null;
+    if (this.tut) {
+      // обучению нужно знать, что нажал игрок (жест, обвинение), — до того, как это попадёт в симуляцию
+      const send = this.sim.intent.bind(this.sim);
+      this.sim.intent = (it) => {
+        this.tut?.noteIntent(it);
+        send(it);
+      };
+    }
     registerFonts(this, this.init0.fontFamily);
     this.makeTextures();
 
@@ -331,6 +340,7 @@ export class GameScene extends Phaser.Scene {
     this.focusG = this.add.graphics().setDepth(1450);
     this.coachL1 = this.txt(90, AY + 5, '', 'white').setDepth(1601);
     this.coachL2 = this.txt(90, AY + 15, '', 'sand').setDepth(1601);
+    this.coachNext = this.txt(90, PANEL_Y - 14, '', 'yellow').setDepth(1601).setVisible(false);
     this.setupFreezeFrame();
     // постоянная пометка в нижней панели, пока ты призрак
     this.ghostUi = [
@@ -370,7 +380,7 @@ export class GameScene extends Phaser.Scene {
       this.grayFx.reset();
     }
     this.uiCam = this.cameras.add(0, 0, 180, 320).setName('ui');
-    this.uiSet.add(this.crowdG).add(this.crowdIcon).add(this.crowdText).add(this.coachG).add(this.coachL1).add(this.coachL2);
+    this.uiSet.add(this.crowdG).add(this.crowdIcon).add(this.crowdText).add(this.coachG).add(this.coachL1).add(this.coachL2).add(this.coachNext);
     for (const b of this.buttons) {
       if (!b.id.startsWith('crowd-') && !b.id.startsWith('clap-')) continue;
       const icon = this.btnObjs.get(b.id)?.icon;
@@ -682,6 +692,11 @@ export class GameScene extends Phaser.Scene {
     this.audio.unlock();
     requestWakeLock();
     const b = this.hitButton(p.x, p.y);
+    // обучение ждёт «дальше»: любой тап (кроме крестика «пропустить») листает шаг
+    if (this.tut?.waitTap && b?.id !== 'tut-skip') {
+      this.tut.tap();
+      return;
+    }
     if (b) {
       b.pressed = true;
       this.pressedBy.set(p.id, b);
@@ -739,6 +754,13 @@ export class GameScene extends Phaser.Scene {
         this.audio.play('tick');
       }
       return;
+    }
+    // тап по звезде — идти за ней (даже если она прямо над своим персонажем или рядом с кем-то)
+    for (const st of w.stars.values()) {
+      if (Math.hypot(st.x - x, st.y - 3 - y) <= 6) {
+        sim.intent({ k: 'move', x: Math.round(st.x), y: Math.round(st.y) });
+        return;
+      }
     }
     if (Math.hypot(mine.x - x, mine.y - 8 - y) <= 7) {
       sim.intent({ k: 'stop' });
@@ -1310,6 +1332,8 @@ export class GameScene extends Phaser.Scene {
   }
 
   private showToast(s: string, ms: number): void {
+    // в обучении говорит только подсказка сверху — без лишних надписей
+    if (this.tut) return;
     this.toast.setText(s).setVisible(true);
     this.toastUntil = performance.now() + ms;
   }
@@ -1389,7 +1413,10 @@ export class GameScene extends Phaser.Scene {
 
   update(_time: number, rawDelta: number): void {
     const delta = rawDelta * (this.init0.timeScale ?? 1);
-    if (this.hitStop > 0) {
+    if (this.tut?.paused) {
+      // обучение остановило мир: подсказка, рамка, «тапни — дальше»
+      this.acc = 0;
+    } else if (this.hitStop > 0) {
       this.hitStop -= delta;
     } else {
       this.acc += Math.min(delta, 250 * (this.init0.timeScale ?? 1));
@@ -1445,7 +1472,7 @@ export class GameScene extends Phaser.Scene {
     if (this.toast.visible && performance.now() > this.toastUntil) this.toast.setVisible(false);
     // подсказка внизу поля — выше кнопки клипа, если та видна; под ней тёмная подложка
     const clipBtn = this.buttons.find((b) => b.id === 'deathclip');
-    const ty = clipBtn && clipBtn.visible() && this.sim.phase !== 'results' ? PANEL_Y - 40 : PANEL_Y - 14;
+    const ty = (clipBtn && clipBtn.visible() && this.sim.phase !== 'results') || this.tut?.waitTap ? PANEL_Y - 40 : PANEL_Y - 14;
     if (this.toast.y !== ty) this.toast.y = ty;
     const pg = this.plateG;
     pg.clear();
@@ -1843,6 +1870,15 @@ export class GameScene extends Phaser.Scene {
     if (this.tut) lines = this.tut.lines;
     else if (this.coachTip && performance.now() < this.coachTip.until && this.sim.phase === 'play') lines = this.coachTip.lines;
     else this.coachTip = null;
+    // «Тапни — дальше» внизу поля, мигает
+    const nx = !!this.tut?.waitTap;
+    this.coachNext.setVisible(nx && Math.floor(performance.now() / 450) % 3 !== 2);
+    if (nx) {
+      if (this.coachNext.text !== this.t.tutorial.tapNext) this.coachNext.setText(this.t.tutorial.tapNext);
+      this.coachNext.x = Math.round(90 - this.coachNext.width / 2);
+      const w = this.coachNext.width + 8;
+      g.fillStyle(hexToInt(PAL.ink), 0.75).fillRect(Math.round(90 - w / 2), PANEL_Y - 16, w, 13);
+    }
     const on = !!(lines[0] || lines[1]);
     this.coachL1.setVisible(on);
     this.coachL2.setVisible(on);
@@ -1852,8 +1888,12 @@ export class GameScene extends Phaser.Scene {
     this.coachL1.x = Math.round(90 - this.coachL1.width / 2);
     this.coachL2.x = Math.round(90 - this.coachL2.width / 2);
     const h = lines[1] ? 24 : 14;
-    g.fillStyle(hexToInt(PAL.ink), 0.88).fillRect(0, AY + 2, 180, h);
-    g.fillStyle(hexToInt(PAL.yellow)).fillRect(0, AY + 2 + h, 180, 1);
+    // на обвинении сверху свой заголовок игры — подсказка ниже него
+    const by = this.sim.phase === 'accuse' ? AY + 32 : AY + 2;
+    this.coachL1.y = by + 3;
+    this.coachL2.y = by + 13;
+    g.fillStyle(hexToInt(PAL.ink), 0.88).fillRect(0, by, 180, h);
+    g.fillStyle(hexToInt(PAL.yellow)).fillRect(0, by + h, 180, 1);
     // стрелка над целью шага (звезда, «актёр»)
     const a = this.tut?.arrow;
     if (a) {
@@ -1878,6 +1918,8 @@ export class GameScene extends Phaser.Scene {
     if (!f || this.sim.phase !== 'play') return;
     let r: { x: number; y: number; w: number; h: number };
     if (f === 'buttons') r = { x: 43, y: PANEL_Y + 1, w: 95, h: 34 };
+    else if (f === 'fists') r = { x: 42, y: 4, w: 32, h: 16 };
+    else if (f === 'stars') r = { x: 80, y: 4, w: 22, h: 16 };
     else if (f === 'me') {
       const e = this.sim.world.get(this.me()?.eid ?? -1);
       if (!e) return;
@@ -1888,7 +1930,7 @@ export class GameScene extends Phaser.Scene {
     const bot = PANEL_Y;
     const ink = hexToInt(PAL.ink);
     fg.fillStyle(ink, 0.55);
-    if (f === 'buttons') fg.fillRect(0, top, 180, bot - top);
+    if (f === 'buttons' || f === 'fists' || f === 'stars') fg.fillRect(0, top, 180, bot - top);
     else {
       const y0 = Math.max(top, r.y);
       const y1 = Math.min(bot, r.y + r.h);
