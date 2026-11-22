@@ -12,6 +12,7 @@ import { TopBar } from '@/ui/TopBarView';
 import type { TopBar as Bar } from '@/ui/topbar';
 import { playerName } from '@/lib/name';
 import { track } from '@/lib/analytics';
+import { Garland, Snow, useNewYear } from '@/ui/Festive';
 import { shareContent, withLang } from '@/lib/share';
 import { AuthError, ensureAnonymousUser, supabase } from '@/lib/supabase';
 import { createRoom } from '@/net/room';
@@ -28,6 +29,7 @@ export default function HomeClient() {
   const [code, setCode] = useState('');
   const [toast, setToast] = useState('');
   const bar = useRef<Bar | null>(null);
+  const ny = useNewYear();
   const creating = useRef(false);
   // для автосоздания комнаты из эффекта (?create): самая свежая версия create
   const createRef = useRef<() => Promise<void>>(async () => {});
@@ -89,7 +91,8 @@ export default function HomeClient() {
   const clean = code.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 4);
 
   return (
-    <main className="home">
+    <main className={ny ? 'home ny' : 'home'}>
+      {ny && <Snow />}
       <TopBar
         lang={lang}
         barRef={bar}
@@ -100,6 +103,7 @@ export default function HomeClient() {
           document.title = DICTS[l].meta.title;
         }}
       />
+      {ny && <Garland />}
       <div className="crowd" aria-hidden>
         {CROWD.map((i) => (
           <i key={i} className={i === 7 ? 'me' : undefined} style={{ animationDelay: `${(i * 137) % 900}ms` }} />
@@ -107,6 +111,7 @@ export default function HomeClient() {
       </div>
       <h1>{t.meta.title}</h1>
       <p className="tag">{t.meta.tagline}</p>
+      {ny && <p className="ny-line">{t.start.newYear}</p>}
       {/* главное — сразу играть (с ИИ, без друзей и входа); комната для друзей — второй кнопкой */}
       <Link className="btn" href="/sandbox?go" onClick={() => track('quick_play_tap')}>
         {t.start.quickPlay}

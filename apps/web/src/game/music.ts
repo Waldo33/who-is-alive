@@ -10,6 +10,8 @@
  *  - в фазе обвинения — сердцебиение.
  */
 
+import { NY_ROOTS, NY_TRIADS, newYearSeason, nyMelodyAt } from './newyear';
+
 /** Исходная тема: бас по четвертям, мелодия восьмыми (вторая половина такта — октавой выше). */
 const BASS = [45, 45, 52, 45, 48, 48, 55, 48, 41, 41, 48, 41, 43, 43, 50, 47];
 const LEAD = [69, 72, 76, 72, 72, 76, 79, 76, 65, 69, 72, 69, 67, 71, 74, 71];
@@ -72,6 +74,8 @@ export interface Song {
 
 /** Меню и лобби: та же тема «лаунжем» — медленно, мягко, с эхом. */
 const MENU: Flavor = { transpose: 0, bpm: 92, swing: 0.18, lead: 'sine', bass: 'triangle', arp: false, echo: true };
+/** Меню в новогодний сезон (newyear.ts): бубенцы, колокольчики, мотив «Корпоратива». */
+const MENU_NY: Flavor = { transpose: 0, bpm: 104, swing: 0.2, lead: 'triangle', bass: 'triangle', arp: false, echo: true };
 
 type SectionKind = 'intro' | 'A' | 'A2' | 'B' | 'C';
 interface Section {
@@ -123,6 +127,8 @@ export class Music {
   private rng = rngFrom(1);
   private flavor: Flavor = PARK_FLAVOR;
   private song: Song | null = null;
+  /** Музыка меню — новогодняя (сезон проверяется при каждом включении меню). */
+  private festive = false;
   private twist = false;
   private twistBar = 0;
   /** Смена изнанки, ждущая начала такта. */
@@ -171,7 +177,8 @@ export class Music {
     this.paused = false;
     this.twist = false;
     if (mode === 'off') return;
-    this.flavor = mode === 'menu' ? MENU : (style?.flavor ?? PARK_FLAVOR);
+    this.festive = mode === 'menu' && newYearSeason();
+    this.flavor = mode === 'menu' ? (this.festive ? MENU_NY : MENU) : (style?.flavor ?? PARK_FLAVOR);
     this.song = mode === 'play' ? (style?.song ?? null) : null;
     this.rng = rngFrom((Math.random() * 2 ** 31) | 0);
     this.intensity = 0;
@@ -308,7 +315,10 @@ export class Music {
       if (this.next < now - 0.2) this.next = now + 0.05;
       while (this.next < now + 0.12) {
         if (this.mode === 'accuse') this.stepAccuse();
-        else if (this.mode === 'menu') this.stepMenu();
+        else if (this.mode === 'menu') {
+          if (this.festive) this.stepMenuNewYear();
+          else this.stepMenu();
+        }
         else this.stepPlay();
       }
       this.live = this.live.filter((l) => l.until > now - 0.1);
@@ -470,6 +480,41 @@ export class Music {
       const notes = [0, 1, 2, 3].map(lead).sort((a, b) => a - b);
       this.voice(f.lead, notes[[0, 1, 2, 3, 2, 1, 3, 2][s / 2]] + 12, t, 0.2, 0.045);
     }
+    this.next += dt;
+    this.s16 = (s + 1) % 16;
+    if (this.s16 === 0) this.bar++;
+  }
+
+  /**
+   * Новогоднее меню: тот же круг и мелодия, что в «Корпоративе», но спокойно — бас на сильные доли,
+   * тихий аккорд-подушка, бубенцы шаффлом; мелодия колокольчиком, во второй фразе — октавой ниже
+   * с подголоском; в конце круга — звон сверху вниз.
+   */
+  private stepMenuNewYear(): void {
+    const f = this.flavor;
+    const dt = 60 / f.bpm / 4;
+    const s = this.s16;
+    const t = this.next + (s % 2 === 1 ? f.swing * dt : 0);
+    const ch = this.bar % 4;
+    const root = NY_ROOTS[ch];
+    const tri = NY_TRIADS[ch];
+    const phrase = Math.floor(this.bar / 4) % 2;
+    if (s === 0) this.voice(f.bass, root, t, dt * 6, 0.13);
+    if (s === 8) this.voice(f.bass, root + 7, t, dt * 6, 0.11);
+    if (s === 0) for (const iv of tri) this.voice('sine', root + 24 + iv, t, dt * 14, 0.018);
+    if (s % 2 === 0) this.hit(0.025, s % 4 === 2 ? 0.03 : 0.018, 8500, t);
+    if (s === 12 && this.bar % 2 === 1) this.hit(0.04, 0.035, 2600, t);
+    const m = nyMelodyAt(ch, s);
+    if (m) {
+      if (phrase === 0) {
+        this.voice('sine', m[0] + 12, t, dt * 0.7, 0.03);
+        this.voice('triangle', m[0], t, dt * m[1] * 0.9, 0.05);
+      } else {
+        this.voice('triangle', m[0] - 12, t, dt * m[1] * 0.9, 0.05);
+        this.voice('sine', m[0] + 7, t, dt * 0.6, 0.015);
+      }
+    }
+    if (ch === 3 && s >= 12 && s % 2 === 0) this.voice('sine', 91 - (s - 12) * 2, t, dt * 1.5, 0.02);
     this.next += dt;
     this.s16 = (s + 1) % 16;
     if (this.s16 === 0) this.bar++;

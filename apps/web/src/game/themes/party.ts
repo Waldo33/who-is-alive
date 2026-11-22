@@ -6,6 +6,7 @@ import { BASE_MAP } from './base';
 import type { CharStyle, Look, Pose, PropArt, PropSet, ThemePack, View } from './types';
 import { centerDist, critterSheet, hash, tile } from './util';
 import { face } from './people';
+import { NY_ROOTS, NY_TRIADS, nyMelodyAt } from '../newyear';
 
 /**
  * Новогодний корпоратив в опенспейсе: ёлка с огнями посреди переговорки, фикусы в мишуре,
@@ -608,22 +609,11 @@ function bullfinch(dark: boolean) {
 }
 
 // ═════════════ музыка ═════════════
-// Ключ соль мажор: G – Em – Am – D (общеупотребимый круг); мелодия своя.
+// Мотив общий с новогодним меню (newyear.ts): соль мажор, G – Em – Am – D, мелодия своя.
 
-const ROOTS = [43, 40, 45, 38]; // G2 E2 A2 D2
-const TRIADS = [[0, 4, 7], [0, 3, 7], [0, 3, 7], [0, 4, 7]];
-/** Мелодия по тактам круга: [шестнадцатая, нота MIDI, длительность в шестнадцатых]. */
-const MELODY: [number, number, number][][] = [
-  [[0, 74, 2], [2, 71, 2], [4, 74, 2], [6, 79, 6], [12, 78, 2], [14, 76, 2]],
-  [[0, 76, 4], [4, 79, 2], [6, 76, 2], [8, 71, 6], [14, 74, 2]],
-  [[0, 72, 2], [2, 76, 2], [4, 81, 4], [8, 79, 2], [10, 76, 2], [12, 72, 4]],
-  [[0, 74, 2], [2, 78, 2], [4, 81, 2], [6, 78, 2], [8, 74, 6], [14, 69, 2]],
-];
-
-function melodyAt(ch: number, s: number): [number, number] | null {
-  const n = MELODY[ch].find((e) => e[0] === s);
-  return n ? [n[1], n[2]] : null;
-}
+const ROOTS = NY_ROOTS;
+const TRIADS = NY_TRIADS;
+const melodyAt = nyMelodyAt;
 
 const song: Song = {
   step(a: SongApi, st: SongStep) {

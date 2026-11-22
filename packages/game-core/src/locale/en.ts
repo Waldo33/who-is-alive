@@ -64,6 +64,7 @@ export const en: Dict = {
     kidsHint: 'More time to freeze with the crowd and to pick a suspect. For kids and first-timers.',
     play: 'Play with bots',
     quickPlay: 'Play',
+    newYear: 'Happy holidays! The New Year “Office Party” is on',
     createGame: 'Create a game',
     note: 'Rehearsal: you and three AI actors on one phone.',
     rotate: 'Turn your phone upright',

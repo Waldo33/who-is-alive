@@ -17,6 +17,7 @@ import type { TopBar as Bar } from '@/ui/topbar';
 import { playerName, saveName } from '@/lib/name';
 import { loadChunk } from '@/lib/chunk';
 import { setTrackContext, shareKind, track } from '@/lib/analytics';
+import { Snow, useNewYear } from '@/ui/Festive';
 import { download, shareContent, withLang } from '@/lib/share';
 import { AuthError, ensureAnonymousUser, supabase } from '@/lib/supabase';
 import { Room, SPECTATE_DELAY_MS } from '@/net/room';
@@ -256,6 +257,7 @@ export function Lobby({
   onGesture: () => void;
 }) {
   const [qr, setQr] = useState('');
+  const ny = useNewYear();
   const [toast, setToast] = useState('');
   const [editing, setEditing] = useState(false);
   /** Режиссёр нажал «✕» у участника — второе нажатие («Убрать?») подтверждает. */
@@ -309,6 +311,7 @@ export function Lobby({
 
   return (
     <main className="lobby">
+      {ny && <Snow />}
       <h1 className="lobby-logo">{t.meta.title}</h1>
 
       <section className="invite-card" aria-label={t.lobby.codeLabel}>
