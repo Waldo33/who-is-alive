@@ -193,7 +193,11 @@ jobs:
           HAS_TG: ${{ secrets.TELEGRAM_BOT_TOKEN != '' }}
         run: |
           if [ "$HAS_TG" != true ]; then echo "TELEGRAM_BOT_TOKEN не задан в GitHub Secrets — бот остаётся в Supabase"; exit 0; fi
-          info=$(curl -fsS "https://$HOST/tg/info") || { echo "::error::бот не достаёт до api.telegram.org"; exit 1; }
+          # сразу после перезапуска первый запрос к Telegram бывает неудачным — несколько попыток;
+          # бот не должен останавливать выкладку игры
+          info=""
+          for i in $(seq 1 6); do info=$(curl -fsS "https://$HOST/tg/info") && break; sleep 5; done
+          if [ -z "$info" ]; then echo "::warning::бот не отвечает (api.telegram.org?) — вебхук не трогаю"; exit 0; fi
           echo "бот: $info"
           curl -fsS "https://$HOST/tg/setup"; echo
           curl -fsS "https://$HOST/tg/status"; echo
