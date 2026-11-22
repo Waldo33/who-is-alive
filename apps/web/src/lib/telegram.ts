@@ -13,7 +13,7 @@
  *
  * Вне Telegram всё здесь — пустые вызовы. Скрипт Telegram грузится только внутри Telegram.
  */
-import { SUPABASE_URL, TG_APP } from './env';
+import { TG_APP } from './env';
 import { featureOn } from './features';
 import { LANG_KEY } from './lang';
 import { savedName, saveName } from './name';
@@ -276,8 +276,12 @@ export async function telegramReady(): Promise<TgWebApp | null> {
   return w;
 }
 
-/** Сервер бота (Supabase Edge Function `tg-bot`). */
-const BOT_FN = `${SUPABASE_URL}/functions/v1/tg-bot`;
+/**
+ * Сервер бота — Supabase Edge Function `tg-bot` (Франкфурт). На своём сервере в Москве бот есть
+ * (apps/server/src/bot.ts, /tg/*), но оттуда закрыт api.telegram.org (проверено 23.11.2026) — переедет,
+ * когда появится сервер или прокси за границей.
+ */
+const BOT_FN = 'https://wivildtgfkpuxvqoamqg.supabase.co/functions/v1/tg-bot';
 
 async function botPost<T>(path: string, body: Record<string, unknown>): Promise<T | null> {
   const w = await bootTelegram();

@@ -78,7 +78,7 @@ async function copy(s: string): Promise<boolean> {
 
 /** Адрес игры для подписи на клипе и карточке: без протокола. */
 export function siteLabel(): string {
-  return typeof location === 'undefined' ? 'who-is-alive.vercel.app' : location.host;
+  return typeof location === 'undefined' ? 'benobody.app' : location.host;
 }
 
 /**

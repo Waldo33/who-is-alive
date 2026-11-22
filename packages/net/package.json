@@ -14,7 +14,6 @@
   },
   "dependencies": {
     "@kto/game-core": "workspace:*",
-    "@supabase/supabase-js": "2.118.0",
     "zod": "3.25.76"
   },
   "devDependencies": {

@@ -162,7 +162,8 @@ jobs:
           HAS_TG: ${{ secrets.TELEGRAM_BOT_TOKEN != '' }}
         run: |
           if [ "$HAS_TG" != true ]; then echo "TELEGRAM_BOT_TOKEN не задан в GitHub Secrets — бот остаётся в Supabase"; exit 0; fi
-          info=$(curl -fsS "https://$HOST/tg/info") || { echo "::error::бот на сервере не отвечает (api.telegram.org недоступен?)"; exit 1; }
+          # из России api.telegram.org закрыт (23.11.2026) — тогда бот остаётся в Supabase, выкладка не падает
+          info=$(curl -fsS "https://$HOST/tg/info") || { echo "::warning::бот на сервере не достаёт до api.telegram.org — вебхук остаётся в Supabase"; exit 0; }
           echo "бот: $info"
           curl -fsS "https://$HOST/tg/setup"; echo
           curl -fsS "https://$HOST/tg/status"; echo
