@@ -110,6 +110,40 @@ EOF
 systemctl daemon-reload
 systemctl enable --now massovka-backup.timer >/dev/null 2>&1
 
+# ───────────── туннель Нидерланды → Москва ─────────────
+# Из Москвы соединения за границу режутся (api.telegram.org, наш сервер в Нидерландах), а обратно — нет.
+# Поэтому сервер в Нидерландах (infra) сам держит SSH-туннель в Москву: в Москве на 127.0.0.1:9090
+# появляется его игровой сервер с ботом, и Caddy в Москве пересылает туда /tg/*.
+if [ "${ROLE:-game}" = infra ] && [ -n "${TUNNEL_TO:-}" ]; then
+  say "туннель в Москву ($TUNNEL_TO)"
+  [ -f /etc/massovka/tunnel_ed25519 ] || ssh-keygen -q -t ed25519 -N '' -C massovka-tunnel -f /etc/massovka/tunnel_ed25519
+  cat > /etc/systemd/system/massovka-tunnel.service <<EOF
+[Unit]
+Description=Массовка: туннель в Москву (бот, логи)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/ssh -N -i /etc/massovka/tunnel_ed25519 -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/etc/massovka/tunnel_known_hosts -R 127.0.0.1:9090:127.0.0.1:8080 tunnel@$TUNNEL_TO
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  systemctl daemon-reload
+  systemctl enable massovka-tunnel >/dev/null 2>&1
+  systemctl restart massovka-tunnel
+fi
+if [ "${ROLE:-game}" = game ] && [ -s "$D/tunnel.pub" ]; then
+  say "вход для туннеля из Нидерландов (только проброс 127.0.0.1:9090)"
+  id tunnel >/dev/null 2>&1 || useradd --system --create-home --home /var/lib/tunnel --shell /usr/sbin/nologin tunnel
+  install -d -m 700 -o tunnel -g tunnel /var/lib/tunnel/.ssh
+  echo "restrict,port-forwarding,permitlisten=\"127.0.0.1:9090\" $(cat "$D/tunnel.pub")" > /var/lib/tunnel/.ssh/authorized_keys
+  chown tunnel:tunnel /var/lib/tunnel/.ssh/authorized_keys
+  chmod 600 /var/lib/tunnel/.ssh/authorized_keys
+fi
+
 # ───────────── Node и Caddy ─────────────
 if [ -f "$D/node.tar.xz" ]; then
   ver=$(cat "$D/node.version")

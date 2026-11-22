@@ -74,6 +74,14 @@ jobs:
           FIND_ONLY: '1'
         run: /tmp/py/bin/python infra/game/provision.py
 
+      - name: Адрес Москвы (для туннеля из Нидерландов)
+        id: moscow
+        if: matrix.role == 'infra'
+        env:
+          SERVER_NAME: massovka-game
+          FIND_ONLY: '1'
+        run: /tmp/py/bin/python infra/game/provision.py
+
       - name: Адрес (домен, если DNS уже смотрит на сервер)
         id: addr
         env:
@@ -145,7 +153,8 @@ jobs:
           IP: ${{ steps.srv.outputs.ip }}
           HOST: ${{ steps.addr.outputs.host }}
           SSLIP: ${{ steps.srv.outputs.host }}
-          BOT_HOST: ${{ steps.infra.outputs.host }}
+          BOT_IP: ${{ steps.infra.outputs.ip }}
+          MOSCOW_IP: ${{ steps.moscow.outputs.ip }}
           TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         run: |
           ssh $SSH_OPTS root@$IP 'rm -rf /tmp/deploy && mkdir -p /tmp/deploy'
@@ -153,11 +162,16 @@ jobs:
           if [ "$ROLE" = infra ] && [ -n "$TG_TOKEN" ]; then
             ( umask 077; printf 'TELEGRAM_BOT_TOKEN=%s\n' "$TG_TOKEN" > deploy/bot.env )
           fi
+          # открытый ключ туннеля сервера бота — Москве (вход только для проброса порта)
+          if [ "$ROLE" = game ] && [ -n "$BOT_IP" ]; then
+            ssh $SSH_OPTS root@$BOT_IP 'cat /etc/massovka/tunnel_ed25519.pub 2>/dev/null' > deploy/tunnel.pub || true
+          fi
           scp $SSH_OPTS -q deploy/* root@$IP:/tmp/deploy/
           if [ "$ROLE" = game ]; then
-            vars="HOST=$HOST ALT_HOST=$SSLIP SITE_HOST=benobody.app SITE_REDIRECT=https://who-is-alive.vercel.app BOT_UPSTREAM=${BOT_HOST:+https://$BOT_HOST}"
+            up=""; [ -s deploy/tunnel.pub ] && up="http://127.0.0.1:9090"
+            vars="HOST=$HOST ALT_HOST=$SSLIP SITE_HOST=benobody.app SITE_REDIRECT=https://who-is-alive.vercel.app BOT_UPSTREAM=$up"
           else
-            vars="HOST=$HOST BOT_SITE=https://benobody.app"
+            vars="HOST=$HOST BOT_SITE=https://benobody.app TUNNEL_TO=$MOSCOW_IP"
           fi
           ssh $SSH_OPTS root@$IP "ROLE=$ROLE $vars SHA=${GITHUB_SHA::12} bash /tmp/deploy/setup.sh"
 
@@ -189,9 +203,9 @@ jobs:
         env:
           HOST: ${{ steps.addr.outputs.host }}
         run: |
-          for i in $(seq 1 10); do
+          for i in $(seq 1 20); do
             if res=$(curl -fsS "https://$HOST/tg/info"); then echo "через Москву: $res"; exit 0; fi
-            sleep 3
+            sleep 5
           done
           echo "::error::https://$HOST/tg/info через Москву не отвечает"; exit 1
 
@@ -213,7 +227,7 @@ jobs:
         env:
           IP: ${{ steps.srv.outputs.ip }}
         run: |
-          ssh $SSH_OPTS root@$IP 'journalctl -u massovka-game -u caddy -n 60 --no-pager -o cat' | grep -v -E '"(remote_ip|client_ip)"' | cut -c1-300 || true
+          ssh $SSH_OPTS root@$IP 'journalctl -u massovka-game -u caddy -u massovka-tunnel -n 60 --no-pager -o cat' | grep -v -E '"(remote_ip|client_ip)"' | cut -c1-300 || true
 
       - name: Итог
         if: success()

@@ -16,9 +16,7 @@ $(if [ -n "${BOT_UPSTREAM:-}" ]; then cat <<BOT
 	# Telegram-бот живёт на сервере за границей (из России api.telegram.org закрыт):
 	# телефоны ходят сюда, в Москву, а мы пересылаем туда
 	handle /tg/* {
-		reverse_proxy $BOT_UPSTREAM {
-			header_up Host {upstream_hostport}
-		}
+		reverse_proxy $BOT_UPSTREAM
 	}
 BOT
 fi)
