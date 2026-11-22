@@ -12,7 +12,7 @@ import type { EmoteKind } from './events';
  * название в `themes` словарей, пакет в клиенте. См. docs/architecture.md › «Темы».
  */
 
-export type ThemeId = 'caps' | 'chefs' | 'penguins' | 'cosmonauts' | 'office' | 'miami';
+export type ThemeId = 'caps' | 'chefs' | 'penguins' | 'cosmonauts' | 'office' | 'miami' | 'party';
 
 export interface TwistRules {
   /** Когда изнанка включается впервые, с начала игры, сек [от, до]. */
@@ -59,6 +59,11 @@ export const THEME_RULES: readonly ThemeRules[] = [
     // день на пляже → ночь в масках: ночь подольше, закат — плавный (облик в клиенте)
     id: 'miami',
     twist: { firstSec: [16, 26], onSec: [18, 24], gapSec: [10, 14], max: 2, emoteMul: 2, quietSec: 3, exposeKiller: true },
+  },
+  {
+    // новогодний корпоратив → свет погас: темнота, гирлянды, бенгальские огни (облик в клиенте)
+    id: 'party',
+    twist: { firstSec: [14, 24], onSec: [14, 20], gapSec: [10, 16], max: 2, emoteMul: 3 },
   },
 ];
 

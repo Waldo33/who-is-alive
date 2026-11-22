@@ -21,6 +21,7 @@ const LOADERS: Record<ThemeId, () => Promise<{ default: ThemePack }>> = {
   cosmonauts: () => import('./moon'),
   office: () => import('./office'),
   miami: () => import('./miami'),
+  party: () => import('./party'),
 };
 
 const loaded = new Map<number, ThemePack>([[0, PARK]]);
