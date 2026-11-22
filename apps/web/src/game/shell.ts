@@ -1,6 +1,7 @@
 import { DEFAULT_CONFIG, DICTS } from '@kto/game-core';
 import { detectLang } from '../lib/lang';
 import { download, shareContent, withLang } from '../lib/share';
+import { setTrackContext, shareKind, track } from '../lib/analytics';
 import { tutorialDone } from './tutorial';
 import { mountTopBar } from '../ui/topbar';
 import type { TopBarOptions } from '../ui/topbar';
@@ -75,7 +76,9 @@ export interface ShellOptions {
 
 export function mountSandbox(root: HTMLElement, opts: ShellOptions): () => void {
   // новичок — сначала обучение на практике, без нажатий (не в автономном файле и не в ?dev)
+  setTrackContext({ mode: 'sandbox' });
   if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('dev') && !tutorialDone()) {
+    track('page_view', { page: 'sandbox', first: true });
     location.replace('/learn?next=/sandbox');
     return () => {};
   }
@@ -139,6 +142,7 @@ export function mountSandbox(root: HTMLElement, opts: ShellOptions): () => void 
     if (devBtn) devBtn.textContent = t.start.devApply;
   };
   applyLang();
+  track('page_view', { page: 'sandbox' });
 
   const audio = getAudio();
   // музыка меню на стартовом экране (заиграет после первого касания — так требуют браузеры)
@@ -159,6 +163,7 @@ export function mountSandbox(root: HTMLElement, opts: ShellOptions): () => void 
   });
   const bar = mountTopBar(root, menuOpts());
   const exitToMenu = () => {
+    track('match_exit');
     running?.destroy();
     running = null;
     stage.innerHTML = '';
@@ -179,7 +184,9 @@ export function mountSandbox(root: HTMLElement, opts: ShellOptions): () => void 
   };
 
   const onShare = async (text: string, files?: File[]) => {
-    const res = await shareContent({ text, url: withLang(location.origin + '/'), files });
+    const kind = shareKind(files);
+    const res = await shareContent({ text, url: withLang(location.origin + '/', kind), files });
+    track('share', { what: kind, result: res });
     if (res === 'copied') toast(t.start.copied);
     if (res === 'failed') toast(text);
   };
@@ -233,6 +240,7 @@ export function mountSandbox(root: HTMLElement, opts: ShellOptions): () => void 
         onShare,
         onSave,
         onSettings: () => bar.openSettings(),
+        onEvent: track,
         timeScale: speed,
         lang,
       });

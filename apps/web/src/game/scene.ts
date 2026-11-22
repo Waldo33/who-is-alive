@@ -63,6 +63,8 @@ export interface SceneInit {
   timeScale?: number;
   /** «Пробный дубль»: сценарий обучения поверх песочницы без ИИ (tutorial.ts). */
   tutorial?: { onDone: () => void; onSkip: () => void };
+  /** Аналитика (lib/analytics › track): ход матча глазами этого игрока. В обучении молчит. */
+  onEvent?: (name: string, props?: Record<string, string | number | boolean | null>) => void;
 }
 
 interface EntityView {
@@ -907,6 +909,40 @@ export class GameScene extends Phaser.Scene {
     return this.sim.selfPid === this.sim.hostPid;
   }
 
+  /** Событие аналитики; в обучении не пишем — там свои события (TutorialStage). */
+  private track(name: string, props?: Record<string, string | number | boolean | null>): void {
+    if (this.init0.tutorial) return;
+    try {
+      this.init0.onEvent?.(name, props);
+    } catch {
+      /* аналитика не ломает игру */
+    }
+  }
+
+  /** Итог дубля для аналитики: что было со мной и откуда очки. */
+  private trackRound(): void {
+    const s = this.sim.summary;
+    if (!s) return;
+    const self = this.sim.selfPid;
+    const me = s.reveal.find((r) => r.pid === self);
+    const pts = s.points[self];
+    const acc = s.accusations.find((a) => a.pid === self);
+    this.track('round_end', {
+      round: s.round,
+      theme: this.sim.theme,
+      mod: this.sim.mod,
+      reason: s.endReason,
+      alive: !!me?.alive,
+      accused: acc ? (acc.correct ? 'right' : 'wrong') : 'none',
+      caught: !!me && s.accusations.some((a) => a.eid === me.eid),
+      kill: pts?.kill ?? 0,
+      survive: pts?.survive ?? 0,
+      stars: pts?.stars ?? 0,
+      accuse: pts?.accuse ?? 0,
+      awards: s.awards.length,
+    });
+  }
+
   private handleNotices(): void {
     const list = this.sim.drainNotices();
     for (const n of list) this.onNotice(n);
@@ -927,6 +963,7 @@ export class GameScene extends Phaser.Scene {
         // реванш: новый матч — новые лучший момент и карточка
         this.best = null;
         this.cardFile = null;
+        this.track('match_start', { players: this.sim.players.length, kids: this.cfg.kidsMode, rounds: this.cfg.maxRounds, roundSec: this.cfg.roundSec });
       }
     } else if (n.t === 'phase') {
       if (n.phase === 'countdown') this.audio.play('count');
@@ -949,9 +986,24 @@ export class GameScene extends Phaser.Scene {
         this.upgradeDeathClip();
         this.audio.play('drum');
       }
+      if (n.phase === 'results') this.trackRound();
       if (n.phase === 'match_end') {
         this.audio.play(this.sim.match?.tooAlive ? 'sad' : 'fanfare');
         this.spawnConfetti();
+        const m = this.sim.match;
+        if (m) {
+          const scores = Object.values(m.scores).sort((a, b) => b - a);
+          this.track('match_end', {
+            players: this.sim.players.length,
+            rounds: this.sim.roundsPlayed,
+            won: m.winners.includes(this.sim.selfPid),
+            tooAlive: m.tooAlive,
+            score: m.scores[this.sim.selfPid] ?? 0,
+            top: scores[0] ?? 0,
+            margin: (scores[0] ?? 0) - (scores[1] ?? 0),
+            kills: this.sim.myMatchKills,
+          });
+        }
       }
       this.buildOverlay();
     } else if (n.t === 'denied' && n.pid === this.sim.selfPid) {
@@ -1373,10 +1425,12 @@ export class GameScene extends Phaser.Scene {
     if (dc.status === 'ready' && dc.file) {
       const k = dc.killer === undefined ? undefined : this.sim.summary?.reveal.find((r) => r.eid === dc.killer);
       const kName = k ? this.sim.info(k.pid)?.name : undefined;
+      this.track('clip_send', { kind: 'death', type: dc.file.type.split(';')[0] });
       void this.init0.onShare?.(kName ? fmt(this.t.clip.deathTextBy, { name: kName }) : this.t.clip.deathText, [dc.file]);
       return;
     }
     if (dc.status !== 'offer') return;
+    this.track('clip_open', { kind: 'death' });
     this.renderDeathClip(dc);
   }
 
@@ -2365,7 +2419,10 @@ export class GameScene extends Phaser.Scene {
     // «Дальше» решает только режиссёр (хост): у остальных кнопка ничего не делала — им «Поделиться» во всю ширину
     if (this.amHost()) {
       this.addOverlayButton('share', 9, AY + 214, 81, 30, this.t.game.share, () => this.share(), undefined, true);
-      this.addOverlayButton('next', 91, AY + 214, 80, 30, this.t.game.next, () => sim.intent({ k: 'next' }), PAL.amber);
+      this.addOverlayButton('next', 91, AY + 214, 80, 30, this.t.game.next, () => {
+        this.track('next_tap', { round: sim.round });
+        sim.intent({ k: 'next' });
+      }, PAL.amber);
     } else this.addOverlayButton('share', 9, AY + 214, 162, 30, this.t.game.share, () => this.share(), undefined, true);
     this.ovDyn.auto = this.ovText(90, AY + 200, '', 'mist');
   }
@@ -2409,6 +2466,7 @@ export class GameScene extends Phaser.Scene {
     if (this.amHost()) {
       this.addOverlayButton('rematch', 9, AY + 214, 81, 30, this.t.game.rematch, () => {
         this.confetti = [];
+        this.track('rematch', { rounds: sim.roundsPlayed });
         sim.intent({ k: 'rematch' });
       }, PAL.amber);
       this.addOverlayButton('share2', 91, AY + 214, 80, 30, this.t.game.share, () => this.share(), undefined, true);
@@ -2565,6 +2623,7 @@ export class GameScene extends Phaser.Scene {
       squares,
     });
     const files = sim.phase === 'match_end' && this.cardFile ? [this.cardFile] : undefined;
+    this.track('share_tap', { from: sim.phase, card: !!files });
     void this.init0.onShare?.(text, files);
   }
 
@@ -2590,6 +2649,7 @@ export class GameScene extends Phaser.Scene {
     const best = this.best;
     if (!best) return;
     this.closeClip?.();
+    this.track('clip_open', { kind: best.moment.kind, self: !!best.moment.selfRole });
     // модуль клипа в основной сборке (не ленивый чанк): после обновления сайта открытая вкладка
     // не сможет подгрузить чанк, которого уже нет на сервере, и кнопка молча не срабатывала бы
     try {
@@ -2602,9 +2662,13 @@ export class GameScene extends Phaser.Scene {
           const a = best.players.find((p) => p.eid === m.attacker);
           const b = best.players.find((p) => p.eid === m.victim);
           const text = m.kind === 'knockout' && a && b ? fmt(this.t.clip.shareKo, { a: a.name, b: b.name }) : this.t.meta.title;
+          this.track('clip_send', { kind: m.kind, type: file.type.split(';')[0] });
           await this.init0.onShare?.(text, [file]);
         },
-        (file) => this.init0.onSave?.(file),
+        (file) => {
+          this.track('clip_save', { kind: best.moment.kind });
+          this.init0.onSave?.(file);
+        },
       );
       this.events.once('shutdown', () => this.closeClip?.());
     } catch {

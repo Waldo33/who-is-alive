@@ -16,6 +16,7 @@ import { TopBar } from '@/ui/TopBarView';
 import type { TopBar as Bar } from '@/ui/topbar';
 import { playerName, saveName } from '@/lib/name';
 import { loadChunk } from '@/lib/chunk';
+import { setTrackContext, shareKind, track } from '@/lib/analytics';
 import { download, shareContent, withLang } from '@/lib/share';
 import { AuthError, ensureAnonymousUser, supabase } from '@/lib/supabase';
 import { Room } from '@/net/room';
@@ -57,11 +58,14 @@ export default function RoomClient({ code, bot = false }: { code: string; bot?: 
         });
         if (cancelled) return;
       }
+      setTrackContext({ room: code, mode: 'online' });
+      track('page_view', { page: 'room' });
       let uid: string;
       try {
         uid = await ensureAnonymousUser();
       } catch (e) {
         setFatal(e instanceof AuthError ? 'auth' : 'network');
+        track('room_error', { error: e instanceof AuthError ? 'auth' : 'network' });
         return;
       }
       if (cancelled) return;
@@ -88,6 +92,20 @@ export default function RoomClient({ code, bot = false }: { code: string; bot?: 
     });
   };
 
+  // аналитика: вход в лобби (один раз), ошибки комнаты, режиссёр ли я — в контексте всех событий
+  const isHostNow = !!state && state.hostId === state.selfId;
+  const joinedRef = useRef(false);
+  useEffect(() => {
+    setTrackContext({ room: code, mode: 'online', host: isHostNow });
+  }, [code, isHostNow]);
+  useEffect(() => {
+    if (!state) return;
+    if (state.status === 'lobby' && !joinedRef.current) {
+      joinedRef.current = true;
+      track('room_join', { members: state.members.length, tutorial: tutorialDone() });
+    } else if (state.status === 'error' && state.error) track('room_error', { error: state.error });
+  }, [state?.status, state?.error]);
+
   const inGame = state?.status === 'game' && !!roomRef.current?.session;
   // обучение поверх лобби: новичку — сразу, остальным — из «Как играть»; матч начнётся — закроется само
   const [tutOpen, setTutOpen] = useState(false);
@@ -104,6 +122,7 @@ export default function RoomClient({ code, bot = false }: { code: string; bot?: 
   }, [inGame]);
   // «Назад» и «Выйти в меню» сразу освобождают место в комнате
   const goHome = () => {
+    track(inGame ? 'match_exit' : 'room_leave');
     void roomRef.current?.quit();
     router.push('/');
   };
@@ -181,8 +200,11 @@ function GameView({
         createSession: () => session,
         onShare: async (text: string, files?: File[]) => {
           // клипы и карточки уходят в соцсети: ведём на главную — комната занята матчем и через полчаса исчезнет
-          await shareContent({ text, url: withLang(`${location.origin}/`), files });
+          const kind = shareKind(files);
+          const result = await shareContent({ text, url: withLang(`${location.origin}/`, kind), files });
+          track('share', { what: kind, result });
         },
+        onEvent: track,
         onSave: (file: File) => download(file),
         onSettings: () => settingsRef.current(),
       });
@@ -232,14 +254,16 @@ export function Lobby({
   const online = state.members.filter((m) => m.online);
   const canStart = isHost && online.length >= 2;
   // язык отправителя в ссылке — для превью в мессенджере (t меняется вместе с языком)
-  const url = useMemo(() => (typeof window === 'undefined' ? '' : withLang(`${window.location.origin}/r/${state.code}`)), [state.code, t]);
+  const url = useMemo(() => (typeof window === 'undefined' ? '' : withLang(`${window.location.origin}/r/${state.code}`, 'invite')), [state.code, t]);
+  // у QR своя метка: так видно, сколько друзей зашло с экрана рядом, а сколько — по ссылке в чате
+  const qrUrl = useMemo(() => (typeof window === 'undefined' ? '' : withLang(`${window.location.origin}/r/${state.code}`, 'qr')), [state.code, t]);
 
   useEffect(() => {
-    if (!url) return;
-    QRCode.toDataURL(url, { margin: 1, scale: 1, errorCorrectionLevel: 'M', color: { dark: PAL.ink, light: PAL.sand } })
+    if (!qrUrl) return;
+    QRCode.toDataURL(qrUrl, { margin: 1, scale: 1, errorCorrectionLevel: 'M', color: { dark: PAL.ink, light: PAL.sand } })
       .then(setQr)
       .catch(() => setQr(''));
-  }, [url]);
+  }, [qrUrl]);
 
   const flash = (s: string) => {
     setToast(s);
@@ -248,19 +272,24 @@ export function Lobby({
 
   const invite = async () => {
     const text = fmt(t.lobby.inviteText, { name: me?.name ?? '' });
+    const members = state.members.length;
     try {
       if (navigator.share) {
         await navigator.share({ title: t.meta.title, text, url });
+        track('invite', { result: 'shared', members });
         return;
       }
     } catch {
+      track('invite', { result: 'cancelled', members });
       return;
     }
     try {
       await navigator.clipboard.writeText(`${text} ${url}`);
       flash(t.lobby.copied);
+      track('invite', { result: 'copied', members });
     } catch {
       flash(url);
+      track('invite', { result: 'failed', members });
     }
   };
 
@@ -357,6 +386,7 @@ export function Lobby({
         {isHost ? (
           <button className="btn" disabled={!canStart} onClick={() => {
               onGesture();
+              track('lobby_start', { members: state.members.length, online: online.length, kids: !!state.settings.kidsMode });
               void room.startMatch();
             }}>
             {t.lobby.start}

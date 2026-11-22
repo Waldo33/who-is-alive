@@ -70,9 +70,11 @@ export function siteLabel(): string {
  * Ссылка, которой делимся, с языком отправителя (?l=ru|en): по нему мессенджер получает
  * превью на языке того, кто зовёт. Интерфейс получателя от него не меняется.
  */
-export function withLang(url: string): string {
+export function withLang(url: string, src?: string): string {
   const lang = typeof document !== 'undefined' && document.documentElement.lang === 'en' ? 'en' : 'ru';
   const u = new URL(url);
   u.searchParams.set('l', lang);
+  // откуда пришёл получатель (invite, qr, clip, card…) — для аналитики воронки, lib/analytics
+  if (src) u.searchParams.set('src', src);
   return u.toString();
 }

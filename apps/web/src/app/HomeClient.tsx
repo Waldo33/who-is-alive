@@ -11,6 +11,7 @@ import { detectLang } from '@/lib/lang';
 import { TopBar } from '@/ui/TopBarView';
 import type { TopBar as Bar } from '@/ui/topbar';
 import { playerName } from '@/lib/name';
+import { track } from '@/lib/analytics';
 import { shareContent, withLang } from '@/lib/share';
 import { AuthError, ensureAnonymousUser, supabase } from '@/lib/supabase';
 import { createRoom } from '@/net/room';
@@ -35,9 +36,11 @@ export default function HomeClient() {
     // музыка меню: заиграет после первого касания экрана (раньше браузер звук не пустит)
     // первый запуск — сразу обучение на практике, без описаний
     if (!tutorialDone()) {
+      track('page_view', { page: 'home', first: true });
       router.replace('/learn?next=/');
       return;
     }
+    track('page_view', { page: 'home' });
     getAudio().setMusic('menu');
   }, [router]);
   const t = DICTS[lang];
@@ -48,9 +51,11 @@ export default function HomeClient() {
     try {
       await ensureAnonymousUser();
       const c = await createRoom(supabase(), playerName(t));
+      track('room_create', { code: c });
       router.push(`/r/${c}`);
     } catch (e) {
       const key = e instanceof AuthError ? 'auth' : ((e as Error).message as keyof typeof t.lobby.errors);
+      track('room_create_fail', { error: String(key) });
       setError(t.lobby.errors[key] ?? t.lobby.errors.unknown);
       setBusy(false);
     }
@@ -58,7 +63,8 @@ export default function HomeClient() {
 
   /** Ссылка на игру — из PWA адресной строки нет, поэтому своя кнопка. Вызывать прямо из нажатия. */
   const shareGame = async () => {
-    const r = await shareContent({ text: t.lobby.shareGameText, url: withLang(`${location.origin}/`) });
+    const r = await shareContent({ text: t.lobby.shareGameText, url: withLang(`${location.origin}/`, 'share') });
+    track('share', { what: 'game', result: r });
     if (r === 'copied' || r === 'failed') {
       setToast(r === 'copied' ? t.lobby.copied : location.origin);
       setTimeout(() => setToast(''), 2000);

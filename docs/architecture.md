@@ -97,7 +97,7 @@
 - Таблицы: `rooms` (код из 4 букв без похожих — `^[ABCDEFGHJKMNPQRSTUVWXYZ]{4}$`, `host_id`, `status lobby|playing`, `settings`, `last_active_at`), `room_members` (цвет уникален в комнате), `analytics_events`.
 - RPC (`security definer`, `search_path = ''`, проверки внутри): `create_room`, `join_room` (`room_full`, `room_playing`, `room_not_found`), `leave_room`, `claim_host`, `touch_room`, `set_room_status`, `update_room_settings`, `rename_member`, `kick_member` (режиссёр убирает участника в лобби), `room_preview` (без входа: имя хоста, число игроков, статус — для превью ссылки).
 - Пульс: каждый участник раз в 20 с вызывает `touch_room` (`room_members.last_seen_at`; комнату пульс **не** продлевает и отвечает `ok | gone | out` — на `gone` в лобби клиент показывает «комната закрылась»); `join_room` в лобби вытесняет молчащих > 75 с (кроме хоста), `leave_room` передаёт роль хоста недавно отметившемуся. Боты превью в комнату не входят (`lib/bot.ts`).
-- RLS: участник видит свою комнату и её состав. Прямой записи в таблицы нет, только RPC; аналитику можно писать только со своим `user_id`.
+- RLS: участник видит свою комнату и её состав. Прямой записи в таблицы нет, только RPC; аналитику пишет RPC `log_events` (см. ниже), читать её клиентам нельзя.
 - Уборка: `pg_cron` каждые 10 мин вызывает `private.cleanup()` — удаляет комнаты без действий 30 мин (вход, матч, настройки, имя, смена режиссёра; пульс не считается) или старше 6 часов, и анонимных пользователей старше 7 дней.
 - Анонимный вход должен быть включён в Auth → Providers проекта. Советник Supabase предупреждает о `security definer`-функциях — это осознанно.
 - `apps/web/src/net/room.ts` (`Room`):
@@ -106,6 +106,17 @@
   - хост рассылает настройки (`lobby`) и `match_start`;
   - `watch()` раз в секунду: статус комнаты у хоста, смена хоста у гостей;
   - `touch_room` раз в 20 с, повторный `join_room` при возвращении во вкладку, `quit()` — явный уход.
+
+### Аналитика воронки
+
+- Клиент: `apps/web/src/lib/analytics.ts` — `track(name, props)`, `setTrackContext({ room, mode, host })`. События копятся и уходят пачкой через 1,5 с (и при уходе со страницы — `fetch` с `keepalive`) в RPC `log_events` (миграция `20261122120000_analytics_log.sql`). Ошибки и отсутствие сети глотаются молча. Supabase-клиент не создаётся: токен (если игрок уже вошёл) читается из `localStorage['kto-auth']`.
+- Писать может и не вошедший (роль `anon`): главная, песочница и обучение работают без входа. Проверки внутри RPC: имя `^[a-z][a-z0-9_]{0,39}$`, до 30 событий за вызов, `props` до 2 КБ, код комнаты — только формата кода.
+- В строке: `device_id` (случайный id телефона, `localStorage['kto:did']`), `session_id` (один заход), `user_id` (если вошёл), `room_code`, `name`, `props`. Имён игроков и IP нет.
+- В каждом событии: `src` (метка `?src=` этого захода), `src0` (первая метка телефона: откуда пришёл впервые; без метки — `ref` или `direct`), `ref` (чужой реферер), `os`, `br` (браузер), `app` (встроенный браузер: telegram, instagram, vk… — iOS-Telegram по User-Agent не виден), `pwa`, `lang`, `mode` (online / sandbox / tutorial), `host`, `path`.
+- Метки исходящих ссылок (`withLang(url, src)`): `invite` (кнопка «Позвать»), `qr` (QR в лобби), `share` (поделиться игрой с главной), `clip` / `card` / `text` (из игры).
+- События: `page_view` (`page`, `first` — первый запуск), `tutorial_start|done|skip` (`where`, `first`, `sec`), `room_create`, `room_create_fail`, `room_join`, `room_error`, `room_leave`, `invite` (`result`), `lobby_start`, `match_start`, `round_end` (очки по видам, жив ли, обвинил ли верно, вычислили ли), `match_end` (победа, счёт, отрыв), `next_tap`, `rematch`, `match_exit`, `share_tap`, `share` (`what`, `result`), `clip_open`, `clip_send`, `clip_save`. Сцена шлёт свои через `SceneInit.onEvent`; в обучении молчит.
+- Выключено на localhost, в автономном HTML и с `?dev`; включить для проверки — `localStorage['kto:track'] = '1'`.
+- Смотреть — SQL в Supabase (MCP `execute_sql`), например воронка по дням: `select date_trunc('day', created_at) d, name, count(distinct device_id) from analytics_events group by 1, 2 order by 1, 3 desc`.
 
 ## 4. Клиент (`apps/web`)
 
