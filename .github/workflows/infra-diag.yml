@@ -1,0 +1,52 @@
+# Диагностика серверов: состояние служб и журналы (без секретов). Запуск — правкой этого файла.
+name: infra-diag
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/infra-diag.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TWC_TOKEN: ${{ secrets.TWC_TOKEN }}
+      SSH_OPTS: -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=20 -o LogLevel=ERROR
+      FIND_ONLY: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m venv /tmp/py && /tmp/py/bin/pip install -q cryptography
+      - id: game
+        env: { SERVER_NAME: massovka-game }
+        run: /tmp/py/bin/python infra/game/provision.py
+      - id: infra
+        env: { SERVER_NAME: massovka-infra }
+        run: /tmp/py/bin/python infra/game/provision.py
+      - name: Нидерланды
+        env:
+          IP: ${{ steps.infra.outputs.ip }}
+          MSK: ${{ steps.game.outputs.ip }}
+        run: |
+          ssh $SSH_OPTS root@$IP "MSK=$MSK bash -s" <<'SH'
+          systemctl is-active massovka-tunnel massovka-game caddy postgresql || true
+          journalctl -u massovka-tunnel -n 15 --no-pager -o cat
+          timeout 8 bash -c "</dev/tcp/$MSK/22" && echo "порт 22 Москвы: открыт" || echo "порт 22 Москвы: нет"
+          timeout 8 bash -c "</dev/tcp/$MSK/443" && echo "порт 443 Москвы: открыт" || echo "порт 443 Москвы: нет"
+          free -m | head -2
+          SH
+      - name: Москва
+        env:
+          IP: ${{ steps.game.outputs.ip }}
+        run: |
+          ssh $SSH_OPTS root@$IP 'bash -s' <<'SH'
+          ss -ltnp | grep -E ':9090|:8080|:3000|:5432' || true
+          id tunnel; ls -la /var/lib/tunnel/.ssh/ 2>&1; cut -c1-70 /var/lib/tunnel/.ssh/authorized_keys
+          journalctl -u ssh -n 20 --no-pager -o cat | grep -v "Accepted publickey for root" | tail -12
+          sshd -T 2>/dev/null | grep -E "allowtcpforwarding|permitlisten|gatewayports" 
+          free -m | head -2
+          SH
