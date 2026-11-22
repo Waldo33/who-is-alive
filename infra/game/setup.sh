@@ -142,7 +142,7 @@ PORT=8080
 INSTANCE=blue
 PUBLIC_WS_BASE=wss://$HOST
 PUBLIC_API_BASE=https://$HOST
-SITE_URL=https://${SITE_HOST:-$HOST}
+SITE_URL=${BOT_SITE:-https://${SITE_HOST:-$HOST}}
 TG_APP_NAME=play
 TRUST_PROXY=1
 LOG_LEVEL=info
@@ -150,6 +150,8 @@ EOF
 # ключ Telegram-бота привозит выкладка из GitHub Secrets TELEGRAM_BOT_TOKEN (в /tmp/deploy/bot.env),
 # на диске — /etc/massovka/bot.env, только root; читает его systemd при запуске игрового сервера
 if [ -s "$D/bot.env" ]; then install -m 600 "$D/bot.env" /etc/massovka/bot.env; rm -f "$D/bot.env"; fi
+# бот живёт только на сервере бота (infra): на игровом ключа быть не должно
+if [ "${ROLE:-game}" = game ]; then rm -f /etc/massovka/bot.env; fi
 envsum_after=$(cat /etc/massovka/*.env 2>/dev/null | sha256sum)
 
 # ───────────── службы ─────────────
@@ -215,6 +217,7 @@ HOST=$HOST
 ALT_HOST=${ALT_HOST:-}
 SITE_HOST=${SITE_HOST:-}
 SITE_REDIRECT=${SITE_REDIRECT:-}
+BOT_UPSTREAM=${BOT_UPSTREAM:-}
 EOF
 install -d /opt/massovka/bin
 install -m 755 "$D/caddy.sh" /opt/massovka/bin/caddy.sh

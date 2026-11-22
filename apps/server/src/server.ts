@@ -46,7 +46,8 @@ const CONNS_PER_IP = 20;
 const ROOMS_PER_IP_MIN = 10;
 const AUTH_PER_IP_MIN = 30;
 const EVENTS_PER_IP_MIN = 120;
-const BOT_PER_IP_MIN = 60;
+// на сервере бота все запросы телефонов приходят через Москву (один адрес) — лимит с запасом
+const BOT_PER_IP_MIN = 600;
 /** Лобби без действий — закрыть; комната старше — закрыть; без единого игрока на связи — закрыть. */
 const LOBBY_IDLE_MS = 30 * 60_000;
 const ROOM_MAX_AGE_MS = 6 * 3600_000;

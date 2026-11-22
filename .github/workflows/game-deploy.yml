@@ -1,6 +1,8 @@
-# Игровой сервер в Timeweb Cloud: создать (если нет), настроить, выкатить новую версию,
-# проверить живым прогоном четырёх игроков. Всё идемпотентно — повторный запуск безопасен.
-# Логи публичные: секреты не печатаем (ключ SSH выводится из TWC_TOKEN внутри provision.py).
+# Серверы в Timeweb Cloud: создать (если нет), настроить, выкатить новую версию сервера.
+#   game  — Москва: игра (api.benobody.app), сайт (benobody.app, выкладывает web-deploy), Postgres с аналитикой.
+#   infra — Нидерланды: Telegram-бот (из России api.telegram.org закрыт), позже — мониторинг, логи, копии базы.
+# Код сервера один (apps/server), роль задают переменные окружения. Сначала infra — Москва проксирует к нему /tg/*.
+# Всё идемпотентно. Логи Actions: секреты не печатаем (ключ SSH выводится из TWC_TOKEN внутри provision.py).
 name: game-deploy
 
 on:
@@ -25,8 +27,23 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      max-parallel: 1
+      fail-fast: true
+      matrix:
+        include:
+          - role: infra
+            name: massovka-infra
+            # Cloud NL-30: 1 vCPU, 2 ГБ, 30 ГБ, Нидерланды, 1560 ₽ (решение владельца 23.11.2026)
+            presets: '6807'
+          - role: game
+            name: massovka-game
+            presets: '6759,6749,4797,4795,6867,6869'
     env:
       TWC_TOKEN: ${{ secrets.TWC_TOKEN }}
+      SERVER_NAME: ${{ matrix.name }}
+      SERVER_PRESETS: ${{ matrix.presets }}
+      ROLE: ${{ matrix.role }}
       SSH_OPTS: -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=20 -o ServerAliveInterval=15 -o LogLevel=ERROR
     steps:
       - uses: actions/checkout@v4
@@ -49,16 +66,27 @@ jobs:
           python3 -m venv /tmp/py && /tmp/py/bin/pip install -q cryptography
           /tmp/py/bin/python infra/game/provision.py
 
+      - name: Адрес сервера бота (для Москвы)
+        id: infra
+        if: matrix.role == 'game'
+        env:
+          SERVER_NAME: massovka-infra
+          FIND_ONLY: '1'
+        run: /tmp/py/bin/python infra/game/provision.py
+
       - name: Адрес (домен, если DNS уже смотрит на сервер)
         id: addr
         env:
           IP: ${{ steps.srv.outputs.ip }}
           SSLIP: ${{ steps.srv.outputs.host }}
-          DOMAIN: api.benobody.app
+          DOMAIN: ${{ matrix.role == 'game' && 'api.benobody.app' || '' }}
         run: |
-          got=$(dig +short A "$DOMAIN" @8.8.8.8 | tail -1)
-          echo "$DOMAIN → ${got:-нет записи} (сервер $IP)"
-          if [ "$got" = "$IP" ]; then host=$DOMAIN; else host=$SSLIP; fi
+          host=$SSLIP
+          if [ -n "$DOMAIN" ]; then
+            got=$(dig +short A "$DOMAIN" @8.8.8.8 | tail -1)
+            echo "$DOMAIN → ${got:-нет записи} (сервер $IP)"
+            if [ "$got" = "$IP" ]; then host=$DOMAIN; fi
+          fi
           echo "host=$host" >> "$GITHUB_OUTPUT"
           echo "основной адрес: $host"
 
@@ -117,15 +145,21 @@ jobs:
           IP: ${{ steps.srv.outputs.ip }}
           HOST: ${{ steps.addr.outputs.host }}
           SSLIP: ${{ steps.srv.outputs.host }}
+          BOT_HOST: ${{ steps.infra.outputs.host }}
           TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         run: |
           ssh $SSH_OPTS root@$IP 'rm -rf /tmp/deploy && mkdir -p /tmp/deploy'
-          # ключ бота — файлом по SSH (не в командной строке и не в логах)
-          if [ -n "$TG_TOKEN" ]; then
+          # ключ бота — только серверу бота, файлом по SSH (не в командной строке и не в логах)
+          if [ "$ROLE" = infra ] && [ -n "$TG_TOKEN" ]; then
             ( umask 077; printf 'TELEGRAM_BOT_TOKEN=%s\n' "$TG_TOKEN" > deploy/bot.env )
           fi
           scp $SSH_OPTS -q deploy/* root@$IP:/tmp/deploy/
-          ssh $SSH_OPTS root@$IP "HOST=$HOST ALT_HOST=$SSLIP SITE_HOST=benobody.app SITE_REDIRECT=https://who-is-alive.vercel.app SHA=${GITHUB_SHA::12} bash /tmp/deploy/setup.sh"
+          if [ "$ROLE" = game ]; then
+            vars="HOST=$HOST ALT_HOST=$SSLIP SITE_HOST=benobody.app SITE_REDIRECT=https://who-is-alive.vercel.app BOT_UPSTREAM=${BOT_HOST:+https://$BOT_HOST}"
+          else
+            vars="HOST=$HOST BOT_SITE=https://benobody.app"
+          fi
+          ssh $SSH_OPTS root@$IP "ROLE=$ROLE $vars SHA=${GITHUB_SHA::12} bash /tmp/deploy/setup.sh"
 
       - name: HTTPS снаружи
         env:
@@ -138,35 +172,41 @@ jobs:
           echo "::error::https://$HOST/healthz не отвечает"
           exit 1
 
-      - name: Сайт benobody.app (пока — перенаправление на Vercel)
-        run: |
-          for h in benobody.app www.benobody.app; do
-            ok=0
-            for i in $(seq 1 20); do
-              res=$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' "https://$h/r/TEST" || true)
-              case "$res" in 30*) echo "$h → $res"; ok=1; break;; esac
-              sleep 5
-            done
-            [ "$ok" = 1 ] || echo "::warning::$h не отвечает перенаправлением ($res)"
-          done
-
-      - name: Живой прогон (4 игрока, ~30 с)
-        env:
-          HOST: ${{ steps.addr.outputs.host }}
-        run: pnpm --filter @kto/server smoke "https://$HOST"
-
-      - name: Telegram-бот (вебхук на этот сервер)
-        if: success()
+      - name: Telegram-бот (вебхук на сервер бота)
+        if: matrix.role == 'infra'
         env:
           HOST: ${{ steps.addr.outputs.host }}
           HAS_TG: ${{ secrets.TELEGRAM_BOT_TOKEN != '' }}
         run: |
           if [ "$HAS_TG" != true ]; then echo "TELEGRAM_BOT_TOKEN не задан в GitHub Secrets — бот остаётся в Supabase"; exit 0; fi
-          # из России api.telegram.org закрыт (23.11.2026) — тогда бот остаётся в Supabase, выкладка не падает
-          info=$(curl -fsS "https://$HOST/tg/info") || { echo "::warning::бот на сервере не достаёт до api.telegram.org — вебхук остаётся в Supabase"; exit 0; }
+          info=$(curl -fsS "https://$HOST/tg/info") || { echo "::error::бот не достаёт до api.telegram.org"; exit 1; }
           echo "бот: $info"
           curl -fsS "https://$HOST/tg/setup"; echo
           curl -fsS "https://$HOST/tg/status"; echo
+
+      - name: Москва → бот (/tg/* проксируется на сервер бота)
+        if: matrix.role == 'game' && steps.infra.outputs.host != ''
+        env:
+          HOST: ${{ steps.addr.outputs.host }}
+        run: |
+          for i in $(seq 1 10); do
+            if res=$(curl -fsS "https://$HOST/tg/info"); then echo "через Москву: $res"; exit 0; fi
+            sleep 3
+          done
+          echo "::error::https://$HOST/tg/info через Москву не отвечает"; exit 1
+
+      - name: Сайт benobody.app
+        if: matrix.role == 'game'
+        run: |
+          for h in benobody.app www.benobody.app; do
+            printf '%s → ' "$h"; curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' "https://$h/" || true
+          done
+
+      - name: Живой прогон (4 игрока, ~30 с)
+        if: matrix.role == 'game'
+        env:
+          HOST: ${{ steps.addr.outputs.host }}
+        run: pnpm --filter @kto/server smoke "https://$HOST"
 
       - name: Логи сервера (последние)
         if: always() && steps.srv.outputs.ip != ''
@@ -180,5 +220,5 @@ jobs:
         env:
           HOST: ${{ steps.addr.outputs.host }}
         run: |
-          echo "### Игровой сервер: https://$HOST" >> "$GITHUB_STEP_SUMMARY"
+          echo "### ${{ matrix.role }}: https://$HOST" >> "$GITHUB_STEP_SUMMARY"
           echo "версия ${GITHUB_SHA::12}" >> "$GITHUB_STEP_SUMMARY"

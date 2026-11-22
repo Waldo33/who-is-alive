@@ -105,6 +105,17 @@ def main():
     print('ключ сервера (открытый):', pub)
     key_id = ensure_key(pub)
     servers = [s for s in api('GET', '/servers').get('servers', []) if s.get('name') == NAME]
+    # только узнать адрес другого сервера (Москве — адрес сервера бота); нет его — пустой вывод
+    if os.environ.get('FIND_ONLY') == '1':
+        ip = ipv4(servers[0]) if servers else None
+        if ip:
+            host = ip.replace('.', '-') + '.sslip.io'
+            print(f'{NAME}: {host}')
+            with open(os.environ.get('GITHUB_OUTPUT', '/dev/null'), 'a') as f:
+                f.write(f'ip={ip}\nhost={host}\n')
+        else:
+            print(f'{NAME}: нет')
+        return
     if len(servers) > 1:
         print(f'::warning::серверов с именем {NAME}: {len(servers)} (id: {[x["id"] for x in servers]}) — беру первый, лишние удалить в панели')
     if servers:

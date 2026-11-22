@@ -12,11 +12,23 @@ cat > "$f" <<CADDY
 
 $HOST${ALT_HOST:+, $ALT_HOST} {
 	encode zstd gzip
-	# метрики — только изнутри
-	@internal path /metrics
-	respond @internal 404
-	# X-Forwarded-For Caddy ставит сам (адрес клиента) — по нему лимиты на сервере
-	reverse_proxy 127.0.0.1:8080
+$(if [ -n "${BOT_UPSTREAM:-}" ]; then cat <<BOT
+	# Telegram-бот живёт на сервере за границей (из России api.telegram.org закрыт):
+	# телефоны ходят сюда, в Москву, а мы пересылаем туда
+	handle /tg/* {
+		reverse_proxy $BOT_UPSTREAM {
+			header_up Host {upstream_hostport}
+		}
+	}
+BOT
+fi)
+	handle {
+		# метрики — только изнутри
+		@internal path /metrics
+		respond @internal 404
+		# X-Forwarded-For Caddy ставит сам (адрес клиента) — по нему лимиты на сервере
+		reverse_proxy 127.0.0.1:8080
+	}
 	log {
 		output stdout
 		format json
