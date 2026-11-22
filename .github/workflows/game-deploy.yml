@@ -49,6 +49,19 @@ jobs:
           python3 -m venv /tmp/py && /tmp/py/bin/pip install -q cryptography
           /tmp/py/bin/python infra/game/provision.py
 
+      - name: Адрес (домен, если DNS уже смотрит на сервер)
+        id: addr
+        env:
+          IP: ${{ steps.srv.outputs.ip }}
+          SSLIP: ${{ steps.srv.outputs.host }}
+          DOMAIN: api.benobody.app
+        run: |
+          got=$(dig +short A "$DOMAIN" @8.8.8.8 | tail -1)
+          echo "$DOMAIN → ${got:-нет записи} (сервер $IP)"
+          if [ "$got" = "$IP" ]; then host=$DOMAIN; else host=$SSLIP; fi
+          echo "host=$host" >> "$GITHUB_OUTPUT"
+          echo "основной адрес: $host"
+
       - name: Дождаться SSH
         env:
           IP: ${{ steps.srv.outputs.ip }}
@@ -102,15 +115,16 @@ jobs:
       - name: Настроить и выкатить
         env:
           IP: ${{ steps.srv.outputs.ip }}
-          HOST: ${{ steps.srv.outputs.host }}
+          HOST: ${{ steps.addr.outputs.host }}
+          SSLIP: ${{ steps.srv.outputs.host }}
         run: |
           ssh $SSH_OPTS root@$IP 'rm -rf /tmp/deploy && mkdir -p /tmp/deploy'
           scp $SSH_OPTS -q deploy/* root@$IP:/tmp/deploy/
-          ssh $SSH_OPTS root@$IP "HOST=$HOST SHA=${GITHUB_SHA::12} bash /tmp/deploy/setup.sh"
+          ssh $SSH_OPTS root@$IP "HOST=$HOST ALT_HOST=$SSLIP SHA=${GITHUB_SHA::12} bash /tmp/deploy/setup.sh"
 
       - name: HTTPS снаружи
         env:
-          HOST: ${{ steps.srv.outputs.host }}
+          HOST: ${{ steps.addr.outputs.host }}
         run: |
           for i in $(seq 1 30); do
             if curl -fsS "https://$HOST/healthz"; then echo; exit 0; fi
@@ -121,7 +135,7 @@ jobs:
 
       - name: Живой прогон (4 игрока, ~30 с)
         env:
-          HOST: ${{ steps.srv.outputs.host }}
+          HOST: ${{ steps.addr.outputs.host }}
         run: pnpm --filter @kto/server smoke "https://$HOST"
 
       - name: Логи сервера (последние)
@@ -134,7 +148,7 @@ jobs:
       - name: Итог
         if: success()
         env:
-          HOST: ${{ steps.srv.outputs.host }}
+          HOST: ${{ steps.addr.outputs.host }}
         run: |
           echo "### Игровой сервер: https://$HOST" >> "$GITHUB_STEP_SUMMARY"
           echo "версия ${GITHUB_SHA::12}" >> "$GITHUB_STEP_SUMMARY"

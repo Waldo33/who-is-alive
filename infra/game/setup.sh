@@ -3,7 +3,8 @@
 # от root; повторный запуск безопасен. Всё нужное (Node, Caddy, сборка сервера) привозит Actions
 # в /tmp/deploy: из России часть зарубежных сайтов (nodejs.org на Cloudflare) режется.
 #
-#   HOST=1-2-3-4.sslip.io SHA=<коммит> bash setup.sh
+#   HOST=api.benobody.app [ALT_HOST=1-2-3-4.sslip.io] SHA=<коммит> bash setup.sh
+# HOST — основной адрес (в нём WebSocket для клиентов), ALT_HOST — запасной, обслуживается так же.
 set -euo pipefail
 
 : "${HOST:?нужен HOST}"
@@ -153,7 +154,7 @@ cat > /etc/caddy/Caddyfile <<EOF
 	admin localhost:2019
 }
 
-$HOST {
+$HOST${ALT_HOST:+, $ALT_HOST} {
 	encode zstd gzip
 	# метрики — только изнутри
 	@internal path /metrics
