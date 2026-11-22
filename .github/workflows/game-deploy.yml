@@ -1,0 +1,140 @@
+# Игровой сервер в Timeweb Cloud: создать (если нет), настроить, выкатить новую версию,
+# проверить живым прогоном четырёх игроков. Всё идемпотентно — повторный запуск безопасен.
+# Логи публичные: секреты не печатаем (ключ SSH выводится из TWC_TOKEN внутри provision.py).
+name: game-deploy
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/server/**'
+      - 'packages/net/**'
+      - 'packages/game-core/**'
+      - 'infra/game/**'
+      - '.github/workflows/game-deploy.yml'
+
+concurrency:
+  group: game-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TWC_TOKEN: ${{ secrets.TWC_TOKEN }}
+      SSH_OPTS: -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=20 -o ServerAliveInterval=15 -o LogLevel=ERROR
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Тесты сервера
+        run: pnpm --filter @kto/server test
+
+      - name: Сборка
+        run: pnpm --filter @kto/server build
+
+      - name: Сервер в Timeweb (найти или создать)
+        id: srv
+        run: |
+          python3 -m venv /tmp/py && /tmp/py/bin/pip install -q cryptography
+          /tmp/py/bin/python infra/game/provision.py
+
+      - name: Дождаться SSH
+        env:
+          IP: ${{ steps.srv.outputs.ip }}
+        run: |
+          for i in $(seq 1 30); do
+            if ssh $SSH_OPTS root@$IP true 2>/dev/null; then echo "SSH есть"; exit 0; fi
+            sleep 10
+          done
+          echo "::error::SSH не ответил"; exit 1
+
+      - name: Что уже стоит на сервере
+        id: have
+        env:
+          IP: ${{ steps.srv.outputs.ip }}
+        run: |
+          echo "node=$(ssh $SSH_OPTS root@$IP 'cat /opt/node/VERSION 2>/dev/null' || true)" >> "$GITHUB_OUTPUT"
+          echo "caddy=$(ssh $SSH_OPTS root@$IP 'cat /etc/caddy/VERSION 2>/dev/null' || true)" >> "$GITHUB_OUTPUT"
+
+      - name: Привезти Node и Caddy (если нужно)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HAVE_NODE: ${{ steps.have.outputs.node }}
+          HAVE_CADDY: ${{ steps.have.outputs.caddy }}
+        run: |
+          mkdir -p deploy
+          # Node 22 — последняя версия ветки, проверка контрольной суммы
+          curl -fsSL https://nodejs.org/dist/latest-v22.x/SHASUMS256.txt -o /tmp/node.sums
+          file=$(grep -oE 'node-v22\.[0-9]+\.[0-9]+-linux-x64\.tar\.xz' /tmp/node.sums | head -1)
+          ver=$(echo "$file" | grep -oE 'v22\.[0-9]+\.[0-9]+')
+          if [ "$ver" != "$HAVE_NODE" ]; then
+            echo "Node: $HAVE_NODE → $ver"
+            curl -fsSL "https://nodejs.org/dist/latest-v22.x/$file" -o "deploy/$file"
+            (cd deploy && grep " $file\$" /tmp/node.sums | sha256sum -c -)
+            mv "deploy/$file" deploy/node.tar.xz
+            echo "$ver" > deploy/node.version
+          else echo "Node $ver уже стоит"; fi
+          # Caddy — последний релиз с GitHub, проверка контрольной суммы
+          tag=$(gh release view --repo caddyserver/caddy --json tagName -q .tagName)
+          if [ "$tag" != "$HAVE_CADDY" ]; then
+            echo "Caddy: $HAVE_CADDY → $tag"
+            v=${tag#v}
+            gh release download "$tag" --repo caddyserver/caddy -p "caddy_${v}_linux_amd64.tar.gz" -p "caddy_${v}_checksums.txt" -D /tmp/caddy
+            (cd /tmp/caddy && grep " caddy_${v}_linux_amd64.tar.gz\$" "caddy_${v}_checksums.txt" | sha512sum -c -)
+            tar -xzf "/tmp/caddy/caddy_${v}_linux_amd64.tar.gz" -C /tmp/caddy caddy
+            mv /tmp/caddy/caddy deploy/caddy
+            echo "$tag" > deploy/caddy.version
+          else echo "Caddy $tag уже стоит"; fi
+          cp apps/server/dist/server.mjs apps/server/dist/server.mjs.map infra/game/setup.sh deploy/
+          ls -la deploy
+
+      - name: Настроить и выкатить
+        env:
+          IP: ${{ steps.srv.outputs.ip }}
+          HOST: ${{ steps.srv.outputs.host }}
+        run: |
+          ssh $SSH_OPTS root@$IP 'rm -rf /tmp/deploy && mkdir -p /tmp/deploy'
+          scp $SSH_OPTS -q deploy/* root@$IP:/tmp/deploy/
+          ssh $SSH_OPTS root@$IP "HOST=$HOST SHA=${GITHUB_SHA::12} bash /tmp/deploy/setup.sh"
+
+      - name: HTTPS снаружи
+        env:
+          HOST: ${{ steps.srv.outputs.host }}
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS "https://$HOST/healthz"; then echo; exit 0; fi
+            sleep 5
+          done
+          echo "::error::https://$HOST/healthz не отвечает"
+          exit 1
+
+      - name: Живой прогон (4 игрока, ~30 с)
+        env:
+          HOST: ${{ steps.srv.outputs.host }}
+        run: pnpm --filter @kto/server smoke "https://$HOST"
+
+      - name: Логи сервера (последние)
+        if: always() && steps.srv.outputs.ip != ''
+        env:
+          IP: ${{ steps.srv.outputs.ip }}
+        run: |
+          ssh $SSH_OPTS root@$IP 'journalctl -u massovka-game -u caddy -n 60 --no-pager -o cat' | grep -v -E '"(remote_ip|client_ip)"' | cut -c1-300 || true
+
+      - name: Итог
+        if: success()
+        env:
+          HOST: ${{ steps.srv.outputs.host }}
+        run: |
+          echo "### Игровой сервер: https://$HOST" >> "$GITHUB_STEP_SUMMARY"
+          echo "версия ${GITHUB_SHA::12}" >> "$GITHUB_STEP_SUMMARY"
