@@ -40,6 +40,12 @@ jobs:
           t "mirror.yandex.ru" http://mirror.yandex.ru/ubuntu/ls-lR.gz
           t "archive.ubuntu.com" http://archive.ubuntu.com/ubuntu/ls-lR.gz
           t "timeweb s3" https://s3.timeweb.cloud
+          echo "── Telegram API"
+          getent ahosts api.telegram.org | head -4
+          curl -s -o /dev/null -m 15 -w "api.telegram.org (ipv4): %{http_code} %{time_total}s\n" -4 https://api.telegram.org/ || echo "ipv4: fail"
+          curl -s -o /dev/null -m 15 -w "api.telegram.org (ipv6): %{http_code} %{time_total}s\n" -6 https://api.telegram.org/ || echo "ipv6: fail"
+          curl -sv -o /dev/null -m 15 -4 https://api.telegram.org/ 2>&1 | grep -E "Connected|SSL|Trying|timed out|reset" | head -6
+          curl -s -o /dev/null -m 15 -w "core.telegram.org: %{http_code}\n" https://core.telegram.org/ || echo "core: fail"
           SH
       - name: Заливка из Actions на сервер
         env:
