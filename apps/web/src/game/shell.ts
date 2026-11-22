@@ -19,7 +19,7 @@ const CSS = `
 .kto-root,.kto-root *{touch-action:manipulation}
 .kto-stage,.kto-stage *{touch-action:none}
 .kto-root{position:fixed;inset:0;-webkit-text-size-adjust:100%;text-size-adjust:100%;background:${PAL.ink};color:${PAL.sand};font-family:var(--kto-font);
-  padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  padding:var(--sat, env(safe-area-inset-top)) env(safe-area-inset-right) var(--sab, env(safe-area-inset-bottom)) env(safe-area-inset-left);
   overflow:hidden;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent;
   overscroll-behavior:none;
   background-image:repeating-linear-gradient(0deg,${PAL.ink} 0 6px,${PAL.plum} 6px 7px);}
@@ -27,7 +27,7 @@ const CSS = `
 .kto-stage canvas{image-rendering:pixelated;image-rendering:crisp-edges;
   box-shadow:0 0 0 2px ${PAL.night},0 0 0 4px ${PAL.ink},0 0 0 6px ${PAL.grape},0 0 0 8px ${PAL.ink};}
 .kto-start{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;
-  gap:16px;padding:calc(68px + env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom));text-align:center;z-index:5;
+  gap:16px;padding:calc(68px + var(--sat, env(safe-area-inset-top))) 16px calc(24px + var(--sab, env(safe-area-inset-bottom)));text-align:center;z-index:5;
   background:${PAL.ink}ee;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;touch-action:pan-y}
 .kto-start>:first-child{margin-top:auto}.kto-start>:last-child{margin-bottom:auto}
 .kto-root .kto-topbar{padding-bottom:12px;background:linear-gradient(${PAL.ink} 75%, transparent)}
@@ -48,13 +48,13 @@ const CSS = `
 .kto-rotate{position:absolute;inset:0;display:none;align-items:center;justify-content:center;flex-direction:column;gap:16px;
   background:${PAL.ink};z-index:20;font-size:11px;color:${PAL.sand};text-align:center;padding:24px}
 @media (orientation:landscape) and (max-height:500px){.kto-rotate{display:flex}}
-.kto-toast{position:absolute;left:50%;bottom:calc(16px + env(safe-area-inset-bottom));transform:translateX(-50%);
+.kto-toast{position:absolute;left:50%;bottom:calc(16px + var(--sab, env(safe-area-inset-bottom)));transform:translateX(-50%);
   background:${PAL.night};color:${PAL.sand};font-size:9px;padding:10px 14px;box-shadow:0 0 0 2px ${PAL.ink};z-index:30;display:none}
 .kto-dev{position:absolute;top:0;right:0;z-index:40;background:${PAL.night}f2;color:${PAL.mist};font:11px/1.4 ui-monospace,monospace;
   max-height:100%;overflow:auto;padding:8px;width:min(320px,90vw);display:none}
 .kto-dev label{display:flex;justify-content:space-between;gap:6px;margin:2px 0}
 .kto-dev input,.kto-dev select{width:90px;font:inherit;background:${PAL.ink};color:${PAL.white};border:1px solid ${PAL.dusk}}
-.kto-dev-toggle{position:absolute;top:calc(4px + env(safe-area-inset-top));right:4px;z-index:41;font:10px ui-monospace,monospace;
+.kto-dev-toggle{position:absolute;top:calc(4px + var(--sat, env(safe-area-inset-top)));right:4px;z-index:41;font:10px ui-monospace,monospace;
   background:${PAL.grape};color:${PAL.white};border:0;padding:6px 8px}
 @media (prefers-reduced-motion:reduce){.kto-btn:active{transform:none}}
 `;

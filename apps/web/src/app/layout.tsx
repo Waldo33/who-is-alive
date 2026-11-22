@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next';
 import '@fontsource/press-start-2p/400.css';
 import './globals.css';
 import PwaRegister from './PwaRegister';
+import TelegramBoot from '@/ui/TelegramBoot';
 import { SITE_URL } from '@/lib/env';
 import { shareMetadata } from '@/lib/meta';
 
@@ -43,6 +44,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         {children}
         <PwaRegister />
+        <TelegramBoot />
       </body>
     </html>
   );

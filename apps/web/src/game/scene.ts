@@ -34,6 +34,7 @@ import {
 } from './sprites';
 import { isThemeLoaded, loadTheme, lookCount, preloadThemes, themeLook, themePack, variantOf } from './themes';
 import type { Look } from './themes';
+import { haptic, setClosingConfirmation } from '../lib/telegram';
 
 const AY = 24; // верх арены на экране
 const CROWD_KINDS: CrowdKind[] = ['freeze', 'jump', 'dance'];
@@ -295,7 +296,10 @@ export class GameScene extends Phaser.Scene {
     this.sim = this.init0.createSession?.(this.cfg, players, seed) ?? createLocalSession(this.cfg, players, seed, ME);
     this.cfg = this.sim.cfg; // по сети конфиг задаёт хост
     this.sim.onWorldEvent((ev) => this.onWorldEvent(ev));
-    this.events.once('shutdown', () => this.sim.dispose());
+    this.events.once('shutdown', () => {
+      this.sim.dispose();
+      setClosingConfirmation(false);
+    });
     this.tut = this.init0.tutorial && this.sim instanceof LocalSession ? new Tutorial(this.sim, this.t.tutorial, this.init0.tutorial.onDone) : null;
     if (this.tut) {
       // обучению нужно знать, что нажал игрок (жест, обвинение), — до того, как это попадёт в симуляцию
@@ -749,6 +753,7 @@ export class GameScene extends Phaser.Scene {
       b.pressed = true;
       this.pressedBy.set(p.id, b);
       this.audio.play('click');
+      haptic('select');
       b.onDown?.();
       return;
     }
@@ -838,6 +843,7 @@ export class GameScene extends Phaser.Scene {
       this.lunge = { dx: ((te.x - mine.x) / d) * 3, dy: ((te.y - mine.y) / d) * 2, start: performance.now() };
       this.swingFx.push({ eid, x: te.x, y: te.y, t: 0 });
       this.audio.play('swing');
+      haptic('medium');
     }
     this.sim.intent({ k: 'attack', eid });
   }
@@ -857,7 +863,9 @@ export class GameScene extends Phaser.Scene {
           this.cameras.main.shake(120, 0.008);
           this.hitStop = 60;
         }
-        if (ev.target === myEid || this.sim.world.time - this.lastAttackAt < 200) navigator.vibrate?.(40);
+        // вибрация (в Telegram — родная): вырезали меня — сильно; мой удар — успех по живому, ошибка по боту
+        if (ev.target === myEid) haptic('heavy');
+        else if (this.sim.world.time - this.lastAttackAt < 200) haptic(ev.result === 'player' ? 'success' : 'error');
         if (ev.target === myEid) {
           // «Жёсткий дубль»: вырезал режиссёр — сразу после окна команды, без удара
           const c = this.sim.world.crowd;
@@ -872,6 +880,7 @@ export class GameScene extends Phaser.Scene {
         break;
       case 'star_taken':
         this.audio.play('starTake');
+        if (ev.eid === myEid) haptic('success');
         if (ev.eid !== myEid && this.sim.phase === 'play') this.tip('star');
         if (themePack(this.sim.theme).starSiren && this.sim.phase === 'play') {
           this.audio.play('siren');
@@ -907,6 +916,7 @@ export class GameScene extends Phaser.Scene {
         if (ev.vote) this.tip('vote');
         this.audio.cutMusic();
         this.audio.play('crowd');
+        haptic('warning'); // стоп-кадр: «замри» чувствуется рукой, даже без звука
         this.musicResumeAt = ev.windowEnd + 900;
         break;
       case 'zone':
@@ -1000,6 +1010,8 @@ export class GameScene extends Phaser.Scene {
       }
     } else if (n.t === 'phase') {
       if (n.phase === 'countdown') this.audio.play('count');
+      // Telegram: посреди матча — переспросить, если закрывают приложение
+      if (!this.init0.tutorial && !this.init0.spectator) setClosingConfirmation(n.phase !== 'match_end');
       if (n.phase === 'play') {
         this.audio.play('ready');
         this.flashWord(this.t.game.action);
@@ -1041,6 +1053,7 @@ export class GameScene extends Phaser.Scene {
       this.buildOverlay();
     } else if (n.t === 'denied' && n.pid === this.sim.selfPid) {
       this.audio.play('denied');
+      haptic('error');
       const msg = this.t.game.denied[n.reason];
       this.showToast(msg, 1000);
     }

@@ -174,6 +174,15 @@
   - Регистрация — только в проде.
 - **Устаревшая вкладка**: ленивые части (`@/game/boot`, `shell`, `audio`) грузятся через `loadChunk`. Если файла после деплоя уже нет — одна перезагрузка страницы.
 
+## 4.1 Telegram Mini App (`lib/telegram.ts`, `ui/TelegramBoot.tsx`)
+- Внутри Telegram (параметры запуска `#tgWebAppData…` в адресе, флаг в `sessionStorage['kto:tg']`) грузится SDK `telegram-web-app.js`; вне Telegram — ничего.
+- Настройка: `ready`, `expand`, на телефоне — `requestFullscreen` и `lockOrientation` (Bot API 8.0), `disableVerticalSwipes` (7.7: свайп по полю не сворачивает приложение), цвета шапки/фона/нижней панели = `ink`. Безопасные зоны Telegram (`safeAreaInset` + `contentSafeAreaInset`) → CSS `--tg-top/--tg-bottom`; вся вёрстка берёт отступы из `--sat/--sab` (максимум из системных и Telegram).
+- «Назад» — родная кнопка Telegram: `topbar.ts` отдаёт свой `onBack` в `setTelegramBack`, своя кнопка прячется (`html.tg`).
+- Матч: `setClosingConfirmation` (переспросить при закрытии посреди матча), вибрация `haptic()` — HapticFeedback в Telegram, `navigator.vibrate` вне его (удар, вырезали, звезда, стоп-кадр, отказ, нажатия).
+- Профиль: имя (до 14 знаков) и язык из Telegram — по умолчанию, если свои не заданы; комната ждёт `telegramReady()` перед входом.
+- Ссылки: `TG_APP` (`NEXT_PUBLIC_TG_APP`, «бот/приложение») → `t.me/<TG_APP>?startapp=r_КОД | daily | home`. Параметр запуска читается сразу из адреса (`tgWebAppStartParam`) — главная ведёт в комнату или загадку до обучения, один раз за запуск. «Позвать» и «Поделиться» в Telegram — родным окном выбора чата (`t.me/share/url`), ссылки из Telegram — тоже в Telegram (`tgLinkFor`). Файлы (клип, карточка) — системным меню, если встроенный браузер его даёт, иначе ссылкой.
+- Пока бот не настроен (`TG_APP` пусто) — всё работает, ссылки ведут на сайт.
+
 ## 5. Ассеты
 
 - Палитра — `packages/assets/src/palette.ts` (`PAL`, 32 цвета; `PLAYER_COLORS` — 4 цвета игроков).

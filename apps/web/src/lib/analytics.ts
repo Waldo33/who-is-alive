@@ -14,6 +14,7 @@
  * и навсегда — первая (`src0`): откуда человек пришёл впервые.
  */
 import { SUPABASE_KEY, SUPABASE_URL } from './env';
+import { inTelegram } from './telegram';
 
 export type Props = Record<string, string | number | boolean | null | undefined>;
 
@@ -114,7 +115,7 @@ function baseProps(): Props {
     ref,
     os: os(ua),
     br: browser(ua),
-    app: inAppBrowser(ua),
+    app: inTelegram() ? 'telegram' : inAppBrowser(ua),
     pwa: typeof matchMedia === 'function' && matchMedia('(display-mode: standalone)').matches,
     lang: document.documentElement.lang || null,
   };

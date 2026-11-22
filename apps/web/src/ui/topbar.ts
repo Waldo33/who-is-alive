@@ -2,6 +2,7 @@ import { DICTS, LANGS } from '@kto/game-core';
 import type { Lang } from '@kto/game-core';
 import { LANG_KEY } from '../lib/lang';
 import { getAudio } from '../game/audio';
+import { setTelegramBack } from '../lib/telegram';
 
 /**
  * Верхняя панель всех экранов: «← Назад» слева и шестерёнка справа.
@@ -124,6 +125,8 @@ export function mountTopBar(parent: HTMLElement, init: TopBarOptions): TopBar {
   const render = () => {
     const t = DICTS[o.lang];
     back.hidden = !o.onBack;
+    // в Telegram «Назад» — родной кнопкой в шапке Telegram (наша спрятана стилем html.tg)
+    setTelegramBack(o.onBack ? () => o.onBack?.() : null);
     back.textContent = `< ${t.ui.back}`; // стрелки «←» нет в пиксельном шрифте
     gear.hidden = !!o.noGear;
     gear.setAttribute('aria-label', t.ui.settings);
@@ -238,6 +241,7 @@ export function mountTopBar(parent: HTMLElement, init: TopBarOptions): TopBar {
     },
     openSettings: open,
     destroy() {
+      setTelegramBack(null);
       document.removeEventListener('keydown', onKey);
       bar.remove();
       sheet.remove();
@@ -246,9 +250,10 @@ export function mountTopBar(parent: HTMLElement, init: TopBarOptions): TopBar {
 }
 
 export const TOPBAR_CSS = `
+html.tg .kto-back{display:none!important}
 .kto-topbar-host{position:fixed;top:0;left:0;right:0;z-index:20;height:0}
 .kto-topbar{position:absolute;top:0;left:0;right:0;z-index:20;display:flex;justify-content:space-between;align-items:center;
-  padding:calc(8px + env(safe-area-inset-top)) calc(8px + env(safe-area-inset-right)) 0 calc(8px + env(safe-area-inset-left));pointer-events:none}
+  padding:calc(8px + var(--sat, env(safe-area-inset-top))) calc(8px + env(safe-area-inset-right)) 0 calc(8px + env(safe-area-inset-left));pointer-events:none}
 .kto-topbar button{pointer-events:auto;font:inherit;font-family:var(--font-pixel,'Press Start 2P'),monospace;font-size:10px;min-height:44px;min-width:44px;
   border:0;border-radius:0;background:#262b44;color:#ead4aa;box-shadow:0 0 0 2px #181425,0 3px 0 #181425;cursor:pointer;padding:0 12px;
   display:inline-flex;align-items:center;justify-content:center;gap:6px}
@@ -261,7 +266,7 @@ export const TOPBAR_CSS = `
   font-family:var(--font-pixel,'Press Start 2P'),monospace;touch-action:manipulation}
 .kto-sheet[hidden]{display:none}
 .kto-sheet-box{width:100%;max-width:440px;max-height:88dvh;overflow:auto;background:#262b44;color:#ead4aa;
-  box-shadow:0 0 0 2px #181425,0 0 0 4px #5a6988;padding:20px 16px calc(20px + env(safe-area-inset-bottom));margin:0 8px}
+  box-shadow:0 0 0 2px #181425,0 0 0 4px #5a6988;padding:20px 16px calc(20px + var(--sab, env(safe-area-inset-bottom)));margin:0 8px}
 .kto-sheet h2{font-size:13px;color:#fee761;margin:0 0 18px;font-weight:normal}
 .kto-sheet h3{font-size:11px;color:#fee761;margin:0 0 12px;font-weight:normal}
 .kto-set{display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:10px;margin-bottom:14px}

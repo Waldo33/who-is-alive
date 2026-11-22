@@ -12,6 +12,7 @@ import { TopBar } from '@/ui/TopBarView';
 import type { TopBar as Bar } from '@/ui/topbar';
 import { playerName } from '@/lib/name';
 import { track } from '@/lib/analytics';
+import { telegramStartTarget } from '@/lib/telegram';
 import { Garland, Snow, useNewYear } from '@/ui/Festive';
 import { shareContent, withLang } from '@/lib/share';
 import { AuthError, ensureAnonymousUser, supabase } from '@/lib/supabase';
@@ -38,6 +39,12 @@ export default function HomeClient() {
     setLang(l);
     document.documentElement.lang = l;
     document.title = DICTS[l].meta.title;
+    // открыли из Telegram по ссылке-приглашению (?startapp=r_КОД / daily) — сразу туда, без обучения
+    const tgTarget = telegramStartTarget();
+    if (tgTarget) {
+      location.replace(tgTarget);
+      return;
+    }
     // музыка меню: заиграет после первого касания экрана (раньше браузер звук не пустит)
     // первый запуск — сразу обучение на практике, без описаний, потом матч с ИИ
     if (!tutorialDone()) {
