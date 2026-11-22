@@ -49,6 +49,8 @@ export interface ClipInput {
   captions?: { find: string; findSub?: string; reveal: string; kind: string };
   /** Без крови (детский режим): выбивание — «поф» и в теме с оружием. */
   noGore?: boolean;
+  /** Победитель матча (клип из итогов матча): на заставке — его имя и корона над его цветом. */
+  winner?: { name: string; color: number };
 }
 
 export interface ClipResult {
@@ -599,8 +601,15 @@ export class ClipPlayerScene {
     const appear = Math.min(1, ms / 300);
     g.globalAlpha = appear;
     text(g, t.meta.title, LW / 2, 92, PAL.yellow, font, { size: 1.25 });
-    // хоровод вдвое крупнее: живые в цветах игроков, между ними бот
+    // победитель матча — момент триумфа: «Звезда фильма» и имя его цветом
+    const win = this.inp.winner;
+    if (win) {
+      text(g, t.card.winner, LW / 2, 36, PAL.mist, font);
+      text(g, win.name, LW / 2, 52, PLAYER_COLORS[win.color], font, { size: 1.25, maxWidth: LW - 12 });
+    }
+    // хоровод вдвое крупнее: живые в цветах игроков, между ними бот; над победителем — корона
     const ch = a.chars(this.inp.rec.theme);
+    const crownAt = a.icons.names.indexOf('crown');
     g.save();
     g.scale(2, 2);
     const cols = [0, 1, -1, 2, 3];
@@ -611,6 +620,7 @@ export class ClipPlayerScene {
       g.drawImage(a.shadow, x - 5, y - 2);
       if (col >= 0) frame(g, ch.outline[1 + col], OL_W, OL_H, fr, x - 7, y - 17);
       frame(g, ch.body, CH_W, CH_H, fr, x - 6, y - CH_H);
+      if (win && col === win.color && crownAt >= 0) frame(g, a.icons.canvas, 8, 8, crownAt, x - 4, y - CH_H - 8);
     });
     g.restore();
     text(g, t.clip.cta, LW / 2, 196, PAL.white, font);

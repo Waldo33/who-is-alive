@@ -14,7 +14,7 @@ import {
   THEME_RULES,
   roundMod,
 } from '@kto/game-core';
-import type { AwardId, ClientSession, CrowdKind, Dict, Entity, GameConfig, Lang, Moment, Notice, RoundRecording, ThemeText, World, WorldEvent } from '@kto/game-core';
+import type { AwardId, ClientSession, CrowdKind, Dict, Entity, GameConfig, Lang, Moment, Notice, RoundRecording, RoundSummary, ThemeText, World, WorldEvent } from '@kto/game-core';
 import { resultCardFile } from './card';
 import { Tutorial } from './tutorial';
 import { SWING_HIT, aim, armed, armsOf, bodyPose, drawAir, drawFloor, killsFromLog, makeKill, weaponSfx } from './gore';
@@ -36,6 +36,8 @@ import { isThemeLoaded, loadTheme, lookCount, preloadThemes, themeLook, themePac
 import type { Look } from './themes';
 import { haptic, setClosingConfirmation } from '../lib/telegram';
 
+/** Постоянные кнопки «автопилот» и «эмоция» в нижней панели (выключены — не пользовались). */
+const HUD_EXTRAS = false;
 const AY = 24; // верх арены на экране
 const CROWD_KINDS: CrowdKind[] = ['freeze', 'jump', 'dance'];
 /** Половина заката/рассвета: столько сгущаются сумерки, столько же проступает новый облик. */
@@ -171,6 +173,15 @@ export class GameScene extends Phaser.Scene {
   private fxG!: Phaser.GameObjects.Graphics;
   private arrow!: Phaser.GameObjects.Image;
   private ring!: Phaser.GameObjects.Image;
+  /** «Где я»: расходящиеся круги вокруг своего персонажа в начале дубля. */
+  private findMe!: Phaser.GameObjects.Graphics;
+  private findMeAt = -1e9;
+  private myColor = 0xffffff;
+  /** Корона над лучшим в дубле на финальном кадре разоблачения. */
+  private crown!: Phaser.GameObjects.Image;
+  private crownEid = -1;
+  /** Момент триумфа победителя матча уже показан (до следующего матча). */
+  private triumphShown = false;
   private hud: Record<string, Phaser.GameObjects.BitmapText> = {};
   private hudIcons: Phaser.GameObjects.Image[] = [];
   private buttons: Button[] = [];
@@ -342,8 +353,13 @@ export class GameScene extends Phaser.Scene {
         poof: this.add.image(0, 0, 'poof', 0).setVisible(false),
       });
     }
-    this.ring = this.add.image(0, 0, 'ring').setAlpha(0.7).setVisible(false);
-    this.arrow = this.add.image(0, 0, 'arrow').setOrigin(0.5, 1).setTint(hexToInt(PLAYER_COLORS[0])).setDepth(800).setVisible(false);
+    // свой персонаж (только у себя): кольцо под ногами, стрелка над головой, контур — цветом игрока
+    const myColor = hexToInt(PLAYER_COLORS[this.sim.info(this.sim.selfPid)?.color ?? 0]);
+    this.myColor = myColor;
+    this.ring = this.add.image(0, 0, 'ring').setTint(myColor).setVisible(false);
+    this.arrow = this.add.image(0, 0, 'arrow').setOrigin(0.5, 1).setTint(myColor).setDepth(800).setVisible(false);
+    this.findMe = this.add.graphics().setDepth(799);
+    this.crown = this.add.image(0, 0, 'icons', 0).setOrigin(0.5, 1).setScale(2).setDepth(801).setVisible(false);
 
     const pigeonSpots = [[70, 56], [118, 214], [146, 98], [34, 182], [104, 30]];
     for (const [x, y] of pigeonSpots) {
@@ -574,8 +590,9 @@ export class GameScene extends Phaser.Scene {
 
   private buildButtons(): void {
     const play = () => this.sim.phase === 'play' && !!this.me()?.alive;
-    // в обучении нет автопилота и эмоций — там внизу кнопка «Пропустить»
-    const extra = () => play() && !this.init0.tutorial;
+    // автопилот и эмоция постоянно висели в панели, но ими не пользовались (плейтесты, ноябрь 2026) —
+    // убраны с экрана; механика осталась (боты и ИИ-игроки ею живут), вернуть — HUD_EXTRAS = true
+    const extra = () => HUD_EXTRAS && play() && !this.init0.tutorial;
     const crowdOpen = () => play() && this.sim.crowdWindowOpen(this.sim.world.time);
     this.buttons.push(
       {
@@ -1013,12 +1030,14 @@ export class GameScene extends Phaser.Scene {
       }
     } else if (n.t === 'phase') {
       if (n.phase === 'countdown') this.audio.play('count');
+      if (n.phase !== 'match_end') this.triumphShown = false;
       // Telegram: посреди матча — переспросить, если закрывают приложение
       if (!this.init0.tutorial && !this.init0.spectator) setClosingConfirmation(n.phase !== 'match_end');
       if (n.phase === 'play') {
         this.audio.play('ready');
         this.flashWord(this.t.game.action);
-        const intro = this.themeText()?.intro;
+        // присказка темы — только когда нет условия съёмки: его уже прочитали на отсчёте
+        const intro = roundMod(this.sim.mod) === 'none' ? this.themeText()?.intro : undefined;
         if (intro) this.time.delayedCall(900, () => this.sim.phase === 'play' && this.showToast(intro, 2400));
       }
       if (n.phase === 'accuse') this.audio.play('tick');
@@ -1824,6 +1843,7 @@ export class GameScene extends Phaser.Scene {
     const mine = w.get(myEid);
     const showTargets = mode === 'live' && phase === 'play' && me?.alive && !me.autopilot && w.time >= (me?.stunUntil ?? 0);
     const pulse = 0.55 + 0.45 * Math.sin(performance.now() / 110);
+    let crownShown = false;
     w.entities.forEach((e, i) => {
       const v = this.views[i];
       if (!v) return;
@@ -1875,6 +1895,11 @@ export class GameScene extends Phaser.Scene {
       }
       let jumpOff = yoff;
       if (mode === 'final' && highlight?.has(e.eid)) jumpOff = -Math.abs(Math.round(Math.sin(performance.now() / 140) * 5));
+      // лучший в дубле — с короной над головой (момент триумфа на финальном кадре разоблачения)
+      if (mode === 'final' && e.eid === this.crownEid) {
+        crownShown = true;
+        this.crown.setVisible(true).setFrame(this.icon('crown')).setPosition(x, sy + jumpOff - CH_H - 1).setDepth(sy + 0.5);
+      }
       // замах своего персонажа (только на своём экране)
       let lx = 0;
       let ly = 0;
@@ -1906,6 +1931,10 @@ export class GameScene extends Phaser.Scene {
       } else if (mode === 'live' && phase === 'accuse' && me?.accused === e.eid) {
         v.ol.setTint(hexToInt(PLAYER_COLORS[0])).setAlpha(1);
         olVis = true;
+      } else if (mode === 'live' && e.eid === myEid && (phase === 'countdown' || phase === 'play' || phase === 'accuse')) {
+        // свой персонаж всегда в контуре своего цвета — видно только на своём экране
+        v.ol.setTint(this.myColor).setAlpha(1);
+        olVis = true;
       }
       v.ol.setVisible(olVis);
       if (olVis) v.ol.setFrame(frame).setFlipX(flip).setPosition(x, sy + jumpOff).setDepth(sy - 0.2);
@@ -1922,6 +1951,7 @@ export class GameScene extends Phaser.Scene {
       v.q.setVisible(q);
       if (q) v.q.setPosition(x + 5, sy - CH_H - 2).setDepth(sy + 0.4);
     });
+    if (!crownShown) this.crown.setVisible(false);
     for (let i = w.entities.length; i < this.views.length; i++) {
       const v = this.views[i];
       v.spr.setVisible(false);
@@ -1936,8 +1966,19 @@ export class GameScene extends Phaser.Scene {
       const y = Math.round(mine.py + (mine.y - mine.py) * alpha) + AY;
       const { yoff } = this.frameFor(mine, t);
       const bounce = Math.floor(performance.now() / 180) % 2;
-      this.arrow.setVisible(true).setPosition(x, y + yoff - CH_H - 2 - bounce);
+      this.arrow.setVisible(true).setPosition(x, y + yoff - CH_H - 3 - bounce);
       this.ring.setVisible(true).setPosition(x, y).setDepth(y - 0.6);
+      // начало дубля: два расходящихся круга вокруг себя — глаз сразу находит своего
+      if (phase === 'countdown' && this.findMeAt < 0) this.findMeAt = performance.now();
+      const fk = (performance.now() - this.findMeAt) / 700;
+      this.findMe.clear();
+      if (this.findMeAt > 0 && fk < 2.4) {
+        for (const k of [fk % 1.2, (fk + 0.6) % 1.2]) {
+          if (fk < 0.6 && k > fk) continue;
+          this.findMe.lineStyle(2, this.myColor, Math.max(0, 1 - k / 1.2));
+          this.findMe.strokeCircle(x, y - 8, 6 + k * 26);
+        }
+      }
       if (phase === 'countdown') {
         const blinkOn = Math.floor(performance.now() / 160) % 2 === 0;
         const idx = w.entities.indexOf(mine);
@@ -1946,6 +1987,8 @@ export class GameScene extends Phaser.Scene {
     } else {
       this.arrow.setVisible(false);
       this.ring.setVisible(false);
+      this.findMe.clear();
+      if (phase !== 'countdown' && phase !== 'play') this.findMeAt = -1e9;
     }
 
     // звёзды
@@ -2009,6 +2052,7 @@ export class GameScene extends Phaser.Scene {
     }
     const alive = new Map<number, number>();
     for (const r of s.reveal) if (r.alive) alive.set(r.eid, colors.get(r.eid)!);
+    this.crownEid = this.roundStar(s);
     this.renderWorld(this.sim.world, 1, 'final', alive);
     if (!this.finalSoundsPlayed) {
       this.finalSoundsPlayed = true;
@@ -2427,15 +2471,14 @@ export class GameScene extends Phaser.Scene {
         this.ovDyn.count = this.ovText(90, AY + 92, String(Math.max(1, Math.ceil(sim.timeLeft() / 1000))), 'yellow');
         this.ovDyn.count.setScale(3);
         this.centerScaled(this.ovDyn.count);
-        const modOn = roundMod(sim.mod) !== 'none';
-        this.ovPlate(AY + 122, modOn ? 76 : 30);
-        this.ovText(90, AY + 126, this.t.game.findYourself, 'sand');
-        this.ovText(90, AY + 138, tp(this.lang, this.t.game.roundTheme, sim.round, { theme: this.t.themes[sim.theme] }), 'mist');
+        // минимум текста (плейтесты: «много текста в начале дубля»): номер дубля с темой и, если есть,
+        // условие съёмки двумя строками; «где ты» показывают круги вокруг своего персонажа
         const mod = roundMod(sim.mod);
+        this.ovPlate(AY + 122, mod !== 'none' ? 42 : 18);
+        this.ovText(90, AY + 126, tp(this.lang, this.t.game.roundTheme, sim.round, { theme: this.t.themes[sim.theme] }), 'mist');
         if (mod !== 'none') {
-          this.ovText(90, AY + 160, this.t.game.modTitle, 'mist');
-          this.ovText(90, AY + 172, this.t.mods[mod].name, 'yellow');
-          this.ovText(90, AY + 184, this.t.mods[mod].desc, 'white');
+          this.ovText(90, AY + 140, this.t.mods[mod].name, 'yellow');
+          this.ovText(90, AY + 152, this.t.mods[mod].desc, 'white');
         }
         break;
       }
@@ -2545,6 +2588,14 @@ export class GameScene extends Phaser.Scene {
   private buildMatchEnd(): void {
     const sim = this.sim;
     const m = sim.match!;
+    if (!m.tooAlive && !this.triumphShown && !this.init0.spectator) {
+      this.triumphShown = true;
+      this.showTriumph(() => {
+        this.clearOverlay();
+        this.buildMatchEnd();
+      });
+      return;
+    }
     this.ovPanel(8, AY + 8, 164, 244);
     this.ov(this.add.image(90, AY + 22, 'icons', this.icon('crown')).setScale(2), 2100);
     if (m.tooAlive) this.ovText(90, AY + 36, this.t.game.tooAlive, 'yellow');
@@ -2715,6 +2766,79 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
+  /** Лучший в дубле (больше всех очков, без ничьей) — если он в кадре; иначе -1. */
+  private roundStar(s: RoundSummary): number {
+    let best: { pid: string; total: number } | null = null;
+    let tie = false;
+    for (const [pid, line] of Object.entries(s.points)) {
+      if (!best || line.total > best.total) {
+        best = { pid, total: line.total };
+        tie = false;
+      } else if (line.total === best.total) tie = true;
+    }
+    if (!best || tie || best.total <= 0) return -1;
+    const r = s.reveal.find((x) => x.pid === best.pid);
+    return r && r.alive ? r.eid : -1;
+  }
+
+  /**
+   * Момент триумфа победителя матча: поле темнеет, его персонаж — крупно в луче света, с короной,
+   * пляшет; имя его цветом, фанфары и конфетти. Через 2,8 с (или по касанию) — итоги матча.
+   */
+  private showTriumph(done: () => void): void {
+    const sim = this.sim;
+    const m = sim.match!;
+    const pid = m.winners[0];
+    const info = sim.info(pid)!;
+    const color = hexToInt(PLAYER_COLORS[info.color]);
+    const eid = sim.summary?.reveal.find((r) => r.pid === pid)?.eid ?? -1;
+    const idx = Math.max(0, sim.world.entities.findIndex((e) => e.eid === eid));
+    const fig = this.charKey(this.lookKey, idx);
+    const cy = AY + 156;
+    const bg = this.add.graphics();
+    bg.fillStyle(hexToInt(PAL.ink), 0.82).fillRect(0, AY, 180, PANEL_Y - AY);
+    // луч прожектора: светлый конус сверху и пятно на полу
+    bg.fillStyle(hexToInt(PAL.sand), 0.12).fillTriangle(90, AY, 52, cy + 4, 128, cy + 4);
+    bg.fillStyle(hexToInt(PAL.sand), 0.25).fillEllipse(90, cy + 2, 64, 14);
+    this.ov(bg, 2050);
+    const ol = this.ov(this.add.image(90, cy, 'ol' + fig, F.DANCE).setOrigin(7 / OL_W, 17 / OL_H).setScale(3).setTint(color), 2051);
+    const body = this.ov(this.add.image(90, cy, 'ch' + fig, F.DANCE).setOrigin(6 / CH_W, 1).setScale(3), 2052);
+    const crown = this.ov(this.add.image(90, cy - CH_H * 3 - 2, 'icons', this.icon('crown')).setOrigin(0.5, 1).setScale(3), 2053);
+    const me = pid === sim.selfPid;
+    const title = this.ovText(90, AY + 40, (me ? this.t.game.youWon : this.t.game.winner).replace(/:$/, ''), 'yellow');
+    // крупно, если влезает в ширину поля
+    if (title.width * 2 <= 170) {
+      title.setScale(2);
+      this.centerScaled(title);
+    }
+    this.ovText(90, cy + 14, info.name, COLOR_FONT[info.color]);
+    this.audio.play('fanfare');
+    haptic('success');
+    this.spawnConfetti();
+    let k = 0;
+    const dance = this.time.addEvent({
+      delay: 160,
+      loop: true,
+      callback: () => {
+        k++;
+        const fr = F.DANCE + (k % 4);
+        const hop = k % 2 === 0 ? 0 : -3;
+        body.setFrame(fr).setY(cy + hop);
+        ol.setFrame(fr).setY(cy + hop);
+        crown.setY(cy - CH_H * 3 - 2 + hop);
+      },
+    });
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      dance.remove();
+      if (this.sim.phase === 'match_end') done();
+    };
+    this.time.delayedCall(2800, finish);
+    this.input.once('pointerup', finish);
+  }
+
   private spawnConfetti(): void {
     const cols = [PAL.red, PAL.yellow, PAL.green, PAL.cyan, PAL.orchid, PAL.white].map(hexToInt);
     this.confetti = Array.from({ length: 90 }, (_, i) => ({
@@ -2763,6 +2887,14 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  /** Победитель матча для заставки клипа (клип из итогов матча, без «слишком живых»). */
+  private clipWinner(): { name: string; color: number } | undefined {
+    const m = this.sim.match;
+    if (this.sim.phase !== 'match_end' || !m || m.tooAlive || !m.winners[0]) return undefined;
+    const w = this.sim.info(m.winners[0]);
+    return w ? { name: w.name, color: w.color } : undefined;
+  }
+
   private openClip(): void {
     const best = this.best;
     if (!best) return;
@@ -2773,7 +2905,7 @@ export class GameScene extends Phaser.Scene {
     try {
       this.closeClip = openClipOverlay(
         document.body,
-        { ...best, arena: this.sim.arena, t: this.t, font: this.init0.fontFamily, site: location.host, noGore: this.cfg.kidsMode },
+        { ...best, arena: this.sim.arena, t: this.t, font: this.init0.fontFamily, site: location.host, noGore: this.cfg.kidsMode, winner: this.clipWinner() },
         this.t,
         async (file) => {
           const m = best.moment;

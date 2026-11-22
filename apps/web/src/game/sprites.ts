@@ -216,16 +216,19 @@ export function makeShadow(): HTMLCanvasElement {
 }
 
 export function makeRing(): HTMLCanvasElement {
-  const { c, g } = canvas(15, 7);
-  const pts: [number, number][] = [];
-  for (let a = 0; a < Math.PI * 2; a += 0.05) pts.push([Math.round(7 + Math.cos(a) * 7), Math.round(3 + Math.sin(a) * 3)]);
-  for (const [x, y] of pts) px(g, x, y, PAL.sand);
+  // кольцо под своим персонажем: 2 пикселя толщиной, белое (тонируется цветом игрока)
+  const { c, g } = canvas(19, 9);
+  for (let a = 0; a < Math.PI * 2; a += 0.04) {
+    px(g, Math.round(9 + Math.cos(a) * 9), Math.round(4 + Math.sin(a) * 4), PAL.white);
+    px(g, Math.round(9 + Math.cos(a) * 8), Math.round(4 + Math.sin(a) * 3), PAL.white);
+  }
   return c;
 }
 
 export function makeArrow(): HTMLCanvasElement {
-  const { c, g } = canvas(7, 6);
-  grid(g, 0, 0, ['ooooooo', 'owwwwwo', '.owwwo.', '..owo..', '...o...', '.......'], { o: PAL.ink, w: PAL.white });
+  // стрелка «это ты» над головой: крупная, с чёрным контуром, белая (тонируется цветом игрока)
+  const { c, g } = canvas(11, 9);
+  grid(g, 0, 0, ['ooooooooooo', 'owwwwwwwwwo', 'owwwwwwwwwo', '.owwwwwwwo.', '..owwwwwo..', '...owwwo...', '....owo....', '.....o.....', '...........'], { o: PAL.ink, w: PAL.white });
   return c;
 }
 
