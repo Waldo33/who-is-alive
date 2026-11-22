@@ -109,7 +109,7 @@ jobs:
             mv /tmp/caddy/caddy deploy/caddy
             echo "$tag" > deploy/caddy.version
           else echo "Caddy $tag уже стоит"; fi
-          cp apps/server/dist/server.mjs apps/server/dist/server.mjs.map infra/game/setup.sh deploy/
+          cp apps/server/dist/server.mjs apps/server/dist/server.mjs.map infra/game/setup.sh infra/game/caddy.sh deploy/
           ls -la deploy
 
       - name: Настроить и выкатить

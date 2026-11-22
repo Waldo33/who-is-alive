@@ -150,36 +150,16 @@ ProtectSystem=full
 WantedBy=multi-user.target
 EOF
 
-cat > /etc/caddy/Caddyfile <<EOF
-{
-	admin localhost:2019
-}
-
-$HOST${ALT_HOST:+, $ALT_HOST} {
-	encode zstd gzip
-	# метрики — только изнутри
-	@internal path /metrics
-	respond @internal 404
-	# X-Forwarded-For Caddy ставит сам (адрес клиента) — по нему лимиты на сервере
-	reverse_proxy 127.0.0.1:8080
-	log {
-		output stdout
-		format json
-	}
-}
+# адреса — в файл: их читает caddy.sh (его вызывает и выкладка сайта)
+cat > /etc/massovka/hosts.env <<EOF
+HOST=$HOST
+ALT_HOST=${ALT_HOST:-}
+SITE_HOST=${SITE_HOST:-}
+SITE_REDIRECT=${SITE_REDIRECT:-}
 EOF
-# сайт пока на Vercel: голый домен и www ведут туда (свои сертификаты Caddy получит сам)
-if [ -n "${SITE_HOST:-}" ] && [ -n "${SITE_REDIRECT:-}" ]; then
-cat >> /etc/caddy/Caddyfile <<EOF
-
-$SITE_HOST, www.$SITE_HOST {
-	redir $SITE_REDIRECT{uri} 302
-}
-EOF
-fi
-
-chown root:caddy /etc/caddy/Caddyfile
-chmod 640 /etc/caddy/Caddyfile
+install -d /opt/massovka/bin
+install -m 755 "$D/caddy.sh" /opt/massovka/bin/caddy.sh
+/opt/massovka/bin/caddy.sh
 chmod 644 /etc/systemd/system/massovka-game.service /etc/systemd/system/caddy.service
 chmod 600 /etc/massovka/game.env
 

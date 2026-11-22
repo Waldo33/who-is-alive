@@ -1,0 +1,85 @@
+# Сайт на своём сервере: сборка Next.js (standalone) в Actions, заливка и перезапуск на сервере.
+# Сервер и Caddy настраивает game-deploy; здесь — только версия сайта.
+name: web-deploy
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/web/**'
+      - 'packages/**'
+      - 'infra/game/web.sh'
+      - 'infra/game/caddy.sh'
+      - '.github/workflows/web-deploy.yml'
+
+concurrency:
+  group: web-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      TWC_TOKEN: ${{ secrets.TWC_TOKEN }}
+      SSH_OPTS: -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=20 -o ServerAliveInterval=15 -o LogLevel=ERROR
+      SITE: benobody.app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Сборка сайта
+        env:
+          NEXT_STANDALONE: '1'
+          NEXT_PUBLIC_SITE_URL: https://benobody.app
+          NEXT_TELEMETRY_DISABLED: '1'
+        run: |
+          pnpm --filter web build
+          cd apps/web
+          # статика и public в standalone не входят — кладём рядом с server.js
+          cp -r .next/static .next/standalone/apps/web/.next/static
+          cp -r public .next/standalone/apps/web/public
+          tar -czf /tmp/web.tar.gz -C .next/standalone .
+          ls -la /tmp/web.tar.gz
+
+      - name: Сервер
+        id: srv
+        run: |
+          python3 -m venv /tmp/py && /tmp/py/bin/pip install -q cryptography
+          /tmp/py/bin/python infra/game/provision.py
+
+      - name: Залить и перезапустить
+        env:
+          IP: ${{ steps.srv.outputs.ip }}
+        run: |
+          ssh $SSH_OPTS root@$IP 'rm -rf /tmp/deploy-web && mkdir -p /tmp/deploy-web'
+          scp $SSH_OPTS -q /tmp/web.tar.gz infra/game/web.sh infra/game/caddy.sh root@$IP:/tmp/deploy-web/
+          ssh $SSH_OPTS root@$IP "SHA=${GITHUB_SHA::12} bash /tmp/deploy-web/web.sh"
+
+      - name: Проверка снаружи
+        run: |
+          for i in $(seq 1 20); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "https://$SITE/" || true)
+            [ "$code" = 200 ] && break
+            sleep 5
+          done
+          for p in / /sandbox /r/ABCD /manifest.webmanifest "/og?l=ru" /icons/icon-192.png; do
+            printf '%-24s ' "$p"; curl -s -o /dev/null -w '%{http_code} %{size_download}B %{time_total}s\n' "https://$SITE$p"
+          done
+          test "$(curl -s -o /dev/null -w '%{http_code}' "https://$SITE/")" = 200
+          test "$(curl -s -o /dev/null -w '%{http_code}' "https://$SITE/sandbox")" = 200
+
+      - name: Логи сайта
+        if: always() && steps.srv.outputs.ip != ''
+        env:
+          IP: ${{ steps.srv.outputs.ip }}
+        run: ssh $SSH_OPTS root@$IP 'journalctl -u massovka-web -n 40 --no-pager -o cat' | cut -c1-300 || true
