@@ -115,7 +115,7 @@ describe('игровой сервер: лобби', () => {
     expect(ls[1].room!.members.map((m) => m.userId)).toEqual([users[1].userId, users[2].userId]);
   });
 
-  it('старт — только режиссёр и только если игроков хватает; пока идёт матч, новые не входят', async () => {
+  it('старт — только режиссёр и только если игроков хватает; пока идёт матч, новый — зритель', async () => {
     const { http, ws } = await boot();
     const [a, b, c] = await Promise.all([anon(http), anon(http), anon(http)]);
     const { code } = await create(http, a.token);
@@ -133,7 +133,9 @@ describe('игровой сервер: лобби', () => {
     await until(() => berrs.includes('not_director'), 3000, 'не режиссёр');
     la.start();
     await until(() => la.room?.status === 'playing', 3000, 'матч начался');
-    await expect(link(ws, c, code, 'C').connect()).rejects.toThrow('room_playing');
+    const lc = link(ws, c, code, 'C');
+    await lc.connect();
+    expect(lc.spectator).toBe(true);
     const p = (await (await fetch(`${http}/v1/rooms/${code}`)).json()) as { status: string };
     expect(p.status).toBe('playing');
   });
@@ -277,5 +279,37 @@ describe('игровой сервер: матч', () => {
     await until(() => starts.length === 2, 3000, 'новый матч');
     const s2 = starts[1] as Extract<RoomMsg, { t: 'match_start' }>;
     expect(s2.players.map((p) => p.pid).sort()).toEqual([a.userId, b.userId, c.userId].sort());
+  }, 90_000);
+
+  it('опоздавший смотрит матч зрителем (только общий канал), после матча занимает место', async () => {
+    const { http, ws, srv } = await boot(40);
+    const [a, b, c] = await Promise.all([anon(http), anon(http), anon(http)]);
+    const { code } = await create(http, a.token, { name: 'A', settings: { roundSec: 60, maxRounds: 3, kidsMode: false, aiFill: false } });
+    const la = link(ws, a, code, 'A');
+    const lb = link(ws, b, code, 'B');
+    await la.connect();
+    await lb.connect();
+    la.start();
+    const room = srv.rooms.get(code)!;
+    await until(() => room.runner?.host.phase === 'play', 5000, 'дубль');
+    const lc = link(ws, c, code, 'C');
+    const r = await lc.connect();
+    expect(lc.spectator).toBe(true);
+    expect(r.members.map((m) => m.userId)).not.toContain(c.userId);
+    const got: { ch: string; t: string }[] = [];
+    lc.onMessage((ch, m) => got.push({ ch, t: (m as { t: string }).t }));
+    await until(() => got.some((g) => g.t === 'ev'), 3000, 'трансляция');
+    expect(got.every((g) => g.ch === 'room')).toBe(true);
+    // зритель не управляет: его намерения сервер не принимает
+    lc.send('host', { t: 'i', i: { k: 'move', x: 50, y: 50 } });
+    // занять место посреди матча нельзя
+    const errs: string[] = [];
+    lc.onError((e) => errs.push(e));
+    lc.join();
+    await until(() => errs.includes('not_now'), 3000, 'не сейчас');
+    await until(() => room.status === 'lobby', 60_000, 'конец матча');
+    lc.join();
+    await until(() => !lc.spectator && !!lc.room?.members.some((m) => m.userId === c.userId), 3000, 'занял место');
+    expect(lc.reconnects).toBe(0);
   }, 90_000);
 });

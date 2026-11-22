@@ -12,3 +12,6 @@ export const SUPABASE_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'sb_pub
 export const SITE_URL =
   process.env.NEXT_PUBLIC_SITE_URL ||
   (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : 'https://who-is-alive.vercel.app');
+
+/** Свой игровой сервер (комнаты и матчи; docs/server-migration.md). */
+export const GAME_API = (process.env.NEXT_PUBLIC_GAME_API || 'https://api.benobody.app').replace(/\/$/, '');

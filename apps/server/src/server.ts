@@ -51,6 +51,7 @@ interface ConnState {
   ip: string;
   budget: MsgBudget;
   alive: boolean;
+  name: string;
 }
 
 export class GameServer {
@@ -300,7 +301,7 @@ export class GameServer {
 
   private onConnection(ws: WebSocket, ip: string): void {
     this.ipConns.inc(ip);
-    const st: ConnState = { userId: null, room: null, ip, budget: new MsgBudget(MSGS_PER_SEC), alive: true };
+    const st: ConnState = { userId: null, room: null, ip, budget: new MsgBudget(MSGS_PER_SEC), alive: true, name: '' };
     this.conns.set(ws, st);
     const peer: Peer = {
       send: (text) => {
@@ -353,6 +354,7 @@ export class GameServer {
       if (err) return this.fail(peer, err, true, ws);
       st.userId = userId;
       st.room = room;
+      st.name = m.name;
       return;
     }
     const room = st.room;
@@ -367,6 +369,7 @@ export class GameServer {
         room.setReady(uid, m.on);
         return;
       case 'rename':
+        st.name = m.name;
         room.rename(uid, m.name);
         return;
       case 'settings':
@@ -381,6 +384,9 @@ export class GameServer {
         if (!err && room.runner !== before) this.stats.matches++;
         break;
       }
+      case 'join':
+        err = room.promote(uid, st.name);
+        break;
       case 'leave':
         room.leave(uid);
         st.room = null;

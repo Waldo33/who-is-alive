@@ -50,7 +50,7 @@ describe('комната', () => {
     expect(room.directorId).toBe('a');
   });
 
-  it('во время матча пропавший режиссёр через 10 с передаёт роль; перезаход в матч разрешён, новичкам — нет', () => {
+  it('во время матча пропавший режиссёр через 10 с передаёт роль; перезаход в матч разрешён, новичок — зритель', () => {
     const { room, advance } = makeRoom();
     const [pa, pb] = [fakePeer(), fakePeer()];
     room.join('a', 'A', pa);
@@ -65,7 +65,9 @@ describe('комната', () => {
     room.housekeeping();
     expect(room.directorId).toBe('b');
     expect(room.runner!.host.sim.hostPid).toBe('b');
-    expect(room.join('c', 'C', fakePeer())).toBe('room_playing');
+    expect(room.join('c', 'C', fakePeer())).toBeNull();
+    expect(room.spectators.has('c')).toBe(true);
+    expect(room.members.has('c')).toBe(false);
     expect(room.join('a', 'A', fakePeer())).toBeNull();
     room.close('test');
   });

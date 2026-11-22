@@ -16,7 +16,7 @@ import { featureOn } from '@/lib/features';
 import { telegramStartTarget } from '@/lib/telegram';
 import { Garland, Snow, useNewYear } from '@/ui/Festive';
 import { shareContent, withLang } from '@/lib/share';
-import { AuthError, ensureAnonymousUser, supabase } from '@/lib/supabase';
+import { AuthError } from '@/lib/game-server';
 import { createRoom } from '@/net/room';
 
 const CROWD = Array.from({ length: 11 }, (_, i) => i);
@@ -83,8 +83,7 @@ export default function HomeClient() {
     setBusy(true);
     setError('');
     try {
-      await ensureAnonymousUser();
-      const c = await createRoom(supabase(), playerName(t));
+      const c = await createRoom(playerName(t), undefined, lang);
       track('room_create', { code: c });
       router.push(`/r/${c}`);
     } catch (e) {

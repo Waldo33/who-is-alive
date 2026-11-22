@@ -23,7 +23,8 @@
 
 - Монорепо **pnpm 10.18.3**, Node 22, TypeScript 5.9 strict, ESLint 9 (flat config в корне), Vitest 3.
 - `apps/web` — **Next.js 15.5** (App Router, React 19) + **Phaser 3.90**. Деплой: Vercel Hobby, проект `who-is-alive` (`prj_J1ZWu5Ncozw0FtcgTVoQGQFLrUNm`, команда `team_KRSpd6ofFYaA171W5rl60kY7`), Root Directory = `apps/web`.
-- **Supabase** (проект `who-is-alive`, ref `wivildtgfkpuxvqoamqg`, Франкфурт): анонимный вход, Postgres + RLS, Realtime (Broadcast + Presence, приватные каналы), pg_cron. Публичный URL и publishable key вшиты как запасные значения в `apps/web/src/lib/env.ts` (это нормально: ключ публичный, права режут RLS). Сервисных ключей в репозитории нет и быть не должно.
+- **Свой игровой сервер** `apps/server` (Timeweb Cloud, Москва, `https://api.benobody.app`, с 22.11.2026): комнаты, лобби и матчи для всех — матч считает сервер, у всех игроков `RemoteSession` поверх `ServerLink`. Выкладка — `.github/workflows/game-deploy.yml` на каждый push в `apps/server`, `packages/*`, `infra/game` (живой прогон четырёх игроков в конце). Адрес для клиента — `GAME_API` в `apps/web/src/lib/env.ts`.
+- **Supabase** (проект `who-is-alive`, ref `wivildtgfkpuxvqoamqg`, Франкфурт): теперь только аналитика, Telegram-бот и «Кастинг дня» (старые комнаты на Realtime остались в коде `packages/net/src/supabase.ts`, но клиент их больше не использует): анонимный вход, Postgres + RLS, Realtime, pg_cron. Публичный URL и publishable key вшиты как запасные значения в `apps/web/src/lib/env.ts` (это нормально: ключ публичный, права режут RLS). Сервисных ключей в репозитории нет и быть не должно.
 - `packages/game-core` — правила игры, чистый детерминированный TS.
 - `packages/net` — сетевой слой: транспорт, хост, гость, протокол (zod).
 - `packages/assets` — палитра 32 цвета `PAL`, `PLAYER_COLORS`.
@@ -106,7 +107,7 @@ CI (`.github/workflows/ci.yml`): lint, typecheck, test, `sim --rounds 200`.
 | `…/supabase.ts` | `SupabaseTransport` — каналы Realtime |
 | `…/host.ts`, `remote.ts` | `HostSession` (оборачивает `MatchSim`), `RemoteSession` (гость: прогноз и сверка) |
 | `…/protocol.ts` | типы сообщений и zod-схемы того, что гость шлёт хосту |
-| `apps/web/src/net/room.ts` | `Room`: вход по RPC, состав, Presence, старт матча, смена хоста |
+| `apps/web/src/net/room.ts` | `Room`: комната на игровом сервере — вход, состав, «Готов», старт, зритель (опоздал к матчу); `lib/game-server.ts` — анонимный вход (`kto:auth2`), создание комнаты, информация о комнате для превью |
 | `apps/web/src/app/` | страницы: `/` (`HomeClient`), `/r/[code]` (`RoomClient`: лобби + игра), `/sandbox`; превью ссылок `og.tsx` + маршрут `og/route.tsx` (язык отправителя из `?l=`); `manifest.ts`, `PwaRegister.tsx` |
 | `apps/web/src/game/scene.ts` | сцена Phaser (~1400 строк): рендер, HUD, оверлеи фаз, ввод, музыка по фазам |
 | `…/game/themes/` | пакеты тем («площадки»): облик толпы, локация, музыка; каждый — свой файл, грузится по требованию (`index.ts › loadTheme`, до старта игры — `loadAllThemes`). Парк — в `sprites.ts`. Новая тема на заданный сеттинг — скилл `.claude/skills/new-theme/SKILL.md` |

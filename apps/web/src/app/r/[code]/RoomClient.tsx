@@ -20,7 +20,6 @@ import { setTrackContext, shareKind, track } from '@/lib/analytics';
 import { Snow, useNewYear } from '@/ui/Festive';
 import { inTelegram, telegramReady, telegramShare, telegramShareCard, tgLink } from '@/lib/telegram';
 import { download, shareContent, withLang } from '@/lib/share';
-import { AuthError, ensureAnonymousUser, supabase } from '@/lib/supabase';
 import { Room, SPECTATE_DELAY_MS } from '@/net/room';
 import type { RemoteSession } from '@kto/net';
 import type { Audio as GameAudio } from '@/game/audio';
@@ -31,7 +30,6 @@ export default function RoomClient({ code, bot = false }: { code: string; bot?: 
   const [lang, setLang] = useState<Lang>('ru');
   const t = DICTS[lang];
   const [state, setState] = useState<RoomState | null>(null);
-  const [fatal, setFatal] = useState('');
   const roomRef = useRef<Room | null>(null);
   const router = useRouter();
   const bar = useRef<Bar | null>(null);
@@ -66,16 +64,7 @@ export default function RoomClient({ code, bot = false }: { code: string; bot?: 
       if (cancelled) return;
       setTrackContext({ room: code, mode: 'online' });
       track('page_view', { page: 'room' });
-      let uid: string;
-      try {
-        uid = await ensureAnonymousUser();
-      } catch (e) {
-        setFatal(e instanceof AuthError ? 'auth' : 'network');
-        track('room_error', { error: e instanceof AuthError ? 'auth' : 'network' });
-        return;
-      }
-      if (cancelled) return;
-      room = new Room(supabase(), code, uid);
+      room = new Room(code);
       roomRef.current = room;
       off = room.subscribe(setState);
       await room.join(playerName(DICTS[detectLang()]));
@@ -155,7 +144,7 @@ export default function RoomClient({ code, bot = false }: { code: string; bot?: 
     />
   );
 
-  const errorKey = fatal || (state?.status === 'error' ? state.error : '');
+  const errorKey = state?.status === 'error' ? state.error : '';
   let screen: React.ReactNode;
   if (errorKey) screen = <ErrorScreen t={t} errorKey={errorKey} />;
   else if (!state || state.status === 'connecting') {
@@ -225,6 +214,8 @@ function GameView({
         onSettings: () => settingsRef.current(),
       });
       if (cancelled) running.destroy();
+      // отладка и автопроверки: ?dev — сцена в консоли как window.__kto
+      else if (new URLSearchParams(location.search).has('dev')) (window as unknown as { __kto: RunningGame }).__kto = running;
     });
     return () => {
       cancelled = true;

@@ -302,6 +302,8 @@ infra/
 - Загрузка из Actions в Москву медленная (~30 МБ Node — около 10 минут), поэтому Node и Caddy везём, только если версия сменилась.
 - Ansible и OpenTofu — когда появятся база, мониторинг и второй сервер.
 
+**Переключение (22.11.2026, решение владельца: сразу и полностью, без флага):** клиент (`apps/web/src/net/room.ts`, `lib/game-server.ts`, `lib/preview.ts`) работает только с `https://api.benobody.app`; Supabase для комнат больше не используется (открытые старые вкладки доживают на нём). Зрители перенесены на сервер (`spectator` в `welcome`, `join` после матча). Сайт пока на Vercel.
+
 **Этап 2. Инфраструктура (1–2 дня)**
 - [ ] `infra/tofu`, `infra/ansible`, `infra/compose`, `provision.yml`, `deploy-infra.yml`, `ops.yml`, `watchdog.yml`, `backup-check.yml`.
 - [ ] Создать серверы, подготовить, поднять стек `infra`.

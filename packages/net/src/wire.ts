@@ -34,6 +34,8 @@ export const ClientMsg = z.discriminatedUnion('t', [
   z.object({ t: z.literal('kick'), userId: z.string().max(64) }),
   z.object({ t: z.literal('start') }),
   z.object({ t: z.literal('leave') }),
+  /** Зритель: матч кончился — занять место в комнате. */
+  z.object({ t: z.literal('join') }),
   /** Игровое сообщение хосту (`GuestMsg`), проверяется схемой у хоста. */
   z.object({ t: z.literal('g'), m: z.unknown() }),
 ]);
@@ -72,7 +74,8 @@ export type WireError =
 
 /** Сервер → клиент. */
 export type ServerMsg =
-  | { t: 'welcome'; selfId: string; room: WireRoom }
+  /** spectator — пришёл посреди матча: смотрит общий канал, место займёт после матча (`join`). */
+  | { t: 'welcome'; selfId: string; room: WireRoom; spectator?: boolean }
   | { t: 'room'; room: WireRoom }
   | { t: 'error'; code: WireError; fatal?: boolean }
   | { t: 'kicked' }

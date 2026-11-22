@@ -26,10 +26,14 @@ export class ServerLink implements Transport {
   readonly authoritative = true;
   readonly selfId: string;
   room: WireRoom | null = null;
+  /** Пришёл посреди матча: смотрит, место займёт после (`join`). */
+  spectator = false;
   private ws: WebSocket | null = null;
   private closedByUs = false;
   private attempts = 0;
   private everJoined = false;
+  /** Соединение открыто заново (после обрыва), ждём его welcome. */
+  private reopened = false;
   private lastMsgAt = 0;
   private watchdog: ReturnType<typeof setInterval> | null = null;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -61,6 +65,7 @@ export class ServerLink implements Transport {
     const WS = this.o.WebSocketImpl ?? WebSocket;
     const ws = new WS(this.o.url);
     this.ws = ws;
+    this.reopened = this.everJoined;
     this.lastMsgAt = Date.now();
     ws.onopen = () => {
       this.lastMsgAt = Date.now();
@@ -113,8 +118,12 @@ export class ServerLink implements Transport {
     switch (m.t) {
       case 'welcome': {
         this.attempts = 0;
-        const again = this.everJoined;
+        // зритель занял место — это не переподключение
+        const promoted = this.spectator && !m.spectator && this.ws !== null && this.everJoined && !this.reopened;
+        this.reopened = false;
+        const again = this.everJoined && !promoted;
         this.everJoined = true;
+        this.spectator = !!m.spectator;
         this.setRoom(m.room);
         if (this.firstJoin) {
           this.firstJoin.resolve(m.room);
@@ -122,7 +131,7 @@ export class ServerLink implements Transport {
         } else if (again) {
           this.reconnects++;
           // матч шёл, пока нас не было: попросить полный снимок мира
-          if (m.room.status === 'playing') this.raw({ t: 'g', m: { t: 'resync' } });
+          if (m.room.status === 'playing' && !this.spectator) this.raw({ t: 'g', m: { t: 'resync' } });
         }
         return;
       }
@@ -204,6 +213,32 @@ export class ServerLink implements Transport {
 
   start(): void {
     this.raw({ t: 'start' });
+  }
+
+  /** Зритель: матч кончился — занять место в комнате. */
+  join(): void {
+    this.raw({ t: 'join' });
+  }
+
+  /**
+   * Вернулись в приложение (телефон спал): если давно ничего не приходило, соединение, скорее
+   * всего, мёртвое — переподключаемся сразу, не дожидаясь сторожа.
+   */
+  poke(): void {
+    if (this.closedByUs) return;
+    if (!this.ws || Date.now() - this.lastMsgAt > 4000) {
+      const ws = this.ws;
+      this.ws = null;
+      try {
+        ws?.close();
+      } catch {
+        // уже закрыт
+      }
+      if (this.retryTimer) clearTimeout(this.retryTimer);
+      this.retryTimer = null;
+      this.attempts = 0;
+      this.open();
+    }
   }
 
   /** Уйти из комнаты насовсем (место освобождается сразу). */

@@ -26,6 +26,8 @@ export const HOLD_MS = 75_000;
 /** Режиссёр пропал во время матча — роль у следующего через столько. */
 export const DIRECTOR_GONE_PLAYING_MS = 10_000;
 const SEATS = 4;
+/** Зрителей на комнату (опоздавшие к матчу смотрят трансляцию). */
+const MAX_SPECTATORS = 8;
 export const SERVER_PID = '$server';
 
 export interface RoomOptions {
@@ -126,6 +128,8 @@ export class Room {
   directorId: string;
   settings: WireRoomSettings;
   members = new Map<string, Member>();
+  /** Зрители: пришли посреди матча — получают только общий канал, после матча занимают место. */
+  spectators = new Map<string, Peer>();
   status: 'lobby' | 'playing' = 'lobby';
   runner: MatchRunner | null = null;
   lastActive: number;
@@ -170,7 +174,14 @@ export class Room {
       m.offlineSince = 0;
       if (name.trim()) m.name = cleanName(name, m.name);
     } else {
-      if (this.status === 'playing') return 'room_playing';
+      if (this.status === 'playing') {
+        if (this.spectators.size >= MAX_SPECTATORS && !this.spectators.has(userId)) return 'room_playing';
+        const old = this.spectators.get(userId);
+        if (old && old !== peer) old.close(4000, 'replaced');
+        this.spectators.set(userId, peer);
+        peer.send(JSON.stringify({ t: 'welcome', selfId: userId, room: this.view(), spectator: true } satisfies ServerMsg));
+        return null;
+      }
       this.purgeOffline(now);
       if (this.members.size >= SEATS) return 'room_full';
       const used = new Set([...this.members.values()].map((x) => x.color));
@@ -186,6 +197,10 @@ export class Room {
 
   /** Соединение оборвалось: место держится HOLD_MS. */
   disconnected(userId: string, peer: Peer): void {
+    if (this.spectators.get(userId) === peer) {
+      this.spectators.delete(userId);
+      return;
+    }
     const m = this.members.get(userId);
     if (!m || m.peer !== peer) return;
     m.peer = null;
@@ -197,6 +212,7 @@ export class Room {
 
   /** Явный уход (кнопка «Назад»): место освобождается сразу. */
   leave(userId: string): void {
+    this.spectators.delete(userId);
     const m = this.members.get(userId);
     if (!m) return;
     // во время матча место за игроком остаётся до конца матча (его персонаж уже на поле)
@@ -251,6 +267,18 @@ export class Room {
     this.directorId = next.userId;
     this.directorGoneSince = 0;
     this.runner?.host.setDirector(next.userId);
+  }
+
+  /** Зритель занимает место, когда матч кончился (комната снова в лобби). */
+  promote(userId: string, name: string): WireError | null {
+    const peer = this.spectators.get(userId);
+    if (!peer) return null;
+    if (this.status === 'playing') return 'not_now';
+    this.spectators.delete(userId);
+    const err = this.join(userId, name, peer);
+    // мест нет — остаётся зрителем следующего матча
+    if (err) this.spectators.set(userId, peer);
+    return err;
   }
 
   // ───────────── действия в лобби ─────────────
@@ -396,6 +424,7 @@ export class Room {
 
   broadcastText(text: string): void {
     for (const m of this.members.values()) m.peer?.send(text);
+    for (const p of this.spectators.values()) p.send(text);
   }
 
   sendTo(userId: string, msg: ServerMsg): void {
@@ -412,6 +441,11 @@ export class Room {
       m.peer?.send(text);
       m.peer?.close(4002, 'closed');
     }
+    for (const p of this.spectators.values()) {
+      p.send(text);
+      p.close(4002, 'closed');
+    }
+    this.spectators.clear();
     this.members.clear();
     this.log('info', 'room_closed', { room: this.code, reason });
   }
