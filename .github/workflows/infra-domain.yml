@@ -26,7 +26,9 @@ jobs:
           echo "NS у реестра (.app):"; dig +short NS "$DOMAIN" @8.8.8.8 || true
           echo "SOA:"; dig +short SOA "$DOMAIN" @1.1.1.1 || true
           echo "A:"; dig +short A "$DOMAIN" @8.8.8.8 || true
-          echo "whois (статус и NS):"; whois "$DOMAIN" 2>/dev/null | grep -iE '^(domain status|name server|registrar:|creation date|registry expiry)' | head -20 || true
+          echo "RDAP реестра .app (статус, NS, регистратор, даты):"
+          curl -sS "https://pubapi.registry.google/rdap/domain/$DOMAIN" -o /tmp/rdap.json -w 'HTTP %{http_code}\n' || true
+          jq -r '"статус: \(.status // [] | join(", "))", "NS: \([.nameservers[]?.ldhName] | join(", "))", (.events[]? | "\(.eventAction): \(.eventDate)"), ([.entities[]? | select(.roles | index("registrar")) | .vcardArray[1][]? | select(.[0] == "fn") | .[3]] | "регистратор: \(join(", "))")' /tmp/rdap.json 2>/dev/null || head -c 300 /tmp/rdap.json
 
       - name: Домен в Timeweb Cloud
         run: |
