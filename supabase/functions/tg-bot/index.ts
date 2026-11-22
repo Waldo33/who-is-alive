@@ -9,18 +9,28 @@
 //   POST /board  — рейтинг загадки дня в чате;
 //   POST /prepare — карточка «поделиться» для WebApp.shareMessage (комната, загадка, приглашение).
 //
-// Секреты: TELEGRAM_BOT_TOKEN (кладёт владелец в Supabase → Edge Functions → Secrets).
+// Ключ бота: секрет функции TELEGRAM_BOT_TOKEN или, если его нет, Supabase Vault `telegram_bot_token`
+// (RPC tg_bot_token — только для service_role).
 // Необязательно: TG_APP_NAME (короткое имя прямой ссылки, по умолчанию «play»), SITE_URL.
 // SUPABASE_URL и SUPABASE_SERVICE_ROLE_KEY Supabase передаёт сам.
 // JWT не проверяется (Telegram его не шлёт): вебхук проверяет секретный заголовок, Mini App — подпись initData.
 
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
-const TOKEN = Deno.env.get('TELEGRAM_BOT_TOKEN') ?? '';
+let TOKEN = Deno.env.get('TELEGRAM_BOT_TOKEN') ?? '';
 const APP = Deno.env.get('TG_APP_NAME') ?? 'play';
 const SITE = Deno.env.get('SITE_URL') ?? 'https://who-is-alive.vercel.app';
 const FN_URL = `${Deno.env.get('SUPABASE_URL')}/functions/v1/tg-bot`;
 const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } });
+
+/** Ключ бота: из секретов функции, иначе из Vault (один раз на запуск функции). */
+async function loadToken(): Promise<string> {
+  if (!TOKEN) {
+    const { data } = await db.rpc('tg_bot_token');
+    if (typeof data === 'string') TOKEN = data;
+  }
+  return TOKEN;
+}
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -271,19 +281,47 @@ async function onDaily(body: { initData?: string; n?: number; tries?: number; wo
   return json({ board: await board(init.chat_instance, n, init.user.id), chat: true });
 }
 
+/** Профиль бота на двух языках: описание, короткое описание, команды, кнопка меню «Играть». Повторно — безвредно. */
+async function setupProfile(): Promise<void> {
+  const P = {
+    ru: {
+      description:
+        'Массовка — пиксельная игра для компании на 2–4 телефона. На площади 32 одинаковых человечка: почти все — боты, среди них — вы. Прячься в толпе, вычисляй живых по поведению и бей первым. Матч — 5 минут. А каждый день — загадка «Найди живого».',
+      short: 'Спрячься в толпе ботов и вычисли друзей первым. 2–4 игрока, 5 минут.',
+      start: 'Играть в Массовку',
+      menu: 'Играть',
+    },
+    en: {
+      description:
+        'Be Nobody is a pixel party game for 2–4 phones. 32 identical people on the square: almost all are bots, and you are among them. Hide in the crowd, spot the humans by how they move, and strike first. 5-minute matches, plus a daily “Spot the human” puzzle.',
+      short: 'Hide in a crowd of bots and spot your friends first. 2–4 players, 5 minutes.',
+      start: 'Play Be Nobody',
+      menu: 'Play',
+    },
+  };
+  for (const [lang, p] of Object.entries(P)) {
+    const language_code = lang === 'en' ? undefined : lang; // английский — по умолчанию для всех языков
+    await api('setMyDescription', { description: p.description, language_code });
+    await api('setMyShortDescription', { short_description: p.short, language_code });
+    await api('setMyCommands', { commands: [{ command: 'start', description: p.start }], language_code });
+  }
+  await api('setChatMenuButton', { menu_button: { type: 'web_app', text: P.ru.menu, web_app: { url: `${SITE}/?src=tg` } } });
+}
+
 // ───────────── вход ─────────────
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS });
   const path = new URL(req.url).pathname.replace(/^.*\/tg-bot/, '') || '/';
-  if (!TOKEN) return json({ error: 'no_token', hint: 'Supabase → Edge Functions → Secrets: TELEGRAM_BOT_TOKEN' }, 503);
   try {
+    if (!(await loadToken())) return json({ error: 'no_token', hint: 'Supabase → Edge Functions → Secrets: TELEGRAM_BOT_TOKEN' }, 503);
     if (req.method === 'GET' && path === '/info') {
       const b = await getMe();
       return json({ username: b.username, app: APP, inline: !!b.supports_inline_queries });
     }
     if (req.method === 'GET' && path === '/setup') {
       await api('setWebhook', { url: `${FN_URL}/hook`, secret_token: await hookSecret(), allowed_updates: ['message', 'inline_query'], drop_pending_updates: true });
+      await setupProfile();
       const b = await getMe();
       return json({ ok: true, bot: b.username, inline: !!b.supports_inline_queries, webhook: `${FN_URL}/hook` });
     }

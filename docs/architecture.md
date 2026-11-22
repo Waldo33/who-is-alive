@@ -184,7 +184,7 @@
 - Рейтинг загадки «в этом чате»: открыто из чата (`chat_instance` в initData) — результат дня уходит на сервер бота, под квадратиками — список чата.
 
 ### 4.2 Сервер бота (`supabase/functions/tg-bot`, Supabase Edge Function, `verify_jwt: false`)
-- Секрет `TELEGRAM_BOT_TOKEN` кладёт владелец в Supabase → Edge Functions → Secrets (в репозитории и чатах его нет). Вебхук привязывается открытием `…/functions/v1/tg-bot/setup`; секрет заголовка вебхука выводится из токена.
+- Ключ бота — в Supabase Vault (`telegram_bot_token`, читает только service_role через RPC `tg_bot_token`) или в секрете функции `TELEGRAM_BOT_TOKEN` (он главнее). В репозитории ключа нет. `…/functions/v1/tg-bot/setup` привязывает вебхук и заполняет профиль бота (описания ru/en, команда `/start`, кнопка меню «Играть»); секрет заголовка вебхука выводится из ключа. Сменить ключ: `/revoke` в BotFather → `select vault.update_secret((select id from vault.secrets where name='telegram_bot_token'), '<новый>')` → `/setup`.
 - `/hook`: `/start [r_КОД|daily]` — приветствие с кнопками web_app; инлайн «@бот» — карточки: пусто → «Позвать» и «Загадка дня», `ABCD` → комната, `daily 🟥🟩⬜` → загадка с квадратиками. Кнопки ведут по прямой ссылке `t.me/<бот>/play?startapp=…`.
 - `/prepare` — `savePreparedInlineMessage` для `WebApp.shareMessage` (комната, загадка, приглашение); `/daily` и `/board` — рейтинг чата. Все три проверяют подпись initData (HMAC «WebAppData», не старше суток).
 - Таблица `tg_daily_scores` (PK чат+день+игрок, первый результат за день окончательный): RLS без политик — только сервер бота (service role); pg_cron чистит старше 30 дней.
