@@ -2,6 +2,7 @@
 //
 // Маршруты (https://<проект>.supabase.co/functions/v1/tg-bot/...):
 //   GET  /info   — юзернейм бота, имя прямой ссылки Mini App, включён ли инлайн-режим (для клиента);
+//   GET  /status — диагностика: вебхук, ошибки доставки, инлайн-режим;
 //   GET  /setup  — привязать вебхук Telegram к /hook (владелец открывает один раз после того, как
 //                  положил ключ бота в секреты Supabase); повторно — безвредно;
 //   POST /hook   — обновления от Telegram: /start и инлайн-запросы «@бот …»;
@@ -281,13 +282,14 @@ async function onDaily(body: { initData?: string; n?: number; tries?: number; wo
   return json({ board: await board(init.chat_instance, n, init.user.id), chat: true });
 }
 
-/** Профиль бота на двух языках: описание, короткое описание, команды, кнопка меню «Играть». Повторно — безвредно. */
+/** Профиль бота на двух языках: имя, описание, короткое описание, команды, кнопка меню «Играть». Повторно — безвредно. */
 async function setupProfile(): Promise<void> {
   const P = {
     ru: {
       description:
         'Массовка — пиксельная игра для компании на 2–4 телефона. На площади 32 одинаковых человечка: почти все — боты, среди них — вы. Прячься в толпе, вычисляй живых по поведению и бей первым. Матч — 5 минут. А каждый день — загадка «Найди живого».',
       short: 'Спрячься в толпе ботов и вычисли друзей первым. 2–4 игрока, 5 минут.',
+      name: 'Массовка',
       start: 'Играть в Массовку',
       menu: 'Играть',
     },
@@ -295,12 +297,14 @@ async function setupProfile(): Promise<void> {
       description:
         'Be Nobody is a pixel party game for 2–4 phones. 32 identical people on the square: almost all are bots, and you are among them. Hide in the crowd, spot the humans by how they move, and strike first. 5-minute matches, plus a daily “Spot the human” puzzle.',
       short: 'Hide in a crowd of bots and spot your friends first. 2–4 players, 5 minutes.',
+      name: 'Be Nobody',
       start: 'Play Be Nobody',
       menu: 'Play',
     },
   };
   for (const [lang, p] of Object.entries(P)) {
     const language_code = lang === 'en' ? undefined : lang; // английский — по умолчанию для всех языков
+    await api('setMyName', { name: p.name, language_code });
     await api('setMyDescription', { description: p.description, language_code });
     await api('setMyShortDescription', { short_description: p.short, language_code });
     await api('setMyCommands', { commands: [{ command: 'start', description: p.start }], language_code });
@@ -318,6 +322,20 @@ Deno.serve(async (req) => {
     if (req.method === 'GET' && path === '/info') {
       const b = await getMe();
       return json({ username: b.username, app: APP, inline: !!b.supports_inline_queries });
+    }
+    if (req.method === 'GET' && path === '/status') {
+      // диагностика: доходят ли обновления от Telegram (без ключа и секретов в ответе)
+      const w = await api<{ url?: string; pending_update_count?: number; last_error_date?: number; last_error_message?: string }>('getWebhookInfo');
+      me = null;
+      const b = await getMe();
+      return json({
+        bot: b.username,
+        inline: !!b.supports_inline_queries,
+        webhook: w.url === `${FN_URL}/hook`,
+        pending: w.pending_update_count ?? 0,
+        lastError: w.last_error_message ?? null,
+        lastErrorAt: w.last_error_date ? new Date(w.last_error_date * 1000).toISOString() : null,
+      });
     }
     if (req.method === 'GET' && path === '/setup') {
       await api('setWebhook', { url: `${FN_URL}/hook`, secret_token: await hookSecret(), allowed_updates: ['message', 'inline_query'], drop_pending_updates: true });
