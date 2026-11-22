@@ -103,6 +103,8 @@ def main():
     pub = ssh_key()
     key_id = ensure_key(pub)
     servers = [s for s in api('GET', '/servers').get('servers', []) if s.get('name') == NAME]
+    if len(servers) > 1:
+        print(f'::warning::серверов с именем {NAME}: {len(servers)} (id: {[x["id"] for x in servers]}) — беру первый, лишние удалить в панели')
     if servers:
         s = servers[0]
         print(f'сервер есть: id={s["id"]}, статус={s.get("status")}')
@@ -130,11 +132,17 @@ def main():
             sys.exit(1)
     sid = s['id']
     ip = None
+    asked_ip = False
     for _ in range(90):
         s = api('GET', f'/servers/{sid}')['server']
         ip = ipv4(s)
         if s.get('status') == 'on' and ip:
             break
+        # некоторые тарифы (MSK Ultra) создаются без публичного IPv4 — заказать его
+        if s.get('status') == 'on' and not ip and not asked_ip:
+            asked_ip = True
+            r = api('POST', f'/servers/{sid}/ips', {'type': 'ipv4'}, soft=True)
+            print('IPv4: заказан' if '_error' not in r else f'IPv4: отказ ({r["_msg"][:200]})')
         time.sleep(10)
     if not ip or s.get('status') != 'on':
         print(f'::error::сервер не готов: статус={s.get("status")}, ip={ip}')
