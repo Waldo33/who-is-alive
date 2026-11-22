@@ -989,7 +989,7 @@ export class GameScene extends Phaser.Scene {
       this.applyTheme();
       this.ghostMarks.clear();
       this.replay = null;
-      // клип выбывшего, который уже монтируется или готов, не теряем: кнопка остаётся до конца следующего дубля
+      // клип выбывшего, который уже монтируется или готов, не теряем: кнопка вернётся на итогах следующего дубля
       const dc = this.deathClip;
       if (!dc || dc.status === 'offer' || dc.round < n.round - 1) this.deathClip = null;
       if (n.round === 1) {
@@ -1388,7 +1388,9 @@ export class GameScene extends Phaser.Scene {
       // в игре — в углу поля, на итогах — во всю ширину нижней панели (кнопки итогов выше)
       visible: () => {
         const ph = this.sim.phase;
-        const ok = !!this.deathClip && (ph === 'countdown' || ph === 'play' || ph === 'accuse' || ph === 'reveal' || ph === 'results');
+        const dc = this.deathClip;
+        // клип прошлого дубля посреди нового не мешает: кнопка ждёт итогов этого дубля (монтаж идёт фоном)
+        const ok = !!dc && (dc.round === this.sim.round ? ph === 'play' || ph === 'accuse' || ph === 'reveal' || ph === 'results' : ph === 'results');
         if (ok) this.placeDeathClipButton(b, ph === 'results');
         return ok;
       },
