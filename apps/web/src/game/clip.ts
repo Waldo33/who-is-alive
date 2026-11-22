@@ -2,13 +2,13 @@ import { PAL, PLAYER_COLORS } from '@kto/assets';
 import { TICK_MS, fmt, makeReplay, worldOf } from '@kto/game-core';
 import type { ArenaDef, Dict, Moment, RoundRecording, World, WorldEvent } from '@kto/game-core';
 import type { ClipSound } from './audio';
-import { fitSize, frame, getArt, scaledCanvas, text } from './art';
+import { fitSize, frame, getArt, scaledCanvas, text, tint } from './art';
 import { canvas } from './pixels';
 import type { Art } from './art';
 import { frameFor } from './frames';
 import { CH_H, CH_W, F, OL_H, OL_W } from './sprites';
-import { bodyPose, drawAir, drawFloor, killsFromLog, weaponSfx } from './gore';
-import type { Kill, Px } from './gore';
+import { SHADOW_ARMS, aim, armed, armsOf, bodyPose, drawAir, drawFloor, killsFromLog, shadowAt, weaponSfx } from './gore';
+import type { Holder, Kill, Px } from './gore';
 import { isThemeLoaded, themeLook, themePack } from './themes';
 
 /**
@@ -134,6 +134,10 @@ export class ClipPlayerScene {
   private kills = new Map<number, Kill>();
   /** Удар момента: в стоп-кадре брызги ещё летят (замедленно). */
   private focusKill: Kill | null = null;
+  /** Кто бил (известно после разоблачения) → его удары. */
+  private byAttacker = new Map<number, Kill[]>();
+  /** Силуэты «тени» (чёрный + неоновый контур) по листу костюма. */
+  private shadows = new Map<HTMLCanvasElement, { body: HTMLCanvasElement; ol: HTMLCanvasElement }>();
 
   constructor(private inp: ClipInput) {
     const { c, g } = scaledCanvas(LW, LH, CLIP_SCALE);
@@ -171,7 +175,12 @@ export class ClipPlayerScene {
     this.part2Dur = cms;
     const th = inp.rec.theme;
     if (!inp.noGore) {
-      for (const k of killsFromLog(inp.rec.log, (tw) => isThemeLoaded(th) && themeLook(th, tw ? 1 : 0).kill === 'weapon')) this.kills.set(k.eid, k);
+      for (const k of killsFromLog(inp.rec.log, (tw) => isThemeLoaded(th) && themeLook(th, tw ? 1 : 0).kill === 'weapon')) {
+        this.kills.set(k.eid, k);
+        // кто бил — только из итогов раунда (клип выбывшего посреди раунда его не знает: там «тень»)
+        k.by = inp.rec.kills?.find((x) => x.victim === k.eid && x.at === k.at)?.by ?? k.by;
+        if (k.by !== undefined) this.byAttacker.set(k.by, [...(this.byAttacker.get(k.by) ?? []), k]);
+      }
     }
     const fk = m.victim !== undefined ? this.kills.get(m.victim) : undefined;
     if (fk && fk.at === m.at && this.hitClip !== Infinity) this.focusKill = fk;
@@ -179,6 +188,12 @@ export class ClipPlayerScene {
     this.duration = this.part1Dur + this.part2Dur + OUTRO_MS;
     // наезд камеры — если есть на кого: за CUT_BEFORE до удара, но сначала дать увидеть всех
     if (focused && (m.attacker !== undefined || m.victim !== undefined)) this.cutAt = Math.max(WIDE_MIN_MS, this.clipOf(m.at - CUT_BEFORE));
+  }
+
+  private shadowOf(body: HTMLCanvasElement, ol: HTMLCanvasElement): { body: HTMLCanvasElement; ol: HTMLCanvasElement } {
+    let s = this.shadows.get(body);
+    if (!s) this.shadows.set(body, (s = { body: tint(body, PAL.ink), ol: tint(ol, PAL.magenta) }));
+    return s;
   }
 
   /** Время мира для момента второй части. */
@@ -385,7 +400,10 @@ export class ClipPlayerScene {
         if (since >= 0 && since < 360) list.push({ y: y + 1, draw: () => frame(g, a.poof, 24, 24, Math.min(5, Math.floor(since / 60)), x - 12, y - 20) });
         continue;
       }
-      const fr = frameFor(e, t, ch.acts);
+      let fr = frameFor(e, t, ch.acts);
+      // бьёт оружием: стоит боком к жертве, пока замахивается
+      const sw = this.byAttacker.get(e.eid)?.find((k) => armed(gt(k)));
+      if (sw) fr = { frame: F.S, flip: e.x > sw.x, yoff: 0 };
       const ce = a.charsFor(this.inp.rec.theme, look, idx); // свой костюм фигуры
       const col = this.colors.get(e.eid);
       const lit = reveal && col !== undefined;
@@ -407,13 +425,38 @@ export class ClipPlayerScene {
         },
       });
     }
+    // «тень», если кто бил — неизвестно
+    const holders = new Map<Kill, Holder>();
+    for (const k of this.kills.values()) {
+      const by = k.by !== undefined ? w.get(k.by) : undefined;
+      if (by) {
+        if (gt(k) <= 0) aim(k, by.x);
+        holders.set(k, pos.get(by.eid) ?? { x: Math.round(by.x), y: Math.round(by.y) });
+        continue;
+      }
+      const h = shadowAt(k);
+      holders.set(k, h);
+      if (!armed(gt(k))) continue;
+      const vi = w.entities.findIndex((e) => e.eid === k.eid);
+      const ce = a.charsFor(this.inp.rec.theme, look, (Math.max(0, vi) + 7) % w.entities.length);
+      const sh = this.shadowOf(ce.body, ce.outline[0]);
+      const flip = h.x > k.x;
+      list.push({
+        y: h.y,
+        draw: () => {
+          frame(g, sh.ol, OL_W, OL_H, F.S, h.x - 7, h.y - 17, flip);
+          frame(g, sh.body, CH_W, CH_H, F.S, h.x - 6, h.y - CH_H, flip);
+        },
+      });
+    }
     for (const st of w.stars.values()) {
       const bob = Math.floor((now + st.id * 300) / 300) % 2;
       list.push({ y: st.y - 1, draw: () => frame(g, a.star, 10, 10, Math.floor(now / 140) % 4, st.x - 5, st.y - 8 - bob) });
     }
     list.sort((p, q) => p.y - q.y);
     for (const d of list) d.draw();
-    for (const k of this.kills.values()) drawAir(px, k, gt(k));
+    const arms = armsOf(themeLook(this.inp.rec.theme, look).chars.map);
+    for (const k of this.kills.values()) drawAir(px, k, gt(k), holders.get(k)!, k.by !== undefined && w.get(k.by) ? arms : SHADOW_ARMS);
 
     // плавная тема (закат): после смены облика лиловые сумерки тают ~0,9 с
     if (look !== this.lastLook) {

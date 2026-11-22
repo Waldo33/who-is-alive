@@ -17,7 +17,8 @@ import {
 import type { AwardId, ClientSession, CrowdKind, Dict, Entity, GameConfig, Lang, Moment, Notice, RoundRecording, ThemeText, World, WorldEvent } from '@kto/game-core';
 import { resultCardFile } from './card';
 import { Tutorial } from './tutorial';
-import { SWING_HIT, bodyPose, drawAir, drawFloor, killsFromLog, makeKill, weaponSfx } from './gore';
+import { SHADOW_ARMS, SWING_END, SWING_HIT, aim, armed, armsOf, bodyPose, drawAir, drawFloor, killsFromLog, makeKill, shadowAt, weaponSfx } from './gore';
+import type { ArmColors, Holder } from './gore';
 import type { Kill, Px } from './gore';
 import { clipSupported, openClipOverlay, recordClipInBackground } from './clip-ui';
 import type { ClipPlayer } from './clip';
@@ -208,6 +209,9 @@ export class GameScene extends Phaser.Scene {
   private bodies: Phaser.GameObjects.Image[] = [];
   /** Повтор на разоблачении: удары оружием по журналу дубля и время повтора (null — повтор не идёт). */
   private replayKills = new Map<number, Kill>();
+  /** Повтор: кто бил (известно после разоблачения) → его удары; без него — «тень». */
+  private replayBy = new Map<number, Kill[]>();
+  private replayShadows = new Map<number, Shadow>();
   private replayT: number | null = null;
   private pxCache = new Map<string, number>();
   private noPoof = new Set<number>();
@@ -811,7 +815,7 @@ export class GameScene extends Phaser.Scene {
     switch (ev.t) {
       case 'hit':
         // ночью Майами — удар оружием: звук, тряска и стоп-кадр — в момент удара (weaponImpact)
-        if (this.weaponKills()) this.weaponHit(ev.target, ev.x, ev.y);
+        if (this.weaponKills()) this.weaponHit(ev.target, ev.x, ev.y, ev.attacker);
         else {
           this.audio.play(ev.result === 'player' ? 'hitPlayer' : 'hitBot');
           this.audio.play('poof');
@@ -928,7 +932,7 @@ export class GameScene extends Phaser.Scene {
         this.finalSoundsPlayed = false;
         const s = this.sim.summary!;
         this.replay = makeReplay(this.sim.world, s.replayFrom, this.sim.world.time);
-        this.replayKills = new Map(this.cfg.kidsMode ? [] : killsFromLog(this.sim.world.log, (tw) => this.weaponLook(tw)).map((k) => [k.eid, k]));
+        this.setReplayKills(s.kills ?? []);
         this.trails.clear();
         this.noteMoment();
         this.upgradeDeathClip();
@@ -964,15 +968,23 @@ export class GameScene extends Phaser.Scene {
    * Замах (0,11 с) → удар (0,06 с) → в момент удара: звук оружия, стоп-кадр, тряска, красная
    * вспышка, искры, брызги, тело падает, оружие остаётся лежать рядом (рисует gore.ts).
    */
-  private weaponHit(eid: number, x: number, y: number): void {
+  private weaponHit(eid: number, x: number, y: number, by?: number): void {
     this.audio.play('swing');
     const w = this.sim.world;
     const i = w.entities.findIndex((e) => e.eid === eid);
     const tex = i >= 0 ? 'ch' + this.charKey(this.lookKey, i) : '';
     const k = makeKill(eid, x, y, w.time);
+    // удар по статисту и так раскрывает бьющего (он оглушён) — машет он сам; иначе — «тень»
+    const att = by !== undefined ? w.get(by) : undefined;
+    if (att) {
+      aim(k, att.x);
+      k.by = by;
+    }
     // до удара жертва ещё стоит
     const standIn = tex ? this.add.image(k.x, AY + k.y - 8, tex, F.D).setDepth(AY + k.y) : null;
-    this.kills.push({ k, t: 0, hit: false, tex, standIn });
+    // бьёт «тень»: кто на самом деле нападал, в игре не раскрываем
+    const shadow = att ? null : this.makeShadow(this.charKey(this.lookKey, (Math.max(0, i) + 7) % w.entities.length));
+    this.kills.push({ k, t: 0, hit: false, tex, standIn, shadow });
     this.noPoof.add(eid);
   }
 
@@ -989,6 +1001,49 @@ export class GameScene extends Phaser.Scene {
     lk.standIn = null;
     const b = bodyPose(lk.k);
     if (lk.tex) this.bodies.push(this.add.image(b.x, AY + b.y, lk.tex, F.D).setAngle(b.angle).setDepth(AY + lk.k.y - 6));
+  }
+
+  /** Повтор разоблачения: удары оружием из журнала дубля, с теми, кто бил (из итогов). */
+  private setReplayKills(by: readonly { by: number; victim: number; at: number }[]): void {
+    for (const sh of this.replayShadows.values()) this.dropShadow(sh);
+    this.replayShadows.clear();
+    this.replayBy.clear();
+    const kills = this.cfg.kidsMode ? [] : killsFromLog(this.sim.world.log, (tw) => this.weaponLook(tw));
+    this.replayKills = new Map(kills.map((k) => [k.eid, k]));
+    for (const k of kills) {
+      k.by = by.find((x) => x.victim === k.eid && x.at === k.at)?.by ?? k.by;
+      if (k.by === undefined) continue;
+      const list = this.replayBy.get(k.by) ?? [];
+      list.push(k);
+      this.replayBy.set(k.by, list);
+    }
+  }
+
+  /** «Тень убийцы»: чёрный силуэт фигуры толпы с неоновым контуром. */
+  private makeShadow(fig: string): Shadow {
+    return {
+      ol: this.add.image(0, 0, 'ol' + fig, F.S).setOrigin(7 / OL_W, 17 / OL_H).setTintFill(hexToInt(PAL.magenta)).setVisible(false),
+      body: this.add.image(0, 0, 'ch' + fig, F.S).setOrigin(6 / CH_W, 1).setTintFill(hexToInt(PAL.ink)).setVisible(false),
+    };
+  }
+
+  private placeShadow(sh: Shadow, k: Kill, dt: number): void {
+    const on = armed(dt);
+    const h = shadowAt(k);
+    const flip = h.x > k.x;
+    sh.ol.setVisible(on).setPosition(h.x, AY + h.y).setFlipX(flip).setDepth(AY + h.y - 0.2);
+    sh.body.setVisible(on).setPosition(h.x, AY + h.y).setFlipX(flip).setDepth(AY + h.y);
+  }
+
+  private dropShadow(sh: Shadow): void {
+    sh.ol.destroy();
+    sh.body.destroy();
+  }
+
+  /** Руки бьющего в повторе — по костюму облика на экране. */
+  private lookArms(): ArmColors {
+    const [t, l] = this.lookKey.split('_').map(Number);
+    return isThemeLoaded(t) ? armsOf(themeLook(t, l).chars.map) : SHADOW_ARMS;
   }
 
   /** Рисовалка gore.ts поверх Graphics (координаты поля). */
@@ -1066,9 +1121,15 @@ export class GameScene extends Phaser.Scene {
   private clearGore(): void {
     for (const b of this.bodies) b.destroy();
     this.bodies = [];
-    for (const lk of this.kills) lk.standIn?.destroy();
+    for (const lk of this.kills) {
+      lk.standIn?.destroy();
+      if (lk.shadow) this.dropShadow(lk.shadow);
+    }
     this.kills = [];
     this.replayKills.clear();
+    this.replayBy.clear();
+    for (const sh of this.replayShadows.values()) this.dropShadow(sh);
+    this.replayShadows.clear();
     this.noPoof.clear();
     this.goreG?.clear();
   }
@@ -1561,9 +1622,22 @@ export class GameScene extends Phaser.Scene {
       const acting = !!e.act && t < e.actEnd;
       const dz = mode === 'live' ? this.dressFrame(i, acting) : null;
       const base = this.frameFor(e, t);
-      const frame = dz?.frame ?? base.frame;
-      const flip = dz?.frame != null ? false : base.flip;
-      const yoff = dz?.frame != null ? 0 : base.yoff;
+      let frame = dz?.frame ?? base.frame;
+      let flip = dz?.frame != null ? false : base.flip;
+      let yoff = dz?.frame != null ? 0 : base.yoff;
+      // бьющий оружием (известный: повтор или удар по статисту) стоит боком к жертве, пока замахивается
+      const rt = this.replayT;
+      const swing =
+        mode === 'replay' && rt !== null
+          ? this.replayBy.get(e.eid)?.find((k) => armed(rt - k.at))
+          : mode === 'live'
+            ? this.kills.find((lk) => lk.k.by === e.eid && armed(lk.t - SWING_HIT))?.k
+            : undefined;
+      if (swing) {
+        frame = F.S;
+        flip = e.x > swing.x;
+        yoff = 0;
+      }
       let jumpOff = yoff;
       if (mode === 'final' && highlight?.has(e.eid)) jumpOff = -Math.abs(Math.round(Math.sin(performance.now() / 140) * 5));
       // замах своего персонажа (только на своём экране)
@@ -1822,15 +1896,47 @@ export class GameScene extends Phaser.Scene {
     const rt = this.replayT;
     const gore = this.sim.phase === 'play' || this.sim.phase === 'accuse' || this.sim.phase === 'reveal';
     for (const b of this.bodies) b.setVisible(gore && rt === null);
-    if (rt !== null) {
-      for (const k of this.replayKills.values()) {
-        drawFloor(floor, k, rt - k.at);
-        drawAir(air, k, rt - k.at);
+    for (const lk of this.kills) {
+      if (lk.shadow) this.placeShadow(lk.shadow, lk.k, rt === null && gore ? lk.t - SWING_HIT : -1e9);
+      if (lk.shadow && lk.t > SWING_END + 100) {
+        this.dropShadow(lk.shadow);
+        lk.shadow = null;
       }
-    } else if (gore) {
-      for (const lk of this.kills) {
-        drawFloor(floor, lk.k, lk.t - SWING_HIT);
-        drawAir(air, lk.k, lk.t - SWING_HIT);
+    }
+    if (rt !== null && this.replay) {
+      const arms = this.lookArms();
+      for (const k of this.replayKills.values()) {
+        const dt = rt - k.at;
+        // повтор после разоблачения: машет тот, кто бил; кто — не знаем (режиссёр) — «тень»
+        const by = k.by !== undefined ? this.replay.get(k.by) : undefined;
+        let holder: Holder;
+        if (by) {
+          if (dt <= 0) aim(k, by.x);
+          holder = { x: Math.round(by.x), y: Math.round(by.y) };
+        } else {
+          holder = shadowAt(k);
+          let sh = this.replayShadows.get(k.eid);
+          if (!sh && armed(dt)) {
+            const i = this.replay.entities.findIndex((e) => e.eid === k.eid);
+            this.replayShadows.set(k.eid, (sh = this.makeShadow(this.charKey(this.lookKey, (Math.max(0, i) + 7) % this.replay.entities.length))));
+          }
+          if (sh) this.placeShadow(sh, k, dt);
+        }
+        drawFloor(floor, k, dt);
+        drawAir(air, k, dt, holder, by ? arms : SHADOW_ARMS);
+      }
+    } else {
+      for (const sh of this.replayShadows.values()) {
+        sh.ol.setVisible(false);
+        sh.body.setVisible(false);
+      }
+      if (gore) {
+        for (const lk of this.kills) {
+          drawFloor(floor, lk.k, lk.t - SWING_HIT);
+          const att = lk.k.by !== undefined ? this.sim.world.get(lk.k.by) : undefined;
+          if (att) drawAir(air, lk.k, lk.t - SWING_HIT, { x: Math.round(att.x), y: Math.round(att.y) }, this.lookArms());
+          else drawAir(air, lk.k, lk.t - SWING_HIT, shadowAt(lk.k), SHADOW_ARMS);
+        }
       }
     }
     // прожекторы режиссёра: свет на площадке гаснет, сверху падает луч, на полу — светлое пятно
@@ -2427,4 +2533,11 @@ interface LiveKill {
   hit: boolean;
   tex: string;
   standIn: Phaser.GameObjects.Image | null;
+  shadow: Shadow | null;
+}
+
+/** Силуэт «тени» с неоновым контуром. */
+interface Shadow {
+  ol: Phaser.GameObjects.Image;
+  body: Phaser.GameObjects.Image;
 }
