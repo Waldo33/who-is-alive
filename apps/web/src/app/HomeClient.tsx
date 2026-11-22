@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
-import { DICTS } from '@kto/game-core';
+import { DICTS, dailyNumber, fmt, localDateKey } from '@kto/game-core';
 import type { Lang } from '@kto/game-core';
 import { getAudio } from '@/game/audio';
 import { tutorialDone } from '@/game/tutorial';
@@ -29,6 +29,18 @@ export default function HomeClient() {
   const [showCode, setShowCode] = useState(false);
   const [code, setCode] = useState('');
   const [toast, setToast] = useState('');
+  // кастинг дня: номер и пройден ли сегодня (localStorage — как на /daily)
+  const [daily, setDaily] = useState({ n: 0, done: false });
+  useEffect(() => {
+    const n = dailyNumber(localDateKey(new Date()));
+    let done = false;
+    try {
+      done = !!JSON.parse(localStorage.getItem('kto:daily') ?? '{}')?.days?.[String(n)];
+    } catch {
+      /* нет записей */
+    }
+    setDaily({ n, done });
+  }, []);
   const bar = useRef<Bar | null>(null);
   const ny = useNewYear();
   const creating = useRef(false);
@@ -119,13 +131,22 @@ export default function HomeClient() {
       <h1>{t.meta.title}</h1>
       <p className="tag">{t.meta.tagline}</p>
       {ny && <p className="ny-line">{t.start.newYear}</p>}
-      {/* главное — сразу играть (с ИИ, без друзей и входа); комната для друзей — второй кнопкой */}
-      <Link className="btn" href="/sandbox?go" onClick={() => track('quick_play_tap')}>
-        {t.start.quickPlay}
-      </Link>
-      <button className="btn small" onClick={create} disabled={busy}>
-        {busy ? t.lobby.connecting : t.lobby.createGame}
-      </button>
+      {/* главное — сразу играть (с ИИ, без друзей и входа); комната для друзей — второй; кастинг дня — карточкой */}
+      <div className="home-actions">
+        <Link className="btn" href="/sandbox?go" onClick={() => track('quick_play_tap')}>
+          {t.start.quickPlay}
+        </Link>
+        <button className="btn alt" onClick={create} disabled={busy}>
+          {busy ? t.lobby.connecting : t.start.withFriends}
+        </button>
+        <Link className="daily-tile" href="/daily" onClick={() => track('daily_tap', { from: 'home' })}>
+          <span className="daily-tile-title">
+            {t.daily.title}
+            {daily.n > 0 && ` ${fmt(t.daily.numShort, { n: daily.n })}`}
+          </span>
+          <span className="daily-tile-sub">{daily.done ? t.start.dailyDone : t.daily.task}</span>
+        </Link>
+      </div>
       {showCode ? (
         <form
           className="code-form"
@@ -154,12 +175,6 @@ export default function HomeClient() {
           {t.lobby.haveCode}
         </button>
       )}
-      <Link className="link" href="/daily" onClick={() => track('daily_tap', { from: 'home' })}>
-        {t.daily.title}: {t.daily.task.toLowerCase()}
-      </Link>
-      <Link className="link" href="/learn">
-        {t.ui.howTo}
-      </Link>
       {toast && (
         <div className="toast" role="status">
           {toast}
