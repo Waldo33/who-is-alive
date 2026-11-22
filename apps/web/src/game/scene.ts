@@ -186,6 +186,9 @@ export class GameScene extends Phaser.Scene {
   private dim!: Phaser.GameObjects.Rectangle;
   private overlayPhase = '';
   private ovDyn: Record<string, Phaser.GameObjects.BitmapText> = {};
+  /** Полоска обратного отсчёта до следующего дубля (итоги дубля). */
+  private autoBar: Phaser.GameObjects.Graphics | null = null;
+  private autoTotal = 1;
   private crowdIcon!: Phaser.GameObjects.Image;
   private crowdText!: Phaser.GameObjects.BitmapText;
   private toast!: Phaser.GameObjects.BitmapText;
@@ -2369,6 +2372,7 @@ export class GameScene extends Phaser.Scene {
     for (const o of this.ovObjs) o.destroy();
     this.ovObjs = [];
     this.ovDyn = {};
+    this.autoBar = null;
     const keep = new Set(this.buttons.filter((b) => b.keep).map((b) => b.id));
     this.buttons = this.buttons.filter((b) => !b.label || b.keep);
     for (const [id, o] of this.btnObjs) if (o.text && !keep.has(id)) this.btnObjs.delete(id);
@@ -2487,6 +2491,9 @@ export class GameScene extends Phaser.Scene {
     this.ovText(90, AY + 16, tp(this.lang, this.t.game.resultsTitle, s.round), 'yellow');
     this.ovText(90, AY + 28, reason, 'mist');
     const order = [...sim.players].sort((a, b) => sim.scores[b.pid] - sim.scores[a.pid]);
+    // цель матча над столбцом счёта: видно, что дублей будет несколько
+    const goal = this.ovText(0, AY + 37, fmt(this.t.game.toWin, { n: this.cfg.scoreToWin }), 'mist', false);
+    goal.x = 171 - goal.width;
     order.forEach((p, i) => {
       const y = AY + 46 + i * 16;
       const pts = s.points[p.pid];
@@ -2512,7 +2519,11 @@ export class GameScene extends Phaser.Scene {
         sim.intent({ k: 'next' });
       }, PAL.amber);
     } else this.addOverlayButton('share', 9, AY + 214, 162, 30, this.t.game.share, () => this.share(), undefined, true);
-    this.ovDyn.auto = this.ovText(90, AY + 200, '', 'mist');
+    // следующий дубль начнётся сам: крупный обратный отсчёт и тающая полоска — у всех, не только у режиссёра
+    this.ovDyn.auto = this.ovText(90, AY + 199, '', 'yellow');
+    this.autoBar = this.add.graphics();
+    this.ov(this.autoBar, 2050);
+    this.autoTotal = Math.max(1, sim.timeLeft());
   }
 
   private awardCard(x: number, y: number, id: AwardId, pids: string[], value: number): void {
@@ -2660,8 +2671,16 @@ export class GameScene extends Phaser.Scene {
       }
     }
     if (phase === 'results' && this.ovDyn.auto) {
-      this.ovDyn.auto.setText(tp(this.lang, this.t.game.nextIn, Math.ceil(sim.timeLeft() / 1000)));
+      const left = sim.timeLeft();
+      this.ovDyn.auto.setText(fmt(this.t.game.nextTake, { n: sim.round + 1, s: Math.ceil(left / 1000) }));
       this.ovDyn.auto.x = Math.round(90 - this.ovDyn.auto.width / 2);
+      const bar = this.autoBar;
+      if (bar) {
+        const w = Math.round((160 * Math.max(0, Math.min(1, left / this.autoTotal))));
+        bar.clear();
+        bar.fillStyle(hexToInt(PAL.ink)).fillRect(10, AY + 209, 160, 3);
+        bar.fillStyle(hexToInt(PAL.amber)).fillRect(10, AY + 210, w, 1);
+      }
     }
   }
 

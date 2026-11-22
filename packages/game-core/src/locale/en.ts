@@ -121,6 +121,8 @@ export const en: Dict = {
     share: 'Share',
     next: 'Next',
     nextIn: 'Next in {n}',
+    nextTake: 'Take {n} in {s}s',
+    toWin: 'to {n}',
     spectator: 'Spectating',
     spectatorLive: 'Match in progress',
     spectatorDelay: 'Delay: {n} s',

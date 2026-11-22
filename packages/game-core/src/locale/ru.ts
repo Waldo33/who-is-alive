@@ -150,6 +150,8 @@ export const ru = {
     share: 'Поделиться',
     next: 'Дальше',
     nextIn: 'Дальше через {n}',
+    nextTake: 'Дубль {n} через {s} с',
+    toWin: 'до {n}',
     spectator: 'Ты зритель',
     spectatorLive: 'Матч уже идёт',
     spectatorDelay: 'Задержка {n} с',
