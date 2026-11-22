@@ -902,6 +902,11 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  /** Я режиссёр (хост): только мои «Дальше» и «Ещё дубль» что-то делают. В песочнице — всегда я. */
+  private amHost(): boolean {
+    return this.sim.selfPid === this.sim.hostPid;
+  }
+
   private handleNotices(): void {
     const list = this.sim.drainNotices();
     for (const n of list) this.onNotice(n);
@@ -2357,8 +2362,11 @@ export class GameScene extends Phaser.Scene {
     });
     s.awards.forEach((a, i) => this.awardCard(16, AY + 112 + i * 42, a.id, a.pids, a.value));
     if (!s.awards.length) this.ovText(90, AY + 130, this.t.game.noAwards, 'mist');
-    this.addOverlayButton('share', 9, AY + 214, 81, 30, this.t.game.share, () => this.share(), undefined, true);
-    this.addOverlayButton('next', 91, AY + 214, 80, 30, this.t.game.next, () => sim.intent({ k: 'next' }), PAL.amber);
+    // «Дальше» решает только режиссёр (хост): у остальных кнопка ничего не делала — им «Поделиться» во всю ширину
+    if (this.amHost()) {
+      this.addOverlayButton('share', 9, AY + 214, 81, 30, this.t.game.share, () => this.share(), undefined, true);
+      this.addOverlayButton('next', 91, AY + 214, 80, 30, this.t.game.next, () => sim.intent({ k: 'next' }), PAL.amber);
+    } else this.addOverlayButton('share', 9, AY + 214, 162, 30, this.t.game.share, () => this.share(), undefined, true);
     this.ovDyn.auto = this.ovText(90, AY + 200, '', 'mist');
   }
 
@@ -2397,11 +2405,14 @@ export class GameScene extends Phaser.Scene {
       total.x = 166 - total.width;
     });
     m.awards.forEach((a, i) => this.awardCard(16, AY + 124 + i * 42, a.id, a.pids, a.value));
-    this.addOverlayButton('rematch', 9, AY + 214, 81, 30, this.t.game.rematch, () => {
-      this.confetti = [];
-      sim.intent({ k: 'rematch' });
-    }, PAL.amber);
-    this.addOverlayButton('share2', 91, AY + 214, 80, 30, this.t.game.share, () => this.share(), undefined, true);
+    // реванш тоже запускает только режиссёр; остальным — «Поделиться» во всю ширину
+    if (this.amHost()) {
+      this.addOverlayButton('rematch', 9, AY + 214, 81, 30, this.t.game.rematch, () => {
+        this.confetti = [];
+        sim.intent({ k: 'rematch' });
+      }, PAL.amber);
+      this.addOverlayButton('share2', 91, AY + 214, 80, 30, this.t.game.share, () => this.share(), undefined, true);
+    } else this.addOverlayButton('share2', 9, AY + 214, 162, 30, this.t.game.share, () => this.share(), undefined, true);
     // открывается касанием: отпускание пальца у нижнего края экрана браузер может забрать себе (Chrome на iPhone);
     // жест для системного меню не нужен — отправка идёт отдельной кнопкой в окне клипа
     if (this.best) this.addOverlayButton('clip', 3, PANEL_Y + 3, 174, 30, this.t.clip.button, () => this.openClip(), PAL.amber);
