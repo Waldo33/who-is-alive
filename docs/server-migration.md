@@ -295,6 +295,13 @@ infra/
 - [ ] Тесты §3.6; `pnpm sim` по-прежнему зелёный.
 - Приёмка: `pnpm lint && pnpm typecheck && pnpm test`; локально 4 вкладки (`?player=N&server=new`) проходят матч в Playwright; нагрузочный тест в памяти.
 
+**Сделано 22.11.2026 (вместо начала этапов 2–3, упрощённо):**
+- Сервер `massovka-game` в Timeweb Cloud, **Москва (`ru-3`), MSK Ultra 15: 1 vCPU, 1 ГБ, 1720 ₽/мес** (решение владельца: пока хватит; в Казани и Екатеринбурге мест не было, обычные московские тарифы — «no free node»). IP `129.101.104.99`, временный адрес `https://129-101-104-99.sslip.io`, домен `benobody.app` (DNS в панели hosting.timeweb.ru, записи `@` и `*` → IP).
+- Развёртывание — **GitHub Actions без Ansible и OpenTofu** (решение владельца: «GH Actions пока хватает»): `.github/workflows/game-deploy.yml` → `infra/game/provision.py` (найти или создать сервер через API Timeweb, заказать IPv4) → `infra/game/setup.sh` по SSH (Node и Caddy привозит Actions — из России nodejs.org режется; systemd, ufw, SSH только по ключу, подкачка, журнал) → живой прогон `pnpm --filter @kto/server smoke`. Запуск — на push в `apps/server`, `packages/*`, `infra/game`.
+- Ключ SSH выводится из `TWC_TOKEN` (HMAC → Ed25519), отдельного секрета нет; ключ подписи токенов игроков рождается на сервере (`/etc/massovka/secrets.env`) и его не покидает.
+- Загрузка из Actions в Москву медленная (~30 МБ Node — около 10 минут), поэтому Node и Caddy везём, только если версия сменилась.
+- Ansible и OpenTofu — когда появятся база, мониторинг и второй сервер.
+
 **Этап 2. Инфраструктура (1–2 дня)**
 - [ ] `infra/tofu`, `infra/ansible`, `infra/compose`, `provision.yml`, `deploy-infra.yml`, `ops.yml`, `watchdog.yml`, `backup-check.yml`.
 - [ ] Создать серверы, подготовить, поднять стек `infra`.
