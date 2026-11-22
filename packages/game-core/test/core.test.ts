@@ -397,3 +397,22 @@ describe('Награды', () => {
     expect(cards[0].value).toBe(9);
   });
 });
+
+describe('загадка дня', () => {
+  it('одна и та же у всех: детерминирована от номера, живой цел, в окне есть «Море волнуется»', async () => {
+    const { buildDaily, dailyNumber, dailySquares } = await import('../src/daily');
+    expect(dailyNumber('2026-11-23')).toBe(1);
+    expect(dailyNumber('2026-12-31')).toBe(39);
+    for (const n of [1, 2, 40]) {
+      const a = buildDaily(n);
+      const b = buildDaily(n);
+      expect(a.answer).toBe(b.answer);
+      expect(a.world.log.length).toBe(b.world.log.length);
+      expect(a.world.get(a.answer)?.alive).toBe(true);
+      expect(a.world.log.some((e) => e.t === 'crowd' && e.showAt >= a.from && e.windowEnd <= a.to)).toBe(true);
+    }
+    expect(dailySquares(2, true)).toBe('🟥🟩⬜');
+    expect(dailySquares(3, false)).toBe('🟥🟥🟥');
+  });
+});
+

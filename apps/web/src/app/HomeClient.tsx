@@ -147,6 +147,9 @@ export default function HomeClient() {
           {t.lobby.haveCode}
         </button>
       )}
+      <Link className="link" href="/daily" onClick={() => track('daily_tap', { from: 'home' })}>
+        {t.daily.title}: {t.daily.task}
+      </Link>
       <Link className="link" href="/learn">
         {t.ui.howTo}
       </Link>
