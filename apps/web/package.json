@@ -12,6 +12,7 @@
     "icons": "node scripts/make-icons.mjs",
     "live-e2e": "esbuild scripts/live-e2e.ts --bundle --platform=node --format=esm --alias:@=./src --outfile=.live-e2e.mjs --log-level=warning && node .live-e2e.mjs",
     "og-bg": "node scripts/make-og.mjs",
+    "tap-check": "node scripts/tap-check.mjs",
     "clip-preview": "node scripts/clip-preview.mjs",
     "theme-sheet": "node scripts/theme-sheet.mjs",
     "theme-video": "node scripts/theme-video.mjs",

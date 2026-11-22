@@ -107,6 +107,11 @@ interface Button {
   accent?: string;
   /** Не удалять вместе с кнопками экранов фаз (clearOverlay). */
   keep?: boolean;
+  /**
+   * Зона нажатия [x, y, w, h], если рисунок мельче пальца: не меньше 30×30 лог. px —
+   * при самом мелком масштабе (×1,5, SE в Safari) это 45×45 CSS px, минимум Apple 44×44.
+   */
+  hit?: [number, number, number, number];
 }
 
 interface Pigeon {
@@ -606,6 +611,7 @@ export class GameScene extends Phaser.Scene {
     kinds.forEach(([kind, icon], i) => {
       this.buttons.push({
         id: 'crowd-' + kind, x: 45 + i * 31, y: PANEL_Y + 3, w: 29, h: 30, icon, accent: PAL.amber, visible: crowdOpen,
+        hit: [44 + i * 31, PANEL_Y, 31, 36],
         onDown: () => {
           const c = this.sim.world.crowd;
           if (c && this.me()?.crowdAnswered === c.warnAt) return;
@@ -622,6 +628,7 @@ export class GameScene extends Phaser.Scene {
     kinds.forEach(([kind, icon], i) => {
       this.buttons.push({
         id: 'clap-' + kind, x: 98 + i * 27, y: PANEL_Y + 3, w: 26, h: 30, icon, accent: PAL.orchid, visible: clapVis,
+        hit: [90 + i * 30, PANEL_Y, 30, 36],
         onDown: () => {
           if (!this.clapReady()) {
             this.audio.play('denied');
@@ -651,6 +658,8 @@ export class GameScene extends Phaser.Scene {
     // шестерёнка: звук, правила и выход — в листе настроек поверх игры (язык меняется вне матча)
     this.buttons.push({
       id: 'sound', x: 166, y: 3, w: 12, h: 18, icon: this.init0.onSettings ? 'gear' : this.audio.enabled ? 'soundOn' : 'soundOff', visible: () => true,
+      // рисунок 12×18, а палец — шире: угол 30×30 (заходит на 6 px в поле, там почти не стоят)
+      hit: [150, 0, 30, 30],
       onUp: () => {
         if (this.init0.onSettings) {
           this.init0.onSettings();
@@ -751,7 +760,8 @@ export class GameScene extends Phaser.Scene {
   private hitButton(x: number, y: number): Button | undefined {
     for (let i = this.buttons.length - 1; i >= 0; i--) {
       const b = this.buttons[i];
-      if (b.visible() && x >= b.x && x < b.x + b.w && y >= b.y && y < b.y + b.h) return b;
+      const [bx, by, bw, bh] = b.hit ?? [b.x, b.y, b.w, b.h];
+      if (b.visible() && x >= bx && x < bx + bw && y >= by && y < by + bh) return b;
     }
     return undefined;
   }
@@ -1473,7 +1483,8 @@ export class GameScene extends Phaser.Scene {
   private placeDeathClipButton(b: Button, wide: boolean): void {
     const [x, y, w, h] = wide ? [3, PANEL_Y + 3, 174, 30] : [96, PANEL_Y - 26, 80, 22];
     if (b.x === x && b.y === y) return;
-    Object.assign(b, { x, y, w, h });
+    // маленькая кнопка над панелью: рисунок 22 px высотой, палец ловим на 30
+    Object.assign(b, { x, y, w, h, hit: wide ? undefined : [x, PANEL_Y - 30, w, 30] });
     const text = this.btnObjs.get('deathclip')?.text;
     if (text) text.y = y + Math.floor(h / 2) - 5;
     this.updateDeathClipLabel();

@@ -97,10 +97,10 @@ button.btn { border: 0; cursor: pointer; border-radius: 0; }
 .players, .settings { width: 100%; max-width: 360px; background: var(--night); padding: 12px; box-shadow: 0 0 0 2px var(--ink); }
 .players h2, .settings h2 { font-size: 10px; color: var(--mist); margin: 0 0 10px; font-weight: normal; }
 .players ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.players li { display: flex; align-items: center; gap: 10px; min-height: 40px; }
+.players li { display: flex; align-items: center; gap: 10px; min-height: 44px; }
 .players li.offline { opacity: 0.45; }
 .swatch { width: 14px; height: 14px; flex: none; background: #3a4466; box-shadow: 0 0 0 2px var(--ink); }
-.players .name { font: inherit; font-size: 10px; color: var(--sand); background: none; border: 0; padding: 8px 0; text-align: left;
+.players .name { font: inherit; font-size: 10px; color: var(--sand); background: none; border: 0; padding: 8px 0; min-height: 44px; text-align: left;
   flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 .players .name:disabled { cursor: default; color: var(--sand); }
 .tag-you { color: var(--amber); }
@@ -109,7 +109,7 @@ button.btn { border: 0; cursor: pointer; border-radius: 0; }
 .badge.host { background: #68386c; color: var(--yellow); }
 .badge.ready { background: #265c42; color: #ffffff; }
 /* режиссёр убирает участника: «✕», второе нажатие — «Убрать?» */
-.players .kick { font: inherit; font-size: 10px; min-width: 40px; min-height: 40px; padding: 0 8px; flex: none;
+.players .kick { font: inherit; font-size: 10px; min-width: 44px; min-height: 44px; padding: 0 8px; flex: none;
   color: var(--mist); background: #262b44; border: 0; box-shadow: 0 0 0 2px var(--ink); cursor: pointer; }
 .players .kick.ask { color: #ffffff; background: #be4a2f; }
 .name-edit { flex: 1; }
@@ -120,11 +120,11 @@ button.btn { border: 0; cursor: pointer; border-radius: 0; }
 .setting.check input { width: 22px; height: 22px; accent-color: var(--amber); }
 .setting-hint { margin: -8px 0 0 30px; font-size: 8px; line-height: 1.8; color: var(--steel); }
 .seg { display: flex; box-shadow: 0 0 0 2px var(--ink); }
-.seg button, .lang-switch button { font: inherit; font-size: 9px; min-width: 52px; min-height: 40px; border: 0; border-radius: 0;
+.seg button, .lang-switch button { font: inherit; font-size: 9px; min-width: 52px; min-height: 44px; border: 0; border-radius: 0;
   background: var(--ink); color: var(--steel); cursor: pointer; }
 .seg button[aria-pressed='true'], .lang-switch button[aria-pressed='true'] { background: #3a4466; color: var(--yellow); }
 .lang-switch { position: absolute; top: calc(12px + var(--sat, env(safe-area-inset-top))); left: 12px; display: flex; box-shadow: 0 0 0 2px #3a4466; }
-.lang-switch button { min-width: 44px; min-height: 36px; }
+.lang-switch button { min-width: 44px; min-height: 44px; }
 .lobby-actions { display: flex; flex-direction: column; gap: 10px; align-items: center; width: 100%; max-width: 360px; }
 .lobby-actions .btn { width: 100%; }
 .toast { position: fixed; left: 50%; bottom: calc(16px + var(--sab, env(safe-area-inset-bottom))); transform: translateX(-50%);

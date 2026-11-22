@@ -36,13 +36,13 @@ const CSS = `
 /* подпись над полем: поле во всю ширину вмещает имя целиком (14 знаков пиксельным шрифтом 16px) */
 .kto-row{display:flex;flex-direction:column;gap:8px;align-items:center;font-size:9px;width:100%}
 .kto-input{font:inherit;font-size:16px;line-height:1.2;max-width:100%;background:${PAL.night};color:${PAL.white};border:2px solid ${PAL.dusk};
-  padding:10px 12px;width:calc(14ch + 32px);text-align:center;outline:none;border-radius:0;-webkit-appearance:none;appearance:none}
+  padding:10px 12px;min-height:44px;width:calc(14ch + 32px);text-align:center;outline:none;border-radius:0;-webkit-appearance:none;appearance:none}
 .kto-input:focus-visible,.kto-btn:focus-visible{outline:2px solid ${PAL.yellow};outline-offset:2px}
 .kto-btn{font:inherit;font-size:12px;color:${PAL.ink};background:${PAL.amber};border:0;padding:16px 22px;min-height:56px;
   box-shadow:0 4px 0 ${PAL.rust},0 0 0 2px ${PAL.ink};cursor:pointer;border-radius:0}
 .kto-btn:active{transform:translateY(3px);box-shadow:0 1px 0 ${PAL.rust},0 0 0 2px ${PAL.ink}}
 .kto-small{font-size:8px;color:${PAL.steel};max-width:36ch;line-height:1.8;margin:0}
-.kto-check{display:flex;align-items:center;gap:8px;font-size:9px;color:${PAL.mist}}
+.kto-check{display:flex;align-items:center;gap:8px;min-height:44px;margin:-9px 0;font-size:9px;color:${PAL.mist}}
 .kto-hint{font-size:8px;line-height:1.8;color:${PAL.steel};max-width:34ch;margin:-10px 0 0;text-align:center}
 .kto-check input{width:20px;height:20px;accent-color:${PAL.amber}}
 .kto-rotate{position:absolute;inset:0;display:none;align-items:center;justify-content:center;flex-direction:column;gap:16px;
