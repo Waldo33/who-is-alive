@@ -39,6 +39,14 @@ jobs:
           timeout 8 bash -c "</dev/tcp/$MSK/22" && echo "порт 22 Москвы: открыт" || echo "порт 22 Москвы: нет"
           timeout 8 bash -c "</dev/tcp/$MSK/443" && echo "порт 443 Москвы: открыт" || echo "порт 443 Москвы: нет"
           free -m | head -2
+          echo "── 20 попыток соединиться с Москвой (по 3 с)"
+          for port in 22 443 80; do
+            ok=0; for i in $(seq 1 20); do timeout 3 bash -c "</dev/tcp/$MSK/$port" 2>/dev/null && ok=$((ok+1)); sleep 0.5; done
+            echo "порт $port: $ok из 20"
+          done
+          echo "── то же к GitHub (для сравнения)"
+          ok=0; for i in $(seq 1 10); do timeout 3 bash -c "</dev/tcp/140.82.112.3/443" 2>/dev/null && ok=$((ok+1)); done; echo "github 443: $ok из 10"
+          ip -4 addr show | grep inet | grep -v 127.0.0 | awk '{print "свой адрес:", $2}'
           SH
       - name: Москва
         env:
@@ -50,6 +58,9 @@ jobs:
           journalctl -u ssh -n 20 --no-pager -o cat | grep -v "Accepted publickey for root" | tail -12
           sshd -T 2>/dev/null | grep -E "allowtcpforwarding|permitlisten|gatewayports" 
           free -m | head -2
+          echo "── 20 попыток соединиться с Нидерландами (по 3 с)"
+          NL=${NL:-72.56.73.184}
+          ok=0; for i in $(seq 1 20); do timeout 3 bash -c "</dev/tcp/$NL/443" 2>/dev/null && ok=$((ok+1)); sleep 0.5; done; echo "NL 443: $ok из 20"
           SH
       - name: Снаружи
         run: |
