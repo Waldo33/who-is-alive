@@ -214,14 +214,33 @@ export class Bot {
         menu: 'Play',
       },
     };
+    // Telegram разрешает менять имя и описания лишь несколько раз в сутки: меняем только то, что отличается,
+    // и сбой профиля не мешает вебхуку
+    const soft = async (what: string, fn: () => Promise<unknown>) => {
+      try {
+        await fn();
+      } catch (e) {
+        this.o.log('warn', 'tg_profile', { what, err: String(e) });
+      }
+    };
     for (const [lang, p] of Object.entries(P)) {
       const language_code = lang === 'en' ? undefined : lang; // английский — по умолчанию для всех языков
-      await this.api('setMyName', { name: p.name, language_code });
-      await this.api('setMyDescription', { description: p.description + (this.casting ? p.casting : ''), language_code });
-      await this.api('setMyShortDescription', { short_description: p.short, language_code });
-      await this.api('setMyCommands', { commands: [{ command: 'start', description: p.start }], language_code });
+      const description = p.description + (this.casting ? p.casting : '');
+      await soft('name', async () => {
+        const cur = await this.api<{ name: string }>('getMyName', { language_code });
+        if (cur.name !== p.name) await this.api('setMyName', { name: p.name, language_code });
+      });
+      await soft('description', async () => {
+        const cur = await this.api<{ description: string }>('getMyDescription', { language_code });
+        if (cur.description !== description) await this.api('setMyDescription', { description, language_code });
+      });
+      await soft('short', async () => {
+        const cur = await this.api<{ short_description: string }>('getMyShortDescription', { language_code });
+        if (cur.short_description !== p.short) await this.api('setMyShortDescription', { short_description: p.short, language_code });
+      });
+      await soft('commands', () => this.api('setMyCommands', { commands: [{ command: 'start', description: p.start }], language_code }));
     }
-    await this.api('setChatMenuButton', { menu_button: { type: 'web_app', text: P.ru.menu, web_app: { url: `${this.o.site}/?src=tg` } } });
+    await soft('menu', () => this.api('setChatMenuButton', { menu_button: { type: 'web_app', text: P.ru.menu, web_app: { url: `${this.o.site}/?src=tg` } } }));
   }
 
   private async onStart(msg: NonNullable<Update['message']>): Promise<void> {

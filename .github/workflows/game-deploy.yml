@@ -29,7 +29,8 @@ jobs:
     timeout-minutes: 30
     strategy:
       max-parallel: 1
-      fail-fast: true
+      # Москва выкатывается, даже если у сервера бота что-то не так
+      fail-fast: false
       matrix:
         include:
           - role: infra
@@ -188,6 +189,7 @@ jobs:
 
       - name: Telegram-бот (вебхук на сервер бота)
         if: matrix.role == 'infra'
+        continue-on-error: true
         env:
           HOST: ${{ steps.addr.outputs.host }}
           HAS_TG: ${{ secrets.TELEGRAM_BOT_TOKEN != '' }}
