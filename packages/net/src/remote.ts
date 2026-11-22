@@ -90,7 +90,14 @@ export class RemoteSession implements ClientSession {
    * своего персонажа не применяются, а снимки хоста сверяются с собственной историей
    * со сдвигом lead — на столько свой персонаж живёт впереди остального мира.
    */
-  private own: { t: number; x: number; y: number }[] = [];
+  /** История своего персонажа; ht — момент мира хоста, когда он там же (свой время + lead, вровень — без lead). */
+  private own: { ht: number; x: number; y: number; pi: number; path: number[] }[] = [];
+  /**
+   * Свой персонаж поставлен вровень с хостом (в стоп-кадре): пока игрок не задал новый маршрут,
+   * он идёт не впереди мира на lead, а вместе с ним. См. syncAtFreeze.
+   */
+  private synced = false;
+  private wasFrozen = false;
   private lead = 0;
   private corr: { x: number; y: number } | null = null;
   private lastPred: { at: number; cell: number; resent?: boolean } | null = null;
@@ -329,12 +336,12 @@ export class RemoteSession implements ClientSession {
     return Math.max(0, this.hostNow() - this.world.time + this.latency * 2);
   }
 
-  /** Где был свой персонаж в момент t по собственной истории. */
-  private ownAt(t: number): { x: number; y: number } | null {
+  /** Где свой персонаж по собственной истории соответствует моменту мира хоста ht. */
+  private ownAt(ht: number): { x: number; y: number; pi: number; path: number[] } | null {
     const h = this.own;
     if (!h.length) return null;
-    if (t <= h[0].t) return h[0];
-    for (let i = h.length - 1; i >= 0; i--) if (h[i].t <= t) return h[i];
+    if (ht <= h[0].ht) return h[0];
+    for (let i = h.length - 1; i >= 0; i--) if (h[i].ht <= ht) return h[i];
     return h[0];
   }
 
@@ -346,7 +353,7 @@ export class RemoteSession implements ClientSession {
     const idle = !e.moving && e.pi >= e.path.length && this.clock() - this.lastPredClock > this.lead + 300;
     if (idle && authMoving) return; // свой уже пришёл, а у хоста он ещё идёт (маршрут бывает длиннее) — ждём
     // оба стоят — сравниваем с текущим местом и добираем даже мелочь; на ходу — с историей со сдвигом lead
-    const ref = idle ? e : this.ownAt(wt - this.lead) ?? e;
+    const ref = idle ? e : this.ownAt(wt) ?? e;
     const dx = ax - ref.x;
     const dy = ay - ref.y;
     const d = Math.hypot(dx, dy);
@@ -423,8 +430,12 @@ export class RemoteSession implements ClientSession {
     while (want-- > 0 && this.world.time + TICK_MS <= limit) {
       this.world.step();
       steps++;
-      this.applyCorrection();
+      // поправка — раз за кадр, а не за шаг: когда догоняем хоста двумя шагами, рывка не будет
+      if (steps === 1) this.applyCorrection();
       this.recordOwn();
+      const frozen = this.world.isFrozen();
+      if (frozen && !this.wasFrozen) this.syncAtFreeze();
+      this.wasFrozen = frozen;
       this.predictStars();
       if (this.snap && this.world.time >= this.snap.wt) this.applySnap();
     }
@@ -480,11 +491,38 @@ export class RemoteSession implements ClientSession {
     }
   }
 
+  /**
+   * Стоп-кадр замораживает мир у хоста и у гостя в один и тот же момент, а свой персонаж у гостя
+   * шёл впереди на lead — у хоста он замер на несколько пикселей раньше. Без этого после «Отомри»
+   * гость подтягивал бы его назад посреди жеста. Ставим его туда, где он у хоста, в момент, когда
+   * экран сереет (рывок в пару пикселей там не виден), и дальше ведём вровень с хостом.
+   */
+  private syncAtFreeze(): void {
+    const me = this.meMsg;
+    const e = me ? this.world.get(me.eid) : undefined;
+    if (!me || !e || !e.alive || me.autopilot || this.clock() < this.hostDrivenUntil || !this.lead) return;
+    const at = this.world.crowd?.showAt ?? this.world.time;
+    const h = this.ownAt(at);
+    this.synced = true;
+    this.corr = null;
+    if (!h || Math.hypot(h.x - e.x, h.y - e.y) < 0.05) return;
+    e.x = e.px = h.x;
+    e.y = e.py = h.y;
+    // тот же маршрут: вернуть и номер точки, к которой он тогда шёл
+    if (h.path === e.path && h.pi <= e.pi) e.pi = h.pi;
+    this.own = [];
+  }
+
+  /** Свой персонаж идёт вровень с хостом: остановка у хоста случится на lead позже — и здесь так же. */
+  private stopAt(e: { moving: boolean }): number {
+    return this.synced && e.moving ? this.world.time + Math.round(this.lead / TICK_MS) * TICK_MS : this.world.time;
+  }
+
   private recordOwn(): void {
     const id = this.meMsg?.eid;
     const e = id === undefined ? undefined : this.world.get(id);
     if (!e) return;
-    this.own.push({ t: this.world.time, x: e.x, y: e.y });
+    this.own.push({ ht: this.world.time + (this.synced ? 0 : this.lead), x: e.x, y: e.y, pi: e.pi, path: e.path });
     if (this.own.length > 200) this.own.splice(0, this.own.length - 200);
   }
 
@@ -580,6 +618,9 @@ export class RemoteSession implements ClientSession {
         const path = planPath(this.world, me!.eid, tgt.x, tgt.y, zone);
         if (path && path.length) {
           this.pushLocal({ t: 'move', eid: me!.eid, path, at: this.world.time });
+          // новый маршрут: свой персонаж снова живёт впереди мира (если шёл вровень — расхождение
+          // на lead добирается плавно на ходу, это смена темпа, а не рывок)
+          this.synced = false;
           this.lastPred = { at: this.world.time, cell: path[path.length - 1] };
           this.moveResend = { it: out, at: this.clock(), tries: 0 };
           this.lastPredClock = this.clock();
@@ -587,11 +628,11 @@ export class RemoteSession implements ClientSession {
         }
       } else if (it.k === 'stop') {
         this.moveResend = null;
-        this.pushLocal({ t: 'stop', eid: me!.eid, at: this.world.time });
+        this.pushLocal({ t: 'stop', eid: me!.eid, at: this.stopAt(e) });
         this.lastPredClock = this.clock();
       } else if (it.k === 'emote') {
         const kind = twistEmote(this.theme, this.world.twist) ?? it.kind ?? EMOTES[Math.floor(Math.random() * EMOTES.length)];
-        this.pushLocal({ t: 'act', eid: me!.eid, kind, dur: emoteDur(kind), at: this.world.time });
+        this.pushLocal({ t: 'act', eid: me!.eid, kind, dur: emoteDur(kind), at: this.stopAt(e) });
         this.emotePred = { kind, until: this.clock() + 3000 };
         this.lastPredClock = this.clock();
         out = { k: 'emote', kind };
@@ -603,9 +644,11 @@ export class RemoteSession implements ClientSession {
         if (c && this.crowdWindowOpen() && me!.crowdAnswered !== c.warnAt && this.crowdPred?.warnAt !== c.warnAt) {
           // в стоп-кадре — вместе с толпой (с таким же разбросом, как у ботов), после — сразу
           const [a, b] = this.cfg.botCrowdReactMs;
-          const at = this.world.time < c.resumeAt ? c.resumeAt + Math.round((a + Math.random() * (b - a)) / TICK_MS) * TICK_MS : this.world.time;
+          const at = this.world.time < c.resumeAt ? c.resumeAt + Math.round((a + Math.random() * (b - a)) / TICK_MS) * TICK_MS : this.stopAt(e);
           this.crowdPred = { warnAt: c.warnAt, kind: it.kind, act: true };
           this.pushLocal({ t: 'act', eid: me!.eid, kind: CROWD_ACT[it.kind], dur: crowdActDur(this.cfg, it.kind), at });
+          // хост начнёт жест в тот же момент (свой персонаж в стоп-кадре поставлен вровень с хостом)
+          if (this.world.time < c.resumeAt) out = { ...out, at } as Intent;
         }
       }
     }

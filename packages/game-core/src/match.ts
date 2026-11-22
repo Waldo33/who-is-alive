@@ -35,7 +35,12 @@ export type Intent =
   /** kind выбирает сам игрок (гость показывает эмоцию сразу, не дожидаясь хоста); без него — случайно. */
   | { k: 'emote'; kind?: EmoteKind }
   /** wt — время мира на экране игрока в момент нажатия (компенсация задержки сети). */
-  | { k: 'crowd'; kind: CrowdKind; wt?: number }
+  /**
+   * at — когда начать жест, нажатый в стоп-кадре («вместе с толпой»): гость выбирает момент сам,
+   * в том же разбросе, что у ботов, и показывает жест у себя ровно тогда же. Иначе персонаж у гостя
+   * останавливался бы раньше или позже, чем у хоста, и потом съезжал бы на место посреди жеста.
+   */
+  | { k: 'crowd'; kind: CrowdKind; wt?: number; at?: number }
   /** «Хлопушка»: вырезанный игрок подаёт команду толпе. */
   | { k: 'clap'; kind: CrowdKind }
   | { k: 'attack'; eid: number; wt?: number }
@@ -876,8 +881,12 @@ export class MatchSim {
         p.crowdLate = wt >= c.resumeAt;
         if (wt < c.resumeAt) {
           const [a, b] = cfg.botCrowdReactMs;
-          // нажал в стоп-кадре — выполнит вместе с толпой (или сразу, если пакет пришёл уже после паузы)
-          p.crowdQueued = { kind: it.kind, at: Math.max(t, c.resumeAt + crowdJitter(this.rng, a, b)) };
+          // нажал в стоп-кадре — выполнит вместе с толпой (или сразу, если пакет пришёл уже после паузы);
+          // момент, выбранный на экране игрока, — если он в разбросе ботов (случайное число берём всё равно:
+          // последовательность случайностей матча не зависит от того, по сети игрок или нет)
+          const jitter = crowdJitter(this.rng, a, b);
+          const own = it.at !== undefined && it.at >= c.resumeAt + a && it.at <= c.resumeAt + b && it.at % TICK_MS === 0 ? it.at : undefined;
+          p.crowdQueued = { kind: it.kind, at: Math.max(t, own ?? c.resumeAt + jitter) };
         } else {
           this.emit({ t: 'act', eid: p.eid, kind: CROWD_ACT[it.kind], dur: crowdActDur(cfg, it.kind), at: t });
         }

@@ -496,4 +496,60 @@ describe('сетевая игра', () => {
     for (const g of guests) g.dispose();
     host.dispose();
   });
+
+  it('шёл и нажал команду в стоп-кадре: во время жеста свой персонаж не съезжает', () => {
+    let nowMs = 0;
+    const clock = () => nowMs;
+    const hub = new LoopbackHub(13);
+    hub.latency = [70, 130];
+    const two: PlayerInfo[] = ['a', 'b'].map((pid, i) => ({ pid, name: pid, color: i }));
+    const tSrv = hub.join({ userId: '$srv', name: 'srv', color: 9, joinedAt: 0 });
+    const ta = hub.join({ userId: 'a', name: 'a', color: 0, joinedAt: 1 });
+    ta.authoritative = true;
+    hub.join({ userId: 'b', name: 'b', color: 1, joinedAt: 2 });
+    const host = new HostSession({ transport: tSrv, players: two, cfg: { crowdFirstSec: [8, 10] } as never, seed: 31, hostPid: 'a', selfPid: '$srv' });
+    const g = new RemoteSession({ transport: ta, selfPid: 'a', hostPid: 'a', players: two, cfg: {}, clock });
+    const step = () => {
+      nowMs += 50;
+      vi.advanceTimersByTime(50);
+      host.tick();
+      host.drainNotices();
+      g.tick();
+    };
+    let tests = 0;
+    let worst = 0;
+    for (let i = 0; i < 20 * 300 && tests < 4 && host.round < 3; i++) {
+      step();
+      const me = g.me();
+      if (g.phase !== 'play' || !me?.alive) continue;
+      const e = g.world.get(me.eid)!;
+      const c = g.world.crowd;
+      // всё время ходим туда-сюда
+      if (!c && !e.moving) g.intent({ k: 'move', x: e.x < 90 ? 150 : 30, y: Math.round(e.y) });
+      if (c && g.world.time < c.resumeAt && g.crowdWindowOpen() && me.crowdAnswered !== c.warnAt && e.moving) {
+        g.intent({ k: 'crowd', kind: c.kind });
+        // дождаться, пока жест начнётся у обоих, и смотреть, двигается ли свой персонаж во время жеста
+        let started = false;
+        let last: [number, number] | null = null;
+        let shift = 0;
+        for (let k = 0; k < 60; k++) {
+          step();
+          const ge = g.world.get(me.eid)!;
+          if (ge.act && ge.act !== 'stun' && g.world.time >= ge.actStart) started = true;
+          if (started && ge.act && g.world.time < ge.actEnd) {
+            if (last) shift += Math.hypot(ge.x - last[0], ge.y - last[1]);
+            last = [ge.x, ge.y];
+          }
+        }
+        if (started) {
+          tests++;
+          worst = Math.max(worst, shift);
+        }
+      }
+    }
+    expect(tests).toBeGreaterThan(0);
+    expect(worst).toBeLessThan(1.5);
+    g.dispose();
+    host.dispose();
+  });
 });

@@ -65,7 +65,7 @@ export const IntentMsg = z.discriminatedUnion('k', [
   z.object({ k: z.literal('move'), x: z.number().int().min(0).max(180), y: z.number().int().min(0).max(260) }),
   z.object({ k: z.literal('stop') }),
   z.object({ k: z.literal('emote'), kind: z.enum(['wave', 'dance', 'jump', 'jab']).optional() }),
-  z.object({ k: z.literal('crowd'), kind: z.enum(['freeze', 'jump', 'dance']), wt: z.number().optional() }),
+  z.object({ k: z.literal('crowd'), kind: z.enum(['freeze', 'jump', 'dance']), wt: z.number().optional(), at: z.number().int().optional() }),
   z.object({ k: z.literal('attack'), eid: z.number().int(), wt: z.number().optional() }),
   z.object({ k: z.literal('clap'), kind: z.enum(['freeze', 'jump', 'dance']) }),
   z.object({ k: z.literal('autopilot'), on: z.boolean() }),
