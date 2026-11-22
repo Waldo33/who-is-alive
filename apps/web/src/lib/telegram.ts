@@ -7,11 +7,13 @@
  *  - вибрация (HapticFeedback) на ударах, звёздах, ошибках;
  *  - имя и язык игрока из профиля Telegram — по умолчанию, если своё не задано;
  *  - ссылки `t.me/<бот>/<приложение>?startapp=…` ведут сразу в комнату (`r_КОД`) или в загадку дня (`daily`);
- *  - «Поделиться» и «Позвать» — родным окном выбора чата Telegram (`t.me/share/url`).
+ *  - «Поделиться» и «Позвать» — карточкой с кнопкой «Играть» (8.0, `shareMessage`: её готовит сервер бота,
+ *    `supabase/functions/tg-bot`), иначе родным окном выбора чата (`t.me/share/url`);
+ *  - рейтинг загадки дня «в этом чате» (по `chat_instance`, подпись initData проверяет сервер бота).
  *
  * Вне Telegram всё здесь — пустые вызовы. Скрипт Telegram грузится только внутри Telegram.
  */
-import { TG_APP } from './env';
+import { SUPABASE_URL, TG_APP } from './env';
 import { LANG_KEY } from './lang';
 import { savedName, saveName } from './name';
 
@@ -51,6 +53,7 @@ export interface TgWebApp {
   setBackgroundColor(c: string): void;
   setBottomBarColor?(c: string): void;
   openTelegramLink(url: string): void;
+  shareMessage?(id: string, cb?: (sent: boolean) => void): void;
   onEvent(e: string, cb: () => void): void;
   BackButton: TgButton;
   HapticFeedback: {
@@ -270,4 +273,63 @@ export async function telegramReady(): Promise<TgWebApp | null> {
     /* приватный режим */
   }
   return w;
+}
+
+/** Сервер бота (Supabase Edge Function `tg-bot`). */
+const BOT_FN = `${SUPABASE_URL}/functions/v1/tg-bot`;
+
+async function botPost<T>(path: string, body: Record<string, unknown>): Promise<T | null> {
+  const w = await bootTelegram();
+  if (!w?.initData) return null;
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 6000);
+  try {
+    const r = await fetch(`${BOT_FN}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ initData: w.initData, ...body }),
+      signal: ctl.signal,
+    });
+    return r.ok ? ((await r.json()) as T) : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export type ShareCard = { kind: 'room'; code: string } | { kind: 'daily'; squares: string } | { kind: 'invite' };
+
+/**
+ * Поделиться карточкой с кнопкой «Играть» (Bot API 8.0): Telegram показывает выбор чата поверх игры
+ * и не закрывает её. false — не вышло (старый Telegram, сервер бота не настроен) — пусть зовущий
+ * откроет обычное окно `telegramShare`.
+ */
+export async function telegramShareCard(card: ShareCard): Promise<boolean> {
+  const w = await bootTelegram();
+  if (!w?.shareMessage || !at('8.0')) return false;
+  const r = await botPost<{ id?: string }>('/prepare', card);
+  if (!r?.id) return false;
+  try {
+    w.shareMessage(r.id);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export interface ChatScore {
+  name: string;
+  tries: number;
+  won: boolean;
+  me: boolean;
+}
+
+/**
+ * Загадка дня в чате, откуда открыта игра: записать свой результат (первый за день — окончательный)
+ * и получить рейтинг чата. null — не в чате или сервер недоступен.
+ */
+export async function telegramDailyBoard(n: number, result: { tries: number; won: boolean }): Promise<ChatScore[] | null> {
+  const r = await botPost<{ board: ChatScore[]; chat: boolean }>('/daily', { n, ...result });
+  return r?.chat ? r.board : null;
 }

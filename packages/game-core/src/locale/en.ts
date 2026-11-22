@@ -196,6 +196,8 @@ export const en: Dict = {
     play: 'Play with friends',
     home: 'Home',
     loading: 'Setting up the take…',
+    chatTitle: 'In this chat',
+    chatAlone: 'You are first here. Challenge the chat!',
   },
   lobby: {
     createGame: 'Create a game',

@@ -3,9 +3,9 @@
 export const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://wivildtgfkpuxvqoamqg.supabase.co';
 /**
  * Telegram Mini App: «бот/приложение» (ссылка t.me/<это>?startapp=…) или просто «бот», если приложение —
- * главное у бота. Пусто — бот ещё не настроен: ссылки ведут на сайт.
+ * главное у бота. Пусто — ссылки ведут на сайт.
  */
-export const TG_APP = process.env.NEXT_PUBLIC_TG_APP || '';
+export const TG_APP = process.env.NEXT_PUBLIC_TG_APP ?? 'be_nobody_bot/play';
 export const SUPABASE_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'sb_publishable_H7jmJUYfYmVIPXF15mr1gQ_PYNXmtdN';
 
 /** Адрес сайта для абсолютных ссылок в превью (og:image и т. п.). */

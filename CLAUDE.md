@@ -119,6 +119,7 @@ CI (`.github/workflows/ci.yml`): lint, typecheck, test, `sim --rounds 200`.
 | `apps/web/src/lib/` | `telegram` (Telegram Mini App: SDK, полный экран, родные «Назад», вибрация, ссылки `startapp`, `docs/architecture.md › 4.1`), `analytics` (`track` — события воронки в `analytics_events` через RPC `log_events`), `share` (поделиться с запасными путями, `withLang` — `?l=` и метка `?src=` в ссылках), `meta` (метаданные превью по языку), `chunk` (перезагрузка при устаревшей вкладке), `preview` (RPC для OG), `env`, `supabase`, `lang`, `name` |
 | `apps/web/public/sw.js` | сервис-воркер PWA |
 | `supabase/migrations/` | схема БД, RLS, RPC, политики Realtime |
+| `supabase/functions/tg-bot/` | сервер Telegram-бота (Edge Function): `/start`, инлайн «@бот», карточки `shareMessage`, рейтинг загадки в чате (`docs/architecture.md › 4.2`) |
 
 ## Как проверять
 

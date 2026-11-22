@@ -229,6 +229,8 @@ export const ru = {
     play: 'Сыграть с друзьями',
     home: 'На главную',
     loading: 'Готовим дубль…',
+    chatTitle: 'В этом чате',
+    chatAlone: 'Пока только ты — позови чат!',
   },
   lobby: {
     createGame: 'Создать игру',

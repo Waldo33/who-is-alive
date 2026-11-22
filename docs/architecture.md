@@ -180,7 +180,15 @@
 - «Назад» — родная кнопка Telegram: `topbar.ts` отдаёт свой `onBack` в `setTelegramBack`, своя кнопка прячется (`html.tg`).
 - Матч: `setClosingConfirmation` (переспросить при закрытии посреди матча), вибрация `haptic()` — HapticFeedback в Telegram, `navigator.vibrate` вне его (удар, вырезали, звезда, стоп-кадр, отказ, нажатия).
 - Профиль: имя (до 14 знаков) и язык из Telegram — по умолчанию, если свои не заданы; комната ждёт `telegramReady()` перед входом.
-- Ссылки: `TG_APP` (`NEXT_PUBLIC_TG_APP`, «бот/приложение») → `t.me/<TG_APP>?startapp=r_КОД | daily | home`. Параметр запуска читается сразу из адреса (`tgWebAppStartParam`) — главная ведёт в комнату или загадку до обучения, один раз за запуск. «Позвать» и «Поделиться» в Telegram — родным окном выбора чата (`t.me/share/url`), ссылки из Telegram — тоже в Telegram (`tgLinkFor`). Файлы (клип, карточка) — системным меню, если встроенный браузер его даёт, иначе ссылкой.
+- Ссылки: `TG_APP` (`NEXT_PUBLIC_TG_APP`, по умолчанию `be_nobody_bot/play`) → `t.me/<TG_APP>?startapp=r_КОД | daily | home`. Параметр запуска читается сразу из адреса (`tgWebAppStartParam`) — главная ведёт в комнату или загадку до обучения, один раз за запуск. «Позвать» (лобби) и «Поделиться» (загадка) в Telegram — карточкой с кнопкой в игру (Bot API 8.0 `shareMessage`, карточку готовит сервер бота), иначе родным окном выбора чата (`t.me/share/url`); прочие ссылки из Telegram — тоже в Telegram (`tgLinkFor`). Файлы (клип, карточка) — системным меню, если встроенный браузер его даёт, иначе ссылкой.
+- Рейтинг загадки «в этом чате»: открыто из чата (`chat_instance` в initData) — результат дня уходит на сервер бота, под квадратиками — список чата.
+
+### 4.2 Сервер бота (`supabase/functions/tg-bot`, Supabase Edge Function, `verify_jwt: false`)
+- Секрет `TELEGRAM_BOT_TOKEN` кладёт владелец в Supabase → Edge Functions → Secrets (в репозитории и чатах его нет). Вебхук привязывается открытием `…/functions/v1/tg-bot/setup`; секрет заголовка вебхука выводится из токена.
+- `/hook`: `/start [r_КОД|daily]` — приветствие с кнопками web_app; инлайн «@бот» — карточки: пусто → «Позвать» и «Загадка дня», `ABCD` → комната, `daily 🟥🟩⬜` → загадка с квадратиками. Кнопки ведут по прямой ссылке `t.me/<бот>/play?startapp=…`.
+- `/prepare` — `savePreparedInlineMessage` для `WebApp.shareMessage` (комната, загадка, приглашение); `/daily` и `/board` — рейтинг чата. Все три проверяют подпись initData (HMAC «WebAppData», не старше суток).
+- Таблица `tg_daily_scores` (PK чат+день+игрок, первый результат за день окончательный): RLS без политик — только сервер бота (service role); pg_cron чистит старше 30 дней.
+- Деплой — MCP `deploy_edge_function` (или `supabase functions deploy tg-bot --no-verify-jwt`).
 - Пока бот не настроен (`TG_APP` пусто) — всё работает, ссылки ведут на сайт.
 
 ## 5. Ассеты

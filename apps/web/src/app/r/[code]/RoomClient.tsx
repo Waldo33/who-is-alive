@@ -18,7 +18,7 @@ import { playerName, saveName } from '@/lib/name';
 import { loadChunk } from '@/lib/chunk';
 import { setTrackContext, shareKind, track } from '@/lib/analytics';
 import { Snow, useNewYear } from '@/ui/Festive';
-import { inTelegram, telegramReady, telegramShare, tgLink } from '@/lib/telegram';
+import { inTelegram, telegramReady, telegramShare, telegramShareCard, tgLink } from '@/lib/telegram';
 import { download, shareContent, withLang } from '@/lib/share';
 import { AuthError, ensureAnonymousUser, supabase } from '@/lib/supabase';
 import { Room, SPECTATE_DELAY_MS } from '@/net/room';
@@ -291,10 +291,17 @@ export function Lobby({
   const invite = async () => {
     const text = fmt(t.lobby.inviteText, { name: me?.name ?? '' });
     const members = state.members.length;
-    // в Telegram — родным окном «выбрать чат»; ссылка открывает игру прямо в Telegram, сразу в эту комнату
-    if (inTelegram() && telegramShare(tgLink(`r_${state.code}`) ?? url, text)) {
-      track('invite', { result: 'telegram', members });
-      return;
+    // в Telegram — карточкой с кнопкой «Войти в комнату» (игра не закрывается), иначе окном «выбрать чат»;
+    // ссылка открывает игру прямо в Telegram, сразу в эту комнату
+    if (inTelegram()) {
+      if (await telegramShareCard({ kind: 'room', code: state.code })) {
+        track('invite', { result: 'telegram_card', members });
+        return;
+      }
+      if (telegramShare(tgLink(`r_${state.code}`) ?? url, text)) {
+        track('invite', { result: 'telegram', members });
+        return;
+      }
     }
     try {
       if (navigator.share) {

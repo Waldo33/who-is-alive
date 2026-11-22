@@ -9,6 +9,8 @@ import { track } from '@/lib/analytics';
 import { loadChunk } from '@/lib/chunk';
 import { detectLang } from '@/lib/lang';
 import { shareContent, withLang } from '@/lib/share';
+import { inTelegram, telegramDailyBoard, telegramShareCard } from '@/lib/telegram';
+import type { ChatScore } from '@/lib/telegram';
 import { TopBar } from '@/ui/TopBarView';
 import type { DailyView } from '@/game/daily-view';
 
@@ -66,6 +68,7 @@ export default function DailyClient() {
   const [crowd, setCrowd] = useState<{ kind: CrowdKind; vote: boolean } | null>(null);
   const [streak, setStreak] = useState(0);
   const [scale, setScale] = useState(2);
+  const [board, setBoard] = useState<ChatScore[] | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const viewRef = useRef<DailyView | null>(null);
   const puzzleRef = useRef<DailyPuzzle | null>(null);
@@ -185,9 +188,26 @@ export default function DailyClient() {
     } else v.redraw();
   };
 
+  // в Telegram, открытом из чата: свой результат — в рейтинг этого чата, и сам рейтинг
+  useEffect(() => {
+    if (phase !== 'done' || n <= 0 || tries <= 0 || !inTelegram()) return;
+    let off = false;
+    void telegramDailyBoard(n, { tries, won }).then((b) => {
+      if (!off && b) setBoard(b);
+    });
+    return () => {
+      off = true;
+    };
+  }, [phase, n, tries, won]);
+
   const share = async () => {
     const m = modRef.current;
     if (!m) return;
+    // в Telegram — карточкой с кнопкой «Решить загадку»
+    if (inTelegram() && (await telegramShareCard({ kind: 'daily', squares: m.squares(tries, won) }))) {
+      track('share', { what: 'daily', result: 'telegram_card', n });
+      return;
+    }
     const text = fmt(t.daily.shareText, { n, squares: m.squares(tries, won) });
     // в Telegram shareContent сама заменит ссылку на ссылку внутрь Telegram
     const url = withLang(`${location.origin}/daily`, 'daily');
@@ -250,6 +270,20 @@ export default function DailyClient() {
           <p className="daily-result">{won ? fmt(t.daily.won, { n: tries }) : t.daily.lost}</p>
           <p className="daily-squares">{modRef.current?.squares(tries, won)}</p>
           <p className="muted">{fmt(t.daily.streak, { n: streak })}</p>
+          {board && board.length > 0 && (
+            <div className="daily-board">
+              <p className="daily-board-title">{t.daily.chatTitle}</p>
+              <ol>
+                {board.map((r, i) => (
+                  <li key={i} className={r.me ? 'me' : undefined}>
+                    <span className="daily-board-name">{r.name}</span>
+                    <span>{modRef.current?.squares(r.tries, r.won)}</span>
+                  </li>
+                ))}
+              </ol>
+              {board.length === 1 && <p className="muted">{t.daily.chatAlone}</p>}
+            </div>
+          )}
           <button className="btn" onClick={() => void share()}>
             {t.daily.share}
           </button>
