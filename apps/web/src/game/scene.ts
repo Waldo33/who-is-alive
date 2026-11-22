@@ -796,7 +796,10 @@ export class GameScene extends Phaser.Scene {
       const c = this.candidates(x, y)[0];
       if (c) {
         if (this.ghostMarks.has(c.eid)) this.ghostMarks.delete(c.eid);
-        else this.ghostMarks.add(c.eid);
+        else {
+          this.ghostMarks.add(c.eid);
+          this.tut?.noteMark();
+        }
         this.audio.play('tick');
       }
       return;
@@ -1741,7 +1744,8 @@ export class GameScene extends Phaser.Scene {
     this.tut?.update();
     this.renderCoach();
     this.dim.setVisible(phase === 'accuse');
-    const ghost = phase === 'play' && !!this.me() && !this.me()!.alive;
+    // в обучении подсказку «за кадром» даёт сам шаг сверху, а внизу слева — «Пропустить»
+    const ghost = phase === 'play' && !!this.me() && !this.me()!.alive && !this.tut;
     for (const o of this.ghostUi) (o as Phaser.GameObjects.Image).setVisible(ghost);
     if (ghost) {
       // справа «Хлопушка» — подписи короче, чтобы не налезали на кнопки
@@ -2257,6 +2261,7 @@ export class GameScene extends Phaser.Scene {
     if (!f || (this.sim.phase !== 'play' && this.sim.phase !== 'accuse')) return;
     let r: { x: number; y: number; w: number; h: number };
     if (f === 'buttons') r = { x: 43, y: PANEL_Y + 1, w: 95, h: 34 };
+    else if (f === 'claps') r = { x: 97, y: PANEL_Y + 1, w: 82, h: 34 };
     else if (f === 'fists') r = { x: 42, y: 4, w: 32, h: 16 };
     else if (f === 'stars') r = { x: 80, y: 4, w: 22, h: 16 };
     else if (f === 'me') {
@@ -2269,7 +2274,7 @@ export class GameScene extends Phaser.Scene {
     const bot = PANEL_Y;
     const ink = hexToInt(PAL.ink);
     fg.fillStyle(ink, 0.55);
-    if (f === 'buttons' || f === 'fists' || f === 'stars') fg.fillRect(0, top, 180, bot - top);
+    if (f === 'buttons' || f === 'claps' || f === 'fists' || f === 'stars') fg.fillRect(0, top, 180, bot - top);
     else {
       const y0 = Math.max(top, r.y);
       const y1 = Math.min(bot, r.y + r.h);

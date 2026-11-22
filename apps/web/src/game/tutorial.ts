@@ -29,7 +29,7 @@ export const TUTORIAL_CFG: Partial<GameConfig> = {
 };
 
 /** Что выделить рамкой: свой персонаж, кнопки жестов, удары и звёзды в шапке, точка поля. */
-export type TutFocus = 'me' | 'buttons' | 'fists' | 'stars' | { x: number; y: number; r: number } | null;
+export type TutFocus = 'me' | 'buttons' | 'claps' | 'fists' | 'stars' | { x: number; y: number; r: number } | null;
 
 type Lines = readonly string[];
 
@@ -68,8 +68,10 @@ export class Tutorial {
   private lastCrowd: { warnAt: number; kind: CrowdKind } | null = null;
   private accused = false;
   private botHits = 0;
-  /** На обвинении: человечек, на которого показываем «тапни сюда». */
+  /** На обвинении и метке «?»: человечек, на которого показываем «тапни сюда». */
   private suspect = -1;
+  /** Вырезанный поставил метку «?» (сцена сообщает). */
+  private marked = false;
   private note: { lines: Lines; until: number } | null = null;
 
   constructor(
@@ -101,6 +103,11 @@ export class Tutorial {
     const c = this.sim.world.crowd;
     if (it.k === 'crowd' && c) this.lastCrowd = { warnAt: c.warnAt, kind: it.kind };
     if (it.k === 'accuse') this.accused = true;
+  }
+
+  /** Сцена: вырезанный поставил метку «?» на человечка. */
+  noteMark(): void {
+    this.marked = true;
   }
 
   /** Тап по полю, пока ждём «дальше». */
@@ -280,13 +287,44 @@ export class Tutorial {
           return true;
         },
       },
-      // 8. вырезанный не скучает
-      { say: t.ghost, tap: true },
+      // 8. тебя вырезали — игра не кончилась: метки «?» и свой жест толпе («Хлопушка»)
+      { say: t.ghost, tap: true, enter: () => this.cutMe() },
+      {
+        say: t.ghostMark,
+        enter: () => {
+          this.marked = false;
+          this.suspect = -1;
+        },
+        focus: () => this.suspectAt(!this.marked),
+        done: () => {
+          if (!this.marked) return false;
+          this.arrow = null;
+          this.say(t.ghostMarkOk, 2400);
+          return true;
+        },
+      },
+      {
+        say: t.ghostClap,
+        enter: () => {
+          const me = this.me();
+          me.clapsLeft = 1;
+          me.clapAt = 0;
+          this.plannedAt = this.sim.world.time;
+          this.lastCrowd = null;
+        },
+        focus: () => (this.myCrowd() ? null : 'claps'),
+        done: () => {
+          const c = this.myCrowd();
+          if (!c || this.sim.world.time <= c.windowEnd + 600) return false;
+          this.say(t.ghostClapOk, 2200);
+          return true;
+        },
+      },
       // 9. конец дубля: обвинение (таймер обвинения стоит, пока игрок не выбрал)
       {
         say: t.accuse,
         // рамка и стрелка с «кругами от касания» над человечком рядом — понятно, куда тапать
-        focus: () => this.suspectAt(),
+        focus: () => this.suspectAt(this.sim.phase === 'accuse' && !this.accused),
         enter: () => {
           this.accused = false;
           this.suspect = -1;
@@ -301,10 +339,10 @@ export class Tutorial {
     ];
   }
 
-  /** Подсказка обвинения: ближайший к игроку человечек (не под надписями сверху и не у края). */
-  private suspectAt(): TutFocus {
+  /** «Тапни сюда»: ближайший к игроку человечек (не под надписями сверху и не у края). */
+  private suspectAt(active: boolean): TutFocus {
     const w = this.sim.world;
-    if (this.sim.phase !== 'accuse' || this.accused) {
+    if (!active) {
       this.arrow = null;
       return null;
     }
@@ -319,6 +357,15 @@ export class Tutorial {
     }
     this.arrow = { x: e.x, y: e.y };
     return { x: e.x, y: e.y - 6, r: 12 };
+  }
+
+  /** Обучение: тебя вырезали (без баннера — сразу за кадр). */
+  private cutMe(): void {
+    const me = this.me();
+    if (!me.alive) return;
+    me.alive = false;
+    me.diedAt = this.sim.world.time;
+    this.sim.world.push({ t: 'remove', eid: me.eid, cause: 'player', at: this.sim.world.time });
   }
 
   /** «Актёр» встаёт неподалёку от игрока (но не вплотную) и дальше стоит: его поймает прожектор. */

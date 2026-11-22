@@ -163,7 +163,11 @@ export const en: Dict = {
     voteNow: ['No move named!', 'Copy the crowd'],
     voteOk: ['Nailed it!', 'You blend in'],
     voteMiss: ['Odd one out!', 'Watch the crowd'],
-    ghost: ['Cut? You can still', 'call crowd cues'],
+    ghost: ['You got cut. But', 'the take goes on'],
+    ghostMark: ['Tap an actor you', 'suspect: gets a “?”'],
+    ghostMarkOk: ['A note for you', 'for the final vote'],
+    ghostClap: ['You can also call', 'a crowd move. Tap!'],
+    ghostClapOk: ['The whole crowd', 'did your move!'],
     accuse: ['Tap the little guy', 'you think is an actor'],
     accuseOk: ['Spot an actor: +1.', 'Match goes to 8'],
     tips: {
