@@ -117,6 +117,7 @@ systemctl enable --now massovka-backup.timer >/dev/null 2>&1
 if [ "${ROLE:-game}" = infra ] && [ -n "${TUNNEL_TO:-}" ]; then
   say "туннель в Москву ($TUNNEL_TO)"
   [ -f /etc/massovka/tunnel_ed25519 ] || ssh-keygen -q -t ed25519 -N '' -C massovka-tunnel -f /etc/massovka/tunnel_ed25519
+  unit_before=$(cat /etc/systemd/system/massovka-tunnel.service 2>/dev/null | sha256sum)
   cat > /etc/systemd/system/massovka-tunnel.service <<EOF
 [Unit]
 Description=Массовка: туннель в Москву (бот, логи)
@@ -124,16 +125,19 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-ExecStart=/usr/bin/ssh -N -i /etc/massovka/tunnel_ed25519 -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/etc/massovka/tunnel_known_hosts -R 127.0.0.1:9090:127.0.0.1:8080 tunnel@$TUNNEL_TO
+ExecStart=/usr/bin/ssh -N -i /etc/massovka/tunnel_ed25519 -o ExitOnForwardFailure=yes -o ConnectTimeout=5 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/etc/massovka/tunnel_known_hosts -R 127.0.0.1:9090:127.0.0.1:8080 tunnel@$TUNNEL_TO
+# новые соединения в Москву из-за фильтров проходят через раз (20–40%), уже открытое держится:
+# пробуем часто и коротко, а без нужды не переподключаемся
 Restart=always
-RestartSec=5
+RestartSec=2
+StartLimitIntervalSec=0
 
 [Install]
 WantedBy=multi-user.target
 EOF
   systemctl daemon-reload
   systemctl enable massovka-tunnel >/dev/null 2>&1
-  systemctl restart massovka-tunnel
+  if [ "$unit_before" != "$(sha256sum < /etc/systemd/system/massovka-tunnel.service)" ] || ! systemctl is-active -q massovka-tunnel; then systemctl restart massovka-tunnel; fi
 fi
 if [ "${ROLE:-game}" = game ] && [ -s "$D/tunnel.pub" ]; then
   say "вход для туннеля из Нидерландов (только проброс 127.0.0.1:9090)"
