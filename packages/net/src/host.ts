@@ -1,4 +1,4 @@
-import { LocalSession, MatchSim, TICK_MS, makeConfig } from '@kto/game-core';
+import { AiPlayer, LocalSession, MatchSim, TICK_MS, makeConfig } from '@kto/game-core';
 import type { ClientSession, GameConfig, Intent, Notice, PlayerInfo, WorldEvent } from '@kto/game-core';
 import { GuestMsg, SNAP_SCALE } from './protocol';
 import type { MeMsg, PrivateMsg, RoomMsg } from './protocol';
@@ -42,6 +42,10 @@ export class HostSession implements ClientSession {
     this.cfgOverrides = opts.cfg;
     this.sim = new MatchSim(makeConfig(opts.cfg), opts.players, opts.seed, opts.hostPid);
     if (opts.resume) this.sim.resumeMatch(opts.resume);
+    // ИИ-актёры (добор комнаты до 4): играют здесь, у хоста, и видят только то, что видно всем
+    opts.players.forEach((p, i) => {
+      if (p.ai) this.sim.addAgent(new AiPlayer(p.pid, (opts.seed >>> 0) + 101 + i * 7919));
+    });
     this.local = new LocalSession(this.sim, opts.hostPid, opts.seed, { ai: false });
     this.sim.world.listeners.push((ev) => this.pending.push(ev));
     this.unsub = this.t.onMessage((ch, msg, from) => {

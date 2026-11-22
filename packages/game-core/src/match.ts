@@ -20,6 +20,11 @@ export interface PlayerInfo {
   name: string;
   /** 0 красный, 1 синий, 2 жёлтый, 3 зелёный */
   color: number;
+  /**
+   * ИИ-актёр: место в онлайн-комнате, которое добрал режиссёр (за него играет AiPlayer у хоста).
+   * Что игрок — ИИ, видно по имени и в итогах; какая сущность его — так же скрыто, как у людей.
+   */
+  ai?: boolean;
 }
 
 export type Phase = 'countdown' | 'play' | 'accuse' | 'reveal' | 'results' | 'match_end';

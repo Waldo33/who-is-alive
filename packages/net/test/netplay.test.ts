@@ -387,6 +387,45 @@ describe('сетевая игра', () => {
     }
   });
 
+  it('ИИ-актёры: хост играет за них, гость видит их в составе, но не знает их сущностей', () => {
+    const hub = new LoopbackHub(31);
+    hub.latency = [40, 90];
+    const tHost = hub.join({ userId: 'h', name: 'h', color: 0, joinedAt: 0 });
+    const tGuest = hub.join({ userId: 'g1', name: 'g1', color: 1, joinedAt: 1 });
+    const roster: PlayerInfo[] = [
+      { pid: 'h', name: 'h', color: 0 },
+      { pid: 'g1', name: 'g1', color: 1 },
+      { pid: 'ai-1', name: 'ИИ Батон', color: 2, ai: true },
+      { pid: 'ai-2', name: 'ИИ Енот', color: 3, ai: true },
+    ];
+    let nowMs = 0;
+    const leaks: unknown[] = [];
+    tGuest.onMessage((_ch, msg) => leaks.push(msg));
+    const guest = new RemoteSession({ transport: tGuest, selfPid: 'g1', hostPid: 'h', players: roster, cfg: {}, clock: () => nowMs });
+    const host = new HostSession({ transport: tHost, players: roster, cfg: {}, seed: 31, hostPid: 'h' });
+    const moved = new Set<number>();
+    host.world.listeners.push((ev) => {
+      if (ev.t === 'move') moved.add(ev.eid);
+    });
+    for (let i = 0; i < 20 * 200 && host.phase !== 'results'; i++) {
+      nowMs += 50;
+      vi.advanceTimersByTime(50);
+      host.tick();
+      guest.tick();
+    }
+    // за ИИ-актёров играет хост: их сущности ходят, дубль доходит до итогов
+    const aiEids = host.sim.pr.filter((p) => p.pid.startsWith('ai-')).map((p) => p.eid);
+    expect(aiEids.length).toBe(2);
+    expect(aiEids.some((e) => moved.has(e))).toBe(true);
+    expect(host.phase).toBe('results');
+    expect(guest.players.filter((p) => p.ai).map((p) => p.pid)).toEqual(['ai-1', 'ai-2']);
+    // гостю ничто не сообщает, какая сущность у ИИ-актёра, до итогов дубля
+    const early = leaks.filter((m) => (m as { t?: string }).t === 'ev' || (m as { t?: string }).t === 'snap');
+    expect(JSON.stringify(early)).not.toMatch(/ai-1|ai-2/);
+    host.dispose();
+    guest.dispose();
+  });
+
   it('смена хоста: матч продолжается со счётом, раунд начинается заново', () => {
     const rig = makeRig([40, 80], 0, 10);
     for (let i = 0; i < 20 * 60 * 3 && rig.host.round < 2; i++) rig.step();

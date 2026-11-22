@@ -263,7 +263,8 @@ export function Lobby({
   const me = state.members.find((m) => m.userId === state.selfId);
   const isHost = state.hostId === state.selfId;
   const online = state.members.filter((m) => m.online);
-  const canStart = isHost && online.length >= 2;
+  // с ИИ-актёрами свободные места займут они — начать можно и одному
+  const canStart = isHost && online.length >= room.minHumans();
   // язык отправителя в ссылке — для превью в мессенджере (t меняется вместе с языком)
   const url = useMemo(() => (typeof window === 'undefined' ? '' : withLang(`${window.location.origin}/r/${state.code}`, 'invite')), [state.code, t]);
   // у QR своя метка: так видно, сколько друзей зашло с экрана рядом, а сколько — по ссылке в чате
@@ -376,7 +377,7 @@ export function Lobby({
             ) : (
               <li key={'empty' + i} className="empty">
                 <i className="swatch" />
-                <span className="muted">{t.lobby.emptySlot}</span>
+                <span className="muted">{state.settings.aiFill ? t.lobby.aiSlot : t.lobby.emptySlot}</span>
               </li>
             ),
           )}
@@ -397,7 +398,7 @@ export function Lobby({
         {isHost ? (
           <button className="btn" disabled={!canStart} onClick={() => {
               onGesture();
-              track('lobby_start', { members: state.members.length, online: online.length, kids: !!state.settings.kidsMode });
+              track('lobby_start', { members: state.members.length, online: online.length, kids: !!state.settings.kidsMode, aiFill: !!state.settings.aiFill });
               void room.startMatch();
             }}>
             {t.lobby.start}
@@ -461,6 +462,11 @@ function Settings({ t, settings, onChange }: { t: Dict; settings: RoomSettings; 
         <span>{t.lobby.kids}</span>
       </label>
       <p className="setting-hint">{t.lobby.kidsHint}</p>
+      <label className="setting check">
+        <input type="checkbox" checked={!!settings.aiFill} onChange={(e) => onChange({ ...settings, aiFill: e.target.checked })} />
+        <span>{t.lobby.aiFill}</span>
+      </label>
+      <p className="setting-hint">{t.lobby.aiFillHint}</p>
     </section>
   );
 }

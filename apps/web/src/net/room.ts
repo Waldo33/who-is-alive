@@ -3,6 +3,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { DelayedTransport, HostSession, RemoteSession, SupabaseTransport } from '@kto/net';
 import type { PresenceMember, RoomMsg, Transport } from '@kto/net';
+import { DICTS, fmt } from '@kto/game-core';
 import type { ClientSession, PlayerInfo } from '@kto/game-core';
 import { rpcErrorCode } from '@/lib/supabase';
 
@@ -10,9 +11,17 @@ export interface RoomSettings {
   roundSec: 60 | 75 | 90;
   maxRounds: 3 | 5 | 7;
   kidsMode: boolean;
+  /**
+   * ИИ-актёры: свободные места до 4 занимают ИИ (за них играет хост), матч можно начать и одному.
+   * Пока владелец проводит плейтесты — по умолчанию выключено (решение 22.11.2026), потом включить.
+   */
+  aiFill: boolean;
 }
 
-export const DEFAULT_SETTINGS: RoomSettings = { roundSec: 75, maxRounds: 5, kidsMode: false };
+export const DEFAULT_SETTINGS: RoomSettings = { roundSec: 75, maxRounds: 5, kidsMode: false, aiFill: false };
+
+/** Сколько всего мест в матче (люди + ИИ-актёры). */
+const SEATS = 4;
 
 /**
  * Задержка трансляции для зрителя: опоздавший обычно сидит рядом с игроками — всё, что он видит,
@@ -212,6 +221,28 @@ export class Room {
       .map((m) => ({ pid: m.userId, name: m.name, color: m.color }));
   }
 
+  /** Состав нового матча: люди в комнате и, если включено, ИИ-актёры на свободные места и цвета. */
+  private roster(): PlayerInfo[] {
+    const humans = this.membersAsPlayers();
+    if (!this.state.settings.aiFill) return humans;
+    const lang = typeof document !== 'undefined' && document.documentElement.lang === 'en' ? 'en' : 'ru';
+    const t = DICTS[lang];
+    const free = [0, 1, 2, 3].filter((c) => !humans.some((h) => h.color === c));
+    const nouns = [...t.names.noun].sort(() => Math.random() - 0.5);
+    const ai = free.slice(0, Math.max(0, SEATS - humans.length)).map((color, i) => ({
+      pid: `ai-${i + 1}`,
+      name: fmt(t.lobby.aiName, { name: nouns[i] }).slice(0, 14),
+      color,
+      ai: true,
+    }));
+    return [...humans, ...ai];
+  }
+
+  /** Сколько людей нужно, чтобы начать матч: с ИИ-актёрами — хватит одного. */
+  minHumans(): number {
+    return this.state.settings.aiFill ? 1 : 2;
+  }
+
   private cfgFromSettings() {
     const s = this.state.settings;
     return { roundSec: s.roundSec, maxRounds: s.maxRounds, kidsMode: s.kidsMode };
@@ -323,8 +354,9 @@ export class Room {
   rematchWithNewcomers(): boolean {
     if (!this.isHost || this.state.status !== 'game') return false;
     const now = this.membersAsPlayers();
-    const same = now.length === this.matchPlayers.length && now.every((p) => this.matchPlayers.some((q) => q.pid === p.pid));
-    if (same || now.length < 2) return false;
+    const humansBefore = this.matchPlayers.filter((p) => !p.ai);
+    const same = now.length === humansBefore.length && now.every((p) => humansBefore.some((q) => q.pid === p.pid));
+    if (same || now.length < this.minHumans()) return false;
     void this.startMatch();
     return true;
   }
@@ -332,10 +364,14 @@ export class Room {
   /** Хост: начать матч с теми, кто сейчас в комнате. */
   async startMatch(resume?: { scores: Record<string, number>; round: number }): Promise<void> {
     if (!this.isHost || !this.transport) return;
-    const players = resume ? this.matchPlayers.filter((p) => this.state.members.some((m) => m.userId === p.pid && (m.online || m.userId === this.state.selfId))) : this.membersAsPlayers();
-    if (players.length < 2 && !resume) return;
+    // ИИ-актёры переживают смену хоста: за них теперь играет новый хост
+    const players = resume
+      ? this.matchPlayers.filter((p) => p.ai || this.state.members.some((m) => m.userId === p.pid && (m.online || m.userId === this.state.selfId)))
+      : this.roster();
+    if (players.filter((p) => !p.ai).length < this.minHumans() && !resume) return;
     this.matchPlayers = players;
-    await this.transport.setRole(true, players.map((p) => p.pid));
+    // личные каналы — только у людей
+    await this.transport.setRole(true, players.filter((p) => !p.ai).map((p) => p.pid));
     await this.sb.rpc('set_room_status', { p_code: this.state.code, p_status: 'playing' });
     const seed = Math.floor(Math.random() * 2 ** 31);
     const cfg = this.cfgFromSettings();
