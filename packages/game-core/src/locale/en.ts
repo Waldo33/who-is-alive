@@ -150,7 +150,7 @@ export const en: Dict = {
     voteOk: ['Nailed it!', 'You blend in'],
     voteMiss: ['Odd one out!', 'Watch the crowd'],
     ghost: ['Cut? You can still', 'call crowd cues'],
-    accuse: ['End of take. Tap', 'who’s an actor'],
+    accuse: ['Tap the little guy', 'you think is an actor'],
     accuseOk: ['Spot an actor: +1.', 'Match goes to 8'],
     tips: {
       vote: ['No move named:', 'guess the majority'],

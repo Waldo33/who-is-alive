@@ -68,6 +68,8 @@ export class Tutorial {
   private lastCrowd: { warnAt: number; kind: CrowdKind } | null = null;
   private accused = false;
   private botHits = 0;
+  /** На обвинении: человечек, на которого показываем «тапни сюда». */
+  private suspect = -1;
   private note: { lines: Lines; until: number } | null = null;
 
   constructor(
@@ -283,8 +285,11 @@ export class Tutorial {
       // 9. конец дубля: обвинение (таймер обвинения стоит, пока игрок не выбрал)
       {
         say: t.accuse,
+        // рамка и стрелка с «кругами от касания» над человечком рядом — понятно, куда тапать
+        focus: () => this.suspectAt(),
         enter: () => {
           this.accused = false;
+          this.suspect = -1;
           // конец дубля без сужения кадра: сразу обвинение
           this.sim.zoneStarted = true;
           this.sim.plannedPlayEnd = this.sim.world.time;
@@ -294,6 +299,26 @@ export class Tutorial {
       },
       { say: t.accuseOk, tap: true },
     ];
+  }
+
+  /** Подсказка обвинения: ближайший к игроку человечек (не под надписями сверху и не у края). */
+  private suspectAt(): TutFocus {
+    const w = this.sim.world;
+    if (this.sim.phase !== 'accuse' || this.accused) {
+      this.arrow = null;
+      return null;
+    }
+    let e = w.get(this.suspect);
+    if (!e || !e.alive) {
+      const me = this.meE();
+      const ok = w.alive().filter((o) => o.eid !== me.eid && o.y > 90 && o.y < 240 && o.x > 24 && o.x < 156);
+      ok.sort((a, b) => Math.hypot(a.x - me.x, a.y - me.y) - Math.hypot(b.x - me.x, b.y - me.y));
+      e = ok[0];
+      if (!e) return null;
+      this.suspect = e.eid;
+    }
+    this.arrow = { x: e.x, y: e.y };
+    return { x: e.x, y: e.y - 6, r: 12 };
   }
 
   /** «Актёр» встаёт неподалёку от игрока (но не вплотную) и дальше стоит: его поймает прожектор. */

@@ -594,9 +594,11 @@ export class GameScene extends Phaser.Scene {
         id: 'tut-skip', x: 3, y: PANEL_Y + 3, w: 84, h: 30, label: this.t.tutorial.skip,
         visible: () => !this.sim.crowdWindowOpen(this.sim.world.time),
         onUp: () => skip(),
+        // переживает смену оверлеев (отсчёт → дубль → обвинение), иначе кнопку убирало вместе с ними
+        keep: true,
       };
       this.buttons.push(b);
-      const text = this.txt(b.x + b.w / 2, b.y + 10, b.label!, 'white').setOrigin(0.5, 0).setDepth(1102);
+      const text = this.txt(b.x + b.w / 2, b.y + 10, b.label!, 'white').setOrigin(0.5, 0).setDepth(2100);
       this.btnObjs.set(b.id, { text });
     }
     // шестерёнка: звук, правила и выход — в листе настроек поверх игры (язык меняется вне матча)
@@ -2206,6 +2208,17 @@ export class GameScene extends Phaser.Scene {
       g.fillRect(x - 3, y - 1, 7, 4).fillRect(x - 2, y + 3, 5, 2).fillRect(x - 1, y + 5, 3, 2);
       g.fillStyle(hexToInt(PAL.yellow));
       g.fillRect(x - 2, y, 5, 3).fillRect(x - 1, y + 3, 3, 2).fillRect(x, y + 5, 1, 1);
+      // на обвинении — «круги от касания» по человечку: сюда тапать
+      if (this.sim.phase === 'accuse') {
+        const k = (performance.now() % 900) / 900;
+        const r = 3 + k * 10;
+        const cy = AY + a.y - 7;
+        g.fillStyle(hexToInt(PAL.yellow), 1 - k);
+        for (let i = 0; i < 20; i++) {
+          const an = (i / 20) * Math.PI * 2;
+          g.fillRect(Math.round(x + Math.cos(an) * r), Math.round(cy + Math.sin(an) * r * 0.8), 1, 1);
+        }
+      }
     }
   }
 
@@ -2217,7 +2230,7 @@ export class GameScene extends Phaser.Scene {
     const fg = this.focusG;
     fg.clear();
     const f = this.tut?.focus;
-    if (!f || this.sim.phase !== 'play') return;
+    if (!f || (this.sim.phase !== 'play' && this.sim.phase !== 'accuse')) return;
     let r: { x: number; y: number; w: number; h: number };
     if (f === 'buttons') r = { x: 43, y: PANEL_Y + 1, w: 95, h: 34 };
     else if (f === 'fists') r = { x: 42, y: 4, w: 32, h: 16 };
@@ -2354,7 +2367,8 @@ export class GameScene extends Phaser.Scene {
         this.ovPlate(AY + 2, 28);
         this.ovText(90, AY + 6, this.t.game.accuseTitle, 'yellow');
         this.ovDyn.sub = this.ovText(90, AY + 18, this.t.game.accuseSub, 'sand');
-        this.ovDyn.timer = this.ovText(90, PANEL_Y + 13, '5', 'red');
+        // в обучении обвинение ждёт игрока — отсчёта нет
+        if (!this.tut) this.ovDyn.timer = this.ovText(90, PANEL_Y + 13, '5', 'red');
         break;
       }
       case 'reveal': {
