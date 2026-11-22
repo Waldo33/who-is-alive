@@ -63,6 +63,11 @@ export interface SceneInit {
   timeScale?: number;
   /** «Пробный дубль»: сценарий обучения поверх песочницы без ИИ (tutorial.ts). */
   tutorial?: { onDone: () => void; onSkip: () => void };
+  /**
+   * Матч с ИИ (песочница на сайте): в конце матча вместо «Поделиться» — «С друзьями»,
+   * переход к созданию настоящей комнаты. Вызывается из жеста (отпускание).
+   */
+  onInvite?: () => void;
   /** Аналитика (lib/analytics › track): ход матча глазами этого игрока. В обучении молчит. */
   onEvent?: (name: string, props?: Record<string, string | number | boolean | null>) => void;
   /**
@@ -2524,7 +2529,14 @@ export class GameScene extends Phaser.Scene {
         if (this.init0.onRematch?.()) return;
         sim.intent({ k: 'rematch' });
       }, PAL.amber);
-      this.addOverlayButton('share2', 91, AY + 214, 80, 30, this.t.game.share, () => this.share(), undefined, true);
+      // матч с ИИ: главный следующий шаг — сыграть с друзьями в настоящей комнате
+      const invite = this.init0.onInvite;
+      if (invite) {
+        this.addOverlayButton('invite', 91, AY + 214, 80, 30, this.t.game.withFriends, () => {
+          this.track('invite_tap', { from: 'match_end' });
+          invite();
+        }, PAL.amber, true);
+      } else this.addOverlayButton('share2', 91, AY + 214, 80, 30, this.t.game.share, () => this.share(), undefined, true);
     } else this.addOverlayButton('share2', 9, AY + 214, 162, 30, this.t.game.share, () => this.share(), undefined, true);
     // открывается касанием: отпускание пальца у нижнего края экрана браузер может забрать себе (Chrome на iPhone);
     // жест для системного меню не нужен — отправка идёт отдельной кнопкой в окне клипа

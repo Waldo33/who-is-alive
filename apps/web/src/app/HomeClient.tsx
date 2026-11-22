@@ -28,24 +28,36 @@ export default function HomeClient() {
   const [code, setCode] = useState('');
   const [toast, setToast] = useState('');
   const bar = useRef<Bar | null>(null);
+  const creating = useRef(false);
+  // для автосоздания комнаты из эффекта (?create): самая свежая версия create
+  const createRef = useRef<() => Promise<void>>(async () => {});
   useEffect(() => {
     const l = detectLang();
     setLang(l);
     document.documentElement.lang = l;
     document.title = DICTS[l].meta.title;
     // музыка меню: заиграет после первого касания экрана (раньше браузер звук не пустит)
-    // первый запуск — сразу обучение на практике, без описаний
+    // первый запуск — сразу обучение на практике, без описаний, потом матч с ИИ
     if (!tutorialDone()) {
       track('page_view', { page: 'home', first: true });
-      router.replace('/learn?next=/');
+      // после обучения — сразу матч с ИИ: человеку из ролика без друзей не нужно искать, где играть
+      router.replace(`/learn?next=${encodeURIComponent('/sandbox?go')}`);
       return;
     }
     track('page_view', { page: 'home' });
     getAudio().setMusic('menu');
+    // «С друзьями» в конце матча с ИИ: сразу создать комнату и позвать
+    if (new URLSearchParams(location.search).has('create')) {
+      history.replaceState(null, '', '/');
+      track('invite_create', { from: 'sandbox' });
+      void createRef.current();
+    }
   }, [router]);
   const t = DICTS[lang];
 
   const create = async () => {
+    if (creating.current) return;
+    creating.current = true;
     setBusy(true);
     setError('');
     try {
@@ -56,10 +68,13 @@ export default function HomeClient() {
     } catch (e) {
       const key = e instanceof AuthError ? 'auth' : ((e as Error).message as keyof typeof t.lobby.errors);
       track('room_create_fail', { error: String(key) });
+      creating.current = false;
       setError(t.lobby.errors[key] ?? t.lobby.errors.unknown);
       setBusy(false);
     }
   };
+
+  createRef.current = create;
 
   /** Ссылка на игру — из PWA адресной строки нет, поэтому своя кнопка. Вызывать прямо из нажатия. */
   const shareGame = async () => {
@@ -92,7 +107,11 @@ export default function HomeClient() {
       </div>
       <h1>{t.meta.title}</h1>
       <p className="tag">{t.meta.tagline}</p>
-      <button className="btn" onClick={create} disabled={busy}>
+      {/* главное — сразу играть (с ИИ, без друзей и входа); комната для друзей — второй кнопкой */}
+      <Link className="btn" href="/sandbox?go" onClick={() => track('quick_play_tap')}>
+        {t.start.quickPlay}
+      </Link>
+      <button className="btn small" onClick={create} disabled={busy}>
         {busy ? t.lobby.connecting : t.lobby.createGame}
       </button>
       {showCode ? (
@@ -123,9 +142,6 @@ export default function HomeClient() {
           {t.lobby.haveCode}
         </button>
       )}
-      <Link className="link" href="/sandbox">
-        {t.start.play}
-      </Link>
       <Link className="link" href="/learn">
         {t.ui.howTo}
       </Link>

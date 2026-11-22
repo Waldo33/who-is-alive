@@ -244,12 +244,20 @@ export function mountSandbox(root: HTMLElement, opts: ShellOptions): () => void 
         onSave,
         onSettings: () => bar.openSettings(),
         onEvent: track,
+        // на сайте (не в автономном файле): после матча с ИИ — «С друзьями», создать комнату на главной
+        onInvite: standalone ? undefined : () => location.assign('/?create=1'),
         timeScale: speed,
         lang,
       });
       if (dev) (window as unknown as { __kto: RunningGame }).__kto = running;
     }
   });
+
+  // «Играть» на главной (?go): сразу в матч, без стартового экрана. Звук включится с первым касанием.
+  if (new URLSearchParams(location.search).has('go')) {
+    track('quick_play');
+    root.querySelector<HTMLButtonElement>('.kto-play')!.click();
+  }
 
   if (dev) {
     const form = root.querySelector<HTMLFormElement>('.kto-dev')!;

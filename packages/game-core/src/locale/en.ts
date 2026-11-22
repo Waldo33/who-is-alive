@@ -63,6 +63,7 @@ export const en: Dict = {
     kids: 'Kids mode',
     kidsHint: 'More time to freeze with the crowd and to pick a suspect. For kids and first-timers.',
     play: 'Play with bots',
+    quickPlay: 'Play',
     createGame: 'Create a game',
     note: 'Rehearsal: you and three AI actors on one phone.',
     rotate: 'Turn your phone upright',
@@ -127,6 +128,7 @@ export const en: Dict = {
     winner: 'Best Actor:',
     tooAlive: 'Overacting!',
     rematch: 'Retake',
+    withFriends: 'Invite',
     and: ' & ',
   },
   mods: {
