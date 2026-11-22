@@ -120,7 +120,7 @@ jobs:
         run: |
           ssh $SSH_OPTS root@$IP 'rm -rf /tmp/deploy && mkdir -p /tmp/deploy'
           scp $SSH_OPTS -q deploy/* root@$IP:/tmp/deploy/
-          ssh $SSH_OPTS root@$IP "HOST=$HOST ALT_HOST=$SSLIP SHA=${GITHUB_SHA::12} bash /tmp/deploy/setup.sh"
+          ssh $SSH_OPTS root@$IP "HOST=$HOST ALT_HOST=$SSLIP SITE_HOST=benobody.app SITE_REDIRECT=https://who-is-alive.vercel.app SHA=${GITHUB_SHA::12} bash /tmp/deploy/setup.sh"
 
       - name: HTTPS снаружи
         env:
@@ -132,6 +132,18 @@ jobs:
           done
           echo "::error::https://$HOST/healthz не отвечает"
           exit 1
+
+      - name: Сайт benobody.app (пока — перенаправление на Vercel)
+        run: |
+          for h in benobody.app www.benobody.app; do
+            ok=0
+            for i in $(seq 1 20); do
+              res=$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' "https://$h/r/TEST" || true)
+              case "$res" in 30*) echo "$h → $res"; ok=1; break;; esac
+              sleep 5
+            done
+            [ "$ok" = 1 ] || echo "::warning::$h не отвечает перенаправлением ($res)"
+          done
 
       - name: Живой прогон (4 игрока, ~30 с)
         env:

@@ -168,6 +168,15 @@ $HOST${ALT_HOST:+, $ALT_HOST} {
 	}
 }
 EOF
+# сайт пока на Vercel: голый домен и www ведут туда (свои сертификаты Caddy получит сам)
+if [ -n "${SITE_HOST:-}" ] && [ -n "${SITE_REDIRECT:-}" ]; then
+cat >> /etc/caddy/Caddyfile <<EOF
+
+$SITE_HOST, www.$SITE_HOST {
+	redir $SITE_REDIRECT{uri} 302
+}
+EOF
+fi
 
 chown root:caddy /etc/caddy/Caddyfile
 chmod 640 /etc/caddy/Caddyfile
@@ -176,6 +185,9 @@ chmod 600 /etc/massovka/game.env
 
 # ───────────── выкладка версии ─────────────
 say "версия $SHA"
+# код сервера не изменился (правили только настройку) — не перезапускать: идущие матчи не оборвутся
+same=0
+if [ -f /opt/massovka/current/server.mjs ] && cmp -s "$D/server.mjs" /opt/massovka/current/server.mjs; then same=1; fi
 rel="/opt/massovka/releases/$SHA"
 install -d -o game -g game "$rel"
 install -m 644 -o game -g game "$D/server.mjs" "$rel/server.mjs"
@@ -188,7 +200,11 @@ systemctl daemon-reload
 systemctl enable --now caddy >/dev/null 2>&1
 systemctl reload caddy || systemctl restart caddy
 systemctl enable massovka-game >/dev/null 2>&1
-systemctl restart massovka-game
+if [ "$same" = 1 ] && systemctl is-active -q massovka-game; then
+  say "код сервера тот же — без перезапуска"
+else
+  systemctl restart massovka-game
+fi
 
 say "проверка"
 for i in $(seq 1 30); do
