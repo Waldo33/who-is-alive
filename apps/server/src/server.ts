@@ -10,6 +10,7 @@ import { Auth } from './auth';
 import { Counter, MsgBudget, RateWindow } from './limits';
 import { jsonLogger } from './log';
 import type { Logger } from './log';
+import type { Bot } from './bot';
 import { Room } from './room';
 import { MemoryStore, parseEvents } from './store';
 import type { Store } from './store';
@@ -34,6 +35,8 @@ export interface GameServerOptions {
   maxRooms?: number;
   /** База (аналитика и т. п.); нет — память. */
   store?: Store;
+  /** Telegram-бот (маршруты /tg/*); нет ключа — бота нет. */
+  bot?: Bot;
 }
 
 /** Лимиты (docs/server-migration.md › 3.3). */
@@ -43,6 +46,7 @@ const CONNS_PER_IP = 20;
 const ROOMS_PER_IP_MIN = 10;
 const AUTH_PER_IP_MIN = 30;
 const EVENTS_PER_IP_MIN = 120;
+const BOT_PER_IP_MIN = 60;
 /** Лобби без действий — закрыть; комната старше — закрыть; без единого игрока на связи — закрыть. */
 const LOBBY_IDLE_MS = 30 * 60_000;
 const ROOM_MAX_AGE_MS = 6 * 3600_000;
@@ -75,6 +79,7 @@ export class GameServer {
   private readonly roomRate = new RateWindow(ROOMS_PER_IP_MIN, 60_000);
   private readonly authRate = new RateWindow(AUTH_PER_IP_MIN, 60_000);
   private readonly eventsRate = new RateWindow(EVENTS_PER_IP_MIN, 60_000);
+  private readonly botRate = new RateWindow(BOT_PER_IP_MIN, 60_000);
   readonly store: Store;
   private readonly emptySince = new Map<Room, number>();
   private loop: ReturnType<typeof setInterval> | null = null;
@@ -147,6 +152,7 @@ export class GameServer {
     this.roomRate.sweep(now);
     this.authRate.sweep(now);
     this.eventsRate.sweep(now);
+    this.botRate.sweep(now);
   }
 
   private dropRoom(r: Room, why: string): void {
@@ -192,6 +198,14 @@ export class GameServer {
       }
       if (p === '/v1/rooms' && req.method === 'POST') return this.createRoom(req, res);
       if (p === '/v1/events' && req.method === 'POST') return this.events(req, res);
+      if (p.startsWith('/tg/')) {
+        if (!this.o.bot) return this.reply(res, 503, { error: 'no_bot' });
+        // вебхук Telegram — без лимита (его проверяет секретный заголовок), остальное — по адресу
+        if (p !== '/tg/hook' && !this.botRate.take(this.ip(req), this.now())) return this.reply(res, 429, { error: 'rate_limited' });
+        const body = req.method === 'POST' ? await readJson(req, 65_536) : null;
+        const r = await this.o.bot.handle(req.method ?? 'GET', p.slice(3), req.headers, body);
+        return this.reply(res, r.status, r.body);
+      }
       const m = /^\/v1\/rooms\/([A-Za-z]{4})$/.exec(p);
       if (m && req.method === 'GET') {
         const r = this.rooms.get(m[1].toUpperCase());
@@ -430,12 +444,12 @@ export class GameServer {
   }
 }
 
-async function readJson(req: IncomingMessage): Promise<unknown> {
+async function readJson(req: IncomingMessage, limit = 8192): Promise<unknown> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const c of req) {
     size += (c as Buffer).length;
-    if (size > 8192) return null;
+    if (size > limit) return null;
     chunks.push(c as Buffer);
   }
   if (!chunks.length) return null;

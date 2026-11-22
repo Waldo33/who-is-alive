@@ -117,8 +117,13 @@ jobs:
           IP: ${{ steps.srv.outputs.ip }}
           HOST: ${{ steps.addr.outputs.host }}
           SSLIP: ${{ steps.srv.outputs.host }}
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         run: |
           ssh $SSH_OPTS root@$IP 'rm -rf /tmp/deploy && mkdir -p /tmp/deploy'
+          # ключ бота — файлом по SSH (не в командной строке и не в логах)
+          if [ -n "$TG_TOKEN" ]; then
+            ( umask 077; printf 'TELEGRAM_BOT_TOKEN=%s\n' "$TG_TOKEN" > deploy/bot.env )
+          fi
           scp $SSH_OPTS -q deploy/* root@$IP:/tmp/deploy/
           ssh $SSH_OPTS root@$IP "HOST=$HOST ALT_HOST=$SSLIP SITE_HOST=benobody.app SITE_REDIRECT=https://who-is-alive.vercel.app SHA=${GITHUB_SHA::12} bash /tmp/deploy/setup.sh"
 
@@ -149,6 +154,18 @@ jobs:
         env:
           HOST: ${{ steps.addr.outputs.host }}
         run: pnpm --filter @kto/server smoke "https://$HOST"
+
+      - name: Telegram-бот (вебхук на этот сервер)
+        if: success()
+        env:
+          HOST: ${{ steps.addr.outputs.host }}
+          HAS_TG: ${{ secrets.TELEGRAM_BOT_TOKEN != '' }}
+        run: |
+          if [ "$HAS_TG" != true ]; then echo "TELEGRAM_BOT_TOKEN не задан в GitHub Secrets — бот остаётся в Supabase"; exit 0; fi
+          info=$(curl -fsS "https://$HOST/tg/info") || { echo "::error::бот на сервере не отвечает (api.telegram.org недоступен?)"; exit 1; }
+          echo "бот: $info"
+          curl -fsS "https://$HOST/tg/setup"; echo
+          curl -fsS "https://$HOST/tg/status"; echo
 
       - name: Логи сервера (последние)
         if: always() && steps.srv.outputs.ip != ''

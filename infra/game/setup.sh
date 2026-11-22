@@ -135,14 +135,21 @@ if [ ! -f /etc/massovka/secrets.env ]; then
 fi
 chmod 600 /etc/massovka/secrets.env
 
+envsum_before=$(cat /etc/massovka/*.env 2>/dev/null | sha256sum)
 cat > /etc/massovka/game.env <<EOF
 NODE_ENV=production
 PORT=8080
 INSTANCE=blue
 PUBLIC_WS_BASE=wss://$HOST
+PUBLIC_API_BASE=https://$HOST
+SITE_URL=https://${SITE_HOST:-$HOST}
+TG_APP_NAME=play
 TRUST_PROXY=1
 LOG_LEVEL=info
 EOF
+# ключ Telegram-бота привозит выкладка из GitHub Secrets (в /tmp/deploy/bot.env), на диске — только root
+if [ -s "$D/bot.env" ]; then install -m 600 "$D/bot.env" /etc/massovka/bot.env; rm -f "$D/bot.env"; fi
+envsum_after=$(cat /etc/massovka/*.env 2>/dev/null | sha256sum)
 
 # ───────────── службы ─────────────
 cat > /etc/systemd/system/massovka-game.service <<'EOF'
@@ -156,6 +163,7 @@ User=game
 Group=game
 EnvironmentFile=/etc/massovka/game.env
 EnvironmentFile=/etc/massovka/secrets.env
+EnvironmentFile=-/etc/massovka/bot.env
 ExecStart=/opt/node/bin/node --enable-source-maps /opt/massovka/current/server.mjs
 Restart=always
 RestartSec=1
@@ -230,7 +238,7 @@ systemctl daemon-reload
 systemctl enable --now caddy >/dev/null 2>&1
 systemctl reload caddy || systemctl restart caddy
 systemctl enable massovka-game >/dev/null 2>&1
-if [ "$same" = 1 ] && systemctl is-active -q massovka-game; then
+if [ "$same" = 1 ] && [ "$envsum_before" = "$envsum_after" ] && ! systemctl show massovka-game -p NeedDaemonReload | grep -q yes && systemctl is-active -q massovka-game; then
   say "код сервера тот же — без перезапуска"
 else
   systemctl restart massovka-game

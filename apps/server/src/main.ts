@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { jsonLogger } from './log';
 import type { LogLevel } from './log';
+import { Bot } from './bot';
 import { GameServer } from './server';
 import { MemoryStore, PgStore } from './store';
 import type { Store } from './store';
@@ -36,8 +37,23 @@ if (env.DATABASE_URL) {
   }
 } else log('warn', 'DATABASE_URL не задан — аналитика в памяти');
 
+// Telegram-бот: ключ — в секретах сервера (/etc/massovka/secrets.env), без ключа бота нет
+const bot = env.TELEGRAM_BOT_TOKEN
+  ? new Bot({
+      token: env.TELEGRAM_BOT_TOKEN,
+      apiBase: env.PUBLIC_API_BASE || (env.PUBLIC_WS_BASE ?? '').replace(/^wss:/, 'https:').replace(/^ws:/, 'http:'),
+      site: env.SITE_URL || 'https://benobody.app',
+      app: env.TG_APP_NAME || 'play',
+      features: (env.FEATURES ?? '').split(',').map((s) => s.trim()).filter(Boolean),
+      store,
+      log,
+    })
+  : undefined;
+if (!bot) log('warn', 'TELEGRAM_BOT_TOKEN не задан — бота нет');
+
 const server = new GameServer({
   store,
+  bot,
   authSecret: secret,
   instance: env.INSTANCE || 'blue',
   publicWsBase: env.PUBLIC_WS_BASE || undefined,
