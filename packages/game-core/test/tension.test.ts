@@ -151,4 +151,30 @@ describe('Напряжение: новые механики', () => {
     expect(crowds).toHaveLength(1);
     expect(sim.notices.some((n) => n.t === 'denied' && n.reason === 'not_now')).toBe(true);
   });
+
+  it('ночь Майами: кто бил, видно всем (attacker в hit); днём и в детском режиме — тайна', () => {
+    const hitOf = (kids: boolean, twist: boolean) => {
+      const sim = new MatchSim(makeConfig({ roundMods: false, fixedTheme: 5, kidsMode: kids }), players, 91);
+      runUntil(sim, () => sim.phase === 'play');
+      if (twist) sim.world.push({ t: 'twist', on: true, at: sim.world.time });
+      sim.tick();
+      expect(sim.world.twist).toBe(twist);
+      const a = sim.playerRound('a')!;
+      const b = sim.playerRound('b')!;
+      const ea = sim.world.get(a.eid)!;
+      const eb = sim.world.get(b.eid)!;
+      eb.x = ea.x + 5;
+      eb.y = ea.y;
+      const hits: WorldEvent[] = [];
+      sim.world.listeners.push((ev) => ev.t === 'hit' && hits.push(ev));
+      sim.intent('a', { k: 'attack', eid: b.eid });
+      sim.tick();
+      sim.tick();
+      expect(hits).toHaveLength(1);
+      return hits[0] as Extract<WorldEvent, { t: 'hit' }>;
+    };
+    expect(hitOf(false, true).attacker).toBeDefined();
+    expect(hitOf(false, false).attacker).toBeUndefined();
+    expect(hitOf(true, true).attacker).toBeUndefined();
+  });
 });

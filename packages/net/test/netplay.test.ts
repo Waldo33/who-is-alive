@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Rng } from '@kto/game-core';
+import { Rng, killerExposed } from '@kto/game-core';
 import type { PlayerInfo } from '@kto/game-core';
 import { HostSession, LoopbackHub, RemoteSession } from '../src';
 import type { RoomMsg } from '../src';
@@ -130,10 +130,15 @@ describe('сетевая игра', () => {
       botFingers(rig, rng);
     }
     const pidRe = /:"(h|g1|g2|g3)"/; // значение-строка с id игрока (ключ "h" у прямоугольника — не то)
+    let twist = false;
     for (const { msg } of rig.roomLog) {
       if (msg.t === 'ev' || msg.t === 'snap' || msg.t === 'round') expect(JSON.stringify(msg)).not.toMatch(pidRe);
       if (msg.t === 'ev') {
-        for (const ev of msg.ev) if (ev.t === 'hit' && ev.result === 'player') expect(ev.attacker).toBeUndefined();
+        for (const ev of msg.ev) {
+          if (ev.t === 'twist') twist = ev.on;
+          // кто бил, виден только там, где это решила тема (ночь Майами)
+          if (ev.t === 'hit' && ev.result === 'player' && !killerExposed(rig.host.sim.theme, twist, false)) expect(ev.attacker).toBeUndefined();
+        }
       }
     }
     // личное сообщение каждого гостя упоминает только его собственную сущность

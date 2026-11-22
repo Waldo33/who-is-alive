@@ -32,6 +32,12 @@ export interface TwistRules {
    * идёт закат: иначе команда покажется в одном облике, а продолжится в другом).
    */
   quietSec?: number;
+  /**
+   * В изнанке удар по живому виден всем: в событии `hit` есть `attacker` (ночь Майами —
+   * бьют оружием, и замахивается сам убийца). Единственное исключение из «никто не знает,
+   * кто игрок» — решение владельца; в детском режиме не действует.
+   */
+  exposeKiller?: boolean;
 }
 
 export interface ThemeRules {
@@ -52,7 +58,7 @@ export const THEME_RULES: readonly ThemeRules[] = [
   {
     // день на пляже → ночь в масках: ночь подольше, закат — плавный (облик в клиенте)
     id: 'miami',
-    twist: { firstSec: [16, 26], onSec: [18, 24], gapSec: [10, 14], max: 2, emoteMul: 2, quietSec: 3 },
+    twist: { firstSec: [16, 26], onSec: [18, 24], gapSec: [10, 14], max: 2, emoteMul: 2, quietSec: 3, exposeKiller: true },
   },
 ];
 
@@ -60,6 +66,11 @@ export const THEME_COUNT = THEME_RULES.length;
 
 export function themeRules(theme: number): ThemeRules {
   return THEME_RULES[theme] ?? THEME_RULES[0];
+}
+
+/** Удар по живому сейчас виден всем (изнанка с exposeKiller, не детский режим). */
+export function killerExposed(theme: number, twistOn: boolean, kidsMode: boolean): boolean {
+  return twistOn && !kidsMode && !!themeRules(theme).twist?.exposeKiller;
 }
 
 /** Эмоция, которую в изнанке показывают все (и боты, и кнопка эмоции у игроков), или null. */

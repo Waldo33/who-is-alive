@@ -9,7 +9,7 @@ import type { ActKind, CrowdKind, Dir, EmoteKind, EntitySpawn, WorldEvent } from
 
 import { NavGrid } from './nav';
 import { Rng } from './rng';
-import { THEME_COUNT, themeRules, twistEmote } from './themes';
+import { THEME_COUNT, killerExposed, themeRules, twistEmote } from './themes';
 import { ROUND_MODS, roundMod } from './mods';
 import { World } from './world';
 
@@ -949,7 +949,9 @@ export class MatchSim {
       const n = this.neighbors.get(key);
       if (n) n.hit = true;
       if (victim.autopilot) this.bots.remove(victim.eid);
-      this.emit({ t: 'hit', target, result: 'player', x: hx, y: hy, at: t });
+      // обычно кто бил — тайна; ночью в Майами замах виден всем (themes.ts › exposeKiller)
+      const attacker = killerExposed(this.theme, this.world.twist, cfg.kidsMode) ? p.eid : undefined;
+      this.emit({ t: 'hit', target, result: 'player', x: hx, y: hy, ...(attacker !== undefined ? { attacker } : {}), at: t });
     } else {
       p.botHits++;
       p.stunUntil = t + cfg.missStunSec * 1000;

@@ -33,11 +33,11 @@ export interface Kill {
   dir: 1 | -1;
   pool: Dot[];
   drops: Drop[];
-  /** Кто бил — известно только в повторе после разоблачения: тогда машет он, а не тень. */
+  /** Кто бил (`hit.attacker`): он и замахивается. */
   by?: number;
 }
 
-/** Кто держит оружие: ноги фигуры (свой персонаж в повторе или «тень» у жертвы). */
+/** Кто держит оружие: ноги фигуры бьющего. */
 export interface Holder {
   x: number;
   y: number;
@@ -55,8 +55,6 @@ export function armsOf(map: Record<string, string>): ArmColors {
   return { fill: map.a ?? PAL.peach, edge: PAL.ink, fist: map.s ?? PAL.peach };
 }
 
-/** «Тень убийцы» (в живой игре нападавшего не раскрываем): чёрный силуэт с неоновым контуром. */
-export const SHADOW_ARMS: ArmColors = { fill: PAL.ink, edge: PAL.magenta, fist: PAL.ink };
 
 const REDS = [PAL.red, PAL.magenta, PAL.red, PAL.plum];
 
@@ -110,12 +108,8 @@ export function aim(k: Kill, hx: number): void {
   k.drops = n.drops;
 }
 
-/** Где встаёт «тень» — сбоку от жертвы, лицом к ней. */
-export function shadowAt(k: Kill): Holder {
-  return { x: k.x - k.dir * 9, y: k.y };
-}
 
-/** Оружие в руках (dt — от удара): на входе тень проявляется, на выходе мерцает и исчезает. */
+/** Оружие в руках (dt — от удара): на входе проявляется, на выходе мерцает и исчезает. */
 export function armed(dt: number): boolean {
   const t = dt + SWING_HIT;
   if (t < 0 || t > SWING_END) return false;
@@ -130,9 +124,9 @@ export function killsFromLog(log: readonly WorldEvent[], weaponLook: (twist: boo
   const out: Kill[] = [];
   for (const ev of log) {
     if (ev.t === 'twist') twist = ev.on;
-    else if (ev.t === 'hit' && weaponLook(twist)) {
+    else if (ev.t === 'hit' && ev.attacker !== undefined && weaponLook(twist)) {
+      // бьющий известен (удар по статисту или ночь Майами) — он и машет; без него («Жёсткий дубль») — «поф»
       const k = makeKill(ev.target, ev.x, ev.y, ev.at);
-      // удар по статисту и так раскрывает бьющего (он оглушён) — машет он сам
       k.by = ev.attacker;
       out.push(k);
     }
@@ -170,8 +164,8 @@ export function drawFloor(px: Px, k: Kill, dt: number): void {
 }
 
 /** Над фигурами: руки с оружием у того, кто бьёт, искры, летящие брызги. */
-export function drawAir(px: Px, k: Kill, dt: number, holder: Holder, arms: ArmColors): void {
-  if (armed(dt)) drawSwing(px, k, dt + SWING_HIT, holder, arms);
+export function drawAir(px: Px, k: Kill, dt: number, holder: Holder | null, arms: ArmColors): void {
+  if (holder && armed(dt)) drawSwing(px, k, dt + SWING_HIT, holder, arms);
   if (dt < 0) return;
   if (dt < SPARK_MS) {
     const r = 3 + dt / 22;
