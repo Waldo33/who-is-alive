@@ -93,7 +93,13 @@ export class RemoteSession implements ClientSession {
   private own: { t: number; x: number; y: number }[] = [];
   private lead = 0;
   private corr: { x: number; y: number } | null = null;
-  private lastPred: { at: number; cell: number } | null = null;
+  private lastPred: { at: number; cell: number; resent?: boolean } | null = null;
+  /**
+   * Последнее нажатие «иди сюда», пока хост его не подтвердил. Сообщение могло потеряться —
+   * тогда свой персонаж ушёл бы, а у хоста стоял на месте, и через пару секунд расхождение
+   * исправлялось бы рывком. Не пришло подтверждение — шлём то же нажатие ещё раз (до двух раз).
+   */
+  private moveResend: { it: Intent; at: number; tries: number } | null = null;
   private lastPredClock = -1e9;
   private lastAuth: { x: number; y: number } | null = null;
   private emotePred: { kind: string; until: number } | null = null;
@@ -253,6 +259,7 @@ export class RemoteSession implements ClientSession {
     this.corr = null;
     this.lastAuth = null;
     this.lastPred = null;
+    this.moveResend = null;
     this.emotePred = null;
     this.pendingAtk = [];
     this.fastHits.clear();
@@ -280,9 +287,13 @@ export class RemoteSession implements ClientSession {
       // подтверждение последнего нажатия: точный сдвиг между своим временем и временем хоста
       const lp = this.lastPred;
       if (lp && ev.path[ev.path.length - 1] === lp.cell && ev.at >= lp.at) {
-        const d = ev.at - lp.at;
-        this.lead = this.lead ? this.lead * 0.5 + d * 0.5 : d;
+        // повторно отправленное нажатие пришло позже — по нему сдвиг не меряем
+        if (!lp.resent) {
+          const d = ev.at - lp.at;
+          this.lead = this.lead ? this.lead * 0.5 + d * 0.5 : d;
+        }
         this.lastPred = null;
+        this.moveResend = null;
       }
       return false;
     }
@@ -401,6 +412,7 @@ export class RemoteSession implements ClientSession {
 
   tick(): void {
     this.now += TICK_MS;
+    this.resendMove();
     const target = this.targetTime();
     // ровно один шаг мира на кадр; два — если отстали, ноль — если убежали вперёд.
     // Так нет дрожи 0-2-0-2 шага, когда время колеблется у границы шага.
@@ -556,6 +568,7 @@ export class RemoteSession implements ClientSession {
     const me = this.meMsg;
     if (it.k === 'accuse' && this.phase === 'accuse') this.accusePred = it.eid;
     if (it.k === 'autopilot' && me && me.alive && this.phase === 'play') this.autoPred = { on: it.on, until: this.clock() + OPTIMISTIC_MS };
+    if (it.k === 'autopilot') this.moveResend = null;
     // предсказание: показать своё действие сразу, если хост его примет (не автопилот, не оглушён к его приходу)
     const lead = this.estimateLead();
     const accepts = !!me && me.alive && this.phase === 'play' && !me.autopilot && this.hostNow() + this.latency >= me.stunUntil;
@@ -568,10 +581,12 @@ export class RemoteSession implements ClientSession {
         if (path && path.length) {
           this.pushLocal({ t: 'move', eid: me!.eid, path, at: this.world.time });
           this.lastPred = { at: this.world.time, cell: path[path.length - 1] };
+          this.moveResend = { it: out, at: this.clock(), tries: 0 };
           this.lastPredClock = this.clock();
           if (!this.lead) this.lead = lead;
         }
       } else if (it.k === 'stop') {
+        this.moveResend = null;
         this.pushLocal({ t: 'stop', eid: me!.eid, at: this.world.time });
         this.lastPredClock = this.clock();
       } else if (it.k === 'emote') {
@@ -595,6 +610,21 @@ export class RemoteSession implements ClientSession {
       }
     }
     void this.t.send('host', { t: 'i', i: out });
+  }
+
+  /** Нажатие «иди сюда» не подтвердилось за ~3 задержки — отправить его ещё раз (не больше двух раз). */
+  private resendMove(): void {
+    const r = this.moveResend;
+    if (!r || !this.lastPred || this.phase !== 'play') return;
+    if (this.clock() - r.at < Math.max(900, this.latency * 3 + 300)) return;
+    if (r.tries >= 2) {
+      this.moveResend = null;
+      return;
+    }
+    r.tries++;
+    r.at = this.clock();
+    this.lastPred.resent = true;
+    void this.t.send('host', { t: 'i', i: r.it });
   }
 
   private pushLocal(ev: WorldEvent): void {
