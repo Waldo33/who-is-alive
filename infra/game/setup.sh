@@ -60,6 +60,56 @@ install -d /etc/systemd/journald.conf.d
 printf '[Journal]\nSystemMaxUse=500M\n' > /etc/systemd/journald.conf.d/90-massovka.conf
 systemctl restart systemd-journald
 
+# ───────────── Postgres (аналитика, рейтинг бота) ─────────────
+if ! command -v psql >/dev/null; then
+  say "Postgres"
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -qq
+  apt-get install -y -qq postgresql >/dev/null
+fi
+PGVER=$(ls /etc/postgresql | sort -V | tail -1)
+# маленькая машина (1 ГБ): скромные буферы, только localhost
+cat > "/etc/postgresql/$PGVER/main/conf.d/90-massovka.conf" <<'EOF'
+listen_addresses = 'localhost'
+max_connections = 30
+shared_buffers = 64MB
+effective_cache_size = 256MB
+work_mem = 4MB
+maintenance_work_mem = 32MB
+wal_buffers = 4MB
+EOF
+systemctl enable --now postgresql >/dev/null 2>&1
+systemctl reload postgresql || systemctl restart postgresql
+if ! grep -q '^DATABASE_URL=' /etc/massovka/secrets.env 2>/dev/null; then
+  say "база massovka"
+  pw=$(openssl rand -hex 24)
+  sudo -u postgres psql -qtAc "do \$\$ begin if not exists (select from pg_roles where rolname = 'massovka') then create role massovka login password '$pw'; else alter role massovka password '$pw'; end if; end \$\$;"
+  sudo -u postgres psql -qtAc "select 1 from pg_database where datname = 'massovka'" | grep -q 1 || sudo -u postgres createdb -O massovka massovka
+  ( umask 077; echo "DATABASE_URL=postgres://massovka:$pw@127.0.0.1:5432/massovka" >> /etc/massovka/secrets.env )
+fi
+
+say "копия базы раз в сутки (14 дней)"
+install -d -m 700 -o postgres -g postgres /var/backups/massovka
+cat > /etc/systemd/system/massovka-backup.service <<'EOF'
+[Unit]
+Description=Массовка: копия базы
+[Service]
+Type=oneshot
+User=postgres
+ExecStart=/bin/sh -c 'pg_dump -Fc massovka > /var/backups/massovka/massovka-$(date +%%F).dump && find /var/backups/massovka -name "*.dump" -mtime +14 -delete'
+EOF
+cat > /etc/systemd/system/massovka-backup.timer <<'EOF'
+[Unit]
+Description=Массовка: копия базы раз в сутки
+[Timer]
+OnCalendar=*-*-* 03:17:00
+Persistent=true
+[Install]
+WantedBy=timers.target
+EOF
+systemctl daemon-reload
+systemctl enable --now massovka-backup.timer >/dev/null 2>&1
+
 # ───────────── Node и Caddy ─────────────
 if [ -f "$D/node.tar.xz" ]; then
   ver=$(cat "$D/node.version")
@@ -98,7 +148,7 @@ EOF
 cat > /etc/systemd/system/massovka-game.service <<'EOF'
 [Unit]
 Description=Массовка: игровой сервер
-After=network-online.target
+After=network-online.target postgresql.service
 Wants=network-online.target
 
 [Service]

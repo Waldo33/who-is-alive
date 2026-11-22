@@ -11,6 +11,8 @@ import { Counter, MsgBudget, RateWindow } from './limits';
 import { jsonLogger } from './log';
 import type { Logger } from './log';
 import { Room } from './room';
+import { MemoryStore, parseEvents } from './store';
+import type { Store } from './store';
 import type { Peer } from './room';
 
 export interface GameServerOptions {
@@ -30,6 +32,8 @@ export interface GameServerOptions {
   speed?: number;
   /** Сколько комнат одновременно, больше — «сервер занят». */
   maxRooms?: number;
+  /** База (аналитика и т. п.); нет — память. */
+  store?: Store;
 }
 
 /** Лимиты (docs/server-migration.md › 3.3). */
@@ -38,6 +42,7 @@ const MAX_STRIKES = 3;
 const CONNS_PER_IP = 20;
 const ROOMS_PER_IP_MIN = 10;
 const AUTH_PER_IP_MIN = 30;
+const EVENTS_PER_IP_MIN = 120;
 /** Лобби без действий — закрыть; комната старше — закрыть; без единого игрока на связи — закрыть. */
 const LOBBY_IDLE_MS = 30 * 60_000;
 const ROOM_MAX_AGE_MS = 6 * 3600_000;
@@ -69,6 +74,8 @@ export class GameServer {
   private readonly ipConns = new Counter();
   private readonly roomRate = new RateWindow(ROOMS_PER_IP_MIN, 60_000);
   private readonly authRate = new RateWindow(AUTH_PER_IP_MIN, 60_000);
+  private readonly eventsRate = new RateWindow(EVENTS_PER_IP_MIN, 60_000);
+  readonly store: Store;
   private readonly emptySince = new Map<Room, number>();
   private loop: ReturnType<typeof setInterval> | null = null;
   private slow: ReturnType<typeof setInterval> | null = null;
@@ -83,6 +90,7 @@ export class GameServer {
     this.now = o.now ?? Date.now;
     this.speed = o.speed ?? 1;
     this.maxRooms = o.maxRooms ?? 2000;
+    this.store = o.store ?? new MemoryStore();
     this.http = createServer((req, res) => void this.onHttp(req, res));
     this.wss = new WebSocketServer({ noServer: true, maxPayload: WIRE_MAX_BYTES });
     this.http.on('upgrade', (req, socket, head) => {
@@ -138,6 +146,7 @@ export class GameServer {
     }
     this.roomRate.sweep(now);
     this.authRate.sweep(now);
+    this.eventsRate.sweep(now);
   }
 
   private dropRoom(r: Room, why: string): void {
@@ -182,6 +191,7 @@ export class GameServer {
         return this.reply(res, 200, await this.auth.issue());
       }
       if (p === '/v1/rooms' && req.method === 'POST') return this.createRoom(req, res);
+      if (p === '/v1/events' && req.method === 'POST') return this.events(req, res);
       const m = /^\/v1\/rooms\/([A-Za-z]{4})$/.exec(p);
       if (m && req.method === 'GET') {
         const r = this.rooms.get(m[1].toUpperCase());
@@ -222,6 +232,24 @@ export class GameServer {
     this.rooms.set(code, room);
     this.log('info', 'room_created', { room: code, user: hashId(userId) });
     return this.reply(res, 200, { code, wsUrl: this.wsUrl(req) });
+  }
+
+  /**
+   * Аналитика воронки: пачка событий (как RPC log_events в Supabase). Тело — JSON с типом text/plain,
+   * чтобы браузер слал без предварительного запроса и с keepalive при закрытии вкладки.
+   */
+  private async events(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.eventsRate.take(this.ip(req), this.now())) return this.reply(res, 429, { error: 'rate_limited' });
+    const b = parseEvents(await readJson(req));
+    if (!b) return this.reply(res, 400, { error: 'bad_events' });
+    const userId = b.token ? await this.auth.verify(b.token) : null;
+    try {
+      await this.store.logEvents(b.device, b.session, userId, b.events);
+    } catch (e) {
+      this.log('error', 'events_store', { err: String(e) });
+      return this.reply(res, 503, { error: 'store' });
+    }
+    return this.reply(res, 204);
   }
 
   private newCode(): string | null {

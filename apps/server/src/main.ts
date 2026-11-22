@@ -2,6 +2,8 @@ import { randomBytes } from 'node:crypto';
 import { jsonLogger } from './log';
 import type { LogLevel } from './log';
 import { GameServer } from './server';
+import { MemoryStore, PgStore } from './store';
+import type { Store } from './store';
 
 /**
  * Запуск игрового сервера. Настройки — из окружения:
@@ -21,7 +23,21 @@ if (!secret) {
   log('warn', 'AUTH_SIGNING_KEY не задан — временный ключ (токены умрут с перезапуском)');
 }
 
+let store: Store = new MemoryStore();
+if (env.DATABASE_URL) {
+  const pgStore = new PgStore(env.DATABASE_URL, log);
+  try {
+    await pgStore.migrate();
+    store = pgStore;
+    log('info', 'db_ready');
+  } catch (e) {
+    // без базы игра всё равно работает — только аналитика копится в памяти
+    log('error', 'db_unavailable', { err: String(e) });
+  }
+} else log('warn', 'DATABASE_URL не задан — аналитика в памяти');
+
 const server = new GameServer({
+  store,
   authSecret: secret,
   instance: env.INSTANCE || 'blue',
   publicWsBase: env.PUBLIC_WS_BASE || undefined,
@@ -40,6 +56,7 @@ async function stop(sig: string): Promise<void> {
   log('info', 'stopping', { sig });
   // TODO этап 3: режим drain — доиграть матчи и перевезти лобби на новый экземпляр
   await server.close();
+  await store.close();
   process.exit(0);
 }
 process.on('SIGTERM', () => void stop('SIGTERM'));

@@ -72,6 +72,33 @@ describe('игровой сервер: вход и HTTP', () => {
   });
 });
 
+describe('игровой сервер: аналитика', () => {
+  it('принимает пачку событий как text/plain, проверяет имена, комнату и игрока', async () => {
+    const { http, srv } = await boot();
+    const u = await anon(http);
+    const body = {
+      d: 'dev-12345678',
+      s: 'sess-1234567',
+      t: u.token,
+      e: [
+        { n: 'page_view', p: { page: 'home' } },
+        { n: 'room_join', p: { members: 2 }, r: 'ABCD' },
+        { n: 'Bad Name', p: {} },
+        { n: 'big', p: { x: 'y'.repeat(3000) } },
+      ],
+    };
+    const r = await fetch(`${http}/v1/events`, { method: 'POST', headers: { 'content-type': 'text/plain' }, body: JSON.stringify(body) });
+    expect(r.status).toBe(204);
+    const store = srv.store as unknown as { events: { name: string; room: string | null; userId: string | null; props: object }[] };
+    expect(store.events.map((e) => e.name)).toEqual(['page_view', 'room_join', 'big']);
+    expect(store.events[1].room).toBe('ABCD');
+    expect(store.events[0].userId).toBe(u.userId);
+    expect(store.events[2].props).toEqual({});
+    const bad = await fetch(`${http}/v1/events`, { method: 'POST', body: JSON.stringify({ d: '!', e: [] }) });
+    expect(bad.status).toBe(400);
+  });
+});
+
 describe('игровой сервер: лобби', () => {
   it('четверо входят, пятый — «комната полна»; готов, имя, настройки, кик, уход режиссёра', async () => {
     const { http, ws } = await boot();

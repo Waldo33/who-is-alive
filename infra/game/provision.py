@@ -101,6 +101,8 @@ def ipv4(server):
 
 def main():
     pub = ssh_key()
+    # открытый ключ — не секрет: им шифруют данные для переноса на сервер (infra/game/import.py)
+    print('ключ сервера (открытый):', pub)
     key_id = ensure_key(pub)
     servers = [s for s in api('GET', '/servers').get('servers', []) if s.get('name') == NAME]
     if len(servers) > 1:
