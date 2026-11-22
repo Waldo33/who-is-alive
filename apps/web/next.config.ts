@@ -14,6 +14,12 @@ const config: NextConfig = {
   // линтер запускается из корня монорепо в CI
   eslint: { ignoreDuringBuilds: true },
   // сервис-воркер всегда свежий: иначе обновления игры доходили бы до установленного приложения с опозданием
+  // сайт переехал на свой сервер (benobody.app): сборка на Vercel только перенаправляет старые ссылки,
+  // с путём и параметрами (комнаты /r/КОД, ?startapp из Telegram); фрагмент (#tgWebAppData) браузер сохраняет сам
+  async redirects() {
+    if (!process.env.VERCEL) return [];
+    return [{ source: '/:path*', destination: 'https://benobody.app/:path*', permanent: false }];
+  },
   async headers() {
     return [
       {
