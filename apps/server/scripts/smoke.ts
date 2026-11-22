@@ -72,8 +72,57 @@ const frame = setInterval(() => {
   }
 }, 50);
 await until(() => gs.every((g) => g.phase === 'play'), 15_000, 'дубль начался');
-await new Promise((r) => setTimeout(r, PLAY_MS));
+// игрок 0 — «живой»: ходит, останавливается и жмёт жесты; считаем сдвиги своего персонажа стоя
+const probe = gs[0];
+const gaps: number[] = [];
+let lastEv = 0;
+links[0].onMessage((ch, m) => {
+  if (ch === 'room' && (m as { t: string }).t === 'ev') {
+    const n = performance.now();
+    if (lastEv) gaps.push(n - lastEv);
+    lastEv = n;
+  }
+});
+let shifts = 0;
+let maxShift = 0;
+const shiftLog: string[] = [];
+const tEnd = Date.now() + PLAY_MS;
+let lastPos: [number, number] | null = null;
+let standSince = 0;
+let phaseI = 0;
+while (Date.now() < tEnd && probe.phase === 'play') {
+  const me = probe.me();
+  const e = me ? probe.world.get(me.eid) : undefined;
+  if (e && me?.alive) {
+    const cycle = Math.floor((Date.now() / 1000) % 6);
+    if (cycle === 0 && phaseI !== 1) {
+      phaseI = 1;
+      probe.intent({ k: 'move', x: Math.round(e.x < 90 ? e.x + 25 : e.x - 25), y: Math.round(e.y) });
+    } else if (cycle >= 2 && cycle % 1 === 0 && phaseI !== cycle) {
+      phaseI = cycle;
+      probe.intent({ k: 'emote', kind: (['wave', 'dance', 'jump'] as const)[cycle % 3] });
+    }
+    if (!e.moving) {
+      standSince ||= Date.now();
+      if (lastPos && Date.now() - standSince > 300) {
+        const d = Math.hypot(e.x - lastPos[0], e.y - lastPos[1]);
+        if (d > 0.01) {
+          shifts++;
+          maxShift = Math.max(maxShift, d);
+          if (shiftLog.length < 10) shiftLog.push(`  стоя сдвиг ${d.toFixed(2)} пикс., act=${e.act ?? "-"}, задержка ${Math.round(probe.latency)} мс`);
+        }
+      }
+    } else standSince = 0;
+    lastPos = [e.x, e.y];
+  }
+  await new Promise((r) => setTimeout(r, 25));
+}
 clearInterval(frame);
+gaps.sort((a, b) => a - b);
+const q = (p: number) => Math.round(gaps[Math.min(gaps.length - 1, Math.floor(gaps.length * p))] ?? 0);
+console.log(`пакеты ev: ${gaps.length}, интервал p50 ${q(0.5)} мс, p95 ${q(0.95)} мс, p99 ${q(0.99)} мс, макс ${q(1)} мс`);
+console.log(`сдвиги своего персонажа стоя: ${shifts}, макс ${maxShift.toFixed(2)} пикс.`);
+for (const l of shiftLog) console.log(l);
 
 const lat = gs.map((g) => Math.round(g.latency));
 const stalls = gs.map((g) => g.stalls);
