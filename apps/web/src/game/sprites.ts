@@ -216,19 +216,25 @@ export function makeShadow(): HTMLCanvasElement {
 }
 
 export function makeRing(): HTMLCanvasElement {
-  // кольцо под своим персонажем: 2 пикселя толщиной, белое (тонируется цветом игрока)
-  const { c, g } = canvas(19, 9);
-  for (let a = 0; a < Math.PI * 2; a += 0.04) {
-    px(g, Math.round(9 + Math.cos(a) * 9), Math.round(4 + Math.sin(a) * 4), PAL.white);
-    px(g, Math.round(9 + Math.cos(a) * 8), Math.round(4 + Math.sin(a) * 3), PAL.white);
+  // кольцо под своим персонажем: 2 пикселя толщиной, белое (тонируется цветом игрока),
+  // с контуром ink снаружи и внутри — читается на кирпиче парка и на светлой льдине
+  const { c, g } = canvas(21, 11);
+  for (let a = 0; a < Math.PI * 2; a += 0.03) {
+    px(g, Math.round(10 + Math.cos(a) * 10), Math.round(5 + Math.sin(a) * 5), PAL.ink);
+    px(g, Math.round(10 + Math.cos(a) * 7), Math.round(5 + Math.sin(a) * 2), PAL.ink);
+  }
+  for (let a = 0; a < Math.PI * 2; a += 0.03) {
+    px(g, Math.round(10 + Math.cos(a) * 9), Math.round(5 + Math.sin(a) * 4), PAL.white);
+    px(g, Math.round(10 + Math.cos(a) * 8), Math.round(5 + Math.sin(a) * 3), PAL.white);
   }
   return c;
 }
 
-export function makeArrow(): HTMLCanvasElement {
-  // стрелка «это ты» над головой: крупная, с чёрным контуром, белая (тонируется цветом игрока)
+export function makeArrow(color: string = PAL.white): HTMLCanvasElement {
+  // стрелка «это ты» над головой: крупная, контур ink, кромка цветом игрока и белая сердцевина —
+  // жёлтая на светлой льдине и красная на кирпиче больше не теряются (не тонируется)
   const { c, g } = canvas(11, 9);
-  grid(g, 0, 0, ['ooooooooooo', 'owwwwwwwwwo', 'owwwwwwwwwo', '.owwwwwwwo.', '..owwwwwo..', '...owwwo...', '....owo....', '.....o.....', '...........'], { o: PAL.ink, w: PAL.white });
+  grid(g, 0, 0, ['ooooooooooo', 'occcccccccc'.slice(0, 10) + 'o', 'occwwwwwcco', '.occwwwcco.', '..occwcco..', '...occco...', '....oco....', '.....o.....', '...........'], { o: PAL.ink, w: PAL.white, c: color });
   return c;
 }
 
@@ -247,7 +253,8 @@ export function makeStar(): HTMLCanvasElement {
     '.oo....oo.',
   ];
   for (let f = 0; f < 4; f++) {
-    grid(g, f * 10, 0, shape, { o: PAL.umber, y: f % 2 ? PAL.amber : PAL.yellow, w: PAL.white });
+    // контур ink (был umber): звезда не тонет в снегу льдины и в конфетти корпоратива
+    grid(g, f * 10, 0, shape, { o: PAL.ink, y: f % 2 ? PAL.amber : PAL.yellow, w: PAL.white });
     const sp = [[2, 1], [8, 2], [8, 8], [1, 7]][f];
     px(g, f * 10 + sp[0], sp[1], PAL.white);
   }
@@ -322,6 +329,10 @@ export function makeIcons(): { canvas: HTMLCanvasElement; names: string[] } {
     cross: ['oo....oo', 'owo..owo', '.owoowo.', '..owwo..', '..owwo..', '.owoowo.', 'owo..owo', 'oo....oo'],
     gear: ['...mm...', '.m.mm.m.', '..mmmm..', 'mmm..mmm', 'mmm..mmm', '..mmmm..', '.m.mm.m.', '...mm...'],
     crown: ['o..o..o.', 'oyoyoyo.', 'oyyyyyo.', 'oyyyyyo.', 'oyryryo.', 'ooooooo.', '........', '........'],
+    // «поделиться»: стрелка вверх из лотка
+    share: ['...oo...', '..owwo..', '.owwwwo.', 'oooww ooo'.replace(' ', ''), 'o.owwo.o', 'owoooowo', 'owwwwwwo', 'oooooooo'],
+    // кадр плёнки: клип
+    film: ['oooooooo', 'owowowow', 'oooooooo', 'owwwwwwo', 'owwwwwwo', 'oooooooo', 'owowowow', 'oooooooo'],
     // «Толпа решает»: жест не назван
     question: ['.oooooo.', 'oyyyyyyo', 'oyooooyo', 'ooo.oyyo', '...oyyo.', '...oyo..', '...ooo..', '...oyo..'],
   };
@@ -581,6 +592,30 @@ export const ICON_MAP: Record<string, string> = {
   o: PAL.ink, w: PAL.white, m: PAL.mist, d: PAL.steel, n: PAL.dusk, y: PAL.yellow, r: PAL.red,
   b: PAL.blue, g: PAL.green, u: PAL.umber, f: PAL.orange, a: PAL.amber, s: PAL.peach,
 };
+
+/**
+ * Значки шапки дубля 10×10: кулак (удар есть), пустой слот (удар истрачен), своя звезда и пустая ячейка.
+ * Кулак спереди — пальцы, большой палец поперёк, контур ink: читается на 1× как ✊, а не как зубы.
+ */
+export const HUD_FISTS: Record<string, string[]> = {
+  // A: кулак цвета кожи
+  a: ['..oooooo..', '.osososoo.', 'ososososso', 'ososososso', 'ofofofosso', 'ooooooosso', 'osssssofso', '.offffosso', '..ossssso.', '..oooooo..'],
+  // B: белая перчатка (как кнопки команд)
+  b: ['..oooooo..', '.owowowoo.', 'owowowowwo', 'owowowowwo', 'omomomowwo', 'ooooooowwo', 'owwwwwomwo', '.ommmmowwo', '..owwwwwo.', '..oooooo..'],
+  // C: вспышка удара
+  c: ['....o.....', '.o.owo.o..', '..owwwo...', '.owwwwwoo.', 'owwwwwwwwo', '.oowwwwwo.', '..owwwwo..', '.owo.owo..', '.oo...oo..', '..........'],
+};
+export function makeHudIcons(fist: keyof typeof HUD_FISTS = 'a'): HTMLCanvasElement {
+  const { c, g } = canvas(40, 10);
+  const rows = HUD_FISTS[fist];
+  grid(g, 0, 0, rows, { o: PAL.ink, s: PAL.peach, f: PAL.fawn, w: PAL.white, m: PAL.mist });
+  // пустой слот: тот же силуэт без деталей, тёмный — «удар истрачен»
+  grid(g, 10, 0, rows.map((r) => r.replace(/[^.o]/g, 'n').replace(/o(?=n)|(?<=n)o/g, 'o')), { o: PAL.ink, n: PAL.dusk });
+  const star = ['...oo...', '...oyo..', 'oooyyooo', 'oyyyyyyo', '.oyyyyo.', '.oyooyo.', '.oo..oo.', '........'];
+  grid(g, 21, 1, star, { o: PAL.ink, y: PAL.yellow });
+  grid(g, 31, 1, star, { o: PAL.ink, y: PAL.dusk });
+  return c;
+}
 
 /** Лист иконок 8×8 из строк (иконки команд темы). */
 export function makeIconSheet(list: string[][]): HTMLCanvasElement {

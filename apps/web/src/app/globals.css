@@ -8,6 +8,7 @@
   --rust: #be4a2f;
   --coral: #f6757a;
   --mist: #c0cbdc;
+  --slate: #8b9bb4;
   --steel: #5a6988;
   --font-pixel: 'Press Start 2P';
   /* безопасные зоны: системные или Telegram (полноэкранный Mini App: шапка Telegram поверх страницы, lib/telegram.ts) */
@@ -78,7 +79,7 @@ button.btn { border: 0; cursor: pointer; border-radius: 0; }
   text-underline-offset: 4px; cursor: pointer; min-height: 44px; }
 .link:focus-visible, .lobby button:focus-visible, .code-input:focus-visible { outline: 2px solid var(--yellow); outline-offset: 2px; }
 .error { color: var(--coral) !important; font-size: 10px; line-height: 1.8; max-width: 32ch; text-align: center; }
-.muted { color: var(--steel); font-size: 9px; line-height: 1.8; margin: 0; text-align: center; }
+.muted { color: var(--slate); font-size: 9px; line-height: 1.8; margin: 0; text-align: center; }
 .code-form { display: flex; gap: 8px; align-items: stretch; }
 .code-input { font: inherit; font-size: 18px; width: 7ch; text-align: center; letter-spacing: 4px; text-transform: uppercase;
   background: var(--night); color: var(--yellow); border: 2px solid #3a4466; border-radius: 0; padding: 10px; }
@@ -118,7 +119,7 @@ button.btn { border: 0; cursor: pointer; border-radius: 0; }
 .setting { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 9px; color: var(--sand); }
 .setting.check { justify-content: flex-start; min-height: 44px; }
 .setting.check input { width: 22px; height: 22px; accent-color: var(--amber); }
-.setting-hint { margin: -8px 0 0 30px; font-size: 8px; line-height: 1.8; color: var(--steel); }
+.setting-hint { margin: -8px 0 0 30px; font-size: 8px; line-height: 1.8; color: var(--slate); }
 .seg { display: flex; box-shadow: 0 0 0 2px var(--ink); }
 .seg button, .lang-switch button { font: inherit; font-size: 9px; min-width: 52px; min-height: 44px; border: 0; border-radius: 0;
   background: var(--ink); color: var(--steel); cursor: pointer; }
@@ -189,4 +190,4 @@ button.btn { border: 0; cursor: pointer; border-radius: 0; }
 .daily-board li.me .daily-board-name { color: var(--amber); }
 .daily-board-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .daily-board li > span:last-child { flex-shrink: 0; white-space: nowrap; }
-.daily .muted { color: var(--steel); }
+.daily .muted { color: var(--slate); }

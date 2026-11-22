@@ -20,6 +20,8 @@ export const FONT_COLORS = {
   mist: PAL.mist,
   coral: PAL.coral,
   amber: PAL.amber,
+  /** Тёмный текст на янтарной главной кнопке — без контура (контур ink слил бы буквы). */
+  ink: PAL.ink,
 } as const;
 export type FontColor = keyof typeof FONT_COLORS;
 
@@ -54,6 +56,7 @@ export function registerFonts(scene: Phaser.Scene, family: string): void {
             g.fillStyle = color;
             g.fillRect(dx + x, dy + y, 1, 1);
           } else if (
+            name !== 'ink' &&
             (x >= -1 && y >= -1) &&
             [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]].some(([ox, oy]) => {
               const nx = x + ox;
