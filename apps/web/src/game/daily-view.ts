@@ -1,6 +1,6 @@
 import { PAL } from '@kto/assets';
 import { TICK_MS, makeReplay } from '@kto/game-core';
-import type { ArenaDef, CrowdKind, World } from '@kto/game-core';
+import type { ArenaDef, CrowdKind, HintRect, World } from '@kto/game-core';
 import { frame, getArt } from './art';
 import type { Art } from './art';
 import { frameFor } from './frames';
@@ -33,6 +33,8 @@ export class DailyView {
   /** Ошибочные выборы (крестик) и правильный ответ (рамка). */
   wrong = new Set<number>();
   answer: number | null = null;
+  /** Подсказка после промаха: всё вне этой части поля притушено. */
+  hint: HintRect | null = null;
 
   constructor(private o: DailyViewOpts) {
     o.canvas.width = o.arena.width;
@@ -82,6 +84,12 @@ export class DailyView {
   /** Перерисовать стоп-кадр (после выбора). */
   redraw(): void {
     if (this.last) this.draw(this.last, 1, performance.now());
+  }
+
+  /** Где стоит сущность на последнем кадре. */
+  posOf(eid: number): { x: number; y: number } | null {
+    const e = this.last?.entities.find((x) => x.eid === eid);
+    return e ? { x: e.x, y: e.y } : null;
   }
 
   /** Сущность под тапом (координаты в пикселях canvas на экране) или null. */
@@ -167,6 +175,28 @@ export class DailyView {
       for (let k = 0; k < 48; k++) {
         const ang = (k / 48) * Math.PI * 2;
         g.fillRect(Math.round(s.x + Math.cos(ang) * s.r), Math.round(s.y + Math.sin(ang) * s.r * 0.75), 1, 1);
+      }
+    }
+    // подсказка: вне нужной части поля — темнее, по краю части — пунктир
+    const h = this.hint;
+    if (h) {
+      const W = this.o.arena.width;
+      const H = this.o.arena.height;
+      g.fillStyle = PAL.ink;
+      g.globalAlpha = 0.6;
+      g.fillRect(0, 0, W, h.y);
+      g.fillRect(0, h.y + h.h, W, H - h.y - h.h);
+      g.fillRect(0, h.y, h.x, h.h);
+      g.fillRect(h.x + h.w, h.y, W - h.x - h.w, h.h);
+      g.globalAlpha = 1;
+      g.fillStyle = PAL.yellow;
+      for (let k = 0; k < h.w; k += 4) {
+        g.fillRect(h.x + k, h.y, 2, 1);
+        g.fillRect(h.x + k, h.y + h.h - 1, 2, 1);
+      }
+      for (let k = 0; k < h.h; k += 4) {
+        g.fillRect(h.x, h.y + k, 1, 2);
+        g.fillRect(h.x + h.w - 1, h.y + k, 1, 2);
       }
     }
     // стоп-кадр: мир сереет

@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { DICTS, fmt, tp } from '@kto/game-core';
 import type { CrowdKind, DailyPuzzle, Lang } from '@kto/game-core';
+import { dailyHint } from '@kto/game-core';
 import { track } from '@/lib/analytics';
 import { loadChunk } from '@/lib/chunk';
 import { detectLang } from '@/lib/lang';
@@ -70,25 +71,18 @@ export default function DailyClient() {
   const [scale, setScale] = useState(2);
   const [board, setBoard] = useState<ChatScore[] | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const slotRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<DailyView | null>(null);
   const puzzleRef = useRef<DailyPuzzle | null>(null);
   const audioRef = useRef<import('@/game/audio').Audio | null>(null);
   const modRef = useRef<{ squares: (tries: number, won: boolean) => string; tries: number } | null>(null);
+  const [hinted, setHinted] = useState(false);
 
   useEffect(() => {
     const l = detectLang();
     setLang(l);
     document.documentElement.lang = l;
     document.title = `${DICTS[l].daily.title} · ${DICTS[l].meta.title}`;
-    // целый масштаб в пикселях экрана (как integerZoom у игры): пиксели не размываются
-    const fit = () => {
-      const dpr = window.devicePixelRatio || 1;
-      const w = Math.min(window.innerWidth - 24, 540) * dpr;
-      const h = (window.innerHeight - 210) * dpr;
-      setScale(Math.max(1, Math.floor(Math.min(w / 180, h / 260))) / dpr);
-    };
-    fit();
-    addEventListener('resize', fit);
     let cancelled = false;
     void loadChunk(() => Promise.all([import('@kto/game-core'), import('@/game/themes'), import('@/game/audio')])).then(async ([core, themes, audio]) => {
       const num = core.dailyNumber(core.localDateKey(new Date()));
@@ -111,9 +105,27 @@ export default function DailyClient() {
     });
     return () => {
       cancelled = true;
-      removeEventListener('resize', fit);
       viewRef.current?.dispose();
     };
+  }, []);
+
+  // поле занимает всё место между заголовком и кнопками — экран без прокрутки;
+  // масштаб целый в пикселях экрана (как integerZoom у игры): пиксели не размываются
+  useEffect(() => {
+    const slot = slotRef.current;
+    if (!slot) return;
+    const fit = () => {
+      const dpr = window.devicePixelRatio || 1;
+      const w = slot.clientWidth * dpr;
+      const h = slot.clientHeight * dpr;
+      // совсем нет места (маленький экран + рейтинг чата под ответом) — поле прячем, а не листаем
+      const k = Math.floor(Math.min(w / 180, h / 260));
+      setScale(k / dpr >= 0.5 ? k / dpr : 0);
+    };
+    fit();
+    const ro = new ResizeObserver(fit);
+    ro.observe(slot);
+    return () => ro.disconnect();
   }, []);
 
   // canvas появляется после загрузки: тогда и создаём вид
@@ -171,6 +183,7 @@ export default function DailyClient() {
     setTries(used);
     track('daily_guess', { n, try: used, right: eid === p.answer });
     if (eid === p.answer) {
+      v.hint = null;
       v.answer = eid;
       v.redraw();
       audioRef.current?.play('accuseRight');
@@ -182,10 +195,17 @@ export default function DailyClient() {
     setFlash(t.daily.wrong);
     setTimeout(() => setFlash(''), 900);
     if (used >= m.tries) {
+      v.hint = null;
       v.answer = p.answer;
       v.redraw();
       finish(used, false);
-    } else v.redraw();
+    } else {
+      // промах — подсказка: часть поля, где живой (половина, потом четверть)
+      const pos = v.posOf(p.answer);
+      if (pos) v.hint = dailyHint(p.sim.arena, pos.x, pos.y, used);
+      setHinted(true);
+      v.redraw();
+    }
   };
 
   // в Telegram, открытом из чата: свой результат — в рейтинг этого чата, и сам рейтинг
@@ -221,34 +241,38 @@ export default function DailyClient() {
   return (
     <main className="daily">
       <TopBar lang={lang} onBack={() => router.push('/')} />
-      <h1 className="daily-title">
-        {t.daily.title}
-        {n > 0 && <span> · {fmt(t.daily.num, { n })}</span>}
-      </h1>
-      <p className="daily-task">{t.daily.task}</p>
-      {phase === 'loading' ? (
-        <p className="muted">{t.daily.loading}</p>
-      ) : (
-        <div className="daily-stage" style={{ width: 180 * scale, height: 260 * scale }}>
-          <canvas
-            ref={canvasRef}
-            className="daily-canvas"
-            style={{ width: 180 * scale, height: 260 * scale }}
-            onPointerUp={onTap}
-            aria-label={t.daily.task}
-          />
-          {phase === 'intro' && (
-            <div className="daily-cover">
-              <p>{t.daily.intro}</p>
-              <button className="btn" onClick={() => watch()}>
-                {t.daily.start}
-              </button>
-            </div>
-          )}
-          {phase === 'watch' && <div className="daily-badge">{crowdName || t.daily.watch}</div>}
-          {phase === 'guess' && <div className="daily-badge">{flash || t.daily.guess}</div>}
-        </div>
-      )}
+      <header className="daily-head">
+        <h1 className="daily-title">
+          {t.daily.title}
+          {n > 0 && <span> {fmt(t.daily.numShort, { n })}</span>}
+        </h1>
+        <p className="daily-task">{t.daily.task}</p>
+      </header>
+      <div className="daily-slot" ref={slotRef}>
+        {phase === 'loading' ? (
+          <p className="muted">{t.daily.loading}</p>
+        ) : (
+          <div className="daily-stage" style={{ width: 180 * scale, height: 260 * scale, visibility: scale ? 'visible' : 'hidden' }}>
+            <canvas
+              ref={canvasRef}
+              className="daily-canvas"
+              style={{ width: 180 * scale, height: 260 * scale }}
+              onPointerUp={onTap}
+              aria-label={t.daily.task}
+            />
+            {phase === 'intro' && (
+              <div className="daily-cover">
+                <p>{t.daily.intro}</p>
+                <button className="btn" onClick={() => watch()}>
+                  {t.daily.start}
+                </button>
+              </div>
+            )}
+            {phase === 'watch' && <div className="daily-badge">{crowdName || t.daily.watch}</div>}
+            {phase === 'guess' && <div className="daily-badge">{flash || (hinted ? t.daily.hint : t.daily.guess)}</div>}
+          </div>
+        )}
+      </div>
       {phase === 'guess' && (
         <div className="daily-actions">
           <p className="muted">{tp(lang, t.daily.tries, left)}</p>
@@ -268,13 +292,15 @@ export default function DailyClient() {
       {phase === 'done' && (
         <div className="daily-actions">
           <p className="daily-result">{won ? fmt(t.daily.won, { n: tries }) : t.daily.lost}</p>
-          <p className="daily-squares">{modRef.current?.squares(tries, won)}</p>
-          <p className="muted">{fmt(t.daily.streak, { n: streak })}</p>
+          <p className="daily-line">
+            <span className="daily-squares">{modRef.current?.squares(tries, won)}</span>
+            <span className="muted">{fmt(t.daily.streak, { n: streak })}</span>
+          </p>
           {board && board.length > 0 && (
             <div className="daily-board">
               <p className="daily-board-title">{t.daily.chatTitle}</p>
               <ol>
-                {board.map((r, i) => (
+                {board.slice(0, 5).map((r, i) => (
                   <li key={i} className={r.me ? 'me' : undefined}>
                     <span className="daily-board-name">{r.name}</span>
                     <span>{modRef.current?.squares(r.tries, r.won)}</span>
@@ -284,12 +310,14 @@ export default function DailyClient() {
               {board.length === 1 && <p className="muted">{t.daily.chatAlone}</p>}
             </div>
           )}
-          <button className="btn" onClick={() => void share()}>
-            {t.daily.share}
-          </button>
-          <Link className="btn small" href="/?create=1" onClick={() => track('invite_tap', { from: 'daily' })}>
-            {t.daily.play}
-          </Link>
+          <div className="daily-buttons">
+            <button className="btn small" onClick={() => void share()}>
+              {t.daily.share}
+            </button>
+            <Link className="btn small" href="/?create=1" onClick={() => track('invite_tap', { from: 'daily' })}>
+              {t.daily.play}
+            </Link>
+          </div>
           <p className="muted">{fmt(t.daily.next, { t: untilMidnight() })}</p>
         </div>
       )}

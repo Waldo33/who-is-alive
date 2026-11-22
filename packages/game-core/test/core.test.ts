@@ -414,5 +414,22 @@ describe('загадка дня', () => {
     expect(dailySquares(2, true)).toBe('🟥🟩⬜');
     expect(dailySquares(3, false)).toBe('🟥🟥🟥');
   });
+
+  it('у живого есть приметы, подсказка после промаха накрывает его', async () => {
+    const { buildDaily, dailyHint } = await import('../src/daily');
+    for (let n = 1; n <= 30; n++) {
+      const p = buildDaily(n);
+      const me = p.world.get(p.answer)!;
+      const tells = p.world.log.filter(
+        (e) => (e.t === 'star_taken' && e.eid === p.answer) || e.t === 'spot',
+      ).length;
+      expect(tells).toBeGreaterThan(0);
+      for (const m of [1, 2]) {
+        const r = dailyHint(p.sim.arena, me.x, me.y, m)!;
+        expect(me.x >= r.x && me.x < r.x + r.w && me.y >= r.y && me.y < r.y + r.h).toBe(true);
+      }
+    }
+    expect(dailyHint({ width: 180, height: 260 }, 10, 10, 0)).toBeNull();
+  });
 });
 
