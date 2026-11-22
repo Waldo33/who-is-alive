@@ -1,0 +1,53 @@
+# Скорость сети сервера: откуда он может быстро скачивать (GitHub, npm, зеркала) и как быстро
+# к нему заливать из Actions. Нужна, чтобы выбрать способ доставки сборок.
+name: infra-netcheck
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/infra-netcheck.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  net:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      TWC_TOKEN: ${{ secrets.TWC_TOKEN }}
+      SSH_OPTS: -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=20 -o LogLevel=ERROR
+    steps:
+      - uses: actions/checkout@v4
+      - name: Сервер
+        id: srv
+        run: |
+          python3 -m venv /tmp/py && /tmp/py/bin/pip install -q cryptography
+          /tmp/py/bin/python infra/game/provision.py
+      - name: Скачивание на сервер
+        env:
+          IP: ${{ steps.srv.outputs.ip }}
+        run: |
+          ssh $SSH_OPTS root@$IP 'bash -s' <<'SH'
+          t() { printf "%-34s " "$1"; curl -sL -o /dev/null --max-time 60 -w "%{http_code} %{size_download}B %{speed_download}B/s %{time_total}s\n" "$2" || echo fail; }
+          t "github release (caddy)" https://github.com/caddyserver/caddy/releases/download/v2.11.9/caddy_2.11.9_linux_amd64.tar.gz
+          t "github codeload (репозиторий)" https://codeload.github.com/Waldo33/who-is-alive/tar.gz/refs/heads/main
+          t "npm registry (next)" https://registry.npmjs.org/next/-/next-15.5.0.tgz
+          t "npmmirror (next)" https://registry.npmmirror.com/next/-/next-15.5.0.tgz
+          t "nodejs.org" https://nodejs.org/dist/latest-v22.x/SHASUMS256.txt
+          t "ghcr.io (токен)" "https://ghcr.io/token?scope=repository:library/alpine:pull"
+          t "mirror.yandex.ru" http://mirror.yandex.ru/ubuntu/ls-lR.gz
+          t "archive.ubuntu.com" http://archive.ubuntu.com/ubuntu/ls-lR.gz
+          t "timeweb s3" https://s3.timeweb.cloud
+          SH
+      - name: Заливка из Actions на сервер
+        env:
+          IP: ${{ steps.srv.outputs.ip }}
+        run: |
+          head -c 20000000 /dev/urandom > /tmp/blob
+          s=$(date +%s.%N); scp $SSH_OPTS -q /tmp/blob root@$IP:/tmp/blob; e=$(date +%s.%N)
+          echo "scp 20 МБ: $(echo "$e - $s" | bc) с"
+          s=$(date +%s.%N); curl -s -o /dev/null -X POST --data-binary @/tmp/blob --max-time 120 https://api.benobody.app/healthz || true; e=$(date +%s.%N)
+          echo "https 20 МБ (до Caddy): $(echo "$e - $s" | bc) с"
+          ssh $SSH_OPTS root@$IP 'rm -f /tmp/blob'
