@@ -79,9 +79,9 @@ async function getMe() {
 
 const T = {
   ru: {
-    start: 'Массовка — пиксельная игра для компании: спрячься в толпе ботов и вычисли друзей раньше, чем они тебя. А каждый день — загадка «Найди живого».',
+    start: 'Массовка — пиксельная игра для компании: спрячься в толпе ботов и вычисли друзей раньше, чем они тебя. А каждый день — «Кастинг дня»: найди актёра в массовке.',
     play: '▶ Играть',
-    daily: '🔎 Загадка дня',
+    daily: '🎬 Кастинг дня',
     inviteTitle: 'Позвать в «Массовку»',
     inviteDesc: 'Карточка с кнопкой: друзья откроют игру прямо в Telegram',
     inviteText: 'Сыграем в «Массовку»? 32 одинаковых человечка, среди них — мы. Кто кого вычислит первым?',
@@ -89,16 +89,16 @@ const T = {
     roomDesc: 'Друзья попадут сразу в твою комнату',
     roomText: 'Заходи в «Массовку» — комната {code}. Спрячься в толпе и вычисли живых!',
     join: '▶ Войти в комнату',
-    dailyTitle: 'Загадка дня №{n}',
-    dailyDesc: 'Найди живого в толпе за три попытки',
-    dailyText: 'Массовка · Загадка №{n} · Найди живого{squares}\nНайдёшь быстрее?',
-    solve: '🔎 Решить загадку',
+    dailyTitle: 'Кастинг дня №{n}',
+    dailyDesc: 'Найди актёра в массовке за три попытки',
+    dailyText: 'Массовка · Кастинг №{n} · Найди актёра в массовке{squares}\nНайдёшь быстрее?',
+    solve: '🎬 На кастинг',
     openApp: 'Открыть игру',
   },
   en: {
-    start: 'Be Nobody is a pixel party game: hide in a crowd of bots and spot your friends before they spot you. Plus a daily “Spot the human” puzzle.',
+    start: 'Be Nobody is a pixel party game: hide in a crowd of bots and spot your friends before they spot you. Plus a daily casting: spot the actor among the extras.',
     play: '▶ Play',
-    daily: '🔎 Daily puzzle',
+    daily: '🎬 Daily casting',
     inviteTitle: 'Invite to Be Nobody',
     inviteDesc: 'A card with a button: friends open the game right in Telegram',
     inviteText: 'Play Be Nobody? 32 identical pixel people, and we are among them. Who spots whom first?',
@@ -106,10 +106,10 @@ const T = {
     roomDesc: 'Friends join your room directly',
     roomText: 'Join me in Be Nobody — room {code}. Hide in the crowd and spot the humans!',
     join: '▶ Join the room',
-    dailyTitle: 'Daily puzzle #{n}',
-    dailyDesc: 'Spot the human in the crowd in three tries',
-    dailyText: 'Be Nobody · Puzzle #{n} · Spot the human{squares}\nCan you beat me?',
-    solve: '🔎 Solve the puzzle',
+    dailyTitle: 'Daily casting #{n}',
+    dailyDesc: 'Spot the actor among the extras in three tries',
+    dailyText: 'Be Nobody · Casting #{n} · Spot the actor{squares}\nCan you beat me?',
+    solve: '🎬 Join the casting',
     openApp: 'Open the game',
   },
 };
@@ -287,7 +287,7 @@ async function setupProfile(): Promise<void> {
   const P = {
     ru: {
       description:
-        'Массовка — пиксельная игра для компании на 2–4 телефона. На площади 32 одинаковых человечка: почти все — боты, среди них — вы. Прячься в толпе, вычисляй живых по поведению и бей первым. Матч — 5 минут. А каждый день — загадка «Найди живого».',
+        'Массовка — пиксельная игра для компании на 2–4 телефона. На площади 32 одинаковых человечка: почти все — боты, среди них — вы. Прячься в толпе, вычисляй живых по поведению и бей первым. Матч — 5 минут. А каждый день — «Кастинг дня»: найди актёра в массовке.',
       short: 'Спрячься в толпе ботов и вычисли друзей первым. 2–4 игрока, 5 минут.',
       name: 'Массовка',
       start: 'Играть в Массовку',
@@ -295,7 +295,7 @@ async function setupProfile(): Promise<void> {
     },
     en: {
       description:
-        'Be Nobody is a pixel party game for 2–4 phones. 32 identical people on the square: almost all are bots, and you are among them. Hide in the crowd, spot the humans by how they move, and strike first. 5-minute matches, plus a daily “Spot the human” puzzle.',
+        'Be Nobody is a pixel party game for 2–4 phones. 32 identical people on the square: almost all are bots, and you are among them. Hide in the crowd, spot the humans by how they move, and strike first. 5-minute matches, plus a daily casting: spot the actor among the extras.',
       short: 'Hide in a crowd of bots and spot your friends first. 2–4 players, 5 minutes.',
       name: 'Be Nobody',
       start: 'Play Be Nobody',

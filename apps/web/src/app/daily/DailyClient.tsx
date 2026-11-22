@@ -55,7 +55,7 @@ function untilMidnight(): string {
   return `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`;
 }
 
-/** Загадка дня «Найди живого» (/daily). */
+/** «Кастинг дня» (/daily): найди актёра в массовке. */
 export default function DailyClient() {
   const router = useRouter();
   const [lang, setLang] = useState<Lang>('ru');

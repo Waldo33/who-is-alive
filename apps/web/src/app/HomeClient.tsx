@@ -155,7 +155,7 @@ export default function HomeClient() {
         </button>
       )}
       <Link className="link" href="/daily" onClick={() => track('daily_tap', { from: 'home' })}>
-        {t.daily.title}: {t.daily.task}
+        {t.daily.title}: {t.daily.task.toLowerCase()}
       </Link>
       <Link className="link" href="/learn">
         {t.ui.howTo}
