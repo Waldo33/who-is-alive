@@ -1,19 +1,20 @@
 /**
- * Аналитика воронки: события пачками в `analytics_events` через RPC `log_events`
- * (миграция 20261122120000_analytics_log.sql). Без имён и IP.
+ * Аналитика воронки: события пачками на свой сервер (`POST /v1/events`, таблица `analytics_events`
+ * в Postgres сервера; раньше — RPC `log_events` в Supabase). Без имён и IP.
  *
  * - `device_id` — случайный id телефона (localStorage), `session_id` — один заход на страницу;
  *   `user_id` сервер берёт из токена, если игрок уже вошёл анонимно.
  * - Отправка «выстрелил и забыл»: ошибки и отсутствие сети молча глотаются, игра не ждёт.
- * - Supabase-клиент не создаётся: токен читается из того же localStorage, куда его кладёт `lib/supabase`
- *   (песочница не должна тянуть сеть и авторизацию).
+ * - Вход не нужен: токен игрока читается из того же localStorage, куда его кладёт `lib/game-server`
+ *   (песочница не должна тянуть сеть и авторизацию). Тело — JSON с типом text/plain: так браузер
+ *   шлёт без предварительного запроса CORS, в том числе с keepalive при закрытии вкладки.
  * - Выключено: в автономном HTML (file:), на localhost и с `?dev` — чтобы проверки не мешали цифрам.
  *   Включить для проверки: `localStorage['kto:track'] = '1'`.
  *
  * Метка `?src=` во входящей ссылке (invite, qr, clip, card…) запоминается на заход (`src`)
  * и навсегда — первая (`src0`): откуда человек пришёл впервые.
  */
-import { SUPABASE_KEY, SUPABASE_URL } from './env';
+import { GAME_API } from './env';
 import { inTelegram } from './telegram';
 
 export type Props = Record<string, string | number | boolean | null | undefined>;
@@ -122,14 +123,12 @@ function baseProps(): Props {
   return base;
 }
 
-/** Токен анонимного игрока из хранилища supabase-js (если вошёл и не истёк). */
+/** Токен игрока на своём сервере (если уже входил в комнату). */
 function token(): string | null {
   try {
-    const raw = localStorage.getItem('kto-auth');
+    const raw = localStorage.getItem('kto:auth2');
     if (!raw) return null;
-    const s = JSON.parse(raw) as { access_token?: string; expires_at?: number };
-    if (!s.access_token || !s.expires_at || s.expires_at * 1000 < Date.now() + 30_000) return null;
-    return s.access_token;
+    return (JSON.parse(raw) as { token?: string }).token ?? null;
   } catch {
     return null;
   }
@@ -143,14 +142,11 @@ function flush(keepalive = false): void {
   if (!queue.length) return;
   const events = queue.slice(0, 30);
   queue = queue.slice(30);
-  const headers: Record<string, string> = { apikey: SUPABASE_KEY, 'Content-Type': 'application/json' };
-  const tk = token();
-  if (tk) headers.Authorization = `Bearer ${tk}`;
   try {
-    void fetch(`${SUPABASE_URL}/rest/v1/rpc/log_events`, {
+    void fetch(`${GAME_API}/v1/events`, {
       method: 'POST',
-      headers,
-      body: JSON.stringify({ p_device: device, p_session: session, p_events: events }),
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ d: device, s: session, t: token(), e: events }),
       keepalive,
     }).catch(() => undefined);
   } catch {
