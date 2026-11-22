@@ -1,0 +1,51 @@
+# Проверка доступа к Timeweb Cloud: токен работает, на балансе есть деньги,
+# какие тарифы в Москве доступны, какие домены уже есть в аккаунте.
+# Репозиторий публичный — логи видят все, поэтому печатаем только «да/нет»,
+# публичные тарифы и имена доменов; ни токена, ни суммы баланса, ни почты.
+name: infra-check
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/infra-check.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  timeweb:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      TWC_TOKEN: ${{ secrets.TWC_TOKEN }}
+      API: https://api.timeweb.cloud/api/v1
+    steps:
+      - name: Токен есть
+        run: |
+          if [ -z "$TWC_TOKEN" ]; then echo "::error::Секрет TWC_TOKEN пуст или не найден"; exit 1; fi
+          echo "TWC_TOKEN задан"
+
+      - name: Токен принимается
+        run: |
+          code=$(curl -sS -o /tmp/status.json -w '%{http_code}' -H "Authorization: Bearer $TWC_TOKEN" "$API/account/status")
+          echo "account/status: HTTP $code"
+          if [ "$code" != 200 ]; then jq -r '.message // .error_code // "нет описания"' /tmp/status.json || true; exit 1; fi
+          jq -r '.status | "заблокирован: \(.is_blocked // "?"), нужна оплата/подтверждение: \(.is_permanent_blocked // "?")"' /tmp/status.json || true
+
+      - name: Баланс
+        run: |
+          code=$(curl -sS -o /tmp/fin.json -w '%{http_code}' -H "Authorization: Bearer $TWC_TOKEN" "$API/account/finances")
+          echo "account/finances: HTTP $code"
+          jq -r '.finances | "валюта: \(.currency // "?"); баланс больше нуля: \((.balance // 0) > 0); хватит дней: \(.hours_left // "?" | tostring) ч"' /tmp/fin.json || true
+
+      - name: Тарифы серверов в Москве
+        run: |
+          curl -sS -H "Authorization: Bearer $TWC_TOKEN" "$API/presets/servers" -o /tmp/presets.json
+          jq -r '.server_presets[] | select((.location // "") | test("msk|ru-1|ru-3"; "i")) | "\(.id)\t\(.location)\t\(.cpu) vCPU\t\(.ram/1024) ГБ\t\(.disk/1024) ГБ \(.disk_type)\t\(.price) ₽/мес"' /tmp/presets.json | sort -t$'\t' -k6 -n | head -20 || true
+          echo "локации всех тарифов:"; jq -r '[.server_presets[].location] | unique | join(", ")' /tmp/presets.json || true
+
+      - name: Домены в аккаунте
+        run: |
+          curl -sS -H "Authorization: Bearer $TWC_TOKEN" "$API/domains" -o /tmp/domains.json
+          jq -r '"доменов: \(.meta.total // (.domains | length))", (.domains[]? | "\(.fqdn)\tпровайдер: \(.provider // "?")\tистекает: \(.expiration // "?")")' /tmp/domains.json || true
