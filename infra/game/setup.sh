@@ -78,8 +78,8 @@ fi
 # ───────────── секреты (рождаются на сервере и не покидают его) ─────────────
 if [ ! -f /etc/massovka/secrets.env ]; then
   say "ключ подписи токенов игроков"
-  umask 077
-  echo "AUTH_SIGNING_KEY=$(openssl rand -hex 32)" > /etc/massovka/secrets.env
+  # umask — только для этого файла, иначе конфиги ниже станут нечитаемыми для служб
+  ( umask 077; echo "AUTH_SIGNING_KEY=$(openssl rand -hex 32)" > /etc/massovka/secrets.env )
 fi
 chmod 600 /etc/massovka/secrets.env
 
@@ -166,6 +166,11 @@ $HOST {
 	}
 }
 EOF
+
+chown root:caddy /etc/caddy/Caddyfile
+chmod 640 /etc/caddy/Caddyfile
+chmod 644 /etc/systemd/system/massovka-game.service /etc/systemd/system/caddy.service
+chmod 600 /etc/massovka/game.env
 
 # ───────────── выкладка версии ─────────────
 say "версия $SHA"
