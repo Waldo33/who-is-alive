@@ -42,13 +42,14 @@ jobs:
           echo "── наблюдение"
           systemctl is-active node_exporter victoria-metrics victoria-logs grafana systemd-journal-upload 2>&1 | paste -sd' ' || true
           systemctl list-units --no-pager --no-legend 'massovka-*' 'victoria*' 'grafana*' 'node*' '*journal-upload*' | cut -c1-90
-          curl -fsS -m5 'http://127.0.0.1:8428/api/v1/query?query=up' | head -c 600; echo
-          curl -fsS -m5 'http://127.0.0.1:9428/select/logsql/query?query=*&limit=3' | cut -c1-160; echo
+          curl -fsS -m5 'http://127.0.0.1:8428/api/v1/query?query=up' | python3 -c 'import json,sys;[print("up", r["metric"].get("job"), r["metric"].get("server"), r["value"][1]) for r in json.load(sys.stdin)["data"]["result"]]'
+          curl -fsS -m5 'http://127.0.0.1:8428/api/v1/query?query=count(%7B__name__!=%22%22%7D)' | head -c 200; echo
+          curl -fsS -m5 'http://127.0.0.1:9428/select/logsql/query' --data-urlencode 'query=_time:10m | stats by (_stream) count() n' | cut -c1-200 | head -8
           curl -fsS -m5 http://127.0.0.1:3001/api/health; echo
           curl -sS -m10 -o /dev/null -w "grafana снаружи: %{http_code}\n" https://72-56-73-184.sslip.io/grafana/login
           systemctl list-timers --no-pager | grep -E "backup" || true
           ls -la /var/backups/massovka-msk 2>/dev/null | tail -3
-          for u in node_exporter victoria-metrics victoria-logs grafana systemd-journal-upload; do echo "· $u"; journalctl -u $u -n 8 --no-pager -o cat | cut -c1-220; done
+          for u in node_exporter victoria-metrics victoria-logs grafana systemd-journal-upload; do echo "· $u"; journalctl -u $u -n 4 --no-pager -o cat | tr '\\t' ' ' | cut -c1-220; done
           echo "── сторож"
           systemctl list-timers massovka-watch.timer --no-pager | head -3
           for f in /var/lib/massovka-watch/*; do echo "$(basename $f): $(cat $f) мин подряд не работает"; done
