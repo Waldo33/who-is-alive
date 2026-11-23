@@ -3,8 +3,14 @@ import { P1, Synth } from './sfx';
 import type { Sfx } from './sfx';
 import { themePack } from './themes';
 
-/** Подъём громкости звука клипа после компрессора. */
-const CLIP_GAIN = 2.5;
+/**
+ * Подъём громкости звука клипа после компрессора. Цель — −14 LUFS в среднем и пики не выше −1 дБ:
+ * к этому уровню выравнивают Reels, TikTok и Shorts (тише — клип проигрывает соседям в ленте).
+ * Проверка: `pnpm --filter web clip-video <зерно> out.webm [тема]` печатает громкость.
+ */
+const CLIP_GAIN = 3.2;
+/** Потолок мягкого ограничителя клипа: −3,5 дБ (кодек видео добавляет к пикам до 2,5 дБ). */
+const CLIP_CEIL = 0.67;
 
 /**
  * Звук клипа и фильма матча: своя музыка темы и эффекты повтора. Без DOM — работает и в браузере
@@ -45,12 +51,13 @@ export function clipMix(ctx: BaseAudioContext, out: AudioNode, noiseBuf: AudioBu
   makeup.gain.value = CLIP_GAIN;
   const master = ctx.createGain();
   master.gain.value = 1;
-  // мягкий ограничитель: редкие пики после подъёма скругляются, а не хрипят
+  // мягкий ограничитель: редкие пики после подъёма скругляются, а не хрипят; тихое — почти как
+  // есть, громкое — к CLIP_CEIL (запас на кодек: пики в видео ≤ −1 дБ)
   const soft = ctx.createWaveShaper();
   const curve = new Float32Array(1024);
   for (let i = 0; i < curve.length; i++) {
     const x = (i / (curve.length - 1)) * 2 - 1;
-    curve[i] = Math.tanh(x); // тихое — как есть, громкое — скругляется к 0,76
+    curve[i] = (CLIP_CEIL * Math.tanh(1.6 * x)) / Math.tanh(1.6);
   }
   soft.curve = curve;
   // ниже ~90 Гц телефон не играет ничего, а компрессор из-за этого баса зажимал бы всё остальное
@@ -67,8 +74,9 @@ export function clipMix(ctx: BaseAudioContext, out: AudioNode, noiseBuf: AudioBu
   music.manual = !!opts.manual;
   const synth = new Synth(ctx, sfxBus, noiseBuf);
   return {
+    // клип начинается сразу с темы песни и с напряжением, а не с тихого вступления
     start: (theme, twist) => {
-      music.start('play', themePack(theme).music);
+      music.start('play', themePack(theme).music, true);
       music.setTwist(twist);
     },
     setTwist: (on, smooth) => music.setTwist(on, smooth),

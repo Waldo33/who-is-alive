@@ -183,8 +183,11 @@ export class Music {
     return this.timer !== null;
   }
 
-  /** Новый раунд (или новая фаза): тема раунда задаёт характер, вариации — новые. */
-  start(mode: MusicMode, style?: { flavor: Flavor; song?: Song }): void {
+  /**
+   * Новый раунд (или новая фаза): тема раунда задаёт характер, вариации — новые.
+   * hook — сразу с темы (без вступления) и с напряжением: клип в ленте должен зацепить с первой секунды.
+   */
+  start(mode: MusicMode, style?: { flavor: Flavor; song?: Song }, hook = false): void {
     this.hardStop();
     this.mode = mode;
     this.paused = false;
@@ -197,9 +200,13 @@ export class Music {
     this.intensity = 0;
     this.tempoMul = 1;
     this.queue = mode === 'play' ? [this.make('intro'), this.make('A'), this.make('A2'), this.make('B'), this.make('A')] : [];
+    if (hook) this.queue.shift();
     this.sec = this.queue.shift() ?? this.make('A');
     this.sinceA = 0;
-    this.bar = 0;
+    // своя песня темы — со второго круга, где мелодия уже идёт
+    this.bar = hook && this.song ? 8 : 0;
+    this.twistBar = this.bar;
+    if (hook) this.intensity = 1;
     this.s16 = 0;
     this.openBus();
     this.next = this.ctx.currentTime + 0.06;
