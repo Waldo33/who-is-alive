@@ -92,6 +92,10 @@ if [ -x /usr/local/bin/victoria-metrics ]; then
   # комнаты у потолка MAX_ROOMS: выше 80% — скоро новые получат «сервер занят»
   r=$(vm 'max(game_rooms{server="msk"}) / max(game_rooms_limit{server="msk"})' | awk '{print $NF}' | head -1)
   if [ -n "$r" ]; then within "$r" 0.8; check rooms_msk $? "комнат в Москве $(pct "$r")% от лимита — скоро «сервер занят»"; fi
+  # выкладка синий/зелёный: старый экземпляр доигрывает матчи до 20 минут и выходит сам — дольше 30 минут
+  # в drain значит завис (новая выкладка будет ждать его 15 минут, а потом оборвёт матчи)
+  dr=$(vm 'max(max_over_time(game_draining{server="msk"}[30m]) * min_over_time(game_draining{server="msk"}[30m]))' | awk '{print $NF}' | head -1)
+  if [ -n "$dr" ]; then within "$dr" 0; check drain_stuck $? "экземпляр игры в Москве больше 30 минут в drain (выкладка синий/зелёный)"; fi
   # клипы для Telegram в Москве: лимит папки 1 ГБ, старые вытесняются — на 80% пора думать об S3
   c=$(vm 'max(game_clips_bytes{server="msk"}) / max(game_clips_limit_bytes{server="msk"})' | awk '{print $NF}' | head -1)
   if [ -n "$c" ]; then within "$c" 0.8; check clips_msk $? "место под клипы в Москве занято на $(pct "$c")% из 1 ГБ (пора S3)"; fi

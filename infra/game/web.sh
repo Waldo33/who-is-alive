@@ -66,9 +66,11 @@ new=$([ "$active" = blue ] && echo green || echo blue)
 # переезжает в новую (имена с хэшем не пересекаются) — до S3 (этап 2) так открытая вкладка не ловит 404
 prev=$(readlink -f "/opt/massovka/web/color/${active:-none}" 2>/dev/null || readlink -f /opt/massovka/web/current 2>/dev/null || true)
 if [ -n "$prev" ] && [ -d "$prev/apps/web/.next/static" ] && [ "$prev" != "$rel" ]; then
-  (cd "$prev/apps/web/.next/static" && find . -type f -mtime -2 -print0 | while IFS= read -r -d '' f; do
-    [ -e "$rel/apps/web/.next/static/$f" ] || install -D -p -o web -g web "$f" "$rel/apps/web/.next/static/$f"
-  done)
+  carried=$(cd "$prev/apps/web/.next/static" && find . -type f -mtime -2 -print0 | while IFS= read -r -d '' f; do
+    [ -e "$rel/apps/web/.next/static/$f" ] && continue
+    install -D -p -o web -g web "$f" "$rel/apps/web/.next/static/$f" && echo x
+  done | wc -l)
+  say "статика прошлой версии для открытых вкладок: $carried файлов"
 fi
 install -d /opt/massovka/web/color
 ln -sfn "$rel" "/opt/massovka/web/color/$new"
