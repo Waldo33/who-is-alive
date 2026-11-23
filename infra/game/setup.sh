@@ -214,6 +214,15 @@ fi
 chmod 600 /etc/massovka/secrets.env
 
 envsum_before=$(cat /etc/massovka/*.env 2>/dev/null | sha256sum)
+# база стран для замера доступности (geo.ts): привозит game-deploy, если версия поменялась
+if [ -s "$D/geoip.mmdb" ]; then
+  install -d /opt/massovka/geoip
+  install -m 644 "$D/geoip.mmdb" /opt/massovka/geoip/country.mmdb
+  cp "$D/geoip.version" /etc/massovka/geoip.version
+fi
+geoip=""; [ -s /opt/massovka/geoip/country.mmdb ] && geoip=/opt/massovka/geoip/country.mmdb
+# регион — в ответе /v1/probe и в событиях замера; сервер бота пересылает аналитику в Москву по туннелю
+if [ "${ROLE:-game}" = game ]; then region=msk; events_up=""; else region=nl; events_up=http://127.0.0.1:18080; fi
 # потолок комнат под память машины: нагрузочный прогон 23.11 — около 1,5 МБ на комнату (250 комнат = 440 МБ);
 # на сайт, базу, Caddy и «Фильм матча» оставляем ~600 МБ, комнату считаем по 2 МБ с запасом.
 # 1 ГБ → ~150 комнат, 2 ГБ → ~650, 4 ГБ → ~1650. Больше лимита — «сервер занят», а не подкачка и лаги у всех.
@@ -234,6 +243,9 @@ CLIP_BASE=${CLIP_BASE:-https://api.benobody.app}
 TRUST_PROXY=1
 LOG_LEVEL=info
 MAX_ROOMS=$max_rooms
+REGION=$region
+GEOIP_DB=$geoip
+EVENTS_UPSTREAM=$events_up
 EOF
 # ключ Telegram-бота привозит выкладка из GitHub Secrets TELEGRAM_BOT_TOKEN (в /tmp/deploy/bot.env),
 # на диске — /etc/massovka/bot.env, только root; читает его systemd при запуске игрового сервера

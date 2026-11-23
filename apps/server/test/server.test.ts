@@ -99,6 +99,41 @@ describe('игровой сервер: аналитика', () => {
   });
 });
 
+describe('игровой сервер: замер доступности', () => {
+  it('/v1/probe отвечает регионом и отдаёт ?kb= случайных байт', async () => {
+    const srv = new GameServer({ authSecret: SECRET, log: silentLogger, region: 'msk' });
+    servers.push(srv);
+    const http = `http://127.0.0.1:${await srv.listen(0, '127.0.0.1')}`;
+    expect(await (await fetch(`${http}/v1/probe`)).json()).toMatchObject({ ok: true, region: 'msk' });
+    const big = await fetch(`${http}/v1/probe?kb=64`);
+    expect((await big.arrayBuffer()).byteLength).toBe(64 * 1024);
+    expect((await (await fetch(`${http}/v1/probe?kb=9999`)).arrayBuffer()).byteLength).toBe(64 * 1024);
+  });
+
+  it('net_probe получает страну; сервер в Нидерландах пересылает события в Москву', async () => {
+    const geo = { country: (ip: string) => (ip === '5.6.7.8' ? 'NL' : 'RU') };
+    const msk = new GameServer({ authSecret: SECRET, log: silentLogger, trustProxy: true, geo, region: 'msk' });
+    servers.push(msk);
+    const mskHttp = `http://127.0.0.1:${await msk.listen(0, '127.0.0.1')}`;
+    const nl = new GameServer({ authSecret: SECRET, log: silentLogger, trustProxy: true, geo, region: 'nl', eventsUpstream: mskHttp });
+    servers.push(nl);
+    const nlHttp = `http://127.0.0.1:${await nl.listen(0, '127.0.0.1')}`;
+    const body = (n: string, cc?: string) => JSON.stringify({ d: 'dev-12345678', s: 'sess-1234567', e: [{ n, p: { msk_http: 0, ...(cc ? { cc } : {}) } }] });
+    // напрямую в Москву, клиент пытается подсунуть страну — сервер ставит свою
+    let r = await fetch(`${mskHttp}/v1/events`, { method: 'POST', headers: { 'x-forwarded-for': '1.2.3.4' }, body: body('net_probe', 'XX') });
+    expect(r.status).toBe(204);
+    // через Нидерланды: страна — по адресу у Нидерландов, Москва её сохраняет
+    r = await fetch(`${nlHttp}/v1/events`, { method: 'POST', headers: { 'x-forwarded-for': '5.6.7.8' }, body: body('net_probe') });
+    expect(r.status).toBe(204);
+    const store = msk.store as unknown as { events: { name: string; props: Record<string, unknown> }[] };
+    expect(store.events.map((e) => [e.props.cc, e.props.via])).toEqual([
+      ['RU', 'msk'],
+      ['NL', 'nl'],
+    ]);
+    expect((nl.store as unknown as { events: unknown[] }).events).toHaveLength(0);
+  });
+});
+
 describe('игровой сервер: ошибки с телефонов', () => {
   it('пишет ошибку в журнал, считает в метриках, пустое отбрасывает', async () => {
     const logs: { msg: string; f?: Record<string, unknown> }[] = [];

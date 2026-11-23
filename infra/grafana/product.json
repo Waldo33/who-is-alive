@@ -939,6 +939,42 @@
     },
     "overrides": []
    }
+  },
+  {
+   "id": 20,
+   "type": "table",
+   "title": "Доступность серверов: Москва и Европа (замер net_probe)",
+   "description": "Раз в сутки телефон пробует оба сервера (lib/netprobe.ts). Развилка этапа 3: Европа отвечает ≥ 95% игроков «Россия без VPN» — российский вход не нужен. «64 КБ» ловит фильтр, глушащий соединение после 16 КБ. Страна — по адресу (DB-IP Lite, CC BY 4.0, db-ip.com)",
+   "gridPos": {
+    "x": 0,
+    "y": 47,
+    "w": 24,
+    "h": 8
+   },
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "pg"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "pg"
+     },
+     "refId": "A",
+     "rawQuery": true,
+     "editorMode": "code",
+     "format": "table",
+     "rawSql": "with p as (select device_id, props, case when props->>'cc'='RU' then 'Россия без VPN'\n   when props->>'tz' = any(array['Europe/Moscow','Europe/Kaliningrad','Europe/Samara','Europe/Volgograd','Europe/Kirov','Europe/Astrakhan','Europe/Saratov','Europe/Ulyanovsk','Asia/Yekaterinburg','Asia/Omsk','Asia/Novosibirsk','Asia/Barnaul','Asia/Tomsk','Asia/Novokuznetsk','Asia/Krasnoyarsk','Asia/Irkutsk','Asia/Chita','Asia/Yakutsk','Asia/Khandyga','Asia/Vladivostok','Asia/Ust-Nera','Asia/Magadan','Asia/Sakhalin','Asia/Srednekolymsk','Asia/Kamchatka','Asia/Anadyr']) then 'Россия, скорее всего VPN' when props->>'cc' is null then 'страна неизвестна' else 'из-за границы' end as кто\n   from analytics_events where name='net_probe' and $__timeFilter(created_at))\n select кто, count(distinct device_id) as телефонов,\n  round(100.0*avg((props->>'msk_http')::int)) as \"Москва: HTTPS %\", round(100.0*avg((props->>'msk_big')::int)) as \"Москва: 64 КБ %\", round(100.0*avg((props->>'msk_ws')::int)) as \"Москва: WS %\",\n  round(100.0*avg((props->>'eu_http')::int)) as \"Европа: HTTPS %\", round(100.0*avg((props->>'eu_big')::int)) as \"Европа: 64 КБ %\", round(100.0*avg((props->>'eu_ws')::int)) as \"Европа: WS %\",\n  percentile_cont(0.5) within group (order by (props->>'msk_http_ms')::int) as \"Москва, мс\", percentile_cont(0.5) within group (order by (props->>'eu_http_ms')::int) as \"Европа, мс\"\n from p group by 1 order by 2 desc"
+    }
+   ],
+   "options": {
+    "showHeader": true
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   }
   }
  ],
  "templating": {

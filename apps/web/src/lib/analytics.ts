@@ -13,6 +13,10 @@
  *
  * Метка `?src=` во входящей ссылке (invite, qr, clip, card…) запоминается на заход (`src`)
  * и навсегда — первая (`src0`): откуда человек пришёл впервые.
+ *
+ * Невидимые отказы: если пачка не ушла из-за сети (сервер недоступен — фильтр, VPN, метро), она
+ * ложится в `kto:outbox` (до 60 событий) и уходит при первой удачной отправке — с `late_s`, на сколько
+ * секунд опоздала. Так видно и тех, кто не достал до сервера (lib/netprobe.ts шлёт и в Европу).
  */
 import { GAME_API } from './env';
 import { inTelegram } from './telegram';
@@ -23,7 +27,12 @@ interface Ev {
   n: string;
   r?: string;
   p: Props;
+  /** время события на телефоне (мс) — для `late_s` у опоздавших */
+  ts?: number;
 }
+
+const OUTBOX = 'kto:outbox';
+const OUTBOX_MAX = 60;
 
 /** Контекст экрана: подмешивается в каждое событие (комната, режим, режиссёр ли). */
 let ctx: { room?: string; mode?: 'online' | 'sandbox' | 'tutorial'; host?: boolean } = {};
@@ -135,6 +144,71 @@ function token(): string | null {
   }
 }
 
+/** Отправить пачку на сервер; не ушла из-за сети — в отложенные. */
+function post(apiBase: string, events: Ev[], keepalive: boolean): Promise<boolean> {
+  try {
+    return fetch(`${apiBase}/v1/events`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ d: device, s: session, t: token(), e: events }),
+      keepalive,
+    }).then(
+      (r) => {
+        // сервер ответил — связь есть: отправить и отложенное раньше
+        if (r.status < 500) void drainOutbox(apiBase);
+        return r.ok;
+      },
+      () => {
+        saveOutbox(events);
+        return false;
+      },
+    );
+  } catch {
+    return Promise.resolve(false);
+  }
+}
+
+function readOutbox(): Ev[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(OUTBOX) ?? '[]') as unknown;
+    return Array.isArray(v) ? (v as Ev[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveOutbox(events: Ev[]): void {
+  try {
+    const all = [...readOutbox(), ...events].slice(-OUTBOX_MAX);
+    localStorage.setItem(OUTBOX, JSON.stringify(all));
+  } catch {
+    /* приватный режим — не страшно */
+  }
+}
+
+let draining = false;
+/** Отправить отложенные события (с пометкой, на сколько опоздали) на сервер, который ответил. */
+export async function drainOutbox(apiBase = GAME_API): Promise<void> {
+  if (draining || !trackingEnabled()) return;
+  const box = readOutbox();
+  if (!box.length) return;
+  draining = true;
+  try {
+    localStorage.removeItem(OUTBOX);
+    bind();
+    const now = Date.now();
+    const late = box.map((e) => ({ n: e.n, r: e.r, p: { ...e.p, late_s: e.ts ? Math.round((now - e.ts) / 1000) : (e.p.late_s ?? null) } }));
+    for (let i = 0; i < late.length; i += 30) {
+      // не ушло снова — post сам вернёт в отложенные (уже с late_s, ts не нужен)
+      if (!(await post(apiBase, late.slice(i, i + 30), false))) break;
+    }
+  } catch {
+    /* аналитика никогда не ломает игру */
+  } finally {
+    draining = false;
+  }
+}
+
 function flush(keepalive = false): void {
   if (timer) {
     clearTimeout(timer);
@@ -143,16 +217,7 @@ function flush(keepalive = false): void {
   if (!queue.length) return;
   const events = queue.slice(0, 30);
   queue = queue.slice(30);
-  try {
-    void fetch(`${GAME_API}/v1/events`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain' },
-      body: JSON.stringify({ d: device, s: session, t: token(), e: events }),
-      keepalive,
-    }).catch(() => undefined);
-  } catch {
-    /* нет fetch или сети — не страшно */
-  }
+  void post(GAME_API, events, keepalive);
   if (queue.length) flush(keepalive);
 }
 
@@ -175,8 +240,24 @@ export function track(name: string, props: Props = {}): void {
     bind();
     const p: Props = { ...baseProps(), mode: ctx.mode, host: ctx.host, path: location.pathname.replace(/^\/r\/[A-Z]{4}$/, '/r/'), ...props };
     for (const k of Object.keys(p)) if (p[k] === undefined) delete p[k];
-    queue.push({ n: name, r: ctx.room, p });
+    queue.push({ n: name, r: ctx.room, p, ts: Date.now() });
     timer ??= setTimeout(() => flush(), 1500);
+  } catch {
+    /* аналитика никогда не ломает игру */
+  }
+}
+
+/**
+ * Записать событие и отправить сразу на указанный сервер (замер доступности шлёт туда, куда достал:
+ * в Москву или в Европу). Не ушло — в отложенные.
+ */
+export function trackNow(apiBase: string, name: string, props: Props = {}): void {
+  if (!trackingEnabled()) return;
+  try {
+    bind();
+    const p: Props = { ...baseProps(), ...props };
+    for (const k of Object.keys(p)) if (p[k] === undefined) delete p[k];
+    void post(apiBase, [{ n: name, p, ts: Date.now() }], false);
   } catch {
     /* аналитика никогда не ломает игру */
   }

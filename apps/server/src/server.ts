@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
-import { createHash, randomInt } from 'node:crypto';
+import { createHash, randomBytes, randomInt } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { CLIP_MIME, ClipStore } from './clips';
@@ -19,6 +19,7 @@ import { Room } from './room';
 import { MemoryStore, parseEvents } from './store';
 import type { Store } from './store';
 import type { Peer } from './room';
+import type { Geo } from './geo';
 
 export interface GameServerOptions {
   /** Ключ подписи токенов (≥ 32 символов). */
@@ -45,6 +46,15 @@ export interface GameServerOptions {
   clips?: ClipStore;
   /** «Фильм матча» (film.ts); нет — фильм монтирует телефон. */
   film?: FilmService;
+  /** Страна по адресу для замера доступности (geo.ts); нет — неизвестна. */
+  geo?: Geo;
+  /** Где стоит сервер (msk, nl…): в ответе /v1/probe. */
+  region?: string;
+  /**
+   * Куда пересылать аналитику (адрес игрового сервера с базой). Сервер в Нидерландах принимает
+   * события от тех, кто не достал до Москвы, и пересылает их в Москву по туннелю.
+   */
+  eventsUpstream?: string;
 }
 
 /** Лимиты (docs/server-migration.md › 3.3). */
@@ -212,6 +222,7 @@ export class GameServer {
       }
       if (p === '/v1/rooms' && req.method === 'POST') return this.createRoom(req, res);
       if (p === '/v1/events' && req.method === 'POST') return this.events(req, res);
+      if (p === '/v1/probe' && req.method === 'GET') return this.probe(req, res, url);
       if (p === '/v1/errors' && req.method === 'POST') return this.clientError(req, res);
       if (p.startsWith('/v1/clips')) return this.clipRoute(req, res, p);
       if (p.startsWith('/tg/')) {
@@ -270,9 +281,16 @@ export class GameServer {
    * чтобы браузер слал без предварительного запроса и с keepalive при закрытии вкладки.
    */
   private async events(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!this.eventsRate.take(this.ip(req), this.now())) return this.reply(res, 429, { error: 'rate_limited' });
+    const internal = this.internal(req);
+    if (!internal && !this.eventsRate.take(this.ip(req), this.now())) return this.reply(res, 429, { error: 'rate_limited' });
     const b = parseEvents(await readJson(req));
     if (!b) return this.reply(res, 400, { error: 'bad_events' });
+    // замер доступности: страна адреса (сам адрес не храним). Пересланное соседом — страна уже стоит
+    for (const e of b.events) {
+      if (e.name !== 'net_probe' && e.name !== 'net_fail') continue;
+      if (!internal || typeof e.props.cc !== 'string') e.props = { ...e.props, cc: this.o.geo?.country(this.ip(req)) ?? null, via: this.o.region ?? null };
+    }
+    if (this.o.eventsUpstream) return this.relayEvents(res, b);
     const userId = b.token ? await this.auth.verify(b.token) : null;
     try {
       await this.store.logEvents(b.device, b.session, userId, b.events);
@@ -294,6 +312,40 @@ export class GameServer {
     this.stats.clientErrors++;
     this.log('warn', 'client_error', e);
     return this.reply(res, 204);
+  }
+
+  /** Переслать пачку событий на сервер с базой (с сервера в Нидерландах — в Москву по туннелю). */
+  private async relayEvents(res: ServerResponse, b: NonNullable<ReturnType<typeof parseEvents>>): Promise<void> {
+    try {
+      const r = await fetch(`${this.o.eventsUpstream}/v1/events`, {
+        method: 'POST',
+        headers: { 'content-type': 'text/plain' },
+        body: JSON.stringify({ d: b.device, s: b.session, t: b.token, e: b.events.map((e) => ({ n: e.name, p: e.props, r: e.room ?? undefined })) }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      return this.reply(res, r.status === 204 ? 204 : 502);
+    } catch (e) {
+      this.log('warn', 'events_relay', { err: String(e) });
+      return this.reply(res, 502, { error: 'relay' });
+    }
+  }
+
+  /**
+   * Замер доступности (lib/netprobe.ts на сайте): маленький ответ — «достаю ли», `?kb=64` — кусок
+   * случайных байт, чтобы поймать фильтр, который глушит соединение после первых ~16 КБ.
+   */
+  private probe(req: IncomingMessage, res: ServerResponse, url: URL): void {
+    if (!this.eventsRate.take(this.ip(req), this.now())) return this.reply(res, 429, { error: 'rate_limited' });
+    const kb = Math.max(0, Math.min(64, Number(url.searchParams.get('kb')) || 0));
+    if (!kb) return this.reply(res, 200, { ok: true, region: this.o.region ?? null, instance: this.instance });
+    res.writeHead(200, { 'content-type': 'application/octet-stream', 'cache-control': 'no-store' });
+    res.end(randomBytes(kb * 1024));
+  }
+
+  /** Запрос изнутри машины (сосед по туннелю), не через Caddy: Caddy всегда ставит X-Forwarded-For. */
+  private internal(req: IncomingMessage): boolean {
+    const a = req.socket.remoteAddress ?? '';
+    return !req.headers['x-forwarded-for'] && (a === '127.0.0.1' || a === '::1' || a === '::ffff:127.0.0.1');
   }
 
   private newCode(): string | null {

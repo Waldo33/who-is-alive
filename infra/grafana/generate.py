@@ -24,6 +24,8 @@ def table(title,q,pos,desc=""):
     return {"id":nid(),"type":"table","title":title,"description":desc,"gridPos":pos,"datasource":PG,"targets":[sql(q)],"options":{"showHeader":True},"fieldConfig":{"defaults":{},"overrides":[]}}
 R="$__timeFilter(created_at)"
 HOST="(props->>'host')::boolean is true"
+# часовые пояса России: при зарубежном адресе — «скорее всего VPN»
+RU_TZ=",".join(f"'{z}'" for z in ["Europe/Moscow","Europe/Kaliningrad","Europe/Samara","Europe/Volgograd","Europe/Kirov","Europe/Astrakhan","Europe/Saratov","Europe/Ulyanovsk","Asia/Yekaterinburg","Asia/Omsk","Asia/Novosibirsk","Asia/Barnaul","Asia/Tomsk","Asia/Novokuznetsk","Asia/Krasnoyarsk","Asia/Irkutsk","Asia/Chita","Asia/Yakutsk","Asia/Khandyga","Asia/Vladivostok","Asia/Ust-Nera","Asia/Magadan","Asia/Sakhalin","Asia/Srednekolymsk","Asia/Kamchatka","Asia/Anadyr"])
 product=[
  stat("Игроков (устройств)",f"select count(distinct device_id) from analytics_events where {R}",grid(0,0,4,4)),
  stat("Новых игроков",f"select count(*) from (select device_id, min(created_at) f from analytics_events group by 1) d where $__timeFilter(f)",grid(4,0,4,4),desc="Устройства, впервые зашедшие в выбранный период"),
@@ -65,6 +67,15 @@ from f left join a on a.device_id = f.device_id where $__timeFilter(f.d0::timest
  count(*) n from analytics_events where name='sound_toggle' and {R} group by 1 order by 2 desc""",grid(6,39,9,8),desc="sfx — звуки, music — музыка, room_music — режиссёр выбрал «Музыку в дубле», own_music — гость вернул музыку себе"),
  bars("Кто вырезал",f"""select case props->>'out' when 'director' then 'режиссёр (пропустил команду)' when 'player' then 'игрок' else 'не вырезали' end as кто, count(*) n
  from analytics_events where name='round_end' and props ? 'out' and {R} group by 1 order by 2 desc""",grid(15,39,9,8),desc="Режиссёр вырезает за пропущенную команду «Море волнуется» («Жёсткий дубль»): растёт — сигнал не слышат"),
+ table("Доступность серверов: Москва и Европа (замер net_probe)",f"""with p as (select device_id, props, case when props->>'cc'='RU' then 'Россия без VPN'
+   when props->>'tz' = any(array[{RU_TZ}]) then 'Россия, скорее всего VPN' when props->>'cc' is null then 'страна неизвестна' else 'из-за границы' end as кто
+   from analytics_events where name='net_probe' and {R})
+ select кто, count(distinct device_id) as телефонов,
+  round(100.0*avg((props->>'msk_http')::int)) as "Москва: HTTPS %", round(100.0*avg((props->>'msk_big')::int)) as "Москва: 64 КБ %", round(100.0*avg((props->>'msk_ws')::int)) as "Москва: WS %",
+  round(100.0*avg((props->>'eu_http')::int)) as "Европа: HTTPS %", round(100.0*avg((props->>'eu_big')::int)) as "Европа: 64 КБ %", round(100.0*avg((props->>'eu_ws')::int)) as "Европа: WS %",
+  percentile_cont(0.5) within group (order by (props->>'msk_http_ms')::int) as "Москва, мс", percentile_cont(0.5) within group (order by (props->>'eu_http_ms')::int) as "Европа, мс"
+ from p group by 1 order by 2 desc""",grid(0,47,24,8),
+  desc="Раз в сутки телефон пробует оба сервера (lib/netprobe.ts). Развилка этапа 3: Европа отвечает ≥ 95% игроков «Россия без VPN» — российский вход не нужен. «64 КБ» ловит фильтр, глушащий соединение после 16 КБ. Страна — по адресу (DB-IP Lite, CC BY 4.0, db-ip.com)"),
 ]
 def dash(uid,title,panels,frm="now-7d",extra=None):
     d={"uid":uid,"title":title,"tags":["massovka"],"timezone":"browser","schemaVersion":39,"version":1,"editable":False,

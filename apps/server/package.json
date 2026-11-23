@@ -17,6 +17,7 @@
     "@kto/net": "workspace:*",
     "@napi-rs/canvas": "0.1.80",
     "jose": "6.2.18",
+    "mmdb-lib": "^2.2.1",
     "node-web-audio-api": "1.0.4",
     "pg": "8.23.1",
     "ws": "8.23.0",
