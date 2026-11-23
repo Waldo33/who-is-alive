@@ -29,5 +29,6 @@ for mode in legacy colors web; do
   bash "$here/infra/game/caddy.sh"
   grep -q 'reverse_proxy' "$t/caddy/Caddyfile"
   [ -x "$CADDY_BIN" ] && echo "$mode: конфиг прошёл caddy validate" || echo "$mode: конфиг собран"
-  [ -n "${SHOW:-}" ] && cat "$t/caddy/Caddyfile"
+  # if, а не &&: без SHOW последней командой скрипта было бы «ложь» — и выход с кодом 1
+  if [ -n "${SHOW:-}" ]; then cat "$t/caddy/Caddyfile"; fi
 done
