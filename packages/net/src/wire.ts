@@ -80,6 +80,8 @@ export type WireError =
   | 'not_director'
   | 'not_now'
   | 'not_enough_players'
+  /** В лобби не все подключённые игроки нажали «Готов» (режиссёр — не в счёт). */
+  | 'not_ready'
   | 'rate_limited'
   | 'server_busy';
 

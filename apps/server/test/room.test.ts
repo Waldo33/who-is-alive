@@ -55,6 +55,7 @@ describe('комната', () => {
     const [pa, pb] = [fakePeer(), fakePeer()];
     room.join('a', 'A', pa);
     room.join('b', 'B', pb);
+    room.setReady('b', true);
     expect(room.start('a')).toBeNull();
     expect(room.status).toBe('playing');
     room.disconnected('a', pa);
@@ -147,6 +148,7 @@ describe('фильм матча в комнате', () => {
     const [pa, pb] = [fakePeer(), fakePeer()];
     room.join('a', 'A', pa);
     room.join('b', 'B', pb);
+    room.setReady('b', true);
     expect(room.start('a')).toBeNull();
     let jobAt = '';
     for (let i = 0; i < 20000 && room.runner?.host.phase !== 'match_end'; i++) {

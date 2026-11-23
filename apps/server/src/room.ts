@@ -409,6 +409,9 @@ export class Room {
     if (this.status === 'playing' && this.runner?.host.phase !== 'match_end') return 'not_now';
     const humans = this.onlineMembers().map((m) => ({ pid: m.userId, name: m.name, color: m.color }));
     if (humans.length < this.minHumans()) return 'not_enough_players';
+    // из лобби — только когда все подключённые нажали «Готов»; «Ещё дубль» с экрана итогов — без этого
+    const rematch = this.runner?.host.phase === 'match_end';
+    if (!rematch && this.onlineMembers().some((m) => m.userId !== this.directorId && !m.ready)) return 'not_ready';
     const players = [...humans, ...this.aiFill(humans)];
     const cfg: Partial<GameConfig> = {
       roundSec: this.settings.roundSec,
