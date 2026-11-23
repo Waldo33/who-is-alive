@@ -207,6 +207,11 @@ button.summary { color: var(--sand); cursor: pointer; }
   .inv .room-code { font-size: 20px; }
   .cast-card { padding: 6px 4px; }
   .cast-card .actor { width: 28px; height: 36px; }
+  /* лист условий: зазоры уже, чтобы и «Музыка в дубле» влезла без прокрутки */
+  .lobby-sheet-box { gap: 8px; }
+  .lobby-sheet-box .settings { gap: 6px; }
+  .lobby-sheet-box .setting-hint { margin-top: -4px; }
+  .lobby-sheet-box .setting-hint.level-hint { margin-top: -2px; }
 }
 @media (max-height: 520px) {
   .inv { padding: 6px; }
@@ -215,6 +220,8 @@ button.summary { color: var(--sand); cursor: pointer; }
   .cast-card { gap: 2px; }
   .lobby2 { gap: 6px; }
   .lobby2 .sound-hint { font-size: 8px; }
+  .lobby2 { gap: 4px; }
+  .summary { line-height: 1.4; }
   /* подпись «Код комнаты» прячем: колонка с кодом и «Позвать» выше QR и задаёт высоту строки */
   .inv-code .muted { display: none; }
 }

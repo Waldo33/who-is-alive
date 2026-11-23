@@ -160,7 +160,6 @@ export default function RoomClient({ code, bot = false }: { code: string; bot?: 
     if (new URLSearchParams(location.search).has('dev')) (window as unknown as { __ktoAudio: GameAudio }).__ktoAudio = getAudio();
     return () => getAudio().setOrchestra(null);
   }, []);
-  const orchFlag = useMemo(() => featureOn('orchestra'), []);
   // «Назад» и «Выйти в меню» сразу освобождают место в комнате
   const goHome = () => {
     track(inGame ? 'match_exit' : 'room_leave');
@@ -185,19 +184,12 @@ export default function RoomClient({ code, bot = false }: { code: string; bot?: 
       onExit={inGame ? goHome : undefined}
       noGear={inGame}
       onSound={(on) => setSfxOff(!on)}
-      orchestra={
-        orchFlag && isHostNow && state?.status === 'lobby'
-          ? { on: !!state.settings.orchestra, onToggle: (on) => void roomRef.current?.updateSettings({ ...state.settings, orchestra: on }) }
-          : undefined
-      }
       roomMusic={
         state && state.status !== 'connecting' && state.status !== 'error'
           ? {
               mode: roomMusic,
               director: isHostNow,
               own: ownMusic,
-              // настройки комнаты меняются только в лобби
-              onMode: !inGame && isHostNow ? (m) => void roomRef.current?.updateSettings({ ...state.settings, roomMusic: m }) : undefined,
               onOwn: setOwnMusic,
             }
           : undefined
@@ -395,6 +387,7 @@ export function Lobby({
   // главная внизу: пока звать некого, кроме себя, — «Позвать в массовку»; потом «Мотор!», а «Позвать» — в шапку
   const inviteFirst = isHost && !canStart;
   const [sheet, setSheet] = useState(false);
+  const orchFlag = useMemo(() => featureOn('orchestra'), []);
   const [bigQr, setBigQr] = useState(false);
   const st = state.settings;
   const summary = [
@@ -402,6 +395,7 @@ export function Lobby({
     tp(lang, t.lobby.roundsN, st.maxRounds),
     t.start.levels[levelOf(st)],
     ...(st.aiFill ? [t.lobby.aiFill] : []),
+    t.lobby.musicSummary[st.roomMusic ?? 'host'],
   ].join(' · ');
 
   return (
@@ -531,7 +525,7 @@ export function Lobby({
       {sheet && (
         <div className="lobby-sheet" role="dialog" aria-label={t.lobby.settings} onClick={(e) => e.target === e.currentTarget && setSheet(false)}>
           <div className="lobby-sheet-box">
-            <Settings t={t} settings={st} onChange={(s2) => void room.updateSettings(s2)} />
+            <Settings t={t} settings={st} onChange={(s2) => void room.updateSettings(s2)} orchestra={orchFlag} />
             <button className="btn small" onClick={() => setSheet(false)}>
               {t.lobby.done}
             </button>
@@ -602,8 +596,9 @@ export function levelOf(s: Pick<RoomSettings, 'kidsMode' | 'strictCrowd'>): 'eas
   return s.strictCrowd ? 'hard' : s.kidsMode ? 'easy' : 'normal';
 }
 
-function Settings({ t, settings, onChange }: { t: Dict; settings: RoomSettings; onChange: (s: RoomSettings) => void }) {
+function Settings({ t, settings, onChange, orchestra = false }: { t: Dict; settings: RoomSettings; onChange: (s: RoomSettings) => void; orchestra?: boolean }) {
   const level = levelOf(settings);
+  const music = settings.roomMusic ?? 'host';
   return (
     <section className="settings" aria-label={t.lobby.settings}>
       <h2>{t.lobby.settings}</h2>
@@ -645,6 +640,34 @@ function Settings({ t, settings, onChange }: { t: Dict; settings: RoomSettings; 
         <span>{t.lobby.aiFill}</span>
       </label>
       <p className="setting-hint">{t.lobby.aiFillHint}</p>
+      {/* где играет музыка дубля: 2–4 телефона с одной песней вразнобой — каша */}
+      <div className="setting">
+        <span>{t.lobby.music}</span>
+        <div className="seg" role="radiogroup" aria-label={t.lobby.music}>
+          {(['host', 'all', 'none'] as const).map((v) => (
+            <button key={v} role="radio" aria-checked={music === v} aria-pressed={music === v}
+              onClick={() => {
+                if (v !== music) track('sound_toggle', { what: 'room_music', mode: v });
+                onChange({ ...settings, roomMusic: v });
+              }}>
+              {t.lobby.musicModes[v]}
+            </button>
+          ))}
+        </div>
+      </div>
+      <p className="setting-hint level-hint">{t.lobby.musicHints[music]}</p>
+      {orchestra && (
+        <>
+          <label className="setting check">
+            <input type="checkbox" checked={!!settings.orchestra} onChange={(e) => {
+                track('sound_toggle', { what: 'orchestra', on: e.target.checked });
+                onChange({ ...settings, orchestra: e.target.checked });
+              }} />
+            <span>{t.lobby.orchestra}</span>
+          </label>
+          <p className="setting-hint">{t.lobby.orchestraHint}</p>
+        </>
+      )}
     </section>
   );
 }
