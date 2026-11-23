@@ -199,7 +199,7 @@ export class GameServer {
       const p = url.pathname;
       if (p === '/healthz') return this.reply(res, 200, { ok: true });
       if (p === '/readyz') return this.reply(res, this.draining ? 503 : 200, { ok: !this.draining, instance: this.instance });
-      if (p === '/metrics' && req.method === 'GET') return this.metrics(req, res);
+      if (p === '/metrics' && req.method === 'GET') return await this.metrics(req, res);
       if (p === '/v1/auth/anon' && req.method === 'POST') {
         if (!this.authRate.take(this.ip(req), this.now())) return this.reply(res, 429, { error: 'rate_limited' });
         return this.reply(res, 200, await this.auth.issue());
@@ -284,7 +284,7 @@ export class GameServer {
     return null;
   }
 
-  private metrics(req: IncomingMessage, res: ServerResponse): void {
+  private async metrics(req: IncomingMessage, res: ServerResponse): Promise<void> {
     // только изнутри: снаружи Caddy этот путь не пропускает, а здесь — запросы без прокси
     if (this.o.trustProxy && req.headers['x-forwarded-for']) return this.reply(res, 404, { error: 'not_found' });
     let players = 0;
@@ -306,6 +306,9 @@ export class GameServer {
       `game_step_ms_p99{instance="${this.instance}"} ${p99.toFixed(3)}`,
       `game_draining{instance="${this.instance}"} ${this.draining ? 1 : 0}`,
     ];
+    // место под клипы для Telegram: тревога сторожа на 80% лимита (пора S3), график в Grafana
+    const c = await this.clips.usage();
+    lines.push(`game_clips_bytes ${c.bytes}`, `game_clips_count ${c.count}`, `game_clips_limit_bytes ${c.limit}`);
     res.writeHead(200, { 'content-type': 'text/plain; version=0.0.4' });
     res.end(lines.join('\n') + '\n');
   }

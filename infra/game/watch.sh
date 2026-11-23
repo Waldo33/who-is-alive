@@ -62,6 +62,23 @@ if [ -x /usr/local/bin/victoria-metrics ]; then
   [ -n "${down+x}" ] && curl -s -m 5 -o /dev/null http://127.0.0.1:8428/health && [ -z "$down" ]
   check metrics $? "сбор метрик${down:+ (не отвечает: $down)}"
   curl -s -m 5 -o /dev/null -f http://127.0.0.1:3001/api/health; check grafana $? "Grafana"
+
+  # диск Москвы и память обоих серверов (по метрикам; нет данных — не тревожим, за это «сбор метрик»)
+  vm() { curl -s -m 5 --data-urlencode "query=$1" http://127.0.0.1:8428/api/v1/query | jq -r '.data.result[] | "\(.metric.server // "") \(.value[1])"' 2>/dev/null; }
+  pct() { awk -v v="$1" 'BEGIN { printf "%d", v * 100 }'; }
+  # «в норме»: значение не выше порога (0 — норма, как у остальных проверок)
+  within() { awk -v v="$1" -v lim="$2" 'BEGIN { exit !(v <= lim) }'; }
+  for s in msk nl; do
+    name=$([ $s = msk ] && echo "Москвы" || echo "в Нидерландах")
+    # диск Нидерландов уже проверяется выше по df (работает и без метрик)
+    [ $s = nl ] && d="" || d=$(vm "1 - node_filesystem_avail_bytes{server=\"$s\",mountpoint=\"/\"} / node_filesystem_size_bytes{server=\"$s\",mountpoint=\"/\"}" | awk '{print $2}' | head -1)
+    if [ -n "$d" ]; then within "$d" 0.85; check "disk_$s" $? "диск сервера $name заполнен на $(pct "$d")%"; fi
+    m=$(vm "1 - node_memory_MemAvailable_bytes{server=\"$s\"} / node_memory_MemTotal_bytes{server=\"$s\"}" | awk '{print $2}' | head -1)
+    if [ -n "$m" ]; then within "$m" 0.92; check "mem_$s" $? "память сервера $name занята на $(pct "$m")%"; fi
+  done
+  # клипы для Telegram в Москве: лимит папки 1 ГБ, старые вытесняются — на 80% пора думать об S3
+  c=$(vm 'max(game_clips_bytes{server="msk"}) / max(game_clips_limit_bytes{server="msk"})' | awk '{print $2}' | head -1)
+  if [ -n "$c" ]; then within "$c" 0.8; check clips_msk $? "место под клипы в Москве занято на $(pct "$c")% из 1 ГБ (пора S3)"; fi
 fi
 # ночная копия базы Москвы: свежей суток с запасом (раз в сутки в 03:40 UTC)
 if systemctl is-enabled -q massovka-msk-backup.timer 2>/dev/null; then

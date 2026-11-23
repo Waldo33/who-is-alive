@@ -535,11 +535,110 @@
   },
   {
    "id": 12,
+   "type": "timeseries",
+   "title": "Место под клипы Telegram (Москва; лимит 1 ГБ, тревога на 80%)",
+   "description": "Клипы хранятся 2 суток, при лимите старые вытесняются. Упирается в лимит раньше двух суток — пора переносить на S3",
+   "gridPos": {
+    "x": 0,
+    "y": 28,
+    "w": 12,
+    "h": 8
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "vm"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vm"
+     },
+     "refId": "A",
+     "expr": "game_clips_bytes{server=\"msk\"}",
+     "legendFormat": "занято"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vm"
+     },
+     "refId": "B",
+     "expr": "game_clips_limit_bytes{server=\"msk\"}",
+     "legendFormat": "лимит"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "bytes",
+     "custom": {
+      "fillOpacity": 10
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   }
+  },
+  {
+   "id": 13,
+   "type": "timeseries",
+   "title": "Клипов в хранилище",
+   "description": "",
+   "gridPos": {
+    "x": 12,
+    "y": 28,
+    "w": 12,
+    "h": 8
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "vm"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vm"
+     },
+     "refId": "A",
+     "expr": "game_clips_count{server=\"msk\"}",
+     "legendFormat": "клипов"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "none",
+     "custom": {
+      "fillOpacity": 10
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   }
+  },
+  {
+   "id": 14,
    "type": "logs",
    "title": "Ошибки в логах обоих серверов",
    "gridPos": {
     "x": 0,
-    "y": 28,
+    "y": 36,
     "w": 24,
     "h": 12
    },

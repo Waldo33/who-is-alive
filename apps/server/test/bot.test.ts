@@ -129,6 +129,11 @@ describe('клипы на игровом сервере (/v1/clips)', () => {
       expect((await fetch(`${base}/v1/clips/${id}.jpg`)).status).toBe(200);
       expect((await fetch(`${base}/v1/clips/${'0'.repeat(20)}.mp4`)).status).toBe(404);
       expect(readdirSync(dir).sort()).toEqual([`${id}.jpg`, `${id}.mp4`]);
+      // место под клипы — в метриках (тревога сторожа и график в Grafana)
+      const m = await (await fetch(`${base}/metrics`)).text();
+      expect(m).toContain('game_clips_count 1');
+      expect(m).toMatch(new RegExp(`game_clips_bytes ${video.length + jpg.length}\\b`));
+      expect(m).toContain(`game_clips_limit_bytes ${1024 * 1024 * 1024}`);
     } finally {
       await srv.close();
     }

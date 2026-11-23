@@ -22,7 +22,8 @@ import { Transform } from 'node:stream';
 export const CLIP_MAX = 12 * 1024 * 1024;
 export const THUMB_MAX = 400 * 1024;
 const CLIP_TTL_MS = 48 * 3600_000;
-const DIR_MAX = 1024 * 1024 * 1024;
+export const CLIPS_DIR_MAX = 1024 * 1024 * 1024;
+const DIR_MAX = CLIPS_DIR_MAX;
 /** Загрузок клипов на игрока: не больше 12 за 10 минут. */
 const PER_USER = 12;
 const PER_USER_MS = 600_000;
@@ -35,6 +36,7 @@ export type ClipResult = { status: number; body: unknown };
 export class ClipStore {
   readonly dir: string;
   private readonly uploads = new Map<string, number[]>();
+  private usageCache: { at: number; v: { bytes: number; count: number } } | null = null;
 
   constructor(dir?: string, private readonly now: () => number = Date.now) {
     this.dir = dir ?? join(tmpdir(), 'massovka-clips');
@@ -77,6 +79,23 @@ export class ClipStore {
     const path = join(this.dir, `${id}.${ext}`);
     const st = await stat(path).catch(() => null);
     return st?.isFile() ? path : null;
+  }
+
+  /** Сколько занято (для /metrics и тревоги «место под клипы»): раз в минуту, не чаще. */
+  async usage(): Promise<{ bytes: number; count: number; limit: number }> {
+    const now = this.now();
+    if (!this.usageCache || now - this.usageCache.at > 60_000) {
+      let bytes = 0;
+      let count = 0;
+      for (const name of await readdir(this.dir).catch(() => [] as string[])) {
+        const st = await stat(join(this.dir, name)).catch(() => null);
+        if (!st?.isFile()) continue;
+        bytes += st.size;
+        if (!name.endsWith('.jpg')) count++;
+      }
+      this.usageCache = { at: now, v: { bytes, count } };
+    }
+    return { ...this.usageCache.v, limit: DIR_MAX };
   }
 
   private rateOk(user: string): boolean {

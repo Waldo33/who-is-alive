@@ -84,7 +84,10 @@ tech=[
  ts_vm("Диск /",[('(1 - node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) * 100','{{server}}')],grid(16,12,8,8),unit="percent"),
  ts_vm("Сеть",[('sum by (server) (rate(node_network_receive_bytes_total{device!~"lo"}[5m]))','{{server}} приём'),('sum by (server) (rate(node_network_transmit_bytes_total{device!~"lo"}[5m]))','{{server}} отдача')],grid(0,20,12,8),unit="Bps"),
  ts_vm("Связь с источниками метрик (1 — есть)",[('up','{{server}} {{job}}')],grid(12,20,12,8),desc="msk через туннель: пропадает, если туннель Нидерланды → Москва упал"),
- {"id":nid(),"type":"logs","title":"Ошибки в логах обоих серверов","gridPos":grid(0,28,24,12),"datasource":VL,
+ ts_vm("Место под клипы Telegram (Москва; лимит 1 ГБ, тревога на 80%)",[('game_clips_bytes{server="msk"}','занято'),('game_clips_limit_bytes{server="msk"}','лимит')],grid(0,28,12,8),unit="bytes",
+       desc="Клипы хранятся 2 суток, при лимите старые вытесняются. Упирается в лимит раньше двух суток — пора переносить на S3"),
+ ts_vm("Клипов в хранилище",[('game_clips_count{server="msk"}','клипов')],grid(12,28,12,8)),
+ {"id":nid(),"type":"logs","title":"Ошибки в логах обоих серверов","gridPos":grid(0,36,24,12),"datasource":VL,
   "targets":[{"datasource":VL,"refId":"A","expr":'(level:error OR level:warn OR _msg:~"(?i)error|fail") -_SYSTEMD_UNIT:"massovka-watch.service"',"queryType":"instant"}],
   "options":{"showTime":True,"wrapLogMessage":True,"sortOrder":"Descending","enableLogDetails":True}},
 ]
