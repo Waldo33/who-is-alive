@@ -71,13 +71,13 @@ if [ -x /usr/local/bin/victoria-metrics ]; then
   for s in msk nl; do
     name=$([ $s = msk ] && echo "Москвы" || echo "в Нидерландах")
     # диск Нидерландов уже проверяется выше по df (работает и без метрик)
-    [ $s = nl ] && d="" || d=$(vm "1 - node_filesystem_avail_bytes{server=\"$s\",mountpoint=\"/\"} / node_filesystem_size_bytes{server=\"$s\",mountpoint=\"/\"}" | awk '{print $2}' | head -1)
+    [ $s = nl ] && d="" || d=$(vm "1 - node_filesystem_avail_bytes{server=\"$s\",mountpoint=\"/\"} / node_filesystem_size_bytes{server=\"$s\",mountpoint=\"/\"}" | awk '{print $NF}' | head -1)
     if [ -n "$d" ]; then within "$d" 0.85; check "disk_$s" $? "диск сервера $name заполнен на $(pct "$d")%"; fi
-    m=$(vm "1 - node_memory_MemAvailable_bytes{server=\"$s\"} / node_memory_MemTotal_bytes{server=\"$s\"}" | awk '{print $2}' | head -1)
+    m=$(vm "1 - node_memory_MemAvailable_bytes{server=\"$s\"} / node_memory_MemTotal_bytes{server=\"$s\"}" | awk '{print $NF}' | head -1)
     if [ -n "$m" ]; then within "$m" 0.92; check "mem_$s" $? "память сервера $name занята на $(pct "$m")%"; fi
   done
   # клипы для Telegram в Москве: лимит папки 1 ГБ, старые вытесняются — на 80% пора думать об S3
-  c=$(vm 'max(game_clips_bytes{server="msk"}) / max(game_clips_limit_bytes{server="msk"})' | awk '{print $2}' | head -1)
+  c=$(vm 'max(game_clips_bytes{server="msk"}) / max(game_clips_limit_bytes{server="msk"})' | awk '{print $NF}' | head -1)
   if [ -n "$c" ]; then within "$c" 0.8; check clips_msk $? "место под клипы в Москве занято на $(pct "$c")% из 1 ГБ (пора S3)"; fi
 fi
 # ночная копия базы Москвы: свежей суток с запасом (раз в сутки в 03:40 UTC)
