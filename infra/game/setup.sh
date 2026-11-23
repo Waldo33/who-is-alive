@@ -174,7 +174,8 @@ AccuracySec=5s
 WantedBy=timers.target
 EOF
   systemctl daemon-reload
-  systemctl enable --now massovka-watch.timer >/dev/null 2>&1
+  systemctl enable massovka-watch.timer >/dev/null 2>&1
+  systemctl restart massovka-watch.timer
 fi
 
 # ───────────── Node и Caddy ─────────────
