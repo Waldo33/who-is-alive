@@ -354,7 +354,7 @@ export function Lobby({
       <section className="cast" aria-label={fmt(t.lobby.players, { n: state.members.length })}>
         {slots.map((m, i) =>
           m ? (
-            <div key={m.userId} className={`cast-card${m.online ? '' : ' offline'}${kickAsk === m.userId ? ' ask' : ''}`}>
+            <div key={m.userId} className={`cast-card${m.online ? '' : ' offline'}${kickAsk === m.userId ? ' ask' : ''}${m.userId === state.selfId && editing ? ' editing' : ''}`}>
               <Actor color={m.color} waving={m.ready || m.userId === state.hostId} />
               {m.userId === state.selfId && editing ? (
                 <NameEditor

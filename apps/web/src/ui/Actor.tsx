@@ -6,11 +6,12 @@ import { CH_H, CH_W, F, OL_H, OL_W, PARK_CHARS, makeCharacterSheets } from '@/ga
 import type { CharSheets } from '@/game/sprites';
 
 /**
- * Человечек из игры в лобби: спрайт парка ×3 с обводкой цвета игрока. Готовый — машет рукой (кадр жеста),
+ * Человечек из игры в лобби: спрайт парка (×3, на низком экране ×2) с обводкой цвета игрока. Готовый — машет рукой (кадр жеста),
  * пустое место — силуэт цвета dusk. Рисуется на canvas целыми пикселями, без сглаживания.
  */
 let sheets: CharSheets | null = null;
-const SCALE = 3;
+// холст — 1:1 со спрайтом; размер на экране задаёт CSS целым множителем (×3, на низком экране ×2)
+const SCALE = 1;
 const WAVE = [F.WAVE, F.WAVE + 1, F.WAVE + 2, F.WAVE + 1];
 
 function tinted(src: HTMLCanvasElement, color: string): HTMLCanvasElement {
