@@ -58,3 +58,15 @@ jobs:
         run: |
           curl -sS -H "Authorization: Bearer $TWC_TOKEN" "$API/domains" -o /tmp/domains.json
           jq -r '"доменов: \(.meta.total // (.domains | length))", (.domains[]? | "\(.fqdn)\tпровайдер: \(.provider // "?")\tистекает: \(.expiration // "?")")' /tmp/domains.json || true
+
+      - name: S3 и серверы в Нидерландах (этапы 2 и 3 плана инфраструктуры)
+        run: |
+          # тарифы S3: где есть хранилище и почём (docs/infra-plan.md › этап 2 «Где S3»)
+          curl -sS -H "Authorization: Bearer $TWC_TOKEN" "$API/presets/storages" -o /tmp/s3.json -w 'presets/storages: HTTP %{http_code}\n'
+          echo "поля:"; jq -c '(.storages_presets // .storage_presets // [])[0] | keys' /tmp/s3.json 2>/dev/null || head -c 400 /tmp/s3.json
+          jq -r '(.storages_presets // .storage_presets // [])[] | "\(.id)\t\(.location // .region // "?")\t\(.type // "")\t\((.disk // 0)/1024) ГБ\t\(.price) ₽\t\(.description_short // .description // "")"' /tmp/s3.json 2>/dev/null | sort -t$'\t' -k2,2 -k5n | head -40 || true
+          # серверы в Нидерландах под игру (этап 3): от 1 до 4 ГБ памяти
+          curl -sS -H "Authorization: Bearer $TWC_TOKEN" "$API/presets/servers" -o /tmp/presets.json
+          echo "Нидерланды:"
+          jq -r '.server_presets[] | select(.location == "nl-1") | select(.ram <= 4096) | "\(.id)\t\(.cpu)/\(.ram/1024) ГБ\t\(.disk/1024) ГБ \(.disk_type)\t\(.price) ₽\t\(.description_short // "")"' /tmp/presets.json | sort -t$'\t' -k4 -n || true
+          echo "локации серверов:"; jq -r '[.server_presets[].location] | unique | join(", ")' /tmp/presets.json || true
