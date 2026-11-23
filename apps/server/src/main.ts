@@ -47,6 +47,8 @@ const bot = env.TELEGRAM_BOT_TOKEN
       features: (env.FEATURES ?? '').split(',').map((s) => s.trim()).filter(Boolean),
       store,
       log,
+      // клипы для Telegram: systemd StateDirectory=massovka-clips (/var/lib/massovka-clips)
+      clipDir: env.CLIP_DIR || env.STATE_DIRECTORY || undefined,
     })
   : undefined;
 if (!bot) log('warn', 'TELEGRAM_BOT_TOKEN не задан — бота нет');

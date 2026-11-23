@@ -4,6 +4,14 @@ import { ClipPlayerScene, pickClipMime, recordClip } from './clip';
 import { loadTheme } from './themes';
 import { getAudio } from './audio';
 import type { ClipInput, ClipResult } from './clip';
+import { inTelegram, telegramClipCaps, telegramClipSave, telegramClipStory, telegramShareCard, telegramUploadClip } from '../lib/telegram';
+import type { TgClip } from '../lib/telegram';
+
+/** Подпись клипа и учёт действий внутри Telegram (сторис, видео в чат, «Сохранить»). */
+export interface ClipShareOpts {
+  text: string;
+  onTelegram?: (what: 'story' | 'chat' | 'save', ok: boolean) => void;
+}
 
 /**
  * Экран монтажа поверх игры: превью клипа вживую, прогресс, затем «Отправить / Сохранить / Закрыть».
@@ -15,6 +23,7 @@ export function openClipOverlay(
   t: Dict,
   share: (file: File) => Promise<void>,
   save: (file: File) => void,
+  opts?: ClipShareOpts,
 ): () => void {
   const root = document.createElement('div');
   root.className = 'clip-overlay';
@@ -25,6 +34,7 @@ export function openClipOverlay(
       <div class="clip-progress"><i></i></div>
       <div class="clip-actions" hidden>
         <button class="btn clip-send">${t.clip.send}</button>
+        <button class="btn clip-story" hidden>${t.clip.story}</button>
         <button class="btn clip-save">${t.clip.save}</button>
       </div>
       <button class="btn clip-close">${t.clip.close}</button>
@@ -62,6 +72,11 @@ export function openClipOverlay(
     .then((res: ClipResult) => {
       if (closed) return;
       const file = new File([res.blob], `kto-tut-zhivoy.${res.ext}`, { type: res.mime });
+      // Telegram: файл из встроенного браузера не отдать — клип уходит на сервер бота сразу,
+      // пока человек смотрит превью; обложка — последний кадр (заставка с итогом)
+      const caps = inTelegram() ? telegramClipCaps(res.mime) : null;
+      const tgClip: Promise<TgClip | null> | null =
+        caps && (caps.story || caps.chat || caps.save) ? thumbOf(scene.c).then((th) => telegramUploadClip(file, th)) : null;
       status.textContent = t.clip.ready;
       root.querySelector<HTMLElement>('.clip-progress')!.hidden = true;
       actions.hidden = false;
@@ -75,13 +90,64 @@ export function openClipOverlay(
       v.addEventListener('error', () => v.remove());
       scene.c.replaceWith(v);
       void v.play().catch(() => undefined);
-      root.querySelector('.clip-send')!.addEventListener('click', () => void share(file));
-      root.querySelector('.clip-save')!.addEventListener('click', () => save(file));
+      const viaTg = async (what: 'story' | 'chat' | 'save', run: (c: TgClip) => Promise<boolean> | boolean): Promise<boolean> => {
+        // пока клип грузится на сервер — кнопки ждут (нажатие не теряется)
+        actions.classList.add('busy');
+        const c = tgClip && (await tgClip);
+        actions.classList.remove('busy');
+        const ok = !!c && (await run(c));
+        opts?.onTelegram?.(what, ok);
+        return ok;
+      };
+      const text = opts?.text ?? t.meta.title;
+      root.querySelector('.clip-send')!.addEventListener('click', () => {
+        void (async () => {
+          if (caps?.chat && (await viaTg('chat', (c) => telegramShareCard({ kind: 'clip', clip: c.id, text })))) return;
+          await share(file);
+        })();
+      });
+      const story = root.querySelector<HTMLButtonElement>('.clip-story')!;
+      if (caps?.story) {
+        story.hidden = false;
+        story.addEventListener('click', () => {
+          void viaTg('story', (c) => telegramClipStory(c, text, t.meta.title)).then((ok) => {
+            if (!ok) status.textContent = t.clip.failed;
+          });
+        });
+      }
+      root.querySelector('.clip-save')!.addEventListener('click', () => {
+        void (async () => {
+          if (caps?.save && (await viaTg('save', telegramClipSave))) return;
+          save(file);
+        })();
+      });
     })
     .catch(() => {
       if (!closed) status.textContent = t.clip.failed;
     });
   return close;
+}
+
+/** Обложка клипа для карточки в чате: кадр холста шириной 360 (×2 от пикселя клипа) в JPEG. */
+function thumbOf(c: HTMLCanvasElement): Promise<Blob | null> {
+  try {
+    const o = document.createElement('canvas');
+    o.width = 360;
+    o.height = Math.round((c.height * 360) / c.width);
+    const g = o.getContext('2d')!;
+    g.imageSmoothingEnabled = false;
+    g.drawImage(c, 0, 0, o.width, o.height);
+    return new Promise((r) => o.toBlob((b) => r(b), 'image/jpeg', 0.85));
+  } catch {
+    return Promise.resolve(null);
+  }
+}
+
+/** Клип видео-карточкой в чат Telegram (загрузка — по нажатию). false — не вышло, нужен обычный путь. */
+export async function shareClipInTelegram(file: File, text: string): Promise<boolean> {
+  if (!inTelegram() || !telegramClipCaps(file.type).chat) return false;
+  const c = await telegramUploadClip(file);
+  return !!c && (await telegramShareCard({ kind: 'clip', clip: c.id, text }));
 }
 
 /** Можно ли записать клип в этом браузере. */

@@ -1,6 +1,8 @@
 import { createServer } from 'node:http';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import { createHash, randomInt } from 'node:crypto';
+import { createReadStream } from 'node:fs';
+import { stat } from 'node:fs/promises';
 import type { AddressInfo } from 'node:net';
 import { WebSocketServer } from 'ws';
 import type { WebSocket } from 'ws';
@@ -183,7 +185,7 @@ export class GameServer {
     if (origin && this.originOk(origin)) {
       res.setHeader('Access-Control-Allow-Origin', origin);
       res.setHeader('Vary', 'Origin');
-      res.setHeader('Access-Control-Allow-Headers', 'authorization, content-type');
+      res.setHeader('Access-Control-Allow-Headers', 'authorization, content-type, x-tg-init');
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
       res.setHeader('Access-Control-Max-Age', '86400');
     }
@@ -203,8 +205,11 @@ export class GameServer {
         if (!this.o.bot) return this.reply(res, 503, { error: 'no_bot' });
         // вебхук Telegram — без лимита (его проверяет секретный заголовок), остальное — по адресу
         if (p !== '/tg/hook' && !this.botRate.take(this.ip(req), this.now())) return this.reply(res, 429, { error: 'rate_limited' });
-        const body = req.method === 'POST' ? await readJson(req, 65_536) : null;
+        // клип и обложка — сырые байты (видео до 12 МБ), остальное — JSON
+        const raw = req.method === 'POST' && (p === '/tg/clip' || p.endsWith('/thumb'));
+        const body = req.method !== 'POST' ? null : raw ? await readRaw(req, 12 * 1024 * 1024 + 1) : await readJson(req, 65_536);
         const r = await this.o.bot.handle(req.method ?? 'GET', p.slice(3), req.headers, body);
+        if (r.file) return this.sendFile(req, res, r.file);
         return this.reply(res, r.status, r.body);
       }
       const m = /^\/v1\/rooms\/([A-Za-z]{4})$/.exec(p);
@@ -321,6 +326,21 @@ export class GameServer {
     }
     res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
     res.end(JSON.stringify(body));
+  }
+
+  /** Файл клипа: целиком (до 12 МБ) — для сторис, скачивания из Telegram и видео-карточки. */
+  private async sendFile(req: IncomingMessage, res: ServerResponse, f: { path: string; mime: string; name: string }): Promise<void> {
+    const st = await stat(f.path);
+    res.writeHead(200, {
+      'content-type': f.mime,
+      'content-length': String(st.size),
+      // downloadFile в Telegram просит «attachment» и доступ с web.telegram.org
+      'content-disposition': `attachment; filename="${f.name}"`,
+      'access-control-allow-origin': '*',
+      'cache-control': 'public, max-age=86400',
+    });
+    if (req.method === 'HEAD') return void res.end();
+    createReadStream(f.path).pipe(res);
   }
 
   private originOk(origin: string | undefined): boolean {
@@ -443,6 +463,18 @@ export class GameServer {
     peer.send(JSON.stringify({ t: 'error', code, fatal } satisfies ServerMsg));
     if (fatal) ws?.close(4004, code);
   }
+}
+
+/** Сырые байты тела; больше limit — null (дочитывать не нужно: соединение закроется ответом). */
+async function readRaw(req: IncomingMessage, limit: number): Promise<Buffer | null> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const c of req) {
+    size += (c as Buffer).length;
+    if (size > limit) return null;
+    chunks.push(c as Buffer);
+  }
+  return Buffer.concat(chunks);
 }
 
 async function readJson(req: IncomingMessage, limit = 8192): Promise<unknown> {

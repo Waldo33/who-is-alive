@@ -249,6 +249,8 @@ ProtectHome=yes
 ProtectKernelTunables=yes
 ProtectControlGroups=yes
 ReadOnlyPaths=/opt/massovka
+# клипы «Лучший момент» для Telegram (бот): /var/lib/massovka-clips, 2 суток
+StateDirectory=massovka-clips
 MemoryMax=2G
 
 [Install]

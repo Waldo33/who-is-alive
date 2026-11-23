@@ -21,7 +21,7 @@ import { mildOn } from '../ui/topbar';
 import { SWING_HIT, aim, armed, armsOf, bodyPose, drawAir, drawFloor, killsFromLog, makeKill, weaponSfx } from './gore';
 import type { ArmColors } from './gore';
 import type { Kill, Px } from './gore';
-import { clipSupported, openClipOverlay, recordClipInBackground } from './clip-ui';
+import { clipSupported, openClipOverlay, recordClipInBackground, shareClipInTelegram } from './clip-ui';
 import type { ClipPlayer } from './clip';
 import { Audio } from './audio';
 import { frameFor } from './frames';
@@ -1587,8 +1587,14 @@ export class GameScene extends Phaser.Scene {
     if (dc.status === 'ready' && dc.file) {
       const k = dc.killer === undefined ? undefined : this.sim.summary?.reveal.find((r) => r.eid === dc.killer);
       const kName = k ? this.sim.info(k.pid)?.name : undefined;
-      this.track('clip_send', { kind: 'death', type: dc.file.type.split(';')[0] });
-      void this.init0.onShare?.(kName ? fmt(this.t.clip.deathTextBy, { name: kName }) : this.t.clip.deathText, [dc.file]);
+      const file = dc.file;
+      const text = kName ? fmt(this.t.clip.deathTextBy, { name: kName }) : this.t.clip.deathText;
+      void (async () => {
+        // Telegram: видео-карточкой в чат; не вышло — как везде
+        const tg = await shareClipInTelegram(file, text);
+        this.track('clip_send', { kind: 'death', type: file.type.split(';')[0], ...(tg ? { via: 'tg_card' } : {}) });
+        if (!tg) await this.init0.onShare?.(text, [file]);
+      })();
       return;
     }
     if (dc.status !== 'offer') return;
@@ -3052,6 +3058,10 @@ export class GameScene extends Phaser.Scene {
     if (!best) return;
     this.closeClip?.();
     this.track('clip_open', { kind: best.moment.kind, self: !!best.moment.selfRole });
+    const m = best.moment;
+    const a = best.players.find((p) => p.eid === m.attacker);
+    const b = best.players.find((p) => p.eid === m.victim);
+    const text = m.kind === 'knockout' && a && b ? fmt(this.t.clip.shareKo, { a: a.name, b: b.name }) : this.t.meta.title;
     // модуль клипа в основной сборке (не ленивый чанк): после обновления сайта открытая вкладка
     // не сможет подгрузить чанк, которого уже нет на сервере, и кнопка молча не срабатывала бы
     try {
@@ -3060,16 +3070,19 @@ export class GameScene extends Phaser.Scene {
         { ...best, arena: this.sim.arena, t: this.t, font: this.init0.fontFamily, site: location.host, noGore: this.cfg.kidsMode || mildOn(), winner: this.clipWinner() },
         this.t,
         async (file) => {
-          const m = best.moment;
-          const a = best.players.find((p) => p.eid === m.attacker);
-          const b = best.players.find((p) => p.eid === m.victim);
-          const text = m.kind === 'knockout' && a && b ? fmt(this.t.clip.shareKo, { a: a.name, b: b.name }) : this.t.meta.title;
-          this.track('clip_send', { kind: m.kind, type: file.type.split(';')[0] });
+          this.track('clip_send', { kind: best.moment.kind, type: file.type.split(';')[0] });
           await this.init0.onShare?.(text, [file]);
         },
         (file) => {
           this.track('clip_save', { kind: best.moment.kind });
           this.init0.onSave?.(file);
+        },
+        {
+          text,
+          // внутри Telegram: сторис, видео-карточка в чат, родное «Сохранить»
+          // не вышло — сработает обычный путь и посчитается там
+          onTelegram: (what, ok) =>
+            this.track(ok ? (what === 'story' ? 'clip_story' : what === 'chat' ? 'clip_send' : 'clip_save') : 'clip_tg_fail', { kind: best.moment.kind, via: 'tg', what }),
         },
       );
       this.events.once('shutdown', () => this.closeClip?.());

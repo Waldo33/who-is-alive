@@ -154,8 +154,18 @@ button.btn { border: 0; cursor: pointer; border-radius: 0; }
 .clip-status { margin: 0; font-size: 11px; color: var(--sand); text-align: center; line-height: 1.6; }
 .clip-progress { width: 100%; max-width: 280px; height: 10px; background: var(--night); box-shadow: 0 0 0 2px var(--ink); }
 .clip-progress i { display: block; height: 100%; width: 0; background: var(--amber); }
-.clip-actions { display: flex; gap: 12px; }
-.clip-actions[hidden], .clip-progress[hidden] { display: none; }
+.clip-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; width: 100%; max-width: 320px; }
+.clip-actions .btn { min-width: 0; padding-left: 6px; padding-right: 6px; }
+/* в Telegram три кнопки: «Сохранить» — второй строкой во всю ширину; без «В сторис» — две рядом */
+.clip-actions .clip-save { grid-column: 1 / -1; }
+.clip-actions .clip-story[hidden] + .clip-save { grid-column: auto; }
+.clip-actions[hidden], .clip-progress[hidden], .clip-actions .btn[hidden] { display: none; }
+/* низкий экран (iPhone SE, Telegram с шапкой): превью меньше, чтобы кнопки и «Закрыть» влезли */
+@media (max-height: 720px) {
+  .clip-box { gap: 8px; }
+  .clip-frame canvas, .clip-frame video { height: min(48dvh, 640px); }
+}
+.clip-actions.busy .btn { opacity: 0.6; }
 .clip-close { background: var(--night); color: var(--sand); box-shadow: 0 4px 0 var(--ink), 0 0 0 2px var(--steel); }
 
 /* пробный дубль: только сцена (крестик «пропустить» — в шапке самой сцены) */

@@ -64,7 +64,15 @@ export function pickClipMime(withAudio = false): string | null {
   if (typeof MediaRecorder === 'undefined' || typeof HTMLCanvasElement === 'undefined') return null;
   if (!('captureStream' in HTMLCanvasElement.prototype)) return null;
   const audio = withAudio
-    ? ['video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4;codecs=avc1,mp4a.40.2', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus']
+    ? [
+        'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+        'video/mp4;codecs=avc1,mp4a.40.2',
+        // Chrome/Android: mp4 со звуком Opus — сторис и видео в Telegram берут только mp4, не webm
+        'video/mp4;codecs=avc1.42E01E,opus',
+        'video/mp4;codecs=avc1,opus',
+        'video/webm;codecs=vp9,opus',
+        'video/webm;codecs=vp8,opus',
+      ]
     : [];
   const list = [
     ...audio,
