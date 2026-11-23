@@ -15,10 +15,9 @@ describe('ClientSession', () => {
     // в интерфейсе нет способа получить чужую сущность
     expect(Object.keys(view.me()!)).not.toContain('pid');
     expect('pr' in (Object.getPrototypeOf(view) as object)).toBe(false);
-    run(s, () => s.phase === 'accuse', 20 * 100);
-    expect(s.phase).toBe('accuse');
+    run(s, () => s.phase === 'play', 20 * 10);
     expect(s.summary).toBeNull();
-    run(s, () => s.phase === 'reveal', 20 * 10);
+    run(s, () => s.phase === 'reveal', 20 * 100);
     expect(s.summary!.reveal.map((r) => r.pid).sort()).toEqual(['b', 'c', 'd', 'me']);
   });
 

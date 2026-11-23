@@ -15,6 +15,7 @@ export const DEFAULT_CONFIG = {
   // раунд и матч
   countdownSec: 3,
   roundSec: 75,
+  // отдельного экрана обвинения нет с 23.11 (обвиняют вырезанные по ходу дубля); поля — для старых клиентов
   accuseSec: 5,
   kidsAccuseSec: 8,
   // Разоблачение: барабанная дробь → повтор последних N с в ускорении → финальный кадр.
@@ -134,10 +135,6 @@ export const TICK_MS = 50; // 20 Гц, фиксированный шаг сим�
 
 export function crowdPauseMs(cfg: GameConfig): number {
   return cfg.kidsMode ? cfg.kidsPauseMs : cfg.crowdPauseMs;
-}
-
-export function accuseMs(cfg: GameConfig): number {
-  return (cfg.kidsMode ? cfg.kidsAccuseSec : cfg.accuseSec) * 1000;
 }
 
 export function revealMs(cfg: GameConfig): number {

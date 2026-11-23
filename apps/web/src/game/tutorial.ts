@@ -66,9 +66,8 @@ export class Tutorial {
   private start: { x: number; y: number } | null = null;
   private plannedAt = 0;
   private lastCrowd: { warnAt: number; kind: CrowdKind } | null = null;
-  private accused = false;
   private botHits = 0;
-  /** На обвинении и метке «?»: человечек, на которого показываем «тапни сюда». */
+  /** На метке «?»: человечек, на которого показываем «тапни сюда». */
   private suspect = -1;
   /** Вырезанный поставил метку «?» (сцена сообщает). */
   private marked = false;
@@ -102,7 +101,6 @@ export class Tutorial {
   noteIntent(it: Intent): void {
     const c = this.sim.world.crowd;
     if (it.k === 'crowd' && c) this.lastCrowd = { warnAt: c.warnAt, kind: it.kind };
-    if (it.k === 'accuse') this.accused = true;
   }
 
   /** Сцена: вырезанный поставил метку «?» на человечка. */
@@ -320,21 +318,7 @@ export class Tutorial {
           return true;
         },
       },
-      // 9. конец дубля: обвинение (таймер обвинения стоит, пока игрок не выбрал)
-      {
-        say: t.accuse,
-        // рамка и стрелка с «кругами от касания» над человечком рядом — понятно, куда тапать
-        focus: () => this.suspectAt(this.sim.phase === 'accuse' && !this.accused),
-        enter: () => {
-          this.accused = false;
-          this.suspect = -1;
-          // конец дубля без сужения кадра: сразу обвинение
-          this.sim.zoneStarted = true;
-          this.sim.plannedPlayEnd = this.sim.world.time;
-        },
-        hold: () => this.sim.phase === 'accuse' && !this.accused,
-        done: () => this.accused,
-      },
+      // 9. итог: за что очки (отдельного обвинения в конце дубля нет — метка «?» вырезанного и есть обвинение)
       { say: t.accuseOk, tap: true },
     ];
   }

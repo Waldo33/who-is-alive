@@ -77,16 +77,15 @@ export class AiPlayer implements AiAgent {
     const w = sim.world;
     const t = w.time;
 
-    if (sim.phase === 'accuse') {
-      if (!this.accuseAt) this.accuseAt = sim.now + this.rng.range(600, 3500);
-      if (sim.now >= this.accuseAt && me.accused === null) {
-        const target = this.topSuspect(sim, Infinity) ?? this.randomOther(sim);
-        if (target !== null) sim.intent(this.pid, { k: 'accuse', eid: target });
-      }
-      return;
-    }
     // вырезанный ИИ иногда подаёт «Хлопушку» — в песочнице тоже видно, как это работает
     if (sim.phase === 'play' && !me.alive) {
+      // метка «?» — обвинение: осмотрелся — ставит на самого подозрительного, потом изредка переносит
+      if (!this.accuseAt) this.accuseAt = t + this.rng.range(3000, 9000);
+      if (t >= this.accuseAt) {
+        this.accuseAt = t + this.rng.range(6000, 12000);
+        const target = this.topSuspect(sim, Infinity) ?? (me.accused === null || !w.get(me.accused)?.alive ? this.randomOther(sim) : null);
+        if (target !== null && target !== me.accused) sim.intent(this.pid, { k: 'accuse', eid: target });
+      }
       if (me.clapsLeft > 0 && t >= me.clapAt && sim.ghostCrowdAt(t) !== null && this.rng.chance(0.006)) {
         sim.intent(this.pid, { k: 'clap', kind: this.rng.pick<CrowdKind>(['freeze', 'jump', 'dance']) });
       }

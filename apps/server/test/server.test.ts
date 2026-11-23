@@ -214,7 +214,7 @@ describe('игровой сервер: матч', () => {
             if (g.crowdWindowOpen() && me.crowdAnswered !== g.world.crowd!.warnAt && rng.chance(0.2)) g.intent({ k: 'crowd', kind: g.world.crowd!.kind });
             else if (rng.chance(0.03)) g.intent({ k: 'move', x: rng.int(20, 160), y: rng.int(30, 240) });
           }
-          if (g.phase === 'accuse' && me.accused === null && rng.chance(0.05)) {
+          if (g.phase === 'play' && !me.alive && me.accused === null && rng.chance(0.05)) {
             const any = g.world.alive().find((e) => e.eid !== me.eid);
             if (any) g.intent({ k: 'accuse', eid: any.eid });
           }

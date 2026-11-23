@@ -19,6 +19,14 @@ import type { WorldEvent } from '../src';
 
 const players = ['a', 'b', 'c', 'd'].map((pid, i) => ({ pid, name: pid, color: i }));
 
+/** Вырезать игрока сразу (как «Пробный дубль»): без удара, чтобы не зависеть от позиций. */
+function cut(sim: MatchSim, p: { alive: boolean; diedAt: number | null; eid: number }): void {
+  p.alive = false;
+  p.diedAt = sim.world.time;
+  sim.world.push({ t: 'remove', eid: p.eid, cause: 'player', at: sim.world.time });
+  sim.world.step();
+}
+
 function runUntil(sim: MatchSim, pred: () => boolean, maxTicks = 20 * 200): void {
   for (let i = 0; i < maxTicks && !pred(); i++) sim.tick();
 }
@@ -161,8 +169,8 @@ describe('MatchSim', () => {
       sim.tick();
     }
     expect(a.stars).toBe(3);
-    expect(sim.phase).toBe('accuse');
-    runUntil(sim, () => sim.phase === 'reveal');
+    // отдельного экрана обвинения нет: сразу разоблачение
+    expect(sim.phase).toBe('reveal');
     expect(sim.summary!.endReason).toBe('stars');
     expect(sim.summary!.points.a.stars).toBe(2);
   });
@@ -219,7 +227,7 @@ describe('MatchSim', () => {
       if (!shapes.has(key)) shapes.set(key, new Set());
       shapes.get(key)!.add(who + ':' + Object.keys(ev).sort().join(','));
     });
-    runUntil(sim, () => sim.phase === 'accuse', 20 * 90);
+    runUntil(sim, () => sim.phase === 'reveal', 20 * 90);
     const move = [...(shapes.get('move') ?? [])].map((s) => s.split(':')[1]);
     expect(new Set(move).size).toBe(1);
   });
@@ -245,15 +253,28 @@ describe('MatchSim', () => {
     expect(sim.notices.some((n) => n.t === 'attack' && n.pid === a.pid && n.result === 'bot')).toBe(true);
   });
 
-  it('вычислили живого: обвинитель +1, у обвинённого нет очка за выживание', () => {
+  it('вычислили живого: метка вырезанного по ходу дубля — +1, у обвинённого нет очка за выживание', () => {
     const sim = new MatchSim(makeConfig(), players, 43);
-    runUntil(sim, () => sim.phase === 'accuse', 20 * 90);
-    const [a, b, c] = sim.pr;
+    runUntil(sim, () => sim.phase === 'play' && sim.world.time > 2000, 20 * 30);
+    const [a, b, c, d] = sim.pr;
+    // живой обвинять не может
+    sim.intent(b.pid, { k: 'accuse', eid: c.eid });
+    sim.tick();
+    expect(b.accused).toBeNull();
+    cut(sim, a);
+    sim.intent(a.pid, { k: 'accuse', eid: d.eid });
+    sim.tick();
+    expect(a.accused).toBe(d.eid);
+    sim.intent(a.pid, { k: 'accuse', eid: -1 }); // снял метку
+    sim.tick();
+    expect(a.accused).toBeNull();
+    sim.intent(a.pid, { k: 'accuse', eid: b.eid }); // перенёс — верно
+    sim.tick();
+    runUntil(sim, () => sim.phase === 'reveal', 20 * 90);
     expect(b.alive && c.alive).toBe(true);
-    sim.intent(a.pid, { k: 'accuse', eid: b.eid }); // верно
-    runUntil(sim, () => sim.phase !== 'accuse', 20 * 20);
     const pts = sim.summary!.points;
     expect(pts[a.pid].accuse).toBe(1);
+    expect(sim.summary!.accusations).toEqual([{ pid: a.pid, eid: b.eid, correct: true }]);
     expect(pts[b.pid].survive).toBe(0);
     expect(pts[c.pid].survive).toBe(1);
   });
@@ -261,7 +282,7 @@ describe('MatchSim', () => {
   it('чудачества ботов: случаются, все виды, бот остаётся ботом', () => {
     const sim = new MatchSim(makeConfig({ botQuirkPerMin: 20 }), players, 71);
     players.forEach((p, i) => sim.addAgent(new AiPlayer(p.pid, i + 3)));
-    runUntil(sim, () => sim.phase === 'accuse', 20 * 90);
+    runUntil(sim, () => sim.phase === 'reveal', 20 * 90);
     const kinds = new Set(sim.bots.quirkLog.map((q) => q.kind));
     expect(sim.bots.quirkLog.length).toBeGreaterThan(10);
     expect(kinds.size).toBeGreaterThanOrEqual(4);
@@ -271,14 +292,14 @@ describe('MatchSim', () => {
 
   it('при botQuirkPerMin = 0 чудачеств нет', () => {
     const sim = new MatchSim(makeConfig({ botQuirkPerMin: 0 }), players, 72);
-    runUntil(sim, () => sim.phase === 'accuse', 20 * 90);
+    runUntil(sim, () => sim.phase === 'reveal', 20 * 90);
     expect(sim.bots.quirkLog).toHaveLength(0);
   });
 
   it('повтор из журнала воспроизводит позиции', () => {
     const sim = new MatchSim(makeConfig(), players, 51);
     players.forEach((p, i) => sim.addAgent(new AiPlayer(p.pid, i + 5)));
-    runUntil(sim, () => sim.phase === 'accuse', 20 * 90);
+    runUntil(sim, () => sim.phase === 'reveal', 20 * 90);
     const to = sim.playEnd;
     const from = Math.max(sim.playStart, to - 20000);
     const rep = makeReplay(sim.world, from, to)!;
@@ -366,7 +387,7 @@ describe('MatchSim', () => {
         if (ev.t === 'twist') twists.push(ev.at);
         if (ev.t === 'crowd' && twists.some((at) => ev.at >= at && ev.at < at + quiet)) bad.push(ev.at);
       });
-      runUntil(sim, () => sim.phase === 'accuse');
+      runUntil(sim, () => sim.phase === 'reveal');
       expect(bad).toEqual([]);
       checked += twists.length;
     }

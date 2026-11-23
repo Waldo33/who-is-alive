@@ -33,8 +33,8 @@ describe('i18n', () => {
       const flat: string[] = [
         g.soundOffHint, g.soundOn, g.soundOff, g.outSub, g.outHint, g.ghost, g.ghostHint, g.hedge, ...Object.values(g.denied),
         ...Object.values(g.crowd), g.crowdVote, g.crowdGhost, g.voteMajority, g.voteMinority, g.spotted, g.spottedMe, g.clapHint, g.clapDone, g.cutByCrowd, g.modTitle,
-        ...Object.values(t.mods).flatMap((m) => [m.name, m.desc]), g.withCrowd, g.late, g.watchLate, g.findYourself, g.accuseTitle, g.accuseSub,
-        g.accuseChange, g.spectator, g.spectatorLive, g.spectatorWait, g.spectatorDelay.replace('{n}', '10'), g.reveal, g.revealReplay, g.revealFinal, g.guessed, g.missed, g.caught, g.killedBy, g.noAccuse,
+        ...Object.values(t.mods).flatMap((m) => [m.name, m.desc]), g.withCrowd, g.late, g.watchLate, g.findYourself,
+        g.spectator, g.spectatorLive, g.spectatorWait, g.spectatorDelay.replace('{n}', '10'), g.reveal, g.revealReplay, g.revealFinal, g.guessed, g.missed, g.caught, g.killedBy, g.noAccuse,
         tp(lang, g.resultsTitle, 5), ...Object.values(g.endReason), g.starsBurned, g.noAwards, tp(lang, g.nextIn, 10), fmt(g.nextTake, { n: 12, s: 10 }), fmt(g.toWin, { n: 12 }),
         g.youWon, g.winner, g.tooAlive, g.withFriends, tp(lang, g.roundTheme, 5, { theme: t.themes.reduce((a, b) => (a.length > b.length ? a : b)) }),
         ...Object.values(t.themeText).flatMap((x) =>
@@ -46,7 +46,7 @@ describe('i18n', () => {
       // пробный дубль и подсказки: пары строк на поле
       const tut = t.tutorial;
       expect(tut.doneTitle.length).toBeLessThanOrEqual(21);
-      const pairs = [tut.me, tut.crowd, tut.bots, tut.move, tut.crowdSoon, tut.crowdNow, tut.crowdOk, tut.crowdMiss, tut.spot, tut.actor, tut.hunt, tut.huntBot, tut.cut, tut.fists, tut.star, tut.starHud, tut.voteSoon, tut.voteNow, tut.voteOk, tut.voteMiss, tut.ghost, tut.ghostMark, tut.ghostMarkOk, tut.ghostClap, tut.ghostClapOk, tut.accuse, tut.accuseOk, ...Object.values(tut.tips)];
+      const pairs = [tut.me, tut.crowd, tut.bots, tut.move, tut.crowdSoon, tut.crowdNow, tut.crowdOk, tut.crowdMiss, tut.spot, tut.actor, tut.hunt, tut.huntBot, tut.cut, tut.fists, tut.star, tut.starHud, tut.voteSoon, tut.voteNow, tut.voteOk, tut.voteMiss, tut.ghost, tut.ghostMark, tut.ghostMarkOk, tut.ghostClap, tut.ghostClapOk, tut.accuseOk, ...Object.values(tut.tips)];
       expect(tut.tapNext.length).toBeLessThanOrEqual(21);
       for (const pr of pairs) {
         expect(pr.length).toBe(2);

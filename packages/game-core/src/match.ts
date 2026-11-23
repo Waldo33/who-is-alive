@@ -4,7 +4,7 @@ import type { AwardCard, RoundStats } from './awards';
 import { pickMatchAwards, pickRoundAwards } from './awards';
 import { BotBrain, CROWD_ACT, crowdActDur, crowdJitter, emoteDur, planPath } from './bots';
 import type { GameConfig } from './config';
-import { TICK_MS, accuseMs, crowdPauseMs, revealMs } from './config';
+import { TICK_MS, crowdPauseMs, revealMs } from './config';
 import type { ActKind, CrowdKind, Dir, EmoteKind, EntitySpawn, WorldEvent } from './events';
 
 import { NavGrid } from './nav';
@@ -255,7 +255,7 @@ export class MatchSim {
         this.playTick();
         break;
       case 'accuse':
-        for (const a of this.agents) a.update(this);
+        // отдельного экрана обвинения больше нет (обвиняют вырезанные по ходу дубля); фаза — для старых версий
         if (this.now >= this.phaseEndsAt) this.finishRound();
         break;
       case 'reveal':
@@ -668,7 +668,7 @@ export class MatchSim {
     const aliveCount = this.pr.filter((p) => p.alive).length;
     const lastAlive = cfg.endWhenLastAlive && this.players.length >= 2 && aliveCount <= 1;
     if (lastAlive && this.endReason === 'time') this.endReason = 'last_alive';
-    if (this.starWinner || lastAlive || this.world.time >= this.plannedPlayEnd) this.beginAccuse();
+    if (this.starWinner || lastAlive || this.world.time >= this.plannedPlayEnd) this.endPlay();
   }
 
   private starTouched = new Set<number>();
@@ -699,13 +699,14 @@ export class MatchSim {
     }
   }
 
-  private beginAccuse(): void {
+  /** Конец дубля: все замирают, свет обратно — и сразу разоблачение (обвинения вырезанные сделали по ходу дубля). */
+  private endPlay(): void {
     this.playEnd = this.world.time;
     for (const e of this.world.alive()) this.world.push({ t: 'stop', eid: e.eid, at: this.world.time });
-    // свет обратно: обвинение — в обычном облике темы
+    // свет обратно: разоблачение — в обычном облике темы
     if (this.world.twist) this.emit({ t: 'twist', on: false, at: this.world.time });
     this.world.step(); // применить остановку
-    this.setPhase('accuse', accuseMs(this.cfg));
+    this.finishRound();
   }
 
   private finishRound(): void {
@@ -716,6 +717,8 @@ export class MatchSim {
     const accusations: RoundSummary['accusations'] = [];
     const accusedCount = new Map<number, number>();
     for (const p of this.pr) {
+      // метка на того, кого потом вырезали, не считается: он уже ничего не получит
+      if (p.accused !== null && !this.world.get(p.accused)?.alive) p.accused = null;
       if (p.accused === null) continue;
       const correct = aliveEids.has(p.accused);
       accusations.push({ pid: p.pid, eid: p.accused, correct });
@@ -869,11 +872,16 @@ export class MatchSim {
       return;
     }
     if (it.k === 'accuse') {
-      if (this.phase !== 'accuse' || it.eid === p.eid) return;
+      // обвинение — метка вырезанного по ходу дубля: одна, можно перенести или снять (eid -1)
+      if (this.phase !== 'play' || p.alive) return;
+      if (it.eid < 0) {
+        p.accused = null;
+        return;
+      }
       const e = this.world.get(it.eid);
-      if (!e || !e.alive) return;
+      if (!e || !e.alive || it.eid === p.eid) return;
       p.accused = it.eid;
-      p.accusedAsGhost = !p.alive;
+      p.accusedAsGhost = true;
       return;
     }
     if (it.k === 'clap') {
