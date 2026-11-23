@@ -49,10 +49,15 @@ export class ServerLink implements Transport {
   private name: string;
   /** Переподключений за жизнь связи — для статистики сети. */
   reconnects = 0;
+  /** Переездов комнаты на другой экземпляр сервера (выкладка без обрыва). */
+  moves = 0;
+  /** Текущий адрес WebSocket: после «переезжай» — адрес соседнего экземпляра. */
+  private url: string;
 
   constructor(private readonly o: ServerLinkOptions) {
     this.selfId = o.selfId;
     this.name = o.name;
+    this.url = o.url;
   }
 
   /** Подключиться и войти в комнату. Ошибка входа (полная, не найдена…) — отказ с её кодом. */
@@ -66,7 +71,7 @@ export class ServerLink implements Transport {
 
   private open(): void {
     const WS = this.o.WebSocketImpl ?? WebSocket;
-    const ws = new WS(this.o.url);
+    const ws = new WS(this.url);
     this.ws = ws;
     this.reopened = this.everJoined;
     this.lastMsgAt = Date.now();
@@ -158,6 +163,26 @@ export class ServerLink implements Transport {
         return;
       case 'hb':
         return;
+      case 'move': {
+        // комната переехала на соседний экземпляр (выкладка): тот же токен и код, новый адрес, сразу
+        if (typeof m.url !== 'string' || !/^wss?:\/\//.test(m.url)) return;
+        this.url = m.url;
+        this.moves++;
+        this.attempts = 0;
+        const ws = this.ws;
+        this.ws = null;
+        try {
+          ws?.close(1000, 'moving');
+        } catch {
+          // уже закрыт
+        }
+        if (this.retryTimer) {
+          clearTimeout(this.retryTimer);
+          this.retryTimer = null;
+        }
+        if (!this.closedByUs) this.open();
+        return;
+      }
       case 'clock': {
         const w = this.clockWait.get(m.c);
         if (w) {

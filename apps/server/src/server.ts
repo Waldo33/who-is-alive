@@ -18,7 +18,7 @@ import type { Bot } from './bot';
 import { Room } from './room';
 import { MemoryStore, parseEvents } from './store';
 import type { Store } from './store';
-import type { Peer } from './room';
+import type { Peer, RoomSnapshot } from './room';
 import type { Geo } from './geo';
 
 export interface GameServerOptions {
@@ -50,6 +50,15 @@ export interface GameServerOptions {
   geo?: Geo;
   /** Где стоит сервер (msk, nl…): в ответе /v1/probe. */
   region?: string;
+  /**
+   * Соседний экземпляр (синий ↔ зелёный на той же машине): куда перевозить комнаты при выкладке.
+   * http — его адрес изнутри машины, wsUrl — публичный адрес его WebSocket для клиентов.
+   */
+  peer?: { http: string; wsUrl: string };
+  /** Drain закончился (все комнаты переехали или доиграли) — main.ts завершает процесс. */
+  onDrained?: () => void;
+  /** Сколько ждать конца матчей при drain, мс (по умолчанию 20 минут: матч идёт около 5). */
+  drainMs?: number;
   /**
    * Куда пересылать аналитику (адрес игрового сервера с базой). Сервер в Нидерландах принимает
    * события от тех, кто не достал до Москвы, и пересылает их в Москву по туннелю.
@@ -89,6 +98,13 @@ export class GameServer {
   readonly rooms = new Map<string, Room>();
   readonly instance: string;
   draining = false;
+  /** Когда drain обязан закончиться (матчи, не доигравшие к этому сроку, закрываются). */
+  private drainUntil = 0;
+  private drainedFired = false;
+  /** Комнаты, переезд которых сейчас идёт (запрос соседу в пути). */
+  private moving = new Set<string>();
+  /** Соседний экземпляр (из опций или setPeer). */
+  private peer: GameServerOptions['peer'];
   private readonly auth: Auth;
   private readonly clips: ClipStore;
   private readonly wss: WebSocketServer;
@@ -119,12 +135,14 @@ export class GameServer {
     this.now = o.now ?? Date.now;
     this.speed = o.speed ?? 1;
     this.maxRooms = o.maxRooms ?? 2000;
+    this.peer = o.peer;
     this.store = o.store ?? new MemoryStore();
     this.http = createServer((req, res) => void this.onHttp(req, res));
     this.wss = new WebSocketServer({ noServer: true, maxPayload: WIRE_MAX_BYTES });
     this.http.on('upgrade', (req, socket, head) => {
       const path = (req.url ?? '').split('?')[0];
-      if (path !== `/i/${this.instance}/ws` && path !== '/ws') return socket.destroy();
+      // любой /i/<экземпляр>/ws: если экземпляр уже завершился, Caddy отдаёт его адрес соседу
+      if (!/^\/i\/[a-z0-9-]{1,16}\/ws$/.test(path) && path !== '/ws') return socket.destroy();
       if (!this.originOk(req.headers.origin)) return socket.destroy();
       const ip = this.ip(req);
       if (this.ipConns.get(ip) >= CONNS_PER_IP) {
@@ -173,6 +191,7 @@ export class GameServer {
       else if (r.status === 'lobby' && now - r.lastActive > LOBBY_IDLE_MS) why = 'idle';
       if (why) this.dropRoom(r, why);
     }
+    if (this.draining) this.drainStep(now);
     this.roomRate.sweep(now);
     this.authRate.sweep(now);
     this.eventsRate.sweep(now);
@@ -220,6 +239,7 @@ export class GameServer {
         if (!this.authRate.take(this.ip(req), this.now())) return this.reply(res, 429, { error: 'rate_limited' });
         return this.reply(res, 200, await this.auth.issue());
       }
+      if (p.startsWith('/internal/')) return await this.internalRoute(req, res, p);
       if (p === '/v1/rooms' && req.method === 'POST') return this.createRoom(req, res);
       if (p === '/v1/events' && req.method === 'POST') return this.events(req, res);
       if (p === '/v1/probe' && req.method === 'GET') return this.probe(req, res, url);
@@ -236,7 +256,11 @@ export class GameServer {
       const m = /^\/v1\/rooms\/([A-Za-z]{4})$/.exec(p);
       if (m && req.method === 'GET') {
         const r = this.rooms.get(m[1].toUpperCase());
-        if (!r) return this.reply(res, 404, { error: 'room_not_found' });
+        if (!r) {
+          // комната могла переехать или жить у соседа (выкладка): спросить его, если вопрос не от него же
+          const far = req.headers['x-kto-peer'] ? null : await this.peerRoom(m[1].toUpperCase());
+          return far ? this.reply(res, 200, far) : this.reply(res, 404, { error: 'room_not_found' });
+        }
         return this.reply(res, 200, {
           code: r.code,
           status: r.status,
@@ -314,6 +338,127 @@ export class GameServer {
     return this.reply(res, 204);
   }
 
+  // ───────────── выкладка без обрыва: drain и переезд комнат ─────────────
+
+  /** Внутренние маршруты (только изнутри машины): переезд комнат и drain при выкладке. */
+  private async internalRoute(req: IncomingMessage, res: ServerResponse, p: string): Promise<void> {
+    if (!this.internal(req)) return this.reply(res, 404, { error: 'not_found' });
+    if (p === '/internal/import' && req.method === 'POST') {
+      const snap = (await readJson(req, 65_536)) as RoomSnapshot | null;
+      if (!snap || snap.v !== 1 || typeof snap.code !== 'string' || !Array.isArray(snap.members)) return this.reply(res, 400, { error: 'bad_snapshot' });
+      const have = this.rooms.get(snap.code);
+      if (have && !have.closed) return this.reply(res, 409, { error: 'exists' });
+      const room = new Room({
+        code: snap.code,
+        directorId: snap.directorId,
+        directorName: '',
+        settings: snap.settings,
+        lang: snap.lang === 'en' ? 'en' : 'ru',
+        now: this.now,
+        log: this.log,
+        speed: this.speed,
+        film: this.o.film,
+        restore: snap,
+      });
+      this.rooms.set(snap.code, room);
+      this.log('info', 'room_imported', { room: snap.code, members: snap.members.length });
+      return this.reply(res, 204);
+    }
+    if (p === '/internal/drain' && req.method === 'POST') {
+      this.drain();
+      return this.reply(res, 200, { draining: true, rooms: this.rooms.size });
+    }
+    if (p === '/internal/undrain' && req.method === 'POST') {
+      // откат выкладки: снова принимаем новые комнаты (переехавшие обратно не вернутся — они у соседа)
+      this.draining = false;
+      this.drainUntil = 0;
+      return this.reply(res, 200, { draining: false, rooms: this.rooms.size });
+    }
+    return this.reply(res, 404, { error: 'not_found' });
+  }
+
+  /** Задать соседа после запуска (тесты: порты известны только после listen). */
+  setPeer(peer: GameServerOptions['peer']): void {
+    this.peer = peer;
+  }
+
+  /**
+   * Выкладка: новых комнат не создаём, лобби перевозим к соседу, матчи доигрываем (после матча
+   * комната тоже переезжает). Пусто или вышел срок — onDrained (процесс завершается).
+   */
+  drain(): void {
+    if (this.draining) return;
+    this.draining = true;
+    this.drainUntil = this.now() + (this.o.drainMs ?? 20 * 60_000);
+    this.log('info', 'drain_start', { rooms: this.rooms.size, peer: !!this.peer });
+    this.drainStep(this.now());
+  }
+
+  private drainStep(now: number): void {
+    for (const r of [...this.rooms.values()]) {
+      if (r.closed) {
+        this.rooms.delete(r.code);
+        continue;
+      }
+      // без участников перевозить нечего; без соседа — лобби доживают здесь до срока
+      if (r.members.size === 0) {
+        this.dropRoom(r, 'drain_empty');
+        continue;
+      }
+      if (this.peer && r.canMove() && !this.moving.has(r.code)) void this.moveRoom(r);
+    }
+    if (now >= this.drainUntil) {
+      for (const r of [...this.rooms.values()]) this.dropRoom(r, 'drain_deadline');
+    }
+    if (this.rooms.size === 0 && this.moving.size === 0 && !this.drainedFired) {
+      this.drainedFired = true;
+      this.log('info', 'drain_done', {});
+      this.o.onDrained?.();
+    }
+  }
+
+  /** Перевезти комнату к соседу: снимок → он создаёт такую же → игрокам «переезжай». */
+  private async moveRoom(r: Room): Promise<void> {
+    const peer = this.peer;
+    if (!peer) return;
+    this.moving.add(r.code);
+    try {
+      const snap = r.snapshot();
+      const res = await fetch(`${peer.http}/internal/import`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(snap),
+        signal: AbortSignal.timeout(5000),
+      });
+      // 409 — у соседа уже есть такая (повтор после сбоя): всё равно переезжаем к нему
+      if (res.status !== 204 && res.status !== 409) throw new Error(`HTTP ${res.status}`);
+      if (r.closed || r.status !== 'lobby') return;
+      r.moveTo(peer.wsUrl);
+      this.rooms.delete(r.code);
+      this.emptySince.delete(r);
+    } catch (e) {
+      // сосед не ответил — попробуем на следующем шаге drain (раз в секунду)
+      this.log('warn', 'room_move_failed', { room: r.code, err: String(e) });
+    } finally {
+      this.moving.delete(r.code);
+    }
+  }
+
+  /** Есть ли комната у соседа: его ответ /v1/rooms/<код> (с его адресом WebSocket) или null. */
+  private async peerRoom(code: string): Promise<unknown> {
+    const peer = this.peer;
+    if (!peer) return null;
+    try {
+      const r = await fetch(`${peer.http}/v1/rooms/${code}`, { headers: { 'x-kto-peer': '1' }, signal: AbortSignal.timeout(2000) });
+      if (!r.ok) return null;
+      const body = (await r.json()) as Record<string, unknown>;
+      // адрес изнутри машины клиенту не нужен — отдаём публичный
+      return { ...body, wsUrl: peer.wsUrl };
+    } catch {
+      return null;
+    }
+  }
+
   /** Переслать пачку событий на сервер с базой (с сервера в Нидерландах — в Москву по туннелю). */
   private async relayEvents(res: ServerResponse, b: NonNullable<ReturnType<typeof parseEvents>>): Promise<void> {
     try {
@@ -342,16 +487,24 @@ export class GameServer {
     res.end(randomBytes(kb * 1024));
   }
 
-  /** Запрос изнутри машины (сосед по туннелю), не через Caddy: Caddy всегда ставит X-Forwarded-For. */
+  /** Запрос изнутри машины (сосед-экземпляр, сосед по туннелю), не снаружи: внешним Caddy ставит адрес клиента. */
   private internal(req: IncomingMessage): boolean {
-    const a = req.socket.remoteAddress ?? '';
-    return !req.headers['x-forwarded-for'] && (a === '127.0.0.1' || a === '::1' || a === '::ffff:127.0.0.1');
+    const loop = (x: string) => x === '127.0.0.1' || x === '::1' || x === '::ffff:127.0.0.1';
+    if (!loop(req.socket.remoteAddress ?? '')) return false;
+    const xf = req.headers['x-forwarded-for'];
+    const first = (Array.isArray(xf) ? xf[0] : xf)?.split(',')[0]?.trim();
+    // внутренний вход Caddy (127.0.0.1:8080, синий/зелёный) ставит адрес клиента — тоже 127.0.0.1
+    return !first || loop(first);
   }
 
   private newCode(): string | null {
     for (let i = 0; i < 200; i++) {
       let c = '';
-      for (let k = 0; k < 4; k++) c += ROOM_CODE_ALPHABET[randomInt(ROOM_CODE_ALPHABET.length)];
+      // синий и зелёный берут первую букву из разных половин алфавита: код не столкнётся с соседским
+      const half = Math.ceil(ROOM_CODE_ALPHABET.length / 2);
+      const [lo, hi] = this.instance === 'blue' ? [0, half] : this.instance === 'green' ? [half, ROOM_CODE_ALPHABET.length] : [0, ROOM_CODE_ALPHABET.length];
+      c += ROOM_CODE_ALPHABET[lo + randomInt(hi - lo)];
+      for (let k = 1; k < 4; k++) c += ROOM_CODE_ALPHABET[randomInt(ROOM_CODE_ALPHABET.length)];
       if (!this.rooms.has(c)) return c;
     }
     return null;
@@ -519,7 +672,15 @@ export class GameServer {
       const userId = await this.auth.verify(m.token);
       if (!userId) return this.fail(peer, 'bad_token', true, ws);
       const room = this.rooms.get(m.code.toUpperCase());
-      if (!room || room.closed) return this.fail(peer, 'room_not_found', true, ws);
+      if (!room || room.closed) {
+        // комната переехала к соседу (или переезжает прямо сейчас): «переезжай» вместо «не найдена»
+        if (this.peer && (this.moving.has(m.code.toUpperCase()) || (await this.peerRoom(m.code.toUpperCase())))) {
+          peer.send(JSON.stringify({ t: 'move', url: this.peer.wsUrl } satisfies ServerMsg));
+          ws.close(4005, 'moved');
+          return;
+        }
+        return this.fail(peer, 'room_not_found', true, ws);
+      }
       const err = room.join(userId, m.name, peer);
       if (err) return this.fail(peer, err, true, ws);
       st.userId = userId;

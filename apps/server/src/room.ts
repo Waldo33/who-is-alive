@@ -52,6 +52,25 @@ export interface RoomOptions {
   onEmpty?: (room: Room) => void;
   /** «Фильм матча» (film.ts): нет — фильм монтирует телефон. */
   film?: FilmService;
+  /** Комната переехала с соседнего экземпляра сервера (выкладка без обрыва): состав и настройки — оттуда. */
+  restore?: RoomSnapshot;
+}
+
+/**
+ * Снимок комнаты в лобби для переезда на другой экземпляр сервера (синий/зелёный, другой регион):
+ * состав с цветами и «Готов», режиссёр, настройки, зрители. Матч не переезжает — его доигрывают на месте.
+ */
+export interface RoomSnapshot {
+  v: 1;
+  code: string;
+  directorId: string;
+  settings: WireRoomSettings;
+  lang: 'ru' | 'en';
+  createdAt: number;
+  lastActive: number;
+  members: { userId: string; name: string; color: number; joinedAt: number; ready: boolean; offlineSince: number }[];
+  /** Зрители (пришли посреди прошлого матча): после переезда снова зрители, место займут сами. */
+  spectators: string[];
 }
 
 /**
@@ -181,6 +200,8 @@ export class Room {
   /** Номер фильма: готовый фильм прошлого матча не рассылаем, если уже идёт следующий. */
   private filmSeq = 0;
   private film: { n: number; state: 'making' | 'ready' | 'failed'; done?: FilmDone } | null = null;
+  /** Зрители, приехавшие со снимком: войдут — снова станут зрителями, а не займут место. */
+  private expectSpectators = new Set<string>();
   closed = false;
 
   constructor(private readonly o: RoomOptions) {
@@ -192,6 +213,15 @@ export class Room {
     this.createdAt = this.lastActive = o.now();
     this.directorId = o.directorId;
     this.settings = { ...DEFAULT_WIRE_SETTINGS, ...o.settings };
+    const snap = o.restore;
+    if (snap) {
+      // переехала с соседа: все пока «не на связи» — переподключатся через долю секунды
+      this.createdAt = snap.createdAt;
+      this.lastActive = snap.lastActive;
+      for (const m of snap.members) this.members.set(m.userId, { ...m, peer: null, offlineSince: m.offlineSince || o.now() });
+      for (const id of snap.spectators) this.expectSpectators.add(id);
+      return;
+    }
     // создатель занимает место и цвет 0 сразу (как create_room), подключится следом
     this.members.set(o.directorId, {
       userId: o.directorId,
@@ -217,6 +247,11 @@ export class Room {
       m.offlineSince = 0;
       if (name.trim()) m.name = cleanName(name, m.name);
     } else {
+      if (this.expectSpectators.delete(userId)) {
+        this.spectators.set(userId, peer);
+        peer.send(JSON.stringify({ t: 'welcome', selfId: userId, room: this.view(), spectator: true } satisfies ServerMsg));
+        return null;
+      }
       if (this.status === 'playing') {
         if (this.spectators.size >= MAX_SPECTATORS && !this.spectators.has(userId)) return 'room_playing';
         const old = this.spectators.get(userId);
@@ -416,8 +451,12 @@ export class Room {
   /** Игровое сообщение от игрока — безголовому хосту. «Ещё дубль» с новым составом — новый матч. */
   game(userId: string, m: unknown): void {
     const r = this.runner;
-    if (!r) return;
     const msg = m as { t?: string; i?: { k?: string } };
+    if (!r) {
+      // комната переехала с экрана конца матча (матча здесь нет): «Ещё дубль» — новый матч
+      if (msg?.t === 'i' && msg.i?.k === 'rematch' && userId === this.directorId) this.start(userId);
+      return;
+    }
     if (msg?.t === 'i' && msg.i?.k === 'rematch' && userId === this.directorId && r.host.phase === 'match_end') {
       const now = this.onlineMembers().map((x) => x.userId);
       const before = r.players.filter((p) => !p.ai).map((p) => p.pid);
@@ -509,6 +548,57 @@ export class Room {
 
   sendTo(userId: string, msg: ServerMsg): void {
     this.members.get(userId)?.peer?.send(JSON.stringify(msg));
+  }
+
+  // ───────────── переезд на другой экземпляр ─────────────
+
+  /** Можно ли перевезти сейчас: лобби (матч доигрывается на месте) и фильм прошлого матча уже разослан. */
+  canMove(): boolean {
+    return !this.closed && this.status === 'lobby' && this.film?.state !== 'making';
+  }
+
+  snapshot(): RoomSnapshot {
+    return {
+      v: 1,
+      code: this.code,
+      directorId: this.directorId,
+      settings: this.settings,
+      lang: this.lang,
+      createdAt: this.createdAt,
+      lastActive: this.lastActive,
+      members: [...this.members.values()].map((m) => ({
+        userId: m.userId,
+        name: m.name,
+        color: m.color,
+        joinedAt: m.joinedAt,
+        ready: m.ready,
+        offlineSince: m.peer ? 0 : m.offlineSince || this.now(),
+      })),
+      spectators: [...this.spectators.keys(), ...this.expectSpectators],
+    };
+  }
+
+  /**
+   * Комната уже на соседнем экземпляре: всем — «переезжай» с новым адресом и закрыть соединения
+   * (без «closed» — иначе клиент решит, что комнаты больше нет).
+   */
+  moveTo(wsUrl: string): void {
+    if (this.closed) return;
+    this.closed = true;
+    this.runner?.stop();
+    this.runner = null;
+    const text = JSON.stringify({ t: 'move', url: wsUrl } satisfies ServerMsg);
+    for (const m of this.members.values()) {
+      m.peer?.send(text);
+      m.peer?.close(4005, 'moved');
+    }
+    for (const p of this.spectators.values()) {
+      p.send(text);
+      p.close(4005, 'moved');
+    }
+    this.spectators.clear();
+    this.members.clear();
+    this.log('info', 'room_moved', { room: this.code });
   }
 
   close(reason: string): void {

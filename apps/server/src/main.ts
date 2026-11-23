@@ -19,6 +19,8 @@ import { loadGeo } from './geo';
  *   PUBLIC_WS_BASE (wss://api.<домен>), ALLOWED_ORIGINS (через запятую), TRUST_PROXY=1, LOG_LEVEL,
  *   MAX_ROOMS — потолок комнат под память машины (~1,5 МБ на комнату, считает setup.sh; иначе 2000),
  *   REGION (msk | nl), GEOIP_DB — база стран для замера доступности, EVENTS_UPSTREAM — куда пересылать аналитику.
+ *   PEER_HTTP + PEER_WS_URL — соседний экземпляр (синий ↔ зелёный): к нему переезжают комнаты при выкладке
+ *   (POST /internal/drain изнутри машины), после drain процесс завершается сам.
  */
 const env = process.env;
 const log = jsonLogger((env.LOG_LEVEL as LogLevel) || 'info');
@@ -89,6 +91,9 @@ const server = new GameServer({
   geo: loadGeo(env.GEOIP_DB || undefined, (msg, f) => log('info', msg, f)),
   region: env.REGION || undefined,
   eventsUpstream: env.EVENTS_UPSTREAM || undefined,
+  peer: env.PEER_HTTP && env.PEER_WS_URL ? { http: env.PEER_HTTP, wsUrl: env.PEER_WS_URL } : undefined,
+  // выкладка: все комнаты переехали к соседу или доиграли — выходим (systemd не перезапускает код 0)
+  onDrained: () => void stop('drained'),
   log,
   clips,
   film,
@@ -102,7 +107,8 @@ async function stop(sig: string): Promise<void> {
   if (stopping) return;
   stopping = true;
   log('info', 'stopping', { sig });
-  // TODO этап 3: режим drain — доиграть матчи и перевезти лобби на новый экземпляр
+  // выкладка не останавливает старый экземпляр, а переводит его в drain (docs/infra-plan.md › этап 1);
+  // SIGTERM — остановка руками или перезагрузка машины: идущие комнаты закрываются
   await server.close();
   await store.close();
   process.exit(0);
