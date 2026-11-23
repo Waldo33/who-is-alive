@@ -76,7 +76,14 @@ jobs:
       - name: Клип целиком (загрузка, ссылка, карточка бота)
         env:
           TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-        run: python3 infra/game/clip-check.py
+        run: |
+          # настоящее видео h264 (карточку Telegram проверяет по содержимому)
+          ffmpeg -loglevel error -f lavfi -i testsrc=size=360x640:rate=30 -t 3 -pix_fmt yuv420p -c:v libx264 /tmp/t.mp4 && export CLIP_FILE=/tmp/t.mp4 || true
+          python3 infra/game/clip-check.py
+      - name: Ошибки бота за 15 минут (Нидерланды)
+        env:
+          IP: ${{ steps.infra.outputs.ip }}
+        run: ssh $SSH_OPTS root@$IP "journalctl -u massovka-game --since -15min --no-pager -o cat | grep -E 'tg_error|prepare' | tail -5 | cut -c1-400"
       # шлёт картинку и файлы в группу тревог и сразу удаляет — владельцу приходят уведомления о
       # «пропавших тревогах» (23.11.2026). Включать вручную: TG_REACH: '1' на время проверки.
       - name: Достаёт ли Telegram до наших серверов

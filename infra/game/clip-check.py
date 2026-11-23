@@ -15,10 +15,10 @@ def call(url, data=None, headers=None, method=None):
 
 st, body, _ = call(f"{API}/v1/auth/anon", b"", method="POST")
 token = json.loads(body)["token"]
-video = os.urandom(1024 * 1024)
+video = open(os.environ["CLIP_FILE"], "rb").read() if os.environ.get("CLIP_FILE") else os.urandom(1024 * 1024)
 t = time.time()
 st, body, _ = call(f"{API}/v1/clips", video, {"authorization": f"Bearer {token}", "content-type": "video/mp4"})
-print(f"загрузка 1 МБ: {st} за {time.time() - t:.1f} с")
+print(f"загрузка {len(video) // 1024} КБ: {st} за {time.time() - t:.1f} с")
 clip = json.loads(body)["id"]
 st, body, h = call(f"{API}/v1/clips/{clip}.mp4")
 print(f"файл по ссылке: {st}, {h.get('content-type')}, {len(body)} байт, совпадает: {body == video}")
