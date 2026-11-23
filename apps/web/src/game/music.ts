@@ -70,6 +70,11 @@ export interface SongStep {
 /** Своя песня темы: вместо общего мотива — свой шаг секвенсора. */
 export interface Song {
   step(api: SongApi, st: SongStep): void;
+  /**
+   * Вход в изнанку «свет вырубили»: песня проседает, как плёнка, секунда тишины — и изнанка
+   * начинается с удара (Корпоратив). Иначе изнанка вступает сразу.
+   */
+  blackout?: boolean;
 }
 
 /** Меню и лобби: та же тема «лаунжем» — медленно, мягко, с эхом. */
@@ -227,6 +232,29 @@ export class Music {
     if (on === this.twist) return;
     this.twist = on;
     this.twistBar = this.bar;
+    // не в самом начале песни: клип и новый дубль могут начаться сразу в изнанке
+    if (on && this.song?.blackout && this.running && this.mode === 'play' && this.ctx.currentTime - this.startedAt > 0.5) this.blackout();
+  }
+
+  /** «Свет вырубили»: звучащее проседает вниз (0,35 с), секунда тишины, потом музыка возвращается. */
+  private blackout(): void {
+    const bus = this.bus;
+    if (!bus) return;
+    const now = this.ctx.currentTime;
+    const T = 0.35;
+    for (const l of this.live) {
+      if (l.until < now || !('detune' in l.src)) continue;
+      const o = l.src as OscillatorNode;
+      o.detune.cancelScheduledValues(now);
+      o.detune.setValueAtTime(0, now);
+      o.detune.linearRampToValueAtTime(-1200, now + T);
+    }
+    const full = bus.gain.value;
+    bus.gain.cancelScheduledValues(now);
+    bus.gain.setValueAtTime(full, now);
+    bus.gain.exponentialRampToValueAtTime(0.0001, now + T);
+    bus.gain.setValueAtTime(0.0001, now + 1.0);
+    bus.gain.exponentialRampToValueAtTime(full, now + 1.04);
   }
 
   /** Уровень напряжения 0–2 (меняется на следующей доле). */
