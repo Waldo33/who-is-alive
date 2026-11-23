@@ -18,6 +18,12 @@ export const RoomSettingsSchema = z.object({
   kidsMode: z.boolean(),
   strictCrowd: z.boolean().optional(),
   aiFill: z.boolean(),
+  /**
+   * Музыка в дубле (настройка режиссёра): host — только у режиссёра (по умолчанию: игра делалась для
+   * одной комнаты, 2–4 телефона с одной песней — какофония), all — у всех, none — ни у кого.
+   * Эффекты и обрыв «Море волнуется» — у всех при любом выборе. Старые клиенты поля не шлют.
+   */
+  roomMusic: z.enum(['host', 'all', 'none']).optional(),
 });
 export type WireRoomSettings = z.infer<typeof RoomSettingsSchema>;
 

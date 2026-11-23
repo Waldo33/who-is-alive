@@ -71,7 +71,14 @@ export interface TopBarOptions {
   onHowTo?: () => void;
   /** Квадратная кнопка «Поделиться» рядом с шестерёнкой (только главная). Вызывается из click — свежий жест. */
   onShare?: () => void;
+  /**
+   * Комната: где играет музыка дубля. Режиссёр в лобби выбирает для всех (onMode); гость при «только
+   * у режиссёра» или «ни у кого» может вернуть музыку себе (onOwn) — только на своём телефоне.
+   */
+  roomMusic?: { mode: RoomMusicMode; director: boolean; own: boolean; onMode?: (m: RoomMusicMode) => void; onOwn?: (on: boolean) => void };
 }
+
+export type RoomMusicMode = 'host' | 'all' | 'none';
 
 export interface TopBar {
   update(o: Partial<TopBarOptions>): void;
@@ -136,6 +143,25 @@ export function mountTopBar(parent: HTMLElement, init: TopBarOptions): TopBar {
   // не пускать касания к игре под панелью и листом
   for (const el of [bar, sheet]) for (const ev of ['pointerdown', 'pointerup', 'touchstart', 'touchend']) el.addEventListener(ev, (e) => e.stopPropagation());
 
+  /** Строка «Музыка в дубле»: у режиссёра в лобби — выбор для комнаты, у гостя — вернуть музыку себе. */
+  const roomMusicRow = (): string => {
+    const t = DICTS[o.lang];
+    const rm = o.roomMusic;
+    if (!rm) return '';
+    if (rm.director) {
+      if (!rm.onMode) return '';
+      const opts: [RoomMusicMode, string][] = [['host', t.ui.roomMusicHost], ['all', t.ui.roomMusicAll], ['none', t.ui.roomMusicNone]];
+      return `<div class="kto-set rm"><span>${t.ui.roomMusic}</span><div class="kto-seg" role="group" aria-label="${t.ui.roomMusic}">
+        ${opts.map(([m, l]) => `<button type="button" data-room-music="${m}" aria-pressed="${rm.mode === m}">${l}</button>`).join('')}
+      </div></div>`;
+    }
+    if (rm.mode === 'all' || !rm.onOwn || !musicEnabled()) return '';
+    return `<div class="kto-set rm"><span>${t.ui.roomMusic}</span><div class="kto-seg" role="group" aria-label="${t.ui.roomMusic}">
+      <button type="button" data-own-music="off" aria-pressed="${!rm.own}">${rm.mode === 'none' ? t.ui.roomMusicNone : t.ui.roomMusicDirector}</button>
+      <button type="button" data-own-music="on" aria-pressed="${rm.own}">${rm.mode === 'none' ? t.ui.roomMusicMine : t.ui.roomMusicMineToo}</button>
+    </div></div>`;
+  };
+
   const render = () => {
     const t = DICTS[o.lang];
     back.hidden = !o.onBack;
@@ -165,6 +191,7 @@ export function mountTopBar(parent: HTMLElement, init: TopBarOptions): TopBar {
           <button type="button" data-music="on" aria-pressed="${mus}">${t.ui.on}</button>
           <button type="button" data-music="off" aria-pressed="${!mus}">${t.ui.off}</button>
         </div></div>
+        ${roomMusicRow()}
         <div class="kto-set"><span>${t.ui.sfx}</span><div class="kto-seg" role="group" aria-label="${t.ui.sfx}">
           <button type="button" data-sound="on" aria-pressed="${on}">${t.ui.on}</button>
           <button type="button" data-sound="off" aria-pressed="${!on}">${t.ui.off}</button>
@@ -181,10 +208,10 @@ export function mountTopBar(parent: HTMLElement, init: TopBarOptions): TopBar {
               : `<a class="kto-learn" href="/learn">${t.ui.howTo}</a>`
         }
         <div class="kto-sheet-actions">
+          <p class="kto-credit">${t.ui.author} · <a href="https://t.me/waldente" target="_blank" rel="noopener">@waldente</a></p>
           ${o.onExit ? `<button type="button" class="kto-sheet-exit">${t.ui.exit}</button>` : ''}
           <button type="button" class="kto-sheet-close">${t.ui.close}</button>
         </div>
-        <p class="kto-credit">${t.ui.author} · <a href="https://t.me/waldente" target="_blank" rel="noopener">@waldente</a></p>
       </div>`;
     sheet.querySelector<HTMLButtonElement>('[data-howto]')?.addEventListener('click', () => {
       close();
@@ -228,6 +255,16 @@ export function mountTopBar(parent: HTMLElement, init: TopBarOptions): TopBar {
         getAudio().setMusicEnabled(v);
         o.onMusic?.(v);
         render();
+      }),
+    );
+    sheet.querySelectorAll<HTMLButtonElement>('[data-room-music]').forEach((b) =>
+      b.addEventListener('click', () => {
+        o.roomMusic?.onMode?.(b.dataset.roomMusic as RoomMusicMode);
+      }),
+    );
+    sheet.querySelectorAll<HTMLButtonElement>('[data-own-music]').forEach((b) =>
+      b.addEventListener('click', () => {
+        o.roomMusic?.onOwn?.(b.dataset.ownMusic === 'on');
       }),
     );
     sheet.querySelector('.kto-sheet-close')!.addEventListener('click', close);
@@ -302,6 +339,8 @@ html.tg .kto-back{display:none!important}
 .kto-seg{display:flex;box-shadow:0 0 0 2px #181425}
 .kto-seg button{font:inherit;font-size:10px;min-width:56px;min-height:44px;border:0;border-radius:0;background:#181425;color:#5a6988;cursor:pointer}
 .kto-seg button[aria-pressed="true"]{background:#feae34;color:#181425}
+.kto-set.rm span{flex:1 1 0;min-width:0;line-height:1.5}
+.kto-set.rm .kto-seg button{min-width:0;padding:0 8px;font-size:9px}
 .kto-seg button:focus-visible,.kto-sheet-actions button:focus-visible{outline:2px solid #fee761;outline-offset:2px}
 .kto-howto{margin-top:20px;border-top:2px solid #181425;padding-top:16px}
 .kto-howto ul{margin:0;padding:0 0 0 14px;font-size:9px;line-height:1.9;color:#c0cbdc}
@@ -314,16 +353,15 @@ html.tg .kto-back{display:none!important}
 .kto-sheet-actions button{font:inherit;font-size:11px;min-height:48px;padding:0 16px;border:0;border-radius:0;cursor:pointer;
   background:#feae34;color:#181425;box-shadow:0 4px 0 #be4a2f,0 0 0 2px #181425}
 .kto-sheet-actions .kto-sheet-exit{background:#181425;color:#ead4aa;box-shadow:0 0 0 2px #5a6988}
-.kto-credit{margin:8px 0 0;font-size:8px;line-height:1.6;color:#8b9bb4;text-align:right}
+.kto-credit{margin:0 auto 0 0;align-self:center;font-size:8px;line-height:1.6;color:#8b9bb4;text-align:left}
 .kto-credit a{color:#8b9bb4;text-decoration:none;display:inline-flex;align-items:center;min-height:44px;padding:0 0 0 8px}
 /* низкий экран (SE внутри Telegram): лист помещается без прокрутки — сжимаем отступы, не кнопки */
 @media (max-height:540px){
-  .kto-sheet-box{padding-top:14px}
-  .kto-sheet h2{margin-bottom:10px}
-  .kto-set{margin-bottom:8px}
-  .kto-learn{margin:4px 0 8px}
-  .kto-sheet-actions{margin-top:8px}
-  .kto-credit{margin:0}
+  .kto-sheet-box{padding-top:12px;padding-bottom:calc(10px + var(--sab, env(safe-area-inset-bottom)))}
+  .kto-sheet h2{margin-bottom:8px}
+  .kto-set{margin-bottom:6px}
+  .kto-learn{margin:2px 0 6px;min-height:44px}
+  .kto-sheet-actions{margin-top:4px}
 }
 `;
 

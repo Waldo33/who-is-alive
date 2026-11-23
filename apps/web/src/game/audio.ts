@@ -68,6 +68,14 @@ export function getAudio(): Audio {
  */
 export const MUSIC_GAIN = 3;
 
+/**
+ * Музыка дубля на этом телефоне в комнате (настройка режиссёра «Музыка в дубле», RoomClient):
+ * full — как обычно; quiet — тихо, −18 дБ (гость при «только у режиссёра»: с наушниками не в
+ * тишине, а в комнате песню ведёт телефон режиссёра); off — без музыки. Меню и клип не трогает.
+ */
+export type RoundMusic = 'full' | 'quiet' | 'off';
+const QUIET_GAIN = 0.126;
+
 export class Audio {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
@@ -86,6 +94,9 @@ export class Audio {
   musicEnabled = true;
   /** Какая музыка должна звучать сейчас (играет, если музыка включена и звук разблокирован). */
   private want: { mode: MusicMode; theme: number } = { mode: 'off', theme: 0 };
+  /** Музыка дубля на этом телефоне (комната); в песочнице — full. */
+  private round: RoundMusic = 'full';
+  private roundGain: GainNode | null = null;
 
   constructor() {
     this.enabled = stored(STORAGE_KEY) !== 'off';
@@ -152,7 +163,8 @@ export class Audio {
     // музыка отдельной шиной громче эффектов (просьба владельца: «тихо»); выравниватель держит пики
     const musicBus = this.ctx.createGain();
     musicBus.gain.value = MUSIC_GAIN;
-    musicBus.connect(this.duck);
+    this.roundGain = this.ctx.createGain();
+    musicBus.connect(this.roundGain).connect(this.duck);
     this.music = new Music(this.ctx, musicBus, this.noiseBuf);
     // WebKit (iPhone, Telegram) создаёт контекст из жеста приостановленным: запустить в этом же
     // касании и сыграть пустой звук — иначе музыка меню заиграет только со второго касания,
@@ -199,11 +211,27 @@ export class Audio {
     this.apply(restart || !same);
   }
 
+  /** Музыка дубля на этом телефоне (комната). Меняется на ходу: сменился режиссёр — меняется и звук. */
+  setRoundMusic(r: RoundMusic): void {
+    if (r === this.round) return;
+    this.round = r;
+    this.apply();
+  }
+
+  get roundMusic(): RoundMusic {
+    return this.round;
+  }
+
   private apply(force = false): void {
     const m = this.music;
     if (!m || !this.ctx) return;
     const { mode, theme } = this.want;
-    if (!this.musicEnabled || mode === 'off') {
+    const inRound = mode === 'play' || mode === 'accuse';
+    if (this.roundGain) {
+      const g = inRound && this.round === 'quiet' ? QUIET_GAIN : 1;
+      this.roundGain.gain.setTargetAtTime(g, this.ctx.currentTime, 0.15);
+    }
+    if (!this.musicEnabled || mode === 'off' || (inRound && this.round === 'off')) {
       m.stop();
       return;
     }

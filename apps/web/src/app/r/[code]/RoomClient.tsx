@@ -22,7 +22,7 @@ import { inTelegram, telegramReady, telegramShare, telegramShareCard, tgLink } f
 import { download, shareContent, withLang } from '@/lib/share';
 import { Room, SPECTATE_DELAY_MS } from '@/net/room';
 import type { RemoteSession } from '@kto/net';
-import type { Audio as GameAudio } from '@/game/audio';
+import type { Audio as GameAudio, RoundMusic } from '@/game/audio';
 import type { RunningGame } from '@/game/boot';
 import type { RoomSettings, RoomState } from '@/net/room';
 
@@ -118,6 +118,16 @@ export default function RoomClient({ code, bot = false }: { code: string; bot?: 
   useEffect(() => {
     if (!inGame) getAudio().setMusic('menu');
   }, [inGame]);
+  // музыка дубля: по умолчанию только у режиссёра — 2–4 телефона с одной песней вразнобой глушат
+  // сигналы. Гость может вернуть её себе (own) — только на своём телефоне. Сменился режиссёр
+  // посреди матча — саундтрек переходит к новому
+  const [ownMusic, setOwnMusic] = useState(false);
+  const roomMusic = state?.settings.roomMusic ?? 'host';
+  useEffect(() => {
+    const level: RoundMusic = ownMusic || roomMusic === 'all' ? 'full' : roomMusic === 'none' ? 'off' : isHostNow ? 'full' : 'quiet';
+    getAudio().setRoundMusic(level);
+  }, [ownMusic, roomMusic, isHostNow]);
+  useEffect(() => () => getAudio().setRoundMusic('full'), []);
   // «Назад» и «Выйти в меню» сразу освобождают место в комнате
   const goHome = () => {
     track(inGame ? 'match_exit' : 'room_leave');
@@ -141,6 +151,18 @@ export default function RoomClient({ code, bot = false }: { code: string; bot?: 
       onBack={inGame ? undefined : goHome}
       onExit={inGame ? goHome : undefined}
       noGear={inGame}
+      roomMusic={
+        state && state.status !== 'connecting' && state.status !== 'error'
+          ? {
+              mode: roomMusic,
+              director: isHostNow,
+              own: ownMusic,
+              // настройки комнаты меняются только в лобби
+              onMode: !inGame && isHostNow ? (m) => void roomRef.current?.updateSettings({ ...state.settings, roomMusic: m }) : undefined,
+              onOwn: setOwnMusic,
+            }
+          : undefined
+      }
     />
   );
 
