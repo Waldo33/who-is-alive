@@ -78,6 +78,11 @@ jobs:
         env:
           TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         run: python3 infra/game/clip-speed.py
+      - name: Достаёт ли Telegram до наших серверов
+        env:
+          TOKEN: ${{ secrets.ALERTS_BOT_TOKEN }}
+          CHAT: '-5387784292'
+        run: python3 infra/game/tg-reach.py
       - name: Москва
         env:
           IP: ${{ steps.game.outputs.ip }}
