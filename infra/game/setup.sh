@@ -167,8 +167,8 @@ EOF
 [Unit]
 Description=Массовка: сторож раз в минуту
 [Timer]
-OnBootSec=2min
-OnUnitActiveSec=1min
+# каждую минуту по часам (OnUnitActiveSec у короткой службы может не перевзводиться)
+OnCalendar=*-*-* *:*:05
 AccuracySec=5s
 [Install]
 WantedBy=timers.target
