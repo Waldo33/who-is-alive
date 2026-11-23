@@ -98,7 +98,8 @@ for b in victoria-metrics victoria-logs; do
     eval "NEW_${b//-/_}=1"
   fi
 done
-cat > /etc/massovka/scrape.yml <<'EOF'
+install -d -m 755 /etc/victoria
+cat > /etc/victoria/scrape.yml <<'EOF'
 global:
   scrape_interval: 30s
 scrape_configs:
@@ -126,7 +127,7 @@ Description=VictoriaMetrics (метрики, 90 дней)
 After=network-online.target
 [Service]
 User=victoria
-ExecStart=/usr/local/bin/victoria-metrics -storageDataPath=/var/lib/victoria/metrics -retentionPeriod=90d -httpListenAddr=127.0.0.1:8428 -promscrape.config=/etc/massovka/scrape.yml -memory.allowedPercent=20
+ExecStart=/usr/local/bin/victoria-metrics -storageDataPath=/var/lib/victoria/metrics -retentionPeriod=90d -httpListenAddr=127.0.0.1:8428 -promscrape.config=/etc/victoria/scrape.yml -memory.allowedPercent=20
 Restart=always
 NoNewPrivileges=yes
 [Install]
@@ -171,10 +172,12 @@ if [ -x /opt/grafana/bin/grafana ]; then
     sudo -u grafana /opt/grafana/bin/grafana cli --homepath /opt/grafana --pluginsDir /var/lib/grafana/plugins plugins install victoriametrics-logs-datasource >/dev/null || echo "::warning::плагин VictoriaLogs не поставился"
   fi
   . /etc/massovka/hosts.env
-  install -d -m 750 -o root -g grafana /etc/massovka/grafana /etc/massovka/grafana/datasources /etc/massovka/grafana/dashboards
-  [ -s "$D/pgro.env" ] && { install -m 640 -o root -g grafana "$D/pgro.env" /etc/massovka/grafana/pgro.env; rm -f "$D/pgro.env"; }
-  PGRO_PASSWORD=$(. /etc/massovka/grafana/pgro.env 2>/dev/null; echo "${PGRO_PASSWORD:-}")
-  cat > /etc/massovka/grafana/grafana.ini <<EOF
+  # своя папка: /etc/massovka закрыта (700) — там секреты сервера, Grafana туда не заглянуть
+  rm -rf /etc/massovka/grafana /etc/massovka/scrape.yml
+  install -d -m 750 -o root -g grafana /etc/massovka-grafana /etc/massovka-grafana/datasources /etc/massovka-grafana/dashboards
+  [ -s "$D/pgro.env" ] && { install -m 640 -o root -g grafana "$D/pgro.env" /etc/massovka-grafana/pgro.env; rm -f "$D/pgro.env"; }
+  PGRO_PASSWORD=$(. /etc/massovka-grafana/pgro.env 2>/dev/null; echo "${PGRO_PASSWORD:-}")
+  cat > /etc/massovka-grafana/grafana.ini <<EOF
 [server]
 http_addr = 127.0.0.1
 http_port = 3001
@@ -184,10 +187,10 @@ serve_from_sub_path = true
 data = /var/lib/grafana
 logs = /var/log/grafana
 plugins = /var/lib/grafana/plugins
-provisioning = /etc/massovka/grafana
+provisioning = /etc/massovka-grafana
 [security]
 admin_user = admin
-admin_password = \$__file{/etc/massovka/grafana/admin.pw}
+admin_password = \$__file{/etc/massovka-grafana/admin.pw}
 cookie_secure = true
 disable_gravatar = true
 [users]
@@ -205,10 +208,10 @@ news_feed_enabled = false
 mode = console
 level = warn
 EOF
-  if [ -s "$D/grafana_admin" ]; then install -m 640 -o root -g grafana "$D/grafana_admin" /etc/massovka/grafana/admin.pw; rm -f "$D/grafana_admin"
-  elif [ ! -s /etc/massovka/grafana/admin.pw ]; then ( umask 077; head -c 24 /dev/urandom | base64 | tr -d '/+=' > /etc/massovka/grafana/admin.pw ); echo "::warning::нет GRAFANA_PASSWORD — Grafana закрыта случайным паролем"
+  if [ -s "$D/grafana_admin" ]; then install -m 640 -o root -g grafana "$D/grafana_admin" /etc/massovka-grafana/admin.pw; rm -f "$D/grafana_admin"
+  elif [ ! -s /etc/massovka-grafana/admin.pw ]; then ( umask 077; head -c 24 /dev/urandom | base64 | tr -d '/+=' > /etc/massovka-grafana/admin.pw ); echo "::warning::нет GRAFANA_PASSWORD — Grafana закрыта случайным паролем"
   fi
-  cat > /etc/massovka/grafana/datasources/massovka.yml <<EOF
+  cat > /etc/massovka-grafana/datasources/massovka.yml <<EOF
 apiVersion: 1
 deleteDatasources: []
 datasources:
@@ -237,7 +240,7 @@ datasources:
     secureJsonData:
       password: "$PGRO_PASSWORD"
 EOF
-  cat > /etc/massovka/grafana/dashboards/massovka.yml <<'EOF'
+  cat > /etc/massovka-grafana/dashboards/massovka.yml <<'EOF'
 apiVersion: 1
 providers:
   - name: massovka
@@ -249,7 +252,7 @@ providers:
 EOF
   install -d /opt/massovka/grafana-dashboards
   [ -d "$D/dashboards" ] && cp -f "$D"/dashboards/*.json /opt/massovka/grafana-dashboards/
-  chown -R root:grafana /etc/massovka/grafana; chmod -R g+r /etc/massovka/grafana
+  chown -R root:grafana /etc/massovka-grafana; chmod -R g+r /etc/massovka-grafana
   ch=$(unit grafana.service <<'EOF'
 [Unit]
 Description=Grafana (графики, логи, продуктовые метрики)
@@ -257,7 +260,7 @@ After=network-online.target victoria-metrics.service victoria-logs.service
 [Service]
 User=grafana
 WorkingDirectory=/opt/grafana
-ExecStart=/opt/grafana/bin/grafana server --homepath /opt/grafana --config /etc/massovka/grafana/grafana.ini
+ExecStart=/opt/grafana/bin/grafana server --homepath /opt/grafana --config /etc/massovka-grafana/grafana.ini
 Restart=always
 MemoryMax=400M
 NoNewPrivileges=yes
@@ -270,13 +273,13 @@ EOF
   # пароль входа: из GitHub Secrets GRAFANA_PASSWORD, а пока его нет — случайный, рождённый здесь
   # (никогда не остаётся admin/admin: Grafana смотрит в интернет)
   for i in $(seq 1 30); do curl -fsS -o /dev/null http://127.0.0.1:3001/api/health && break; sleep 1; done
-  sudo -u grafana /opt/grafana/bin/grafana cli --homepath /opt/grafana --config /etc/massovka/grafana/grafana.ini admin reset-admin-password --password-from-stdin < /etc/massovka/grafana/admin.pw >/dev/null 2>&1 && echo "пароль Grafana на месте" || echo "::warning::пароль Grafana не обновился"
+  sudo -u grafana /opt/grafana/bin/grafana cli --homepath /opt/grafana --config /etc/massovka-grafana/grafana.ini admin reset-admin-password --password-from-stdin < /etc/massovka-grafana/admin.pw >/dev/null 2>&1 && echo "пароль Grafana на месте" || echo "::warning::пароль Grafana не обновился"
 fi
 
 # ───────────── ночная копия базы Москвы (Нидерланды, 30 дней) ─────────────
-if [ -f /etc/massovka/grafana/pgro.env ]; then
+if [ -f /etc/massovka-grafana/pgro.env ]; then
   install -d -m 750 -o postgres -g postgres /var/backups/massovka-msk
-  install -m 640 -o root -g postgres /etc/massovka/grafana/pgro.env /etc/massovka/pgro-backup.env
+  install -m 640 -o root -g postgres /etc/massovka-grafana/pgro.env /etc/massovka/pgro-backup.env
   cat > /opt/massovka/bin/msk-backup.sh <<'EOF'
 #!/bin/sh
 # копия базы Москвы через туннель (127.0.0.1:15432), хранить 30 дней
@@ -309,5 +312,8 @@ WantedBy=timers.target
 EOF
   systemctl enable massovka-msk-backup.timer >/dev/null 2>&1
   systemctl restart massovka-msk-backup.timer
+  # первая копия — сразу, не дожидаясь ночи
+  ls /var/backups/massovka-msk/*.dump >/dev/null 2>&1 || systemctl start --no-block massovka-msk-backup.service
 fi
+sleep 3
 say "наблюдение готово: $(systemctl is-active victoria-metrics victoria-logs grafana node_exporter systemd-journal-upload | tr '\n' ' ')"
