@@ -81,6 +81,8 @@ describe('выкладка без обрыва: drain и переезд комн
     b.srv.drain();
     await until(() => g.srv.rooms.has(code) && la.moves === 1 && lc.moves === 1, 5000, 'переезд');
     await until(() => !!g.srv.rooms.get(code)?.members.get(a.userId)?.peer && !!g.srv.rooms.get(code)?.members.get(c.userId)?.peer, 5000, 'оба на зелёном');
+    // рассылка состава после второго входа может прийти чуть позже — ждём, пока режиссёр увидит обоих
+    await until(() => !!la.room && la.room.members.length === 2 && la.room.members.every((m) => m.online), 5000, 'режиссёр видит обоих на связи');
     const after = la.room!;
     expect(after.code).toBe(code);
     expect(after.directorId).toBe(a.userId);
