@@ -102,6 +102,8 @@ jobs:
           journalctl -u ssh -n 20 --no-pager -o cat | grep -v "Accepted publickey for root" | tail -12
           sshd -T 2>/dev/null | grep -E "allowtcpforwarding|permitlisten|gatewayports" 
           free -m | head -2
+          df -h / | tail -1 | awk '{print "диск Москвы: всего", $2, "занято", $3, "свободно", $4}'
+          echo "клипов: $(ls /var/lib/massovka-clips 2>/dev/null | grep -c -E 'mp4|webm'), занимают $(du -sh /var/lib/massovka-clips 2>/dev/null | cut -f1)"
           echo "── 20 попыток соединиться с Нидерландами (по 3 с)"
           NL=${NL:-72.56.73.184}
           ok=0; for i in $(seq 1 20); do timeout 3 bash -c "</dev/tcp/$NL/443" 2>/dev/null && ok=$((ok+1)); sleep 0.5; done; echo "NL 443: $ok из 20"
