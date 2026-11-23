@@ -204,6 +204,8 @@ check_for_updates = false
 check_for_plugin_updates = false
 [news]
 news_feed_enabled = false
+[dashboards]
+default_home_dashboard_path = /opt/massovka/grafana-dashboards/product.json
 [log]
 mode = console
 level = warn
