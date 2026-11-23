@@ -53,7 +53,7 @@ export const en: Dict = {
     rules: [
       'You’re an extra: 32 identical little people, almost all bots. Tap to walk <b>like everyone else</b>.',
       'Tap a neighbour to hit. Hit an actor and they’re <b>cut from the shot</b>. Hit a bot and you’re stunned and exposed.',
-      'Three stars win the take. Extras grab stars too, but <b>whoever grabs one looks suspicious</b>.',
+      'Three stars win the take. Stars appear one by one and extras grab them too. But if you get <b>spotted at the end, your stars burn</b>.',
       'Music stops: <b>copy the crowd’s move</b>. Miss it and the director’s spotlight finds you.',
       'At the end: <b>“Who’s acting?”</b> Spot an actor for +1. Cut players guess too, and secretly pick a crowd move with the <b>clapper</b> — it isn’t named, so watch the crowd.',
       'From take 2: <b>shooting rules</b>: hard take, one shot, star shower or cue storm.',
@@ -130,6 +130,7 @@ export const en: Dict = {
     noAccuse: 'You accused nobody',
     resultsTitle: 'Take {n}: results',
     endReason: { time: 'Out of film', stars: 'Three stars!', last_alive: 'One left standing' },
+    starsBurned: 'Stars burned!',
     noAwards: 'A boring take!',
     share: 'Share',
     next: 'Take {n} »',

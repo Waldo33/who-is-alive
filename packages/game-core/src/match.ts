@@ -367,7 +367,10 @@ export class MatchSim {
     this.crowdCount = 0;
     this.hardChecked = -1;
     this.scheduleCrowd(this.playStart);
-    for (let i = 0; i < this.maxStars(); i++) this.spawnStar();
+    // звёзды выходят по одной: сначала starsAtStart, остальные — с шагом появления
+    const first = Math.min(this.maxStars(), this.cfg.starsAtStart + (roundMod(this.mod) === 'stars' ? 1 : 0));
+    for (let i = 0; i < first; i++) this.spawnStar();
+    for (let i = 1; i <= this.maxStars() - first; i++) this.queueStar(this.playStart + i * this.starRespawnMs());
     // изнанка темы: расписание на дубль (зерно — общее, поэтому повтор совпадает)
     const tw = themeRules(this.theme).twist;
     this.twistLeft = tw ? tw.max : 0;
@@ -611,7 +614,7 @@ export class MatchSim {
           this.emit({ t: 'star_taken', id: st.id, eid: p.eid, at: t });
           takenNow.add(st.id); // чтобы второй игрок не взял ту же звезду в этом же тике
           p.stars++;
-          this.starSpawnQueue.push(t + this.starRespawnMs());
+          this.queueStar(t + this.starRespawnMs());
           if (p.stars >= cfg.starsToWin && !this.starWinner) {
             this.starWinner = p.pid;
             this.endReason = 'stars';
@@ -635,7 +638,7 @@ export class MatchSim {
           if (!this.rng.chance(cfg.botStarTakeChance)) continue;
           this.emit({ t: 'star_taken', id: st.id, eid: e.eid, at: t });
           takenNow.add(st.id);
-          this.starSpawnQueue.push(t + this.starRespawnMs());
+          this.queueStar(t + this.starRespawnMs());
           break;
         }
       }
@@ -669,6 +672,14 @@ export class MatchSim {
   }
 
   private starTouched = new Set<number>();
+
+  /** Очередь появления звёзд держим по времени: ранняя замена взятой звезды не ждёт позднюю. */
+  private queueStar(at: number): void {
+    const q = this.starSpawnQueue;
+    let i = q.length;
+    while (i > 0 && q[i - 1] > at) i--;
+    q.splice(i, 0, at);
+  }
 
   private starRespawnMs(): number {
     return this.cfg.starRespawnSec * 1000 * (roundMod(this.mod) === 'stars' ? 0.5 : 1);
@@ -714,7 +725,8 @@ export class MatchSim {
     for (const p of this.pr) {
       // выжил, но тебя вычислили — очко за выживание пропадает (обвинитель своё +1 уже получил)
       if (p.alive && !accusedCount.get(p.eid)) this.addScore(p.pid, cfg.points.survive, 'survive', pts);
-      if (this.starWinner === p.pid) this.addScore(p.pid, cfg.points.stars, 'stars', pts);
+      // три звезды, но тебя вычислили — звёзды сгорели: иначе бег по звёздам в открытую выгоднее всего
+      if (this.starWinner === p.pid && !accusedCount.get(p.eid)) this.addScore(p.pid, cfg.points.stars, 'stars', pts);
     }
     for (const p of this.pr) pts[p.pid].total = pts[p.pid].kill + pts[p.pid].survive + pts[p.pid].stars + pts[p.pid].accuse;
 

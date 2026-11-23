@@ -2655,7 +2655,10 @@ export class GameScene extends Phaser.Scene {
     const sim = this.sim;
     const s = sim.summary!;
     this.ovPanel(8, AY + 8, 164, 244);
-    const reason = this.t.game.endReason[s.endReason];
+    // три звезды, но собравшего вычислили — его звёзды сгорели (MatchSim.finishRound)
+    const winner = s.starWinner ? s.reveal.find((r) => r.pid === s.starWinner) : undefined;
+    const burned = !!winner && s.accusations.some((a) => a.correct && a.eid === winner.eid);
+    const reason = burned ? this.t.game.starsBurned : this.t.game.endReason[s.endReason];
     this.ovText(90, AY + 14, tp(this.lang, this.t.game.resultsTitle, s.round), 'yellow');
     this.ovText(90, AY + 25, reason, 'mist');
     const order = [...sim.players].sort((a, b) => sim.scores[b.pid] - sim.scores[a.pid]);

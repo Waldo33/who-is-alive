@@ -14,6 +14,46 @@ type Inner = { round: number; crowdCount: number; mod: number; scheduleCrowd(fro
 const inner = (sim: MatchSim) => sim as unknown as Inner;
 
 describe('Напряжение: новые механики', () => {
+  it('звёзды выходят по одной: в начале одна, на поле не больше двух', () => {
+    const sim = new MatchSim(makeConfig({ roundMods: false, botStarTakeChance: 0 }), players, 41);
+    runUntil(sim, () => sim.phase === 'play');
+    sim.tick();
+    expect(sim.world.stars.size).toBe(1);
+    let most = 0;
+    let second = -1;
+    for (let i = 0; i < 20 * 30 && sim.phase === 'play'; i++) {
+      sim.tick();
+      most = Math.max(most, sim.world.stars.size);
+      if (second < 0 && sim.world.stars.size >= 2) second = sim.world.time - sim.playStart;
+    }
+    expect(most).toBeLessThanOrEqual(sim.cfg.maxStars);
+    expect(second).toBeGreaterThanOrEqual(sim.cfg.starRespawnSec * 1000 - 100);
+  });
+
+  it('три звезды, но собравшего вычислили — +2 за звёзды сгорают; не вычислили — остаются', () => {
+    const play = (caught: boolean) => {
+      const sim = new MatchSim(makeConfig({ roundMods: false }), players.slice(0, 2), 42);
+      runUntil(sim, () => sim.phase === 'play');
+      sim.tick();
+      const a = sim.playerRound('a')!;
+      a.stars = sim.cfg.starsToWin - 1;
+      const e = sim.world.get(a.eid)!;
+      const st = [...sim.world.stars.values()][0];
+      e.x = st.x;
+      e.y = st.y;
+      runUntil(sim, () => sim.phase === 'accuse');
+      expect(sim.summary?.endReason ?? (sim as unknown as { endReason: string }).endReason).toBe('stars');
+      if (caught) sim.intent('b', { k: 'accuse', eid: a.eid });
+      runUntil(sim, () => sim.phase === 'results' || sim.phase === 'reveal');
+      runUntil(sim, () => !!sim.summary);
+      return sim.summary!.points['a'];
+    };
+    expect(play(false).stars).toBe(2);
+    const burned = play(true);
+    expect(burned.stars).toBe(0);
+    expect(burned.survive).toBe(0);
+  });
+
   it('статисты тоже берут звёзды — подбор звезды не доказывает, что это игрок', () => {
     let byBots = 0;
     let byPlayers = 0;
