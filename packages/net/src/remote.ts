@@ -1,4 +1,4 @@
-import { CROWD_ACT, NavGrid, TICK_MS, World, clampToRect, crowdActDur, crowdCanStartView, emoteDur, makeConfig, planPath, plazaArena, twistEmote } from '@kto/game-core';
+import { CROWD_ACT, NavGrid, TICK_MS, World, clampToRect, crowdActDur, emoteDur, ghostClapOpenView, makeConfig, planPath, plazaArena, twistEmote } from '@kto/game-core';
 import type {
   ArenaDef,
   AwardCard,
@@ -596,8 +596,8 @@ export class RemoteSession implements ClientSession {
     return !!c && t >= c.showAt && t <= c.windowEnd;
   }
 
-  crowdCanStart(t = this.world.time): boolean {
-    return crowdCanStartView(this.world, this.cfg, this.ppe, t);
+  ghostClapOpen(t = this.world.time): boolean {
+    return ghostClapOpenView(this.world, this.cfg, this.ppe, t);
   }
 
   intent(it: Intent): void {

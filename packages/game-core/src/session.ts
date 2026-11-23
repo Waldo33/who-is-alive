@@ -1,5 +1,6 @@
 import type { ArenaDef } from './arena';
 import type { AwardCard } from './awards';
+import { TICK_MS } from './config';
 import type { GameConfig } from './config';
 import { AiPlayer } from './ai';
 import { MatchSim as MatchSimCtor } from './match';
@@ -30,6 +31,18 @@ export function crowdCanStartView(world: World, cfg: GameConfig, plannedPlayEnd:
   const c = world.crowd;
   if (c && t <= c.windowEnd + 2000) return false;
   return !world.zone && t < plannedPlayEnd - cfg.zoneStartBeforeEndSec * 1000 - 3000;
+}
+
+/**
+ * Примет ли хост «Хлопушку» сейчас — по тому, что видно клиенту (как `MatchSim.ghostCrowdAt`, но без
+ * тишины после смены облика темы: её знает только хост). Жест встаёт в очередь, поэтому кнопки открыты
+ * почти весь дубль — кроме последних секунд перед сужением, когда команд уже не будет.
+ */
+export function ghostClapOpenView(world: World, cfg: GameConfig, plannedPlayEnd: number, t = world.time): boolean {
+  const c = world.crowd;
+  const free = Math.max(t, c ? c.windowEnd + 2000 + TICK_MS : t);
+  const at = Math.max(t + cfg.crowdMoodLeadMs + 400, free + cfg.crowdMoodLeadMs);
+  return !world.zone && at < plannedPlayEnd - cfg.zoneStartBeforeEndSec * 1000 - 3000;
 }
 
 /**
@@ -66,8 +79,8 @@ export interface ClientView {
   info(pid: string): PlayerInfo | undefined;
   timeLeft(): number;
   crowdWindowOpen(t?: number): boolean;
-  /** Можно ли подать «Хлопушку» сейчас (если она есть у вырезанного). */
-  crowdCanStart(t?: number): boolean;
+  /** Можно ли подать «Хлопушку» сейчас (если она есть у вырезанного): жест встанет в очередь. */
+  ghostClapOpen(t?: number): boolean;
 }
 
 export interface ClientSession extends ClientView {
@@ -137,7 +150,7 @@ export class LocalSession implements ClientSession {
   info(pid: string) { return this.sim.info(pid); }
   timeLeft() { return this.sim.timeLeft(); }
   crowdWindowOpen(t?: number) { return this.sim.crowdWindowOpen(t); }
-  crowdCanStart(t?: number) { return this.sim.crowdCanStart(t); }
+  ghostClapOpen(t?: number) { return this.sim.ghostCrowdAt(t) !== null; }
 
   intent(it: Intent): void {
     this.sim.intent(this.selfPid, it);

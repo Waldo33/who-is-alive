@@ -433,6 +433,23 @@ export class MatchSim {
     if (this.round >= 2 && this.crowdCount > 0 && this.rng.chance(chance)) this.nextVote = this.rng.pick<CrowdKind>(['freeze', 'jump', 'dance']);
   }
 
+  /**
+   * Когда станет командой «Хлопушка», поданная в момент t: не раньше полного разогрева толпы
+   * (crowdMoodLeadMs — подсказка живым) и не во время чужой команды или тишины после смены облика.
+   * Раньше «Хлопушку» принимали только в редкие окна между командами (к концу дубля они идут
+   * каждые 5–7 с и занимают по 4,5 с) — кнопки у вырезанного почти всегда были серыми. Теперь жест
+   * встаёт в очередь и заменяет ближайшую команду. null — команд в этом дубле больше не будет (сужение).
+   */
+  ghostCrowdAt(t = this.world.time): number | null {
+    const cfg = this.cfg;
+    const c = this.world.crowd;
+    const quiet = (themeRules(this.theme).twist?.quietSec ?? 0) * 1000;
+    const free = Math.max(t, c ? c.windowEnd + 2000 + TICK_MS : t, this.lastTwistAt + quiet);
+    const at = Math.max(t + cfg.crowdMoodLeadMs + 400, free + cfg.crowdMoodLeadMs);
+    if (this.zoneStarted || at >= this.plannedPlayEnd - cfg.zoneStartBeforeEndSec * 1000 - 3000) return null;
+    return at;
+  }
+
   /** Можно ли сейчас начать команду (общие условия для расписания и «Хлопушки»). */
   crowdCanStart(t = this.world.time): boolean {
     const c = this.world.crowd;
@@ -845,14 +862,16 @@ export class MatchSim {
       // «Хлопушка»: вырезанный тайно загадывает жест — он не назван (vote), толпа заранее «разогревается»
       // им, живые угадывают по толпе. Только вырезанный, с перезарядкой; вырезанные и так известны всем.
       if (this.phase !== 'play' || p.alive) return;
-      if (p.clapsLeft <= 0 || t < p.clapAt || this.nextGhost || !this.crowdCanStart(t)) {
+      const at = this.ghostCrowdAt(t);
+      if (p.clapsLeft <= 0 || t < p.clapAt || this.nextGhost || at === null) {
         this.notices.push({ t: 'denied', pid, reason: 'not_now' });
         return;
       }
       p.clapsLeft--;
       p.clapAt = t + cfg.ghostClapCooldownSec * 1000;
       this.bots.setMood(null, t);
-      this.planCrowd(it.kind, cfg.crowdMoodLeadMs + 400, true);
+      // жест встаёт в очередь: заменяет ближайшую команду (разогрев толпы начнётся сам, когда можно)
+      this.planCrowd(it.kind, at - t, true);
       this.nextGhost = true;
       return;
     }

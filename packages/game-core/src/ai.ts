@@ -87,7 +87,7 @@ export class AiPlayer implements AiAgent {
     }
     // вырезанный ИИ иногда подаёт «Хлопушку» — в песочнице тоже видно, как это работает
     if (sim.phase === 'play' && !me.alive) {
-      if (me.clapsLeft > 0 && t >= me.clapAt && sim.crowdCanStart(t) && this.rng.chance(0.006)) {
+      if (me.clapsLeft > 0 && t >= me.clapAt && sim.ghostCrowdAt(t) !== null && this.rng.chance(0.006)) {
         sim.intent(this.pid, { k: 'clap', kind: this.rng.pick<CrowdKind>(['freeze', 'jump', 'dance']) });
       }
       return;

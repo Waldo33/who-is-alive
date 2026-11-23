@@ -147,7 +147,7 @@ describe('Напряжение: новые механики', () => {
     // живой не подаёт
     const crowds: WorldEvent[] = [];
     sim.world.listeners.push((ev) => ev.t === 'crowd' && crowds.push(ev));
-    runUntil(sim, () => sim.crowdCanStart());
+    runUntil(sim, () => sim.ghostCrowdAt() !== null);
     sim.intent('a', { k: 'clap', kind: 'jump' });
     sim.tick();
     expect(crowds).toHaveLength(0);
@@ -168,6 +168,50 @@ describe('Напряжение: новые механики', () => {
     expect(c.vote).toBe(true);
     expect(c.ghost).toBe(true);
     expect(b.clapsLeft).toBe(sim.cfg.ghostClaps - 1);
+  });
+
+  it('«Хлопушка» во время команды толпы встаёт в очередь, а не «не сейчас»; перед сужением — уже нельзя', () => {
+    const sim = new MatchSim(makeConfig({ roundMods: false }), players, 85);
+    runUntil(sim, () => sim.phase === 'play');
+    const b = sim.playerRound('b')!;
+    b.alive = false;
+    sim.world.get(b.eid)!.alive = false;
+    const crowds: { kind: string; ghost?: boolean; at: number }[] = [];
+    sim.world.listeners.push((ev) => ev.t === 'crowd' && crowds.push(ev as never));
+    // идёт обычная команда — раньше тут был отказ
+    runUntil(sim, () => sim.crowdWindowOpen());
+    const busy = sim.world.crowd!;
+    sim.notices = [];
+    sim.intent('b', { k: 'clap', kind: 'dance' });
+    sim.tick();
+    expect(sim.notices.some((n) => n.t === 'denied')).toBe(false);
+    expect(b.clapsLeft).toBe(sim.cfg.ghostClaps - 1);
+    // загаданный жест — следующая команда: после окна текущей и полного разогрева толпы
+    runUntil(sim, () => crowds.some((c) => c.ghost));
+    const g = crowds.find((c) => c.ghost)!;
+    expect(g.kind).toBe('dance');
+    expect(g.at).toBeGreaterThanOrEqual(busy.windowEnd + 2000 + sim.cfg.crowdMoodLeadMs);
+    // за ~23 с до конца команд уже не будет — «Хлопушку» не принимают
+    runUntil(sim, () => sim.world.time >= b.clapAt && sim.ghostCrowdAt() === null);
+    expect(sim.phase).toBe('play');
+    sim.notices = [];
+    sim.intent('b', { k: 'clap', kind: 'jump' });
+    sim.tick();
+    expect(sim.notices.some((n) => n.t === 'denied' && n.reason === 'not_now')).toBe(true);
+  });
+
+  it('«Хлопушка» доступна почти весь дубль: доля времени, когда кнопки открыты, до сужения', () => {
+    const sim = new MatchSim(makeConfig({ roundMods: false }), players, 86);
+    runUntil(sim, () => sim.phase === 'play');
+    let open = 0;
+    let total = 0;
+    while (sim.phase === 'play' && !sim.zoneStarted) {
+      if (sim.world.time > sim.plannedPlayEnd - sim.cfg.zoneStartBeforeEndSec * 1000 - 3000 - sim.cfg.crowdMoodLeadMs - 400) break;
+      total++;
+      if (sim.ghostCrowdAt() !== null) open++;
+      sim.tick();
+    }
+    expect(open / total).toBeGreaterThan(0.95);
   });
 
   it('ночь Майами: кто бил, видно всем (attacker в hit); днём и в детском режиме — тайна', () => {

@@ -720,7 +720,7 @@ export class GameScene extends Phaser.Scene {
   private clapReady(): boolean {
     const me = this.me();
     const w = this.sim.world;
-    return !!me && !me.alive && me.clapsLeft > 0 && w.time >= me.clapAt && performance.now() - this.clapSentAt > 1500 && this.sim.crowdCanStart(w.time);
+    return !!me && !me.alive && me.clapsLeft > 0 && w.time >= me.clapAt && performance.now() - this.clapSentAt > 1500 && this.sim.ghostClapOpen(w.time);
   }
 
   private addOverlayButton(

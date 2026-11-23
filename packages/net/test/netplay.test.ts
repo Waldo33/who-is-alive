@@ -254,11 +254,11 @@ describe('сетевая игра', () => {
     for (let i = 0; i < 20 * 30 && rig.host.phase !== 'play'; i++) rig.step();
     const g1 = sim.playerRound('g1')!;
     g1.alive = false;
-    for (let i = 0; i < 20 * 30 && !(rig.host.crowdCanStart() && rig.guests[0].me()?.alive === false); i++) rig.step();
+    for (let i = 0; i < 20 * 30 && !(rig.host.ghostClapOpen() && rig.guests[0].me()?.alive === false); i++) rig.step();
     const before = rig.host.world.crowd?.warnAt ?? -1;
     rig.guests[0].intent({ k: 'clap', kind: 'dance' });
-    // жест вырезанного не назван и начинается после разогрева толпы (~3,4 с)
-    for (let i = 0; i < 20 * 5; i++) rig.step();
+    // жест вырезанного не назван и начинается после разогрева толпы (~3,4 с; если идёт команда — после неё)
+    for (let i = 0; i < 20 * 10 && !rig.host.world.crowd?.ghost; i++) rig.step();
     const c = rig.host.world.crowd!;
     expect(c.warnAt).toBeGreaterThan(before);
     expect(c.kind).toBe('dance');

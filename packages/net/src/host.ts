@@ -83,7 +83,7 @@ export class HostSession implements ClientSession {
   info(pid: string) { return this.local.info(pid); }
   timeLeft() { return this.local.timeLeft(); }
   crowdWindowOpen(t?: number) { return this.local.crowdWindowOpen(t); }
-  crowdCanStart(t?: number) { return this.local.crowdCanStart(t); }
+  ghostClapOpen(t?: number) { return this.local.ghostClapOpen(t); }
   onWorldEvent(fn: (ev: WorldEvent) => void) { this.local.onWorldEvent(fn); }
 
   intent(it: Intent): void {
