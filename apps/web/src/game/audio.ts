@@ -51,6 +51,13 @@ export function getAudio(): Audio {
   return shared;
 }
 
+/**
+ * Громкость музыки относительно эффектов: ×3 (+9,5 дБ). При ×1 музыка в дубле шла на 8 дБ тише
+ * эффектов (−47 дБ RMS против −38), в меню — около −49 дБ: на динамике телефона её почти не было
+ * слышно (жалоба владельца, 23.11.2026). Пики в дубле остаются ниже −12 дБ. Клип пишет свою смесь.
+ */
+export const MUSIC_GAIN = 3;
+
 export class Audio {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
@@ -78,7 +85,8 @@ export class Audio {
     document.addEventListener('visibilitychange', () => {
       if (!this.ctx) return;
       if (document.hidden) void this.ctx.suspend().catch(() => undefined);
-      else if (this.enabled) void this.ctx.resume().catch(() => undefined);
+      // вернуться из фона, если играет хоть что-то: музыка без эффектов тоже должна вернуться
+      else if (this.enabled || this.musicEnabled) void this.ctx.resume().catch(() => undefined);
     });
     // iOS разрешает запуск звука только из «настоящего» жеста: touchend или click, но не touchstart
     // (а ввод Phaser идёт по touchstart). После блокировки экрана, звонка или ухода в другое
@@ -99,7 +107,7 @@ export class Audio {
     if (this.ctx && this.ctx.state === 'closed') this.ctx = null; // iOS иногда закрывает контекст после долгого фона
     if (this.ctx) {
       // 'suspended' и iOS-овый 'interrupted' — оба лечатся resume() из жеста
-      if (this.ctx.state !== 'running' && this.enabled) void this.ctx.resume().catch(() => undefined);
+      if (this.ctx.state !== 'running' && (this.enabled || this.musicEnabled)) void this.ctx.resume().catch(() => undefined);
       return;
     }
     const AC = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
@@ -125,7 +133,19 @@ export class Audio {
     this.noiseBuf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
     const d = this.noiseBuf.getChannelData(0);
     for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
-    this.music = new Music(this.ctx, this.duck, this.noiseBuf);
+    // музыка отдельной шиной громче эффектов (просьба владельца: «тихо»); выравниватель держит пики
+    const musicBus = this.ctx.createGain();
+    musicBus.gain.value = MUSIC_GAIN;
+    musicBus.connect(this.duck);
+    this.music = new Music(this.ctx, musicBus, this.noiseBuf);
+    // WebKit (iPhone, Telegram) создаёт контекст из жеста приостановленным: запустить в этом же
+    // касании и сыграть пустой звук — иначе музыка меню заиграет только со второго касания,
+    // а им обычно бывает «Играть»
+    if (this.ctx.state !== 'running') void this.ctx.resume().catch(() => undefined);
+    const blip = this.ctx.createBufferSource();
+    blip.buffer = this.ctx.createBuffer(1, 1, this.ctx.sampleRate);
+    blip.connect(this.ctx.destination);
+    blip.start();
     this.apply();
   }
 
