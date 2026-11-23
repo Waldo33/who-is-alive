@@ -16,7 +16,8 @@
     "clip-preview": "node scripts/clip-preview.mjs",
     "theme-sheet": "node scripts/theme-sheet.mjs",
     "theme-video": "node scripts/theme-video.mjs",
-    "clip-video": "node scripts/clip-video.mjs"
+    "clip-video": "node scripts/clip-video.mjs",
+    "sound-check": "node scripts/sound-check.mjs"
   },
   "dependencies": {
     "@fontsource/press-start-2p": "5.3.0",
