@@ -77,8 +77,7 @@ export class FilmService {
     const t0 = Date.now();
     let res: FilmDone | null = null;
     try {
-      // очередь растёт — кодируем быстрее (файл больше, ждать меньше)
-      const preset = this.queue.length >= 2 ? 'ultrafast' : 'veryfast';
+      const preset = 'ultrafast';
       const r = await this.render(task.job, preset);
       if (r) {
         const saved = await this.o.store.adopt(r.video, 'mp4', r.thumb);

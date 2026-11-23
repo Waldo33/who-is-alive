@@ -32,7 +32,7 @@ export interface FilmRenderOpts {
   /** Куда класть временные файлы. */
   tmp: string;
   ffmpeg?: string;
-  /** Пресет x264: veryfast — по умолчанию, ultrafast — когда очередь длинная. */
+  /** Пресет x264 (по умолчанию ultrafast). */
   preset?: string;
 }
 
@@ -52,9 +52,15 @@ export interface FilmRendered {
 const W = 540;
 const H = 960;
 const SCALE = 3;
-const FPS = 30;
+/**
+ * 24 кадра в секунду — «киношные» и на пятую часть дешевле 30: vCPU сервера в Москве втрое медленнее
+ * рабочего ядра, а фильм должен успеть за разоблачение и итоги последнего дубля (~22 с).
+ */
+const FPS = 24;
 const RATE = 48000;
 const FONT = '"Press Start 2P", "Press Start 2P Latin"';
+
+type NapiCanvas = { encode(f: 'jpeg', q: number): Promise<Buffer>; getContext(k: '2d'): CanvasRenderingContext2D };
 
 let ready: Promise<typeof import('@napi-rs/canvas')> | null = null;
 
@@ -160,21 +166,21 @@ export async function renderFilm(job: FilmJob, o: FilmRenderOpts): Promise<FilmR
   const silent = join(o.tmp, `film-${id}-v.mp4`);
   const audio = join(o.tmp, `film-${id}.wav`);
   const out = join(o.tmp, `film-${id}.mp4`);
-  const g = (film.c as unknown as { getContext(k: '2d'): CanvasRenderingContext2D }).getContext('2d');
   let thumb: Buffer | null = null;
   try {
     // кадры → ffmpeg; заодно планируется звук (по часам кадра)
     await run(
       ffmpeg,
       ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'rawvideo', '-pix_fmt', 'rgba', '-s', `${W}x${H}`, '-r', String(FPS), '-i', 'pipe:0',
-        '-vf', 'scale=1080:1920:flags=neighbor,format=yuv420p', '-c:v', 'libx264', '-preset', o.preset ?? 'veryfast', '-tune', 'animation',
-        '-crf', '20', '-threads', '1', '-rc-lookahead', '10', '-an', silent],
+        '-vf', 'scale=1080:1920:flags=neighbor,format=yuv420p', '-c:v', 'libx264', '-preset', o.preset ?? 'ultrafast',
+        // ultrafast вдвое быстрее veryfast, на пиксельной картинке разницы не видно; crf 26 держит файл ~6 МБ
+        '-crf', '26', '-threads', '1', '-an', silent],
       async (stdin) => {
         for (let k = 0; k < frames; k++) {
           now = k / FPS;
-          film.draw(Math.min((k * 1000) / FPS, film.duration));
-          if (k === 0) thumb = await (film.c as unknown as { encode(f: 'jpeg', q: number): Promise<Buffer> }).encode('jpeg', 85);
-          const px = g.getImageData(0, 0, W, H).data;
+          const c = film.frame(Math.min((k * 1000) / FPS, film.duration)) as unknown as NapiCanvas;
+          if (k === 0) thumb = await c.encode('jpeg', 85);
+          const px = c.getContext('2d').getImageData(0, 0, W, H).data;
           if (!stdin.write(Buffer.from(px.buffer, px.byteOffset, px.byteLength))) await once(stdin, 'drain');
         }
       },

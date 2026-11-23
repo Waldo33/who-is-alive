@@ -88,8 +88,21 @@ export class FilmScene {
     this.duration = this.pieces.reduce((a, p) => a + p.dur, 0);
   }
 
-  /** Нарисовать кадр фильма в момент ms от начала. Вызывать с неубывающим ms. */
+  /** Нарисовать кадр фильма в момент ms от начала (на свой холст `c`). Вызывать с неубывающим ms. */
   draw(ms: number): void {
+    const c = this.frame(ms);
+    if (c === this.c) return;
+    this.g.save();
+    this.g.setTransform(1, 0, 0, 1, 0, 0);
+    this.g.drawImage(c, 0, 0);
+    this.g.restore();
+  }
+
+  /**
+   * Нарисовать кадр и вернуть холст, где он лежит: у кусков — холст их сцены, у титров — свой.
+   * Сервер читает пиксели прямо оттуда — без лишнего копирования кадра (vCPU сервера медленный).
+   */
+  frame(ms: number): HTMLCanvasElement {
     let i = 0;
     let start = 0;
     while (i < this.pieces.length - 1 && ms >= start + this.pieces[i].dur) start += this.pieces[i++].dur;
@@ -103,11 +116,7 @@ export class FilmScene {
     }
     if (p.kind === 'scene') {
       p.scene.draw(Math.min(local, p.dur));
-      this.g.save();
-      this.g.setTransform(1, 0, 0, 1, 0, 0);
-      this.g.drawImage(p.scene.c, 0, 0);
-      this.g.restore();
-      return;
+      return p.scene.c;
     }
     if (!this.creditsStarted) {
       this.creditsStarted = true;
@@ -116,15 +125,17 @@ export class FilmScene {
     }
     this.sound?.pump();
     this.drawCredits(local);
+    return this.c;
   }
 
   private keepBg(): void {
-    if (this.bgReady) return;
+    const hook = this.pieces[0];
+    if (this.bgReady || hook.kind !== 'scene') return;
     this.bgReady = true;
     const g = this.bg.g;
     g.save();
     g.setTransform(1, 0, 0, 1, 0, 0);
-    g.drawImage(this.c, 0, 0);
+    g.drawImage(hook.scene.c, 0, 0);
     g.restore();
   }
 
