@@ -4,6 +4,11 @@ name: web-deploy
 
 on:
   workflow_dispatch:
+    inputs:
+      skip_ci:
+        description: 'Не ждать CI (только для аварийной выкладки)'
+        type: boolean
+        default: false
   push:
     branches: [main]
     paths:
@@ -12,6 +17,7 @@ on:
       - 'infra/game/web.sh'
       - 'infra/game/caddy.sh'
       - '.github/workflows/web-deploy.yml'
+      - 'infra/ci-wait.sh'
 
 concurrency:
   group: web-deploy
@@ -19,9 +25,13 @@ concurrency:
 
 permissions:
   contents: read
+  # ci-wait.sh читает прогоны CI этого коммита
+  actions: read
 
 jobs:
   deploy:
+    # стоп-кран: переменная репозитория DEPLOY_FREEZE=1 — push не выкладывает, только запуск вручную
+    if: vars.DEPLOY_FREEZE != '1' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -50,6 +60,12 @@ jobs:
           cp -r public .next/standalone/apps/web/public
           tar -czf /tmp/web.tar.gz -C .next/standalone .
           ls -la /tmp/web.tar.gz
+
+      - name: Дождаться зелёного CI
+        if: ${{ !inputs.skip_ci }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: infra/ci-wait.sh
 
       - name: Сервер
         id: srv

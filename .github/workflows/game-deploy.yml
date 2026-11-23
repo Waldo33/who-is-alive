@@ -7,6 +7,11 @@ name: game-deploy
 
 on:
   workflow_dispatch:
+    inputs:
+      skip_ci:
+        description: 'Не ждать CI (только для аварийной выкладки)'
+        type: boolean
+        default: false
   push:
     branches: [main]
     paths:
@@ -17,6 +22,7 @@ on:
       # «Фильм матча» монтирует сервер теми же сценами, что телефон (apps/server/src/film-render.ts)
       - 'apps/web/src/game/**'
       - '.github/workflows/game-deploy.yml'
+      - 'infra/ci-wait.sh'
 
 concurrency:
   group: game-deploy
@@ -24,9 +30,13 @@ concurrency:
 
 permissions:
   contents: read
+  # ci-wait.sh читает прогоны CI этого коммита
+  actions: read
 
 jobs:
   deploy:
+    # стоп-кран: переменная репозитория DEPLOY_FREEZE=1 — push не выкладывает, только запуск вручную
+    if: vars.DEPLOY_FREEZE != '1' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -77,6 +87,12 @@ jobs:
           node --input-type=module -e "await import('@napi-rs/canvas'); await import('node-web-audio-api'); console.log('нативные модули грузятся')"
           tar -czf ../film.tar.gz node_modules fonts film-worker.mjs film-worker.mjs.map
           ls -la ../film.tar.gz
+
+      - name: Дождаться зелёного CI
+        if: ${{ !inputs.skip_ci }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: infra/ci-wait.sh
 
       - name: Сервер в Timeweb (найти или создать)
         id: srv
