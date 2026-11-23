@@ -148,10 +148,13 @@ describe('выкладка без обрыва: drain и переезд комн
     const { b, g, drained } = await pair(1, 400);
     const u = await anon(b.http);
     const half = 'ABCDEFGHJKMN';
+    // комнат на игрока — 5 в минуту: каждую пару создают разные игроки
     for (let i = 0; i < 8; i++) {
-      expect(half).toContain((await create(b.http, u.token)).charAt(0));
-      expect(half).not.toContain((await create(g.http, u.token)).charAt(0));
+      const x = await anon(b.http);
+      expect(half).toContain((await create(b.http, x.token)).charAt(0));
+      expect(half).not.toContain((await create(g.http, x.token)).charAt(0));
     }
+    await create(b.http, u.token);
     // без соседа лобби не уезжают — закрываются по сроку
     b.srv.setPeer(undefined);
     const la = link(b.ws, u, [...b.srv.rooms.keys()][0], 'U');

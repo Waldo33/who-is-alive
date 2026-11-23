@@ -152,6 +152,18 @@ describe('игровой сервер: ошибки с телефонов', () =
   });
 });
 
+describe('игровой сервер: лимиты по игроку, а не по адресу', () => {
+  it('один игрок — не больше 5 комнат в минуту; другие с того же адреса создают свободно', async () => {
+    const { http } = await boot();
+    const a = await anon(http);
+    for (let i = 0; i < 5; i++) await create(http, a.token);
+    const r = await fetch(`${http}/v1/rooms`, { method: 'POST', headers: { authorization: `Bearer ${a.token}` }, body: '{}' });
+    expect(r.status).toBe(429);
+    // соседи по мобильному оператору (тот же адрес) не страдают
+    for (let i = 0; i < 12; i++) await create(http, (await anon(http)).token);
+  });
+});
+
 describe('игровой сервер: потолок комнат', () => {
   it('больше MAX_ROOMS — «сервер занят» (503), идущие комнаты живут', async () => {
     const srv = new GameServer({ authSecret: SECRET, log: silentLogger, maxRooms: 2 });

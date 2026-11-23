@@ -69,10 +69,13 @@ export interface GameServerOptions {
 /** Лимиты (docs/server-migration.md › 3.3). */
 const MSGS_PER_SEC = 30;
 const MAX_STRIKES = 3;
-const CONNS_PER_IP = 20;
-const ROOMS_PER_IP_MIN = 10;
-const AUTH_PER_IP_MIN = 30;
-const EVENTS_PER_IP_MIN = 120;
+// за одним адресом бывают тысячи людей (мобильные операторы, VPN, вайфай кафе) — лимиты по IP только
+// грубая страховка от ботов, а комнаты ограничиваем по игроку (docs/infra-plan.md › этап 4)
+const CONNS_PER_IP = 200;
+const ROOMS_PER_USER_MIN = 5;
+const ROOMS_PER_IP_MIN = 60;
+const AUTH_PER_IP_MIN = 300;
+const EVENTS_PER_IP_MIN = 600;
 /** Ошибки JS с телефонов: телефон шлёт не больше 10 за заход, это страховка от флуда. */
 const ERRORS_PER_IP_MIN = 30;
 // на сервере бота все запросы телефонов приходят через Москву (один адрес) — лимит с запасом
@@ -115,6 +118,7 @@ export class GameServer {
   private readonly conns = new Map<WebSocket, ConnState>();
   private readonly ipConns = new Counter();
   private readonly roomRate = new RateWindow(ROOMS_PER_IP_MIN, 60_000);
+  private readonly roomUserRate = new RateWindow(ROOMS_PER_USER_MIN, 60_000);
   private readonly authRate = new RateWindow(AUTH_PER_IP_MIN, 60_000);
   private readonly eventsRate = new RateWindow(EVENTS_PER_IP_MIN, 60_000);
   private readonly errorsRate = new RateWindow(ERRORS_PER_IP_MIN, 60_000);
@@ -193,6 +197,7 @@ export class GameServer {
     }
     if (this.draining) this.drainStep(now);
     this.roomRate.sweep(now);
+    this.roomUserRate.sweep(now);
     this.authRate.sweep(now);
     this.eventsRate.sweep(now);
     this.botRate.sweep(now);
@@ -279,7 +284,7 @@ export class GameServer {
     const userId = await this.bearer(req);
     if (!userId) return this.reply(res, 401, { error: 'bad_token' });
     if (this.draining || this.rooms.size >= this.maxRooms) return this.reply(res, 503, { error: 'server_busy' });
-    if (!this.roomRate.take(this.ip(req), this.now())) return this.reply(res, 429, { error: 'rate_limited' });
+    if (!this.roomUserRate.take(userId, this.now()) || !this.roomRate.take(this.ip(req), this.now())) return this.reply(res, 429, { error: 'rate_limited' });
     const body = (await readJson(req)) as { name?: unknown; settings?: unknown; lang?: unknown } | null;
     const settings = RoomSettingsSchema.safeParse(body?.settings);
     const code = this.newCode();
