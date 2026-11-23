@@ -162,7 +162,7 @@ if [ -f "$D/grafana.tar.gz" ]; then
   tar -xzf "$D/grafana.tar.gz" -C "/opt/grafana-$v" --strip-components=1
   ln -sfn "/opt/grafana-$v" /opt/grafana
   echo "$v" > /etc/massovka/grafana.version
-  ls -1d /opt/grafana-*/ | grep -v "/opt/grafana-$v/" | xargs -r rm -rf
+  for old in /opt/grafana-*/; do [ "$old" = "/opt/grafana-$v/" ] || rm -rf "$old"; done
   NEW_GRAFANA=1
 fi
 if [ -x /opt/grafana/bin/grafana ]; then
