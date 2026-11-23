@@ -51,6 +51,8 @@ jobs:
         env:
           NEXT_STANDALONE: '1'
           NEXT_PUBLIC_SITE_URL: https://benobody.app
+          # версия сайта в отчётах об ошибках с телефонов (lib/errors.ts)
+          NEXT_PUBLIC_BUILD: ${{ github.sha }}
           NEXT_TELEMETRY_DISABLED: '1'
         run: |
           pnpm --filter web build

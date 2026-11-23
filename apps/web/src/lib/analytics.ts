@@ -36,7 +36,8 @@ let bound = false;
 
 const SRC_RE = /^[a-z0-9_-]{1,24}$/;
 
-function enabled(): boolean {
+/** Слать ли аналитику и ошибки (lib/errors.ts): не на localhost, не с `?dev`, не в автономном HTML. */
+export function trackingEnabled(): boolean {
   if (typeof window === 'undefined') return false;
   try {
     if (localStorage.getItem('kto:track') === '1') return true;
@@ -169,7 +170,7 @@ function bind(): void {
 
 /** Записать событие. name — латиница в нижнем регистре и `_` (до 40 знаков), props — плоские значения. */
 export function track(name: string, props: Props = {}): void {
-  if (!enabled()) return;
+  if (!trackingEnabled()) return;
   try {
     bind();
     const p: Props = { ...baseProps(), mode: ctx.mode, host: ctx.host, path: location.pathname.replace(/^\/r\/[A-Z]{4}$/, '/r/'), ...props };

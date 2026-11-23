@@ -94,8 +94,14 @@ tech=[
  ts_vm("Место под клипы Telegram (Москва; лимит 1 ГБ, тревога на 80%)",[('game_clips_bytes{server="msk"}','занято'),('game_clips_limit_bytes{server="msk"}','лимит')],grid(0,28,12,8),unit="bytes",
        desc="Клипы хранятся 2 суток, при лимите старые вытесняются. Упирается в лимит раньше двух суток — пора переносить на S3"),
  ts_vm("Клипов в хранилище",[('game_clips_count{server="msk"}','клипов')],grid(12,28,12,8)),
- {"id":nid(),"type":"logs","title":"Ошибки в логах обоих серверов","gridPos":grid(0,36,24,12),"datasource":VL,
-  "targets":[{"datasource":VL,"refId":"A","expr":'(level:error OR level:warn OR _msg:~"(?i)error|fail") -_SYSTEMD_UNIT:"massovka-watch.service"',"queryType":"instant"}],
+ ts_vm("Ошибки JS на телефонах (за 10 минут; тревога — больше 30)",[('sum(increase(game_client_errors_total{server="msk"}[10m]))','ошибки')],grid(0,36,10,10),
+       desc="lib/errors.ts на сайте: исключения и непойманные обещания, не больше 10 разных за заход. Скачок после выкладки — откатывать"),
+ {"id":nid(),"type":"logs","title":"Ошибки JS на телефонах (последние)","gridPos":grid(10,36,14,10),"datasource":VL,
+  "description":"msg — текст, at — файл:строка, build — версия сайта, ua — браузер, path — страница",
+  "targets":[{"datasource":VL,"refId":"A","expr":'_msg:client_error',"queryType":"instant"}],
+  "options":{"showTime":True,"wrapLogMessage":True,"sortOrder":"Descending","enableLogDetails":True}},
+ {"id":nid(),"type":"logs","title":"Ошибки в логах обоих серверов","gridPos":grid(0,46,24,12),"datasource":VL,
+  "targets":[{"datasource":VL,"refId":"A","expr":'(level:error OR level:warn OR _msg:~"(?i)error|fail") -_SYSTEMD_UNIT:"massovka-watch.service" -_msg:client_error',"queryType":"instant"}],
   "options":{"showTime":True,"wrapLogMessage":True,"sortOrder":"Descending","enableLogDetails":True}},
 ]
 open('infra/grafana/product.json','w').write(json.dumps(dash("massovka-product","Массовка — игроки и матчи",product),ensure_ascii=False,indent=1))

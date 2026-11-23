@@ -76,6 +76,12 @@ if [ -x /usr/local/bin/victoria-metrics ]; then
     m=$(vm "1 - node_memory_MemAvailable_bytes{server=\"$s\"} / node_memory_MemTotal_bytes{server=\"$s\"}" | awk '{print $NF}' | head -1)
     if [ -n "$m" ]; then within "$m" 0.92; check "mem_$s" $? "память сервера $name занята на $(pct "$m")%"; fi
   done
+  # ошибки JS с телефонов (lib/errors.ts): больше 30 за 10 минут — что-то сломали выкладкой
+  e=$(vm 'sum(increase(game_client_errors_total{server="msk"}[10m]))' | awk '{print $NF}' | head -1)
+  if [ -n "$e" ]; then within "$e" 30; check client_errors $? "ошибки на телефонах: $(printf '%.0f' "$e") за 10 минут (VictoriaLogs: client_error)"; fi
+  # комнаты у потолка MAX_ROOMS: выше 80% — скоро новые получат «сервер занят»
+  r=$(vm 'max(game_rooms{server="msk"}) / max(game_rooms_limit{server="msk"})' | awk '{print $NF}' | head -1)
+  if [ -n "$r" ]; then within "$r" 0.8; check rooms_msk $? "комнат в Москве $(pct "$r")% от лимита — скоро «сервер занят»"; fi
   # клипы для Telegram в Москве: лимит папки 1 ГБ, старые вытесняются — на 80% пора думать об S3
   c=$(vm 'max(game_clips_bytes{server="msk"}) / max(game_clips_limit_bytes{server="msk"})' | awk '{print $NF}' | head -1)
   if [ -n "$c" ]; then within "$c" 0.8; check clips_msk $? "место под клипы в Москве занято на $(pct "$c")% из 1 ГБ (пора S3)"; fi

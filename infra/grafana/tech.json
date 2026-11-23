@@ -634,11 +634,89 @@
   },
   {
    "id": 14,
+   "type": "timeseries",
+   "title": "Ошибки JS на телефонах (за 10 минут; тревога — больше 30)",
+   "description": "lib/errors.ts на сайте: исключения и непойманные обещания, не больше 10 разных за заход. Скачок после выкладки — откатывать",
+   "gridPos": {
+    "x": 0,
+    "y": 36,
+    "w": 10,
+    "h": 10
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "vm"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vm"
+     },
+     "refId": "A",
+     "expr": "sum(increase(game_client_errors_total{server=\"msk\"}[10m]))",
+     "legendFormat": "ошибки"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "none",
+     "custom": {
+      "fillOpacity": 10
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   }
+  },
+  {
+   "id": 15,
+   "type": "logs",
+   "title": "Ошибки JS на телефонах (последние)",
+   "gridPos": {
+    "x": 10,
+    "y": 36,
+    "w": 14,
+    "h": 10
+   },
+   "datasource": {
+    "type": "victoriametrics-logs-datasource",
+    "uid": "vl"
+   },
+   "description": "msg — текст, at — файл:строка, build — версия сайта, ua — браузер, path — страница",
+   "targets": [
+    {
+     "datasource": {
+      "type": "victoriametrics-logs-datasource",
+      "uid": "vl"
+     },
+     "refId": "A",
+     "expr": "_msg:client_error",
+     "queryType": "instant"
+    }
+   ],
+   "options": {
+    "showTime": true,
+    "wrapLogMessage": true,
+    "sortOrder": "Descending",
+    "enableLogDetails": true
+   }
+  },
+  {
+   "id": 16,
    "type": "logs",
    "title": "Ошибки в логах обоих серверов",
    "gridPos": {
     "x": 0,
-    "y": 36,
+    "y": 46,
     "w": 24,
     "h": 12
    },
@@ -653,7 +731,7 @@
       "uid": "vl"
      },
      "refId": "A",
-     "expr": "(level:error OR level:warn OR _msg:~\"(?i)error|fail\") -_SYSTEMD_UNIT:\"massovka-watch.service\"",
+     "expr": "(level:error OR level:warn OR _msg:~\"(?i)error|fail\") -_SYSTEMD_UNIT:\"massovka-watch.service\" -_msg:client_error",
      "queryType": "instant"
     }
    ],

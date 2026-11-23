@@ -99,6 +99,38 @@ describe('игровой сервер: аналитика', () => {
   });
 });
 
+describe('игровой сервер: ошибки с телефонов', () => {
+  it('пишет ошибку в журнал, считает в метриках, пустое отбрасывает', async () => {
+    const logs: { msg: string; f?: Record<string, unknown> }[] = [];
+    const srv = new GameServer({ authSecret: SECRET, log: (_lvl, msg, f) => void logs.push({ msg, f }), maxRooms: 3 });
+    servers.push(srv);
+    const http = `http://127.0.0.1:${await srv.listen(0, '127.0.0.1')}`;
+    const body = { m: 'TypeError: x is undefined', k: 'error', f: '/_next/static/chunks/a.js:1:20', s: 'at a\n'.repeat(1000), p: '/r/', b: 'abc1234', ua: 'iPhone', extra: 'drop' };
+    const r = await fetch(`${http}/v1/errors`, { method: 'POST', headers: { 'content-type': 'text/plain' }, body: JSON.stringify(body) });
+    expect(r.status).toBe(204);
+    const e = logs.find((l) => l.msg === 'client_error')!.f!;
+    expect(e).toMatchObject({ msg: 'TypeError: x is undefined', kind: 'error', path: '/r/', build: 'abc1234' });
+    expect(String(e.stack).length).toBe(2000);
+    expect(e.extra).toBeUndefined();
+    expect((await fetch(`${http}/v1/errors`, { method: 'POST', body: JSON.stringify({ k: 'error' }) })).status).toBe(400);
+    expect(await (await fetch(`${http}/metrics`)).text()).toContain('game_client_errors_total{instance="blue"} 1');
+  });
+});
+
+describe('игровой сервер: потолок комнат', () => {
+  it('больше MAX_ROOMS — «сервер занят» (503), идущие комнаты живут', async () => {
+    const srv = new GameServer({ authSecret: SECRET, log: silentLogger, maxRooms: 2 });
+    servers.push(srv);
+    const http = `http://127.0.0.1:${await srv.listen(0, '127.0.0.1')}`;
+    const u = await anon(http);
+    await create(http, u.token);
+    await create(http, u.token);
+    const r = await fetch(`${http}/v1/rooms`, { method: 'POST', headers: { authorization: `Bearer ${u.token}` }, body: '{}' });
+    expect(r.status).toBe(503);
+    expect(await r.json()).toEqual({ error: 'server_busy' });
+  });
+});
+
 describe('игровой сервер: лобби', () => {
   it('четверо входят, пятый — «комната полна»; готов, имя, настройки, кик, уход режиссёра', async () => {
     const { http, ws } = await boot();

@@ -54,6 +54,8 @@ const CONNS_PER_IP = 20;
 const ROOMS_PER_IP_MIN = 10;
 const AUTH_PER_IP_MIN = 30;
 const EVENTS_PER_IP_MIN = 120;
+/** Ошибки JS с телефонов: телефон шлёт не больше 10 за заход, это страховка от флуда. */
+const ERRORS_PER_IP_MIN = 30;
 // на сервере бота все запросы телефонов приходят через Москву (один адрес) — лимит с запасом
 const BOT_PER_IP_MIN = 600;
 /** Лобби без действий — закрыть; комната старше — закрыть; без единого игрока на связи — закрыть. */
@@ -89,6 +91,7 @@ export class GameServer {
   private readonly roomRate = new RateWindow(ROOMS_PER_IP_MIN, 60_000);
   private readonly authRate = new RateWindow(AUTH_PER_IP_MIN, 60_000);
   private readonly eventsRate = new RateWindow(EVENTS_PER_IP_MIN, 60_000);
+  private readonly errorsRate = new RateWindow(ERRORS_PER_IP_MIN, 60_000);
   private readonly botRate = new RateWindow(BOT_PER_IP_MIN, 60_000);
   readonly store: Store;
   private readonly emptySince = new Map<Room, number>();
@@ -96,7 +99,7 @@ export class GameServer {
   private slow: ReturnType<typeof setInterval> | null = null;
   private hb: ReturnType<typeof setInterval> | null = null;
   /** Счётчики для /metrics. */
-  readonly stats = { matches: 0, rejected: new Counter() };
+  readonly stats = { matches: 0, clientErrors: 0, rejected: new Counter() };
 
   constructor(private readonly o: GameServerOptions) {
     this.auth = new Auth(o.authSecret);
@@ -209,6 +212,7 @@ export class GameServer {
       }
       if (p === '/v1/rooms' && req.method === 'POST') return this.createRoom(req, res);
       if (p === '/v1/events' && req.method === 'POST') return this.events(req, res);
+      if (p === '/v1/errors' && req.method === 'POST') return this.clientError(req, res);
       if (p.startsWith('/v1/clips')) return this.clipRoute(req, res, p);
       if (p.startsWith('/tg/')) {
         if (!this.o.bot) return this.reply(res, 503, { error: 'no_bot' });
@@ -279,6 +283,19 @@ export class GameServer {
     return this.reply(res, 204);
   }
 
+  /**
+   * Ошибка JS с телефона (lib/errors.ts на сайте): пишем в журнал — оттуда VictoriaLogs и Grafana,
+   * счётчик game_client_errors_total — для тревоги сторожа. Тело — JSON с типом text/plain (без CORS-запроса).
+   */
+  private async clientError(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.errorsRate.take(this.ip(req), this.now())) return this.reply(res, 429, { error: 'rate_limited' });
+    const e = parseClientError(await readJson(req, 8192));
+    if (!e) return this.reply(res, 400, { error: 'bad_error' });
+    this.stats.clientErrors++;
+    this.log('warn', 'client_error', e);
+    return this.reply(res, 204);
+  }
+
   private newCode(): string | null {
     for (let i = 0; i < 200; i++) {
       let c = '';
@@ -303,10 +320,12 @@ export class GameServer {
     const p99 = steps.length ? steps[Math.min(steps.length - 1, Math.floor(steps.length * 0.99))] : 0;
     const lines = [
       `game_rooms{instance="${this.instance}"} ${this.rooms.size}`,
+      `game_rooms_limit{instance="${this.instance}"} ${this.maxRooms}`,
       `game_rooms_playing{instance="${this.instance}"} ${playing}`,
       `game_players_online{instance="${this.instance}"} ${players}`,
       `game_connections{instance="${this.instance}"} ${this.conns.size}`,
       `game_matches_total{instance="${this.instance}"} ${this.stats.matches}`,
+      `game_client_errors_total{instance="${this.instance}"} ${this.stats.clientErrors}`,
       `game_step_ms_p99{instance="${this.instance}"} ${p99.toFixed(3)}`,
       `game_draining{instance="${this.instance}"} ${this.draining ? 1 : 0}`,
     ];
@@ -519,6 +538,29 @@ async function readJson(req: IncomingMessage, limit = 8192): Promise<unknown> {
   } catch {
     return null;
   }
+}
+
+/** Поля ошибки с телефона: только строки, обрезанные; лишнее отбрасываем. */
+export function parseClientError(raw: unknown): Record<string, string> | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const o = raw as Record<string, unknown>;
+  const str = (v: unknown, max: number): string | undefined =>
+    // журнал — JSON (jsonLogger экранирует управляющие символы), поэтому только обрезаем
+    typeof v === 'string' && v ? v.slice(0, max) : undefined;
+  const msg = str(o.m, 300);
+  if (!msg) return null;
+  const out: Record<string, string | undefined> = {
+    msg,
+    kind: str(o.k, 16),
+    at: str(o.f, 200),
+    stack: str(o.s, 2000),
+    path: str(o.p, 80),
+    build: str(o.b, 16),
+    ua: str(o.ua, 200),
+    app: str(o.a, 16),
+  };
+  for (const k of Object.keys(out)) if (out[k] === undefined) delete out[k];
+  return out as Record<string, string>;
 }
 
 /** Для логов: id игрока не пишем в открытом виде. */
