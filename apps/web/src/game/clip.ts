@@ -51,7 +51,24 @@ const SEG_PRE = 2600;
 const SEG_POST = 900;
 const SEG_PLAIN = 4000;
 
-export type ClipMode = 'clip' | 'segment' | 'hook';
+/**
+ * clip — клип выбывшего: загадка → разбор → концовка; feature — главный момент фильма: загадка с отсчётом
+ * и дробью → разбор в полном темпе клипа; segment — короткий кусок фильма; hook — крючок фильма;
+ * blooper — «неудачный дубль» для окошка в титрах: удар по массовке общим планом, все живые подписаны сразу.
+ */
+export type ClipMode = 'clip' | 'segment' | 'hook' | 'feature' | 'blooper';
+/** Загадка главного момента фильма — не дольше этого: зритель успевает поискать, но не заскучать. */
+const FEATURE_PUZZLE_MAX = 4200;
+/** Отсчёт «3, 2, 1» в конце загадки; дробь — за секунду до раскрытия (её удар совпадает со вспышкой). */
+const COUNT_FROM = 3;
+const DRUM_LEAD_MS = 980;
+/**
+ * Короткий кусок фильма тоже начинается «скрыто»: до SEG_HIDDEN мс мира без подсветки, затем вспышка
+ * и живые загораются прямо перед ударом (вкус загадки без лишней длины). До удара остаётся не меньше
+ * SEG_REVEAL_LEAD мира — успеть увидеть, кто есть кто.
+ */
+const SEG_HIDDEN = 1300;
+const SEG_REVEAL_LEAD = 400;
 
 export interface ClipPlayer {
   eid: number;
@@ -82,6 +99,11 @@ export interface ClipInput {
   score?: { color: number; points: number }[];
   /** Ссылка в QR концовки (по умолчанию https://site). */
   link?: string;
+  /**
+   * Музыку ведёт фильм (одна песня на весь ролик): сцена её не перезапускает, только продолжает
+   * после паузы «Море волнуется» и переключает изнанку.
+   */
+  keepMusic?: boolean;
 }
 
 export interface ClipResult {
@@ -140,6 +162,7 @@ interface Timing {
 }
 const CLIP_T: Timing = { base: 1.25, slow: 0.4, slowPre: 700, slowPost: 500, hold: 450, cutBefore: 1600, wideMin: 900 };
 const SEG_T: Timing = { base: 1.4, slow: 0.5, slowPre: 500, slowPost: 400, hold: 400, cutBefore: 1400, wideMin: 700 };
+const BLOOP_T: Timing = { base: 1.1, slow: 0.5, slowPre: 300, slowPost: 300, hold: 250, cutBefore: 0, wideMin: 0 };
 
 /** Камера разбора: целое увеличение (пиксели остаются чёткими), видна четверть арены. */
 const ZOOM = 2;
@@ -188,6 +211,8 @@ export class ClipPlayerScene {
   private tm: Timing;
   /** Показываемое окно мира (у куска фильма — уже окна момента). */
   private win: { from: number; to: number };
+  /** С какого времени мира начинается разбор (у куска фильма — после скрытой части). */
+  private revealFrom = 0;
   private parts: { kind: PartKind; dur: number }[] = [];
   private speed1: number;
   private segs: Seg[];
@@ -198,6 +223,12 @@ export class ClipPlayerScene {
   private hitClip = Infinity;
   /** Тишина перед ударом уже была. */
   private hushed = false;
+  /** Отсчёт загадки: сейчас на экране (0 — нет), какие уже прозвучали; дробь перед раскрытием. */
+  private count = 0;
+  private counted = new Set<number>();
+  private drummed = false;
+  /** Кого из живых уже «раскрыли» звуком. */
+  private litSounded = new Set<number>();
   private hit: { x: number; y: number } | null = null;
   readonly duration: number;
   private replay: World | null = null;
@@ -232,7 +263,8 @@ export class ClipPlayerScene {
     this.wg = wc.g;
     this.art = getArt(inp.arena);
     this.mode = inp.mode ?? 'clip';
-    this.tm = this.mode === 'clip' ? CLIP_T : SEG_T;
+    const full = this.mode === 'clip' || this.mode === 'feature';
+    this.tm = full ? CLIP_T : this.mode === 'blooper' ? BLOOP_T : SEG_T;
     const m = inp.moment;
     const focused = m.kind === 'knockout' || m.kind === 'hit_bot' || m.kind === 'star3';
     if (this.mode === 'hook') this.win = { from: Math.max(m.from, m.at - 450), to: Math.max(m.from, m.at - 120) };
@@ -242,8 +274,8 @@ export class ClipPlayerScene {
         : { from: Math.max(m.from, m.to - SEG_PLAIN), to: m.to };
     } else this.win = { from: m.from, to: m.to };
     const len = this.win.to - this.win.from;
-    this.speed1 = Math.max(PART1_SPEED, len / PART1_MAX_MS);
-    const speed2 = this.mode === 'clip' ? Math.max(this.tm.base, len / PART_MAX_MS) : this.tm.base;
+    this.speed1 = Math.max(PART1_SPEED, len / (this.mode === 'feature' ? FEATURE_PUZZLE_MAX : PART1_MAX_MS));
+    const speed2 = full ? Math.max(this.tm.base, len / PART_MAX_MS) : this.tm.base;
     for (const p of inp.players) this.colors.set(p.eid, p.color);
     const hero = inp.hero;
     this.opp = m.attacker === hero ? m.victim : m.victim === hero ? m.attacker : undefined;
@@ -251,11 +283,15 @@ export class ClipPlayerScene {
     // разбор: обычная скорость → замедление → стоп-кадр на ударе → замедление → обычная
     const pieces: [number, number, number][] = []; // [w0, w1, скорость] (скорость 0 — стоп-кадр)
     const { from, to } = this.win;
+    // кусок фильма: сначала скрытая часть мира, разбор продолжает с того же места (без повтора)
+    let rf = from;
+    if (this.mode === 'segment' && focused && m.at > from) rf = from + Math.max(0, Math.min(SEG_HIDDEN, m.at - this.tm.slowPre - SEG_REVEAL_LEAD - from));
+    this.revealFrom = rf;
     if (this.mode === 'hook') pieces.push([from, to, (to - from) / HOOK_MS]);
     else if (focused && m.at > from && m.at <= to) {
-      const s0 = Math.max(from, m.at - this.tm.slowPre);
+      const s0 = Math.max(rf, m.at - this.tm.slowPre);
       const s1 = Math.min(to, m.at + this.tm.slowPost);
-      pieces.push([from, s0, speed2], [s0, m.at, this.tm.slow], [m.at, m.at, 0], [m.at, s1, this.tm.slow], [s1, to, speed2]);
+      pieces.push([rf, s0, speed2], [s0, m.at, this.tm.slow], [m.at, m.at, 0], [m.at, s1, this.tm.slow], [s1, to, speed2]);
     } else pieces.push([from, to, speed2]);
     const ev = inp.rec.log.find((e) => (e.t === 'hit' && e.at === m.at && (m.victim === undefined || e.target === m.victim)) || (e.t === 'star_taken' && e.at === m.at));
     if (ev?.t === 'hit') this.hit = { x: ev.x, y: ev.y };
@@ -280,16 +316,20 @@ export class ClipPlayerScene {
     const fk = m.victim !== undefined ? this.kills.get(m.victim) : undefined;
     if (fk && fk.at === m.at && this.hitClip !== Infinity) this.focusKill = fk;
 
-    if (this.mode === 'clip') this.parts.push({ kind: 'puzzle', dur: len / this.speed1 });
-    if (this.mode === 'segment') this.parts.push({ kind: 'clap', dur: CLAP_MS });
+    if (full) this.parts.push({ kind: 'puzzle', dur: len / this.speed1 });
+    if (this.mode === 'segment') {
+      this.parts.push({ kind: 'clap', dur: CLAP_MS });
+      this.speed1 = speed2;
+      if (rf > from) this.parts.push({ kind: 'puzzle', dur: (rf - from) / speed2 });
+    }
     this.parts.push({ kind: 'reveal', dur: this.revealDur });
     if (this.mode === 'clip') this.parts.push({ kind: 'outro', dur: OUTRO_MS });
     this.duration = this.parts.reduce((a, p) => a + p.dur, 0);
     // наезд камеры — если есть на кого: за cutBefore до удара, но сначала дать увидеть всех
-    if (this.mode !== 'hook' && focused && (m.attacker !== undefined || m.victim !== undefined)) this.cutAt = Math.max(this.tm.wideMin, this.clipOf(m.at - this.tm.cutBefore));
+    if (this.mode !== 'hook' && this.mode !== 'blooper' && focused && (m.attacker !== undefined || m.victim !== undefined)) this.cutAt = Math.max(this.tm.wideMin, this.clipOf(m.at - this.tm.cutBefore));
     // загораются по одному, герой — последним
     const order = inp.players.map((p) => p.eid).sort((a, b) => (a === hero ? 1 : b === hero ? -1 : 0));
-    order.forEach((eid, i) => this.litAt.set(eid, i * REVEAL_STEP));
+    order.forEach((eid, i) => this.litAt.set(eid, this.mode === 'blooper' ? 0 : i * REVEAL_STEP));
   }
 
   /** Время мира для момента разбора. */
@@ -318,14 +358,20 @@ export class ClipPlayerScene {
     if (idx !== this.part) {
       this.part = idx;
       this.trails.clear();
-      this.replay = kind === 'puzzle' || kind === 'reveal' ? makeReplay(worldOf(this.inp.rec), this.win.from, this.win.to) : null;
+      // разбор куска фильма продолжает мир со скрытой части (revealFrom), у клипа — повторяет окно заново
+      this.replay = kind === 'puzzle' || kind === 'reveal' ? makeReplay(worldOf(this.inp.rec), kind === 'reveal' ? this.revealFrom : this.win.from, this.win.to) : null;
       const r = this.replay;
       if (r && this.sound) {
         if (this.musicResumeAt) this.sound.resume();
         this.musicResumeAt = 0;
-        // музыка темы стартует с первой части с миром (у фильма — заново в каждом куске: другая тема)
-        if (idx === 0 || this.parts[idx - 1].kind === 'clap') this.sound.start(this.inp.rec.theme, r.twist);
+        // клип: музыка темы стартует с первой части с миром; фильм ведёт одну песню сам (keepMusic)
+        if (this.inp.keepMusic) {
+          this.sound.resume();
+          this.sound.setTwist(r.twist);
+        } else if (idx === 0 || this.parts[idx - 1].kind === 'clap') this.sound.start(this.inp.rec.theme, r.twist);
         else this.sound.setTwist(r.twist);
+        // загадка — напряжение в музыке, разбор — спокойнее
+        this.sound.intensity(kind === 'puzzle' ? 2 : 1);
         r.listeners.push((ev) => this.onEvent(ev));
       }
     }
@@ -351,6 +397,17 @@ export class ClipPlayerScene {
       return;
     }
     const reveal = kind === 'reveal' && this.mode !== 'hook';
+    // отсчёт и дробь — у полной загадки; у короткого куска фильма скрытая часть — секунда, без отсчёта
+    if (kind === 'puzzle' && this.mode !== 'segment') this.countdown(this.parts[idx].dur - local);
+    else this.count = 0;
+    // живые загораются по одному — и на каждого удар, всё выше (как в разоблачении в игре)
+    if (reveal && this.sound && this.mode !== 'blooper') {
+      for (const [eid, at] of this.litAt) {
+        if (local < at || this.litSounded.has(eid)) continue;
+        this.litSounded.add(eid);
+        this.sound.play('unmask', this.litSounded.size);
+      }
+    }
     const target = kind === 'puzzle' ? this.win.from + local * this.speed1 : this.worldOf2(local);
     const w = this.replay!;
     while (w.time + TICK_MS <= target && w.time < this.win.to) {
@@ -372,7 +429,7 @@ export class ClipPlayerScene {
     this.drawWorld(w, alpha, reveal, ms, zoomed, local);
     this.drawBands(kind, local, target);
     const g = this.g;
-    if (reveal && local < FLASH_MS) {
+    if (reveal && local < FLASH_MS && this.mode !== 'blooper') {
       g.fillStyle = PAL.white;
       g.globalAlpha = 1 - local / FLASH_MS;
       g.fillRect(0, 0, LW, LH);
@@ -696,6 +753,8 @@ export class ClipPlayerScene {
         const isHero = p.eid === hero;
         // на крупном плане подписаны только участники события: иначе плашки закрывают схватку
         if (zoomed && !isHero && p.eid !== m.attacker && p.eid !== m.victim) continue;
+        // неудачный дубль в окошке титров: подписан только «виновник»
+        if (this.mode === 'blooper' && !isHero) continue;
         const head = sp.y - (CH_H + 1) * zoom;
         labels.push({ x: sp.x, y: Math.max(AY + 1, head - (isHero ? 18 : 12)), name: p.name, color, hero: isHero });
         if (isHero) {
@@ -741,6 +800,11 @@ export class ClipPlayerScene {
     return eid === undefined ? undefined : this.inp.players.find((p) => p.eid === eid);
   }
 
+  /** Точка события на экране (неудачный дубль в окошке титров кадрируется вокруг неё). */
+  focusPoint(): { x: number; y: number } | null {
+    return this.hit ? { x: this.hit.x, y: AY + this.hit.y - 8 } : null;
+  }
+
   /** Плашка подписи в безопасной зоне: две строки по центру безопасной ширины. */
   private caption(l1: string, c1: string, l2?: string, c2?: string): void {
     const g = this.g;
@@ -762,6 +826,8 @@ export class ClipPlayerScene {
     g.fillStyle = PAL.ink;
     g.fillRect(0, 0, LW, AY);
     g.fillRect(0, PANEL_Y, LW, LH - PANEL_Y);
+    // неудачный дубль показывают окошком (кусок поля) — подписи и водяной знак не нужны
+    if (this.mode === 'blooper') return;
     text(g, t.meta.title, LW / 2, 8, PAL.yellow, font, { outline: null });
     // водяной знак: адрес игры весь ролик, в безопасной зоне (ролик обрезают и перезаливают)
     g.globalAlpha = 0.85;
@@ -777,6 +843,7 @@ export class ClipPlayerScene {
     }
     if (kind === 'puzzle') {
       this.caption(cap?.find ?? t.clip.find, PAL.white, cap?.findSub ?? fmt(t.clip.round, { n: this.inp.rec.round }), PAL.mist);
+      this.drawCount(local);
       return;
     }
     const atk = this.player(m.attacker);
@@ -793,6 +860,30 @@ export class ClipPlayerScene {
       else this.caption(l1, PAL.white, cap?.kind ?? (m.kind === 'knockout' && m.selfRole === 'victim' ? t.clip.gotMe : t.clip.kinds[m.kind]), blink ? PAL.yellow : PAL.amber);
     }
     this.rec(blink);
+  }
+
+  /** Конец загадки: «3, 2, 1» с тиком на каждую секунду и дробь — её удар приходится на вспышку раскрытия. */
+  private countdown(left: number): void {
+    const n = left <= COUNT_FROM * 1000 ? Math.max(1, Math.ceil(left / 1000)) : 0;
+    this.count = n;
+    if (n && !this.counted.has(n)) {
+      this.counted.add(n);
+      this.sound?.play('count');
+    }
+    if (left <= DRUM_LEAD_MS && !this.drummed) {
+      this.drummed = true;
+      this.sound?.play('drum');
+    }
+  }
+
+  /** Большая цифра отсчёта над полем (в безопасной зоне), в начале секунды — крупнее. */
+  private drawCount(local: number): void {
+    if (!this.count) return;
+    const g = this.g;
+    const left = this.parts.find((p) => p.kind === 'puzzle')!.dur - local;
+    // первые 160 мс секунды цифра крупнее — «удар» отсчёта
+    const size = this.count * 1000 - left < 160 ? 4 : 3;
+    text(g, String(this.count), (SAFE_L + SAFE_R) / 2, 92 - (size - 3) * 4, PAL.yellow, this.inp.font, { size });
   }
 
   /** «Повтор» в углу — как в спортивной трансляции. */

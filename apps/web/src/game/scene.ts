@@ -3135,6 +3135,7 @@ export class GameScene extends Phaser.Scene {
     const inp = m
       ? filmInput(this.takes, this.sim.players, m, {
           t: this.t,
+          lang: this.lang,
           font: this.init0.fontFamily,
           site: location.host,
           link: `${location.origin}/?src=film&l=${this.lang}`,

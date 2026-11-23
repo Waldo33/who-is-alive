@@ -50,7 +50,7 @@ describe.skipIf(!hasFfmpeg)('фильм матча на сервере', () => {
       expect(info.streams.some((x) => x.codec_type === 'audio')).toBe(true);
       const dur = Number(info.format.duration);
       expect(dur).toBeGreaterThan(8);
-      expect(dur).toBeLessThan(24);
+      expect(dur).toBeLessThan(26);
       expect(statSync(path!).size).toBeLessThan(12 * 1024 * 1024);
       console.log(`фильм: ${dur.toFixed(1)} с, ${(statSync(path!).size / 1e6).toFixed(1)} МБ, монтаж ${Date.now() - t0} мс`);
     } finally {

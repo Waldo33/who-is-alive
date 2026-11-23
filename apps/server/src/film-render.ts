@@ -146,6 +146,7 @@ export async function renderFilm(job: FilmJob, o: FilmRenderOpts): Promise<FilmR
   for (const tk of job.takes) tk.rec.nav = new NavGrid(tk.arena, (tk.rec.nav as unknown as { cell: number }).cell);
   const inp = filmInput(job.takes, job.players, job.match, {
     t: DICTS[job.lang],
+    lang: job.lang,
     font: FONT,
     site: job.site,
     link: job.link,
@@ -188,7 +189,9 @@ export async function renderFilm(job: FilmJob, o: FilmRenderOpts): Promise<FilmR
     // звук целиком запланирован по часам кадров — теперь отрисовать его разом (stop() не зовём: он отключил бы смесь)
     const rendered = await octx.startRendering();
     await writeFile(audio, wav(rendered as unknown as Parameters<typeof wav>[0]));
-    await run(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', '-i', silent, '-i', audio, '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k', '-shortest', '-movflags', '+faststart', out]);
+    await run(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', '-i', silent, '-i', audio, '-c:v', 'copy',
+      // громкость лент (Reels, TikTok, Shorts выравнивают к −14 LUFS) и пики с запасом под AAC — у каждого фильма одинаково
+      '-af', 'volume=-4dB,loudnorm=I=-14:TP=-2:LRA=11', '-ar', '48000', '-c:a', 'aac', '-b:a', '128k', '-shortest', '-movflags', '+faststart', out]);
   } finally {
     await rm(silent, { force: true });
     await rm(audio, { force: true });

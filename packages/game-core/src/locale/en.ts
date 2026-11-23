@@ -314,6 +314,12 @@ export const en: Dict = {
     play1: 'Play it',
     play2: 'with friends',
     filmText: 'Our Be Nobody movie 🎬 Can you spot the real players?',
+    // film credits: roles instead of a score table
+    lead: 'Starring',
+    cameo: 'Cameo',
+    extrasRole: 'Extras',
+    bots: { one: '{n} bot', other: '{n} bots' },
+    bloopers: 'Bloopers',
     making: 'Making clip… {n}%',
     ready: 'Clip ready!',
     send: 'Send',

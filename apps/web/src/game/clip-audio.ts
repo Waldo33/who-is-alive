@@ -22,7 +22,12 @@ export interface ClipSoundCore {
   setTwist(on: boolean, smooth?: boolean): void;
   pause(): void;
   resume(): void;
-  play(name: Sfx): void;
+  /** step — ступень для звуков с нарастанием (живые по одному, звезда). */
+  play(name: Sfx, step?: number): void;
+  /** Напряжение музыки 0–2 (как в дубле): загадка фильма — 2, разбор — 1. */
+  intensity(level: number): void;
+  /** Общий уровень после компрессора, дБ (0 — как клип): фильм с дробью и отсчётом громче — его подравнивают. */
+  level(db: number): void;
   fadeOut(sec: number): void;
   /** Тишина перед ударом: музыка пропадает на sec, удар (P1) возвращает её сам. */
   hush(sec: number): void;
@@ -84,7 +89,7 @@ export function clipMix(ctx: BaseAudioContext, out: AudioNode, noiseBuf: AudioBu
     setTwist: (on, smooth) => music.setTwist(on, smooth),
     pause: () => music.tapeStop(),
     resume: () => music.resume(),
-    play: (name) => {
+    play: (name, step = 0) => {
       // важное (P1, sfx.ts) пробивается через музыку
       if (P1.has(name)) {
         const t = ctx.currentTime;
@@ -92,7 +97,11 @@ export function clipMix(ctx: BaseAudioContext, out: AudioNode, noiseBuf: AudioBu
         duck.gain.setValueAtTime(0.4, t);
         duck.gain.linearRampToValueAtTime(1, t + 0.5);
       }
-      synth.play(name);
+      synth.play(name, step);
+    },
+    intensity: (level) => music.setIntensity(level),
+    level: (db) => {
+      makeup.gain.value = CLIP_GAIN * Math.pow(10, db / 20);
     },
     // уходит музыка, а не всё: подпись-логотип в конце звучит поверх
     fadeOut: (sec) => {

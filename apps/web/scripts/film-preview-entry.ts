@@ -4,7 +4,7 @@ import { FilmScene, filmInput } from '../src/game/film';
 import type { FilmTake } from '../src/game/film';
 import { loadAllThemes } from '../src/game/themes';
 
-const G = globalThis as unknown as { __seed: number; __theme?: number; __frames?: number; __out: unknown };
+const G = globalThis as unknown as { __seed: number; __theme?: number; __frames?: number; __from?: number; __out: unknown };
 void (async () => {
   await loadAllThemes();
   const cfg = makeConfig(G.__theme !== undefined && G.__theme >= 0 ? { fixedTheme: G.__theme } : {});
@@ -20,16 +20,18 @@ void (async () => {
       takes.push({ rec: recordRound(s.world, { round: s.round, theme: s.theme, players: sum.reveal, playEnd: sum.replayTo }), summary: sum, arena: s.arena });
     }
   }
-  const inp = filmInput(takes, players, s.match!, { t: DICTS.ru, font: '"Press Start 2P"', site: 'benobody.app', link: 'https://benobody.app/?src=film' });
+  const inp = filmInput(takes, players, s.match!, { t: DICTS.ru, lang: 'ru', font: '"Press Start 2P"', site: 'benobody.app', link: 'https://benobody.app/?src=film' });
   if (!inp) {
     G.__out = [{ name: 'info', url: 'data:text/plain,' + encodeURIComponent('нет фильма') }];
     return;
   }
   const film = new FilmScene(inp);
   const out: { name: string; url: string }[] = [];
-  const n = G.__frames ?? 16;
+  const n = G.__frames ?? 24;
+  // FILM_FROM=мс — кадры только с этого места (посмотреть концовку подробнее)
+  const from = G.__from ?? 0;
   for (let k = 0; k < n; k++) {
-    const ms = (film.duration * k) / n;
+    const ms = from + ((film.duration - from) * k) / n;
     film.draw(ms);
     out.push({ name: `f${G.__seed}_${String(k).padStart(2, '0')}_${Math.round(ms)}`, url: film.c.toDataURL('image/png') });
   }

@@ -73,7 +73,7 @@ describe('i18n', () => {
       expect(btn(t.clip.film, true), t.clip.film).toBeLessThanOrEqual(174);
       // клип и карточка рисуются тем же шрифтом 8 пикс. на ширине 180
       const c = t.clip;
-      for (const s of [c.film, c.hook, c.hookSub, c.cast, fmt(c.filmMaking, { n: 100 }), fmt(c.making, { n: 100 }), c.ready, c.failed, c.find, c.reveal, fmt(c.round, { n: 7 }), ...Object.values(c.kinds), c.cta, ...Object.values(t.card), c.findMe, c.thatWasMe, c.gotMe, c.whoGotMe, c.deathBtnLong, fmt(c.watch, { name: 'Ш'.repeat(12) }), fmt(c.koOf, { name: 'Ш'.repeat(11) }), c.star3Of, c.botOf, c.preparingLong]) {
+      for (const s of [c.film, c.hook, c.hookSub, c.cast, c.lead, c.cameo, c.extrasRole, c.bloopers, tp(lang, c.bots, 28), fmt(c.filmMaking, { n: 100 }), fmt(c.making, { n: 100 }), c.ready, c.failed, c.find, c.reveal, fmt(c.round, { n: 7 }), ...Object.values(c.kinds), c.cta, ...Object.values(t.card), c.findMe, c.thatWasMe, c.gotMe, c.whoGotMe, c.deathBtnLong, fmt(c.watch, { name: 'Ш'.repeat(12) }), fmt(c.koOf, { name: 'Ш'.repeat(11) }), c.star3Of, c.botOf, c.preparingLong]) {
         expect(s.length, `${lang}: «${s}»`).toBeLessThanOrEqual(21);
       }
       for (const s of [c.send, c.save, c.close]) expect(s.length).toBeLessThanOrEqual(10);
