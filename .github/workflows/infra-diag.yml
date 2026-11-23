@@ -74,6 +74,10 @@ jobs:
           curl -sS -m20 -w " ← клип: %{http_code}\n" https://api.benobody.app/tg/clips/00000000000000000000.mp4
           curl -sS -m20 -w " ← загрузка без подписи: %{http_code}\n" -X POST -H 'content-type: video/mp4' --data-binary 'x' https://api.benobody.app/tg/clip
           curl -sS -m20 -o /dev/null -D - -X OPTIONS -H 'origin: https://benobody.app' https://api.benobody.app/tg/clip | grep -i allow-headers
+      - name: Скорость загрузки клипа (4 МБ)
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: python3 infra/game/clip-speed.py
       - name: Москва
         env:
           IP: ${{ steps.game.outputs.ip }}
