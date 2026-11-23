@@ -564,7 +564,8 @@ export class RemoteSession implements ClientSession {
       stunUntil: m.stunUntil,
       autopilot: ap ?? m.autopilot,
       crowdAnswered: cp && this.world.crowd?.warnAt === cp.warnAt ? cp.warnAt : m.crowdAnswered,
-      accused: this.phase === 'accuse' && this.accusePred !== null ? this.accusePred : m.accused,
+      // своя метка «?» вырезанного — сразу (-1 — снята), не ждём хоста
+      accused: this.phase === 'play' && this.accusePred !== null ? (this.accusePred < 0 ? null : this.accusePred) : m.accused,
       clapsLeft: m.clapsLeft ?? 0,
       clapAt: m.clapAt ?? 0,
     };
@@ -604,7 +605,7 @@ export class RemoteSession implements ClientSession {
     let out: Intent = it;
     if (it.k === 'crowd' || it.k === 'attack') out = { ...it, wt: this.world.time };
     const me = this.meMsg;
-    if (it.k === 'accuse' && this.phase === 'accuse') this.accusePred = it.eid;
+    if (it.k === 'accuse' && this.phase === 'play' && me && !me.alive) this.accusePred = it.eid;
     if (it.k === 'autopilot' && me && me.alive && this.phase === 'play') this.autoPred = { on: it.on, until: this.clock() + OPTIMISTIC_MS };
     if (it.k === 'autopilot') this.moveResend = null;
     // предсказание: показать своё действие сразу, если хост его примет (не автопилот, не оглушён к его приходу)

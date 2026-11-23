@@ -32,18 +32,26 @@ describe('Напряжение: новые механики', () => {
 
   it('три звезды, но собравшего вычислили — +2 за звёзды сгорают; не вычислили — остаются', () => {
     const play = (caught: boolean) => {
-      const sim = new MatchSim(makeConfig({ roundMods: false }), players.slice(0, 2), 42);
+      const sim = new MatchSim(makeConfig({ roundMods: false }), players.slice(0, 3), 42);
       runUntil(sim, () => sim.phase === 'play');
       sim.tick();
       const a = sim.playerRound('a')!;
+      if (caught) {
+        // вычислил вырезанный — меткой «?» по ходу дубля
+        const c = sim.playerRound('c')!;
+        c.alive = false;
+        c.diedAt = sim.world.time;
+        sim.world.push({ t: 'remove', eid: c.eid, cause: 'player', at: sim.world.time });
+        sim.intent('c', { k: 'accuse', eid: a.eid });
+        sim.tick();
+      }
       a.stars = sim.cfg.starsToWin - 1;
       const e = sim.world.get(a.eid)!;
       const st = [...sim.world.stars.values()][0];
       e.x = st.x;
       e.y = st.y;
-      runUntil(sim, () => sim.phase === 'accuse');
+      runUntil(sim, () => sim.phase === 'reveal');
       expect(sim.summary?.endReason ?? (sim as unknown as { endReason: string }).endReason).toBe('stars');
-      if (caught) sim.intent('b', { k: 'accuse', eid: a.eid });
       runUntil(sim, () => sim.phase === 'results' || sim.phase === 'reveal');
       runUntil(sim, () => !!sim.summary);
       return sim.summary!.points['a'];
@@ -88,7 +96,7 @@ describe('Напряжение: новые механики', () => {
       const sim = new MatchSim(makeConfig({ roundMods: false }), players, 900 + seed);
       const shows: number[] = [];
       sim.world.listeners.push((ev) => ev.t === 'crowd' && shows.push(ev.resumeAt));
-      runUntil(sim, () => sim.phase === 'accuse', 20 * 120);
+      runUntil(sim, () => sim.phase === 'reveal', 20 * 120);
       if (shows.length < 3) continue;
       first.push(shows[1] - shows[0]);
       last.push(shows[shows.length - 1] - shows[shows.length - 2]);

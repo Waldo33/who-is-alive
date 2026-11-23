@@ -240,7 +240,6 @@ export class GameScene extends Phaser.Scene {
   private toastUntil = 0;
   private acc = 0;
   private hitStop = 0;
-  private ghostMarks = new Set<number>();
   private replay: World | null = null;
   private trails = new Map<number, { x: number; y: number }[]>();
   private revealStartNow = 0;
@@ -330,7 +329,6 @@ export class GameScene extends Phaser.Scene {
     this.hudIcons = [];
     this.hudStars = [];
     this.overlayPhase = '';
-    this.ghostMarks.clear();
     this.replay = null;
     this.confetti = [];
     this.ovObjs = [];
@@ -880,23 +878,16 @@ export class GameScene extends Phaser.Scene {
     const sim = this.sim;
     const me = this.me();
     if (!me) return;
-    if (sim.phase === 'accuse') {
-      const c = this.candidates(x, y)[0];
-      if (c) {
-        sim.intent({ k: 'accuse', eid: c.eid });
-        this.audio.play('tick');
-      }
-      return;
-    }
     if (sim.phase !== 'play') return;
     const w = sim.world;
     const mine = w.get(me.eid)!;
     if (!me.alive) {
       const c = this.candidates(x, y)[0];
       if (c) {
-        if (this.ghostMarks.has(c.eid)) this.ghostMarks.delete(c.eid);
+        // метка «?» вырезанного — его обвинение: одна, тап по другому переносит, по тому же — снимает
+        if (me.accused === c.eid) sim.intent({ k: 'accuse', eid: -1 });
         else {
-          this.ghostMarks.add(c.eid);
+          sim.intent({ k: 'accuse', eid: c.eid });
           this.tut?.noteMark();
         }
         this.audio.play('tick');
@@ -1077,7 +1068,8 @@ export class GameScene extends Phaser.Scene {
       alive: !!me?.alive,
       // кто вырезал: режиссёр за пропущенную команду («Жёсткий дубль») — сигнал не услышали
       out: me?.alive ? 'none' : (this.outBy ?? 'player'),
-      accused: acc ? (acc.correct ? 'right' : 'wrong') : 'none',
+      // обвиняют только вырезанные: живому — na
+      accused: acc ? (acc.correct ? 'right' : 'wrong') : me?.alive ? 'na' : 'none',
       caught: !!me && s.accusations.some((a) => a.eid === me.eid),
       kill: pts?.kill ?? 0,
       survive: pts?.survive ?? 0,
@@ -1100,8 +1092,7 @@ export class GameScene extends Phaser.Scene {
       this.next25 = 0;
       void loadTheme(n.theme);
       this.applyTheme();
-      this.ghostMarks.clear();
-      this.replay = null;
+        this.replay = null;
       // клип выбывшего, который уже монтируется или готов, не теряем: кнопка вернётся на итогах следующего дубля
       const dc = this.deathClip;
       if (!dc || dc.status === 'offer' || dc.round < n.round - 1) this.deathClip = null;
@@ -2102,7 +2093,7 @@ export class GameScene extends Phaser.Scene {
       const marked = e.markUntil > t;
       v.mark.setVisible(marked);
       if (marked) v.mark.setPosition(x, sy - CH_H - 4 - (Math.floor(t / 150) % 2)).setDepth(sy + 0.4);
-      const q = mode === 'live' && this.ghostMarks.has(e.eid);
+      const q = mode === 'live' && phase === 'play' && me?.accused === e.eid;
       v.q.setVisible(q);
       if (q) v.q.setPosition(x + 5, sy - CH_H - 2).setDepth(sy + 0.4);
     });
@@ -2477,8 +2468,8 @@ export class GameScene extends Phaser.Scene {
       g.fillRect(x - 3, y - 1, 7, 4).fillRect(x - 2, y + 3, 5, 2).fillRect(x - 1, y + 5, 3, 2);
       g.fillStyle(hexToInt(PAL.yellow));
       g.fillRect(x - 2, y, 5, 3).fillRect(x - 1, y + 3, 3, 2).fillRect(x, y + 5, 1, 1);
-      // на обвинении — «круги от касания» по человечку: сюда тапать
-      if (this.sim.phase === 'accuse') {
+      // за кадром — «круги от касания» по человечку: сюда тапать метку
+      if (this.me() && !this.me()!.alive) {
         const k = (performance.now() % 900) / 900;
         const r = 3 + k * 10;
         const cy = AY + a.y - 7;
@@ -2658,14 +2649,6 @@ export class GameScene extends Phaser.Scene {
           this.ovText(90, AY + 140, this.t.mods[mod].name, 'yellow');
           this.ovText(90, AY + 152, this.t.mods[mod].desc, 'white');
         }
-        break;
-      }
-      case 'accuse': {
-        this.ovPlate(AY + 2, 28);
-        this.ovText(90, AY + 6, this.t.game.accuseTitle, 'yellow');
-        this.ovDyn.sub = this.ovText(90, AY + 18, this.t.game.accuseSub, 'sand');
-        // в обучении обвинение ждёт игрока — отсчёта нет
-        if (!this.tut && !spec) this.ovDyn.timer = this.ovText(90, PANEL_Y + 13, '5', 'red');
         break;
       }
       case 'reveal': {
@@ -2906,14 +2889,6 @@ export class GameScene extends Phaser.Scene {
         if (n < 3) this.audio.play('count');
       }
     }
-    if (phase === 'accuse' && this.ovDyn.timer) {
-      const n = Math.ceil(sim.timeLeft() / 1000);
-      if (this.ovDyn.timer.text !== String(n)) {
-        this.ovDyn.timer.setText(String(n));
-        this.audio.play('tick');
-      }
-      if (this.me()?.accused !== null) this.ovDyn.sub?.setText(this.t.game.accuseChange);
-    }
     if (phase === 'reveal' && sim.summary) {
       const s = sim.summary;
       const e = sim.now - this.revealStartNow + this.acc;
@@ -2945,10 +2920,12 @@ export class GameScene extends Phaser.Scene {
           t.setPosition(x, y);
         }
         const mine = s.accusations.find((a) => a.pid === this.sim.selfPid);
-        this.ovDyn.final?.setText(mine ? (mine.correct ? this.t.game.guessed : this.t.game.missed) : this.t.game.noAccuse).setVisible(true);
+        const meR = s.reveal.find((r) => r.pid === this.sim.selfPid);
+        // обвиняют только вырезанные — живому строку про обвинение не показываем
+        const verdict = mine ? (mine.correct ? this.t.game.guessed : this.t.game.missed) : meR && !meR.alive ? this.t.game.noAccuse : '';
+        this.ovDyn.final?.setText(verdict).setVisible(true);
         this.ovDyn.final.x = Math.round(90 - this.ovDyn.final.width / 2);
         // тебя вычислили: вторая строка, первая поднимается
-        const meR = s.reveal.find((r) => r.pid === this.sim.selfPid);
         const caught = !!meR?.alive && s.accusations.some((a) => a.eid === meR.eid);
         this.ovDyn.caught?.setVisible(caught);
         this.ovDyn.killedBy?.setVisible(!caught);
