@@ -32,10 +32,15 @@ jobs:
           api getUpdates > /tmp/u.json
           jq -c '{ok, description, n: (.result | length)}' /tmp/u.json
           jq -c '.result[]? | {date: ((.message.date // .my_chat_member.date // 0) | todate), chat: ((.message.chat // .my_chat_member.chat) | {id, type, title}), migrate_to: .message.migrate_to_chat_id, migrate_from: .message.migrate_from_chat_id, member: .my_chat_member.new_chat_member.status, text: (.message.text // null | if . then .[0:40] else . end), deleted: .message.delete_chat_photo}' /tmp/u.json | tail -30
-          echo "── пробное сообщение"
-          api sendMessage "$(jq -nc --arg c "$CHAT" '{chat_id: $c, text: "🔧 Проверка тревог: если видишь это сообщение в группе — доставка работает.", disable_web_page_preview: true}')" | jq -c '{ok, description, parameters, message_id: .result.message_id, chat: .result.chat.id, chat_type: .result.chat.type}'
+          echo "── пробное сообщение (выключено)"
+          true || api sendMessage "$(jq -nc --arg c "$CHAT" '{chat_id: $c, text: "🔧 Проверка тревог: если видишь это сообщение в группе — доставка работает.", disable_web_page_preview: true}')" | jq -c '{ok, description, parameters, message_id: .result.message_id, chat: .result.chat.id, chat_type: .result.chat.type}'
           echo "── какие сообщения бота в группе ещё существуют (правка кнопок без изменений — ничего не меняет)"
           for id in $(seq 1 12); do
             r=$(api editMessageReplyMarkup "$(jq -nc --arg c "$CHAT" --argjson m $id '{chat_id: $c, message_id: $m, reply_markup: {inline_keyboard: []}}')" | jq -r '.description // "ok"')
             echo "сообщение $id: $r"
+          done
+          echo "── те же номера в личке с ботом (1383823377)"
+          for id in 2 6 7 8; do
+            r=$(api editMessageReplyMarkup "$(jq -nc --argjson m $id '{chat_id: 1383823377, message_id: $m, reply_markup: {inline_keyboard: []}}')" | jq -r '.description // "ok"')
+            echo "личка $id: $r"
           done
