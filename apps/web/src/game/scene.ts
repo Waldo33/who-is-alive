@@ -17,6 +17,7 @@ import {
 import type { AwardId, ClientSession, CrowdKind, Dict, Entity, GameConfig, Lang, Moment, Notice, RoundRecording, RoundSummary, ThemeText, World, WorldEvent } from '@kto/game-core';
 import { resultCardFile } from './card';
 import { Tutorial } from './tutorial';
+import { mildOn } from '../ui/topbar';
 import { SWING_HIT, aim, armed, armsOf, bodyPose, drawAir, drawFloor, killsFromLog, makeKill, weaponSfx } from './gore';
 import type { ArmColors } from './gore';
 import type { Kill, Px } from './gore';
@@ -1135,9 +1136,13 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  /** Ночь Майами и т. п.: выбивают оружием, а не «пофом» (в детском режиме — всегда «поф»). */
+  /**
+   * Ночь Майами и т. п.: выбивают оружием, а не «пофом». С личной настройкой «Без насилия» замах
+   * тот же (его видят все — правило темы), но пустыми руками и с «пуфом» вместо крови и тела.
+   * В детском режиме бьющий не раскрыт (hit без attacker) — там всегда «поф».
+   */
   private weaponKills(): boolean {
-    if (this.cfg.kidsMode || this.sim.phase !== 'play') return false;
+    if (this.sim.phase !== 'play') return false;
     const [t, l] = this.lookKey.split('_').map(Number);
     return this.lookKey !== '0_0' && isThemeLoaded(t) && themeLook(t, l).kill === 'weapon';
   }
@@ -1159,6 +1164,7 @@ export class GameScene extends Phaser.Scene {
     const i = w.entities.findIndex((e) => e.eid === eid);
     const tex = i >= 0 ? 'ch' + this.charKey(this.lookKey, i) : '';
     const k = makeKill(eid, x, y, w.time);
+    k.mild = mildOn();
     // замахивается сам бьющий: ночью в Майами его видят все (themes.ts › exposeKiller)
     const att = w.get(by);
     if (att) aim(k, att.x);
@@ -1171,6 +1177,19 @@ export class GameScene extends Phaser.Scene {
 
   /** Момент удара: всё, что должно случиться разом. */
   private weaponImpact(lk: LiveKill): void {
+    if (lk.k.mild) {
+      // «Без насилия»: без крови, вспышки и тела — жертва исчезает обычным «пуфом»
+      if (lk.mine) this.time.delayedCall(0, () => this.showDeath(lk.mine!.sub, false));
+      this.audio.play('poof');
+      this.audio.play('hitPlayer');
+      this.cameras.main.shake(120, 0.008);
+      lk.standIn?.destroy();
+      lk.standIn = null;
+      const pf = this.add.image(lk.k.x, AY + lk.k.y - 8, 'poof', 0).setDepth(AY + lk.k.y + 1);
+      this.time.addEvent({ delay: 60, repeat: 5, callback: () => (pf.frame.name === '5' ? pf.destroy() : pf.setFrame(Number(pf.frame.name) + 1)) });
+      this.time.delayedCall(420, () => pf.destroy());
+      return;
+    }
     if (lk.mine) this.time.delayedCall(0, () => this.showDeath(lk.mine!.sub, true));
     this.audio.play(weaponSfx(lk.k));
     this.audio.play('hitPlayer');
@@ -1188,7 +1207,9 @@ export class GameScene extends Phaser.Scene {
   /** Повтор разоблачения: удары оружием из журнала дубля (кто бил — в самом событии). */
   private setReplayKills(): void {
     this.replayBy.clear();
-    const kills = this.cfg.kidsMode ? [] : killsFromLog(this.sim.world.log, (tw) => this.weaponLook(tw));
+    const kills = killsFromLog(this.sim.world.log, (tw) => this.weaponLook(tw));
+    const mild = mildOn();
+    for (const k of kills) k.mild = mild;
     this.replayKills = new Map(kills.map((k) => [k.eid, k]));
     for (const k of kills) this.replayBy.set(k.by!, [...(this.replayBy.get(k.by!) ?? []), k]);
   }
@@ -1600,7 +1621,7 @@ export class GameScene extends Phaser.Scene {
         font: this.init0.fontFamily,
         site: location.host,
         captions: known ? { find: c.whoGotMe, reveal: c.reveal, kind: c.gotMe } : { find: c.findMe, reveal: c.thatWasMe, kind: c.whoGotMe },
-        noGore: this.cfg.kidsMode,
+        noGore: this.cfg.kidsMode || mildOn(),
       },
       (p) => {
         if (this.deathClip !== dc) return;
@@ -3019,7 +3040,7 @@ export class GameScene extends Phaser.Scene {
     try {
       this.closeClip = openClipOverlay(
         document.body,
-        { ...best, arena: this.sim.arena, t: this.t, font: this.init0.fontFamily, site: location.host, noGore: this.cfg.kidsMode, winner: this.clipWinner() },
+        { ...best, arena: this.sim.arena, t: this.t, font: this.init0.fontFamily, site: location.host, noGore: this.cfg.kidsMode || mildOn(), winner: this.clipWinner() },
         this.t,
         async (file) => {
           const m = best.moment;

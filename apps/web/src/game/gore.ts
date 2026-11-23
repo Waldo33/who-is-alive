@@ -35,6 +35,8 @@ export interface Kill {
   drops: Drop[];
   /** Кто бил (`hit.attacker`): он и замахивается. */
   by?: number;
+  /** «Без насилия»: замах пустыми руками, без брызг, лужи и брошенного оружия. */
+  mild?: boolean;
 }
 
 /** Кто держит оружие: ноги фигуры бьющего. */
@@ -152,7 +154,7 @@ export function weaponSfx(k: Kill): 'whack' | 'clang' | 'stab' {
 
 /** Пол (под фигурами): лужа, упавшие капли, брошенное оружие. */
 export function drawFloor(px: Px, k: Kill, dt: number): void {
-  if (dt < 0) return;
+  if (dt < 0 || k.mild) return;
   for (const p of k.pool) px(p.x, p.y, 1, 1, p.c);
   if (dt >= DROP_MS) {
     for (const d of k.drops) {
@@ -174,7 +176,7 @@ export function drawAir(px: Px, k: Kill, dt: number, holder: Holder | null, arms
       px(Math.round(k.x + Math.cos(a) * r), Math.round(k.y - 9 + Math.sin(a) * r * 0.8), 1, 1, dt < 70 ? PAL.white : PAL.yellow);
     }
   }
-  if (dt < DROP_MS) {
+  if (dt < DROP_MS && !k.mild) {
     for (const d of k.drops) {
       const p = dropAt(k, d, dt);
       px(p.x, p.y, 1, 1, d.c);
@@ -255,7 +257,7 @@ function drawSwing(px: Px, k: Kill, t: number, h: Holder, c: ArmColors): void {
   const wr = rad(p.wep);
   const len = k.kind === 2 ? 0 : 12;
   // след удара: дуга, по которой прошёл конец оружия
-  if (k.kind !== 2 && t >= 150 && t < SWING_HIT + 70) {
+  if (k.kind !== 2 && !k.mild && t >= 150 && t < SWING_HIT + 70) {
     const now = t < SWING_HIT ? pose(k.kind, t).wep : 22;
     const fade = t < SWING_HIT ? 1 : 1 - (t - SWING_HIT) / 70;
     for (let d = 146; d > now; d -= 7) {
@@ -275,8 +277,10 @@ function drawSwing(px: Px, k: Kill, t: number, h: Holder, c: ArmColors): void {
   const gy = Math.round(hy + Math.sin(wr) * 2);
   const bsx = sx - f * 3;
   stick(px, bsx, sy, Math.atan2(-(gy - sy), gx - bsx), Math.max(1, Math.round(Math.hypot(gx - bsx, gy - sy))), () => c.fill, () => 1, c.edge, inBody);
-  // оружие
-  if (k.kind === 0) stick(px, gx, gy, wr, len, (i) => (i < 3 ? PAL.umber : i > 8 ? PAL.tan : PAL.fawn), (i) => (i > 6 ? 2 : 1));
+  // оружие («Без насилия» — пустые руки)
+  if (k.mild) {
+    /* без оружия */
+  } else if (k.kind === 0) stick(px, gx, gy, wr, len, (i) => (i < 3 ? PAL.umber : i > 8 ? PAL.tan : PAL.fawn), (i) => (i > 6 ? 2 : 1));
   else if (k.kind === 1) stick(px, gx, gy, wr, len, (i) => (i === 0 || i === len ? PAL.steel : i % 4 === 2 ? PAL.white : PAL.mist), () => 2);
   else {
     stick(px, gx, gy, wr, 2, () => PAL.umber, () => 1);

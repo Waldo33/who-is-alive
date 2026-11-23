@@ -21,6 +21,20 @@ export function musicEnabled(): boolean {
   }
 }
 
+/**
+ * «Без насилия» — личная настройка устройства (по умолчанию выкл.): кровь, тела и оружие в игре и клипе
+ * сменяются «пуфом», замах в ночи Майами — пустыми руками. Меняет только вид, правила те же.
+ */
+export const MILD_KEY = 'kto:mild';
+
+export function mildOn(): boolean {
+  try {
+    return localStorage.getItem(MILD_KEY) === 'on';
+  } catch {
+    return false;
+  }
+}
+
 export function soundEnabled(): boolean {
   try {
     return localStorage.getItem(SOUND_KEY) !== 'off';
@@ -135,6 +149,7 @@ export function mountTopBar(parent: HTMLElement, init: TopBarOptions): TopBar {
     if (sheet.hidden) return;
     const on = soundEnabled();
     const mus = musicEnabled();
+    const mild = mildOn();
     sheet.setAttribute('aria-label', t.ui.settings);
     sheet.innerHTML = `
       <div class="kto-sheet-box">
@@ -153,6 +168,10 @@ export function mountTopBar(parent: HTMLElement, init: TopBarOptions): TopBar {
         <div class="kto-set"><span>${t.ui.sfx}</span><div class="kto-seg" role="group" aria-label="${t.ui.sfx}">
           <button type="button" data-sound="on" aria-pressed="${on}">${t.ui.on}</button>
           <button type="button" data-sound="off" aria-pressed="${!on}">${t.ui.off}</button>
+        </div></div>
+        <div class="kto-set"><span>${t.ui.mild}</span><div class="kto-seg" role="group" aria-label="${t.ui.mild}">
+          <button type="button" data-mild="on" aria-pressed="${mild}">${t.ui.on}</button>
+          <button type="button" data-mild="off" aria-pressed="${!mild}">${t.ui.off}</button>
         </div></div>
         ${
           o.onExit || location.pathname === '/learn'
@@ -190,6 +209,16 @@ export function mountTopBar(parent: HTMLElement, init: TopBarOptions): TopBar {
         saveSound(v);
         getAudio().setSfxEnabled(v);
         o.onSound?.(v);
+        render();
+      }),
+    );
+    sheet.querySelectorAll<HTMLButtonElement>('[data-mild]').forEach((b) =>
+      b.addEventListener('click', () => {
+        try {
+          localStorage.setItem(MILD_KEY, b.dataset.mild === 'on' ? 'on' : 'off');
+        } catch {
+          /* приватный режим */
+        }
         render();
       }),
     );
@@ -287,6 +316,15 @@ html.tg .kto-back{display:none!important}
 .kto-sheet-actions .kto-sheet-exit{background:#181425;color:#ead4aa;box-shadow:0 0 0 2px #5a6988}
 .kto-credit{margin:8px 0 0;font-size:8px;line-height:1.6;color:#8b9bb4;text-align:right}
 .kto-credit a{color:#8b9bb4;text-decoration:none;display:inline-flex;align-items:center;min-height:44px;padding:0 0 0 8px}
+/* низкий экран (SE внутри Telegram): лист помещается без прокрутки — сжимаем отступы, не кнопки */
+@media (max-height:540px){
+  .kto-sheet-box{padding-top:14px}
+  .kto-sheet h2{margin-bottom:10px}
+  .kto-set{margin-bottom:8px}
+  .kto-learn{margin:4px 0 8px}
+  .kto-sheet-actions{margin-top:8px}
+  .kto-credit{margin:0}
+}
 `;
 
 let cssAdded = false;
