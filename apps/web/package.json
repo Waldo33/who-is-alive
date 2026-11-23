@@ -11,6 +11,7 @@
     "standalone": "node scripts/build-standalone.mjs",
     "icons": "node scripts/make-icons.mjs",
     "og-bg": "node scripts/make-og.mjs",
+    "telegram-assets": "node scripts/make-telegram.mjs",
     "tap-check": "node scripts/tap-check.mjs",
     "clip-preview": "node scripts/clip-preview.mjs",
     "theme-sheet": "node scripts/theme-sheet.mjs",
