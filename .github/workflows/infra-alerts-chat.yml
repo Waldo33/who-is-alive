@@ -1,4 +1,4 @@
-# Бот тревог: найти группу, куда его добавили (нужна команда /start@бот в группе), и прислать проверку.
+# Бот тревог: проверить чат тревог (тип, переезд в супергруппу, права бота, события) и прислать пробное сообщение.
 # Ключ — GitHub Secret ALERTS_BOT_TOKEN. Печатаем только id и название чатов (не секрет без ключа).
 name: infra-alerts-chat
 
@@ -18,16 +18,19 @@ jobs:
     env:
       TOKEN: ${{ secrets.ALERTS_BOT_TOKEN }}
     steps:
-      - name: Бот и его чаты
+      - name: Чат тревог — что с ним сейчас
+        env:
+          CHAT: '-5387784292'
         run: |
           [ -n "$TOKEN" ] || { echo "::error::нет ALERTS_BOT_TOKEN"; exit 1; }
-          curl -fsS "https://api.telegram.org/bot$TOKEN/getMe" | jq -c '.result | {username, first_name}'
-          curl -fsS "https://api.telegram.org/bot$TOKEN/getUpdates" > /tmp/u.json
-          echo "обновлений: $(jq '.result | length' /tmp/u.json), виды: $(jq -c '[.result[] | keys - ["update_id"] | .[0]] | unique' /tmp/u.json)"
-          jq -c '[.result[] | (.my_chat_member.chat // .message.chat // .channel_post.chat // .my_chat_member // empty) | {id, type, title}]' /tmp/u.json
-          jq -r '[.result[] | (.my_chat_member.chat // .message.chat // .channel_post.chat // empty) | select(.type != "private") | "\(.id)\t\(.type)\t\(.title)"] | unique | .[]' /tmp/u.json | tee /tmp/chats.tsv
-          [ -s /tmp/chats.tsv ] || { echo "::warning::групп не найдено — напиши что-нибудь в группе с ботом и перезапусти"; exit 0; }
-          chat=$(tail -1 /tmp/chats.tsv | cut -f1)
-          echo "CHAT=$chat"
-          curl -fsS -X POST "https://api.telegram.org/bot$TOKEN/sendMessage" -H 'Content-Type: application/json' \
-            -d "$(jq -nc --arg c "$chat" '{chat_id: $c, text: "🎬 Массовка: тревоги подключены. Сюда будут приходить сообщения, если игра, сайт или бот перестанут отвечать, и итоги выкладок."}')" | jq -c '.ok'
+          api() { curl -sS -m 20 "https://api.telegram.org/bot$TOKEN/$1" -H 'Content-Type: application/json' ${2:+-d "$2"}; }
+          echo "── бот"; api getMe | jq -c '.result | {username, first_name}'
+          echo "── вебхук бота тревог (если есть — getUpdates не работает)"; api getWebhookInfo | jq -c '.result | {url, pending_update_count, last_error_message}'
+          echo "── getChat $CHAT"; api getChat "$(jq -nc --arg c "$CHAT" '{chat_id: $c}')" | jq -c '{ok, description, parameters, chat: (.result | {id, type, title, migrate_to_chat_id: .migrate_to_chat_id, message_auto_delete_time, has_hidden_members})}'
+          echo "── права бота в чате"; me=$(api getMe | jq -r .result.id); api getChatMember "$(jq -nc --arg c "$CHAT" --arg u "$me" '{chat_id: $c, user_id: ($u|tonumber)}')" | jq -c '{ok, description, status: .result.status}'
+          echo "── события бота (getUpdates)"
+          api getUpdates > /tmp/u.json
+          jq -c '{ok, description, n: (.result | length)}' /tmp/u.json
+          jq -c '.result[]? | {date: ((.message.date // .my_chat_member.date // 0) | todate), chat: ((.message.chat // .my_chat_member.chat) | {id, type, title}), migrate_to: .message.migrate_to_chat_id, migrate_from: .message.migrate_from_chat_id, member: .my_chat_member.new_chat_member.status, text: (.message.text // null | if . then .[0:40] else . end), deleted: .message.delete_chat_photo}' /tmp/u.json | tail -30
+          echo "── пробное сообщение"
+          api sendMessage "$(jq -nc --arg c "$CHAT" '{chat_id: $c, text: "🔧 Проверка тревог: если видишь это сообщение в группе — доставка работает.", disable_web_page_preview: true}')" | jq -c '{ok, description, parameters, message_id: .result.message_id, chat: .result.chat.id, chat_type: .result.chat.type}'
