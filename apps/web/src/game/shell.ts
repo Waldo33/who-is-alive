@@ -222,9 +222,9 @@ export function mountSandbox(root: HTMLElement, opts: ShellOptions): () => void 
     setTimeout(() => (toastEl.style.display = 'none'), 2200);
   };
 
-  const onShare = async (text: string, files?: File[]) => {
+  const onShare = async (text: string, files?: File[], textNoFile?: string) => {
     const kind = shareKind(files);
-    const res = await shareContent({ text, url: withLang(location.origin + '/', kind), files });
+    const res = await shareContent({ text, url: withLang(location.origin + '/', kind), files, textNoFile });
     track('share', { what: kind, result: res });
     if (res === 'copied') toast(t.start.copied);
     if (res === 'failed') toast(text);

@@ -12,9 +12,11 @@ export interface ShareInput {
   text: string;
   url: string;
   files?: File[];
+  /** Текст, если файл до друга не дойдёт (в Telegram уйдёт только ссылка): без обещания «найди меня на клипе». */
+  textNoFile?: string;
 }
 
-export async function shareContent({ text, url, files }: ShareInput): Promise<ShareResult> {
+export async function shareContent({ text, url, files, textNoFile }: ShareInput): Promise<ShareResult> {
   const nav = navigator as Navigator & { canShare?: (d: ShareData) => boolean };
   const full = `${text} ${url}`;
   // Telegram: текст и ссылка — родным окном выбора чата; файлы (клип, карточка) — системным меню,
@@ -29,7 +31,8 @@ export async function shareContent({ text, url, files }: ShareInput): Promise<Sh
       }
     }
     // ссылка из Telegram — тоже в Telegram: друг откроет игру там же, где получил
-    if (telegramShare(url.startsWith('https://t.me/') ? url : (tgLinkFor(url) ?? url), text)) return 'shared';
+    const plain = files?.length ? (textNoFile ?? text) : text;
+    if (telegramShare(url.startsWith('https://t.me/') ? url : (tgLinkFor(url) ?? url), plain)) return 'shared';
   }
   if (files?.length) {
     if (nav.share && nav.canShare?.({ files })) {

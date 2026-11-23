@@ -314,6 +314,9 @@ export const en: Dict = {
     star3Of: 'got 3 stars!',
     botOf: 'hit an extra!',
     deathText: 'I got cut from Be Nobody 😅 Can you find me?',
+    deathTextNoFile: 'I got cut from Be Nobody 😅 Play and avenge me?',
+    deathTextByNoFile: '{name} cut me from the shot 😤 Play and avenge me?',
+    shareKoNoFile: '{a} vs {b}: 1–0 😳 Want in?',
   },
   card: {
     winner: 'Best Actor',
@@ -349,9 +352,8 @@ export const en: Dict = {
     dailyDesc: '32 identical pixel people: extras and one actor. One take, three tries. Can you spot them?',
   },
   share: {
-    text: '{title} {name}: {points}, {kills}. {squares}',
+    text: '{title} · {name} — {points}\n{squares}\n{cta}',
     points: { one: '{n} point', other: '{n} points' },
-    kills: { one: '{n} cut', other: '{n} cuts' },
-    noKills: 'no cuts',
+    cta: 'Can you beat me?',
   },
 };

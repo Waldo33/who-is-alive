@@ -13,8 +13,10 @@ import {
   DICTS,
   THEME_RULES,
   roundMod,
+  matchShareText,
+  roundOutcome,
 } from '@kto/game-core';
-import type { AwardId, ClientSession, CrowdKind, Dict, Entity, GameConfig, Lang, Moment, Notice, RoundRecording, RoundSummary, ThemeText, World, WorldEvent } from '@kto/game-core';
+import type { AwardId, ClientSession, CrowdKind, Dict, Entity, GameConfig, Lang, Moment, Notice, RoundOutcome, RoundRecording, RoundSummary, ThemeText, World, WorldEvent } from '@kto/game-core';
 import { resultCardFile } from './card';
 import { Tutorial } from './tutorial';
 import { mildOn } from '../ui/topbar';
@@ -55,7 +57,8 @@ export interface SceneInit {
   seed?: number;
   onExit?: () => void;
   /** Поделиться текстом и, если есть, файлами (карточка, клип). Вызывается из жеста пользователя. */
-  onShare?: (text: string, files?: File[]) => void | Promise<void>;
+  /** textNoFile — если файл не дошёл (Telegram отдал только ссылку): текст без обещания клипа. */
+  onShare?: (text: string, files?: File[], textNoFile?: string) => void | Promise<void>;
   /** Открыть настройки (шестерёнка в углу). Без него — кнопка просто включает и выключает звук. */
   onSettings?: () => void;
   /** Сохранить файл на устройство (клип). */
@@ -206,6 +209,8 @@ export class GameScene extends Phaser.Scene {
   /** Момент триумфа победителя матча уже показан (до следующего матча). */
   private triumphShown = false;
   private hud: Record<string, Phaser.GameObjects.BitmapText> = {};
+  /** Свой итог каждого дубля матча (для строки квадратов в «Поделиться»). */
+  private myRounds: (RoundOutcome | null)[] = [];
   private hudIcons: Phaser.GameObjects.Image[] = [];
   private hudStars: Phaser.GameObjects.Image[] = [];
   private hudThreat?: Phaser.GameObjects.Image;
@@ -1580,7 +1585,12 @@ export class GameScene extends Phaser.Scene {
       const k = dc.killer === undefined ? undefined : this.sim.summary?.reveal.find((r) => r.eid === dc.killer);
       const kName = k ? this.sim.info(k.pid)?.name : undefined;
       this.track('clip_send', { kind: 'death', type: dc.file.type.split(';')[0] });
-      void this.init0.onShare?.(kName ? fmt(this.t.clip.deathTextBy, { name: kName }) : this.t.clip.deathText, [dc.file]);
+      const c = this.t.clip;
+      void this.init0.onShare?.(
+        kName ? fmt(c.deathTextBy, { name: kName }) : c.deathText,
+        [dc.file],
+        kName ? fmt(c.deathTextByNoFile, { name: kName }) : c.deathTextNoFile,
+      );
       return;
     }
     if (dc.status !== 'offer') return;
@@ -2611,6 +2621,7 @@ export class GameScene extends Phaser.Scene {
   private buildResults(): void {
     const sim = this.sim;
     const s = sim.summary!;
+    this.myRounds[s.round - 1] = roundOutcome(s, sim.selfPid);
     this.ovPanel(8, AY + 8, 164, 244);
     const reason = this.t.game.endReason[s.endReason];
     this.ovText(90, AY + 14, tp(this.lang, this.t.game.resultsTitle, s.round), 'yellow');
@@ -2989,16 +3000,8 @@ export class GameScene extends Phaser.Scene {
     const sim = this.sim;
     const me = sim.info(this.sim.selfPid)!;
     const score = sim.scores[this.sim.selfPid];
-    const kills = sim.myMatchKills;
-    const squares = sim.roundAwards.map((_, i) => (i < sim.round ? '🟩' : '⬛')).join('');
-    const sh = this.t.share;
-    const text = tp(this.lang, sh.text, 0, {
-      title: this.t.meta.title,
-      name: me.name,
-      points: tp(this.lang, sh.points, score),
-      kills: kills ? tp(this.lang, sh.kills, kills) : sh.noKills,
-      squares,
-    });
+    // квадрат на сыгранный дубль — по своему итогу (🟨 выиграл, 🟩 дожил, 🟥 вырезан)
+    const text = matchShareText(this.t, this.lang, { name: me.name, score, rounds: this.myRounds.slice(0, sim.round) });
     const files = sim.phase === 'match_end' && this.cardFile ? [this.cardFile] : undefined;
     this.track('share_tap', { from: sim.phase, card: !!files });
     void this.init0.onShare?.(text, files);
@@ -3046,9 +3049,10 @@ export class GameScene extends Phaser.Scene {
           const m = best.moment;
           const a = best.players.find((p) => p.eid === m.attacker);
           const b = best.players.find((p) => p.eid === m.victim);
-          const text = m.kind === 'knockout' && a && b ? fmt(this.t.clip.shareKo, { a: a.name, b: b.name }) : this.t.meta.title;
+          const ko = m.kind === 'knockout' && a && b;
+          const text = ko ? fmt(this.t.clip.shareKo, { a: a.name, b: b.name }) : this.t.meta.title;
           this.track('clip_send', { kind: m.kind, type: file.type.split(';')[0] });
-          await this.init0.onShare?.(text, [file]);
+          await this.init0.onShare?.(text, [file], ko ? fmt(this.t.clip.shareKoNoFile, { a: a.name, b: b.name }) : undefined);
         },
         (file) => {
           this.track('clip_save', { kind: best.moment.kind });

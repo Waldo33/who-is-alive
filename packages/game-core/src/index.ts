@@ -14,3 +14,4 @@ export * from './session';
 export * from './locale';
 export * from './moments';
 export * from './daily';
+export * from './share';

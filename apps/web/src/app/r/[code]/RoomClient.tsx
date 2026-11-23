@@ -200,10 +200,10 @@ function GameView({
         audio: audio.current,
         lang,
         createSession: () => session,
-        onShare: async (text: string, files?: File[]) => {
+        onShare: async (text: string, files?: File[], textNoFile?: string) => {
           // клипы и карточки уходят в соцсети: ведём на главную — комната занята матчем и через полчаса исчезнет
           const kind = shareKind(files);
-          const result = await shareContent({ text, url: withLang(`${location.origin}/`, kind), files });
+          const result = await shareContent({ text, url: withLang(`${location.origin}/`, kind), files, textNoFile });
           track('share', { what: kind, result });
         },
         onEvent: spectator ? undefined : track,
