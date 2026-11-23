@@ -193,7 +193,8 @@ describe('игровой сервер: лобби', () => {
   it('старт — только режиссёр и только если игроков хватает; пока идёт матч, новый — зритель', async () => {
     const { http, ws } = await boot();
     const [a, b, c] = await Promise.all([anon(http), anon(http), anon(http)]);
-    const { code } = await create(http, a.token);
+    // без ИИ-актёров: нужен второй живой
+    const { code } = await create(http, a.token, { name: 'A', settings: { roundSec: 60, maxRounds: 3, kidsMode: false, aiFill: false } });
     const la = link(ws, a, code, 'A');
     await la.connect();
     const errs: string[] = [];
@@ -213,6 +214,17 @@ describe('игровой сервер: лобби', () => {
     expect(lc.spectator).toBe(true);
     const p = (await (await fetch(`${http}/v1/rooms/${code}`)).json()) as { status: string };
     expect(p.status).toBe('playing');
+  });
+
+  it('по умолчанию в комнате ИИ-актёры: режиссёр начинает и один', async () => {
+    const { http, ws } = await boot();
+    const a = await anon(http);
+    const { code } = await create(http, a.token);
+    const la = link(ws, a, code, 'A');
+    await la.connect();
+    expect(la.room?.settings.aiFill).toBe(true);
+    la.start();
+    await until(() => la.room?.status === 'playing', 3000, 'матч начался');
   });
 });
 

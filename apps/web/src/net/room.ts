@@ -14,9 +14,10 @@ import { createGameRoom, ensureGameUser, forgetGameUser, gameRoomInfo } from '@/
 export type RoomSettings = WireRoomSettings;
 
 /**
- * ИИ-актёры (aiFill) пока выключены по умолчанию: владелец проводит плейтесты (решение 22.11.2026).
+ * ИИ-актёры (aiFill) включены по умолчанию (решение владельца 23.11.2026): свободные места занимает ИИ,
+ * матч можно начать вдвоём и даже одному. Режиссёр выключает их в настройках лобби.
  */
-export const DEFAULT_SETTINGS: RoomSettings = { roundSec: 75, maxRounds: 5, kidsMode: false, aiFill: false };
+export const DEFAULT_SETTINGS: RoomSettings = { roundSec: 75, maxRounds: 5, kidsMode: false, aiFill: true };
 
 /**
  * Задержка трансляции для зрителя: опоздавший обычно сидит рядом с игроками — всё, что он видит,
