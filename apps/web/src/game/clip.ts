@@ -24,6 +24,8 @@ import { isThemeLoaded, themeLook, themePack } from './themes';
  * Вёрстка — под интерфейс TikTok, Reels и Shorts: всё, что надо прочесть, — в безопасной зоне
  * (x 10…153, y 37…208 из 180×320); нижняя полоса — только счёт и декор, её закрывает подпись поста.
  */
+/** Тишина перед ударом в клипе, мс. */
+const HUSH_MS = 120;
 const LW = 180;
 const LH = 320;
 const AY = 24;
@@ -194,6 +196,8 @@ export class ClipPlayerScene {
   private cutAt = Infinity;
   /** Момент клипа (в разборе), когда случился удар. */
   private hitClip = Infinity;
+  /** Тишина перед ударом уже была. */
+  private hushed = false;
   private hit: { x: number; y: number } | null = null;
   readonly duration: number;
   private replay: World | null = null;
@@ -339,6 +343,8 @@ export class ClipPlayerScene {
         // заставка в конце: музыка плавно уходит к концу клипа
         this.faded = true;
         this.sound.fadeOut(Math.max(0.3, (this.duration - ms) / 1000));
+        // подпись в конце: звуковой логотип — клип узнают в ленте и без картинки
+        this.sound.play('logo');
       }
       this.drawOutro(local);
       this.sound?.pump();
@@ -354,6 +360,11 @@ export class ClipPlayerScene {
     if (this.musicResumeAt && w.time >= this.musicResumeAt) {
       this.musicResumeAt = 0;
       this.sound?.resume();
+    }
+    // перед ударом — 120 мс тишины: удар после «провала» звучит громче всего клипа
+    if (reveal && this.sound && !this.hushed && this.hitClip !== Infinity && local >= this.hitClip - HUSH_MS) {
+      this.hushed = true;
+      this.sound.hush(HUSH_MS / 1000);
     }
     this.sound?.pump();
     const alpha = Math.max(0, Math.min(1, (target - w.time) / TICK_MS));

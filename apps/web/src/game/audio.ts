@@ -155,6 +155,8 @@ export class Audio {
     blip.connect(this.ctx.destination);
     blip.start();
     this.apply();
+    // открытие игры: звуковой логотип над музыкой меню (раз за запуск)
+    if (this.want.mode === 'menu') this.play('logo');
   }
 
   /** Эффекты вкл/выкл. */
@@ -279,6 +281,12 @@ export class Audio {
     else if (P1.has(name)) this.duckMusic(0.355, 0.6);
     else if (P2.has(name)) this.duckMusic(0.63, 0.4);
     this.synth?.play(name, step);
+  }
+
+  /** Стрёкот проектора на sec секунд через when (разоблачение, стоп-кадр «Море волнуется»). Тихий фон. */
+  projector(sec: number, vol = 0.07, when = 0): void {
+    if (!this.ctx || !this.enabled || sec <= 0) return;
+    this.synth?.projector(when, sec, vol, vol);
   }
 
   /** «Вырезан»: звук его мира обрывается на полсекунды, потом медленно возвращается. */

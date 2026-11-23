@@ -24,6 +24,8 @@ export interface ClipSoundCore {
   resume(): void;
   play(name: Sfx): void;
   fadeOut(sec: number): void;
+  /** Тишина перед ударом: музыка пропадает на sec, удар (P1) возвращает её сам. */
+  hush(sec: number): void;
   stop(): void;
   /** Ручной режим (офлайн-рендер): спланировать музыку до текущего времени контекста. */
   pump(): void;
@@ -92,11 +94,20 @@ export function clipMix(ctx: BaseAudioContext, out: AudioNode, noiseBuf: AudioBu
       }
       synth.play(name);
     },
+    // уходит музыка, а не всё: подпись-логотип в конце звучит поверх
     fadeOut: (sec) => {
       const t = ctx.currentTime;
-      master.gain.cancelScheduledValues(t);
-      master.gain.setValueAtTime(master.gain.value, t);
-      master.gain.linearRampToValueAtTime(0.0001, t + sec);
+      duck.gain.cancelScheduledValues(t);
+      duck.gain.setValueAtTime(duck.gain.value, t);
+      duck.gain.linearRampToValueAtTime(0.0001, t + sec);
+    },
+    hush: (sec) => {
+      const t = ctx.currentTime;
+      duck.gain.cancelScheduledValues(t);
+      duck.gain.setValueAtTime(duck.gain.value, t);
+      duck.gain.linearRampToValueAtTime(0.0001, t + 0.02);
+      duck.gain.setValueAtTime(0.0001, t + sec);
+      duck.gain.linearRampToValueAtTime(1, t + sec + 0.3);
     },
     stop: () => {
       music.stop();

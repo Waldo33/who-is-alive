@@ -1011,6 +1011,8 @@ export class GameScene extends Phaser.Scene {
         else if (this.newbie) this.tip('crowd');
         this.audio.cutMusic();
         this.audio.play('crowd');
+        // в стоп-кадре не абсолютная тишина: тихо стрекочет стоящий проектор
+        this.audio.projector((ev.resumeAt - ev.at) / 1000 / (this.init0.timeScale ?? 1) - 0.35, 0.05, 0.35);
         haptic('warning'); // стоп-кадр: «замри» чувствуется рукой, даже без звука
         this.musicResumeAt = ev.windowEnd + 900;
         break;
@@ -1104,7 +1106,8 @@ export class GameScene extends Phaser.Scene {
         this.track('match_start', { players: this.sim.players.length, ai: this.sim.players.filter((p) => p.ai).length, level: this.cfg.strictCrowd ? 'hard' : this.cfg.kidsMode ? 'easy' : 'normal', kids: this.cfg.kidsMode, strict: this.cfg.strictCrowd, rounds: this.cfg.maxRounds, roundSec: this.cfg.roundSec });
       }
     } else if (n.t === 'phase') {
-      if (n.phase === 'countdown') this.audio.play('count');
+      // начало матча — звуковой логотип игры, дальше — обычный отсчёт
+      if (n.phase === 'countdown') this.audio.play(this.sim.round === 1 ? 'logo' : 'count');
       if (n.phase !== 'match_end') this.triumphShown = false;
       // Telegram: посреди матча — переспросить, если закрывают приложение
       if (!this.init0.tutorial && !this.init0.spectator) setClosingConfirmation(n.phase !== 'match_end');
@@ -1132,11 +1135,18 @@ export class GameScene extends Phaser.Scene {
         this.trails.clear();
         this.noteMoment();
         this.upgradeDeathClip();
+        // «смотрим отснятое»: проектор нарастает (drum), потом тихо стрекочет под повтором
         this.audio.play('drum');
+        {
+          const c = this.cfg;
+          const ts = this.init0.timeScale ?? 1;
+          this.audio.projector((s.replayTo - s.replayFrom) / c.revealSpeed / 1000 / ts, 0.06, c.revealDrumSec / ts);
+        }
       }
       if (n.phase === 'results' && !this.init0.spectator) this.trackRound();
       if (n.phase === 'match_end') {
-        this.audio.play(this.sim.match?.tooAlive ? 'sad' : 'fanfare');
+        // «Снято!»: хлопушка и логотип (общая фанфара была безлика); «Слишком живые!» — тромбон
+        this.audio.play(this.sim.match?.tooAlive ? 'sad' : 'wrap');
         this.spawnConfetti();
         const m = this.sim.match;
         if (m) {
@@ -2196,7 +2206,13 @@ export class GameScene extends Phaser.Scene {
       this.finalSoundsPlayed = true;
       s.accusations.forEach((a, i) => this.time.delayedCall(250 + i * 350, () => this.audio.play(a.correct ? 'accuseRight' : 'accuseWrong')));
       // без звука разоблачение тоже чувствуется рукой: короткий толчок на каждого живого
-      [...alive.keys()].forEach((_, i) => this.time.delayedCall(i * 180, () => haptic('heavy')));
+      // каждый живой — удар (всё выше) и толчок вибрации: разоблачение слышно и чувствуется рукой
+      [...alive.keys()].forEach((_, i) =>
+        this.time.delayedCall(i * 180, () => {
+          this.audio.play('unmask', i + 1);
+          haptic('heavy');
+        }),
+      );
       this.ovDyn.final?.setVisible(true);
     }
   }

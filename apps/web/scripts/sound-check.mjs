@@ -28,7 +28,10 @@ const TARGETS = {
   'sfx:starTake': [-35, -31, 'P1 звезда'],
   'sfx:ready': [-33, -29, 'P1 старт дубля'],
   'sfx:crowd': [-33, -29, 'P1 Море волнуется'],
-  'sfx:drum': [-35, -31, 'P1 разоблачение'],
+  'sfx:drum': [-35, -31, 'P1 разоблачение: проектор'],
+  'sfx:unmask': [-35, -30, 'P1 живой раскрыт'],
+  'sfx:logo': [-34, -30, 'P1 звуковой логотип'],
+  'sfx:wrap': [-34, -30, 'P1 «Снято!»'],
   'sfx:whack': [-38, -34, 'P2 бита'],
   'sfx:clang': [-38, -34, 'P2 труба'],
   'sfx:stab': [-38, -34, 'P2 нож'],
@@ -46,6 +49,7 @@ for (let th = 0; th < 7; th++) {
   TARGETS[`music:${th}:twist`] = [-44, -36, 'изнанка ≤ −36'];
 }
 TARGETS['music:accuse'] = [-42, -38, 'обвинение'];
+TARGETS['music:6:blackout-gap'] = [-200, -70, 'тишина после «свет вырубили»'];
 
 const out = await build({ entryPoints: ['scripts/sound-check-entry.ts'], bundle: true, format: 'iife', write: false, logLevel: 'warning' });
 const browser = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] });

@@ -16,7 +16,7 @@ const G = globalThis as unknown as { __out?: string; __err?: string; __only?: st
 const SFX: Sfx[] = [
   'step', 'hitPlayer', 'hitBot', 'poof', 'starTake', 'starSpawn', 'crowd', 'tick', 'click', 'ready',
   'accuseRight', 'accuseWrong', 'fanfare', 'sad', 'hedge', 'pigeon', 'drum', 'denied', 'count', 'swing',
-  'flicker', 'dusk', 'siren', 'whack', 'clang', 'stab', 'knockedOut', 'hitOther', 'cut',
+  'flicker', 'dusk', 'siren', 'whack', 'clang', 'stab', 'knockedOut', 'hitOther', 'cut', 'clap', 'logo', 'wrap', 'unmask',
 ];
 
 // ── поддельные часы: Music планирует ноты по setInterval, в офлайне его крутим сами ──
@@ -165,6 +165,12 @@ void (async () => {
       await music(`music:${th}:calm`, 20, 'play', th, { from: 4 });
       await music(`music:${th}:tense`, 16, 'play', th, { intensity: 2, from: 4 });
       await music(`music:${th}:twist`, 16, 'play', th, { twist: true, from: 4 });
+    }
+    // «свет вырубили» в Корпоративе: после щелчка света — провал тишины (0,4–0,95 с)
+    const party = 6;
+    if (want('music:6:blackout')) {
+      const x = await render(7, { setup: (a) => a.setMusic('play', party, true), at: [[4, (a) => a.setTwist(true)]] });
+      out['music:6:blackout-gap'] = measure(x, Math.round(4.45 * SR), Math.round(4.95 * SR));
     }
     if (want('music:menu')) await music('music:menu', 16, 'menu', 0, { from: 1 });
     if (want('music:accuse')) await music('music:accuse', 12, 'accuse', 0, { from: 1 });
