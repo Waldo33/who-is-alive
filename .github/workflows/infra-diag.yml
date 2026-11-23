@@ -34,7 +34,7 @@ jobs:
           MSK: ${{ steps.game.outputs.ip }}
         run: |
           ssh $SSH_OPTS root@$IP "MSK=$MSK bash -s" <<'SH'
-          systemctl is-active massovka-tunnel massovka-game caddy postgresql || true
+          systemctl is-active massovka-tunnel 'massovka-game@*' caddy postgresql || true; cat /etc/massovka/active-color 2>/dev/null || true
           journalctl -u massovka-tunnel -n 15 --no-pager -o cat | tail -6
           echo "перезапусков туннеля за час: $(journalctl -u massovka-tunnel --since "1 hour ago" --no-pager -o cat | grep -c "Started")"
           timeout 8 bash -c "</dev/tcp/$MSK/22" && echo "порт 22 Москвы: открыт" || echo "порт 22 Москвы: нет"
@@ -84,7 +84,7 @@ jobs:
       - name: Ошибки бота за 15 минут (Нидерланды)
         env:
           IP: ${{ steps.infra.outputs.ip }}
-        run: ssh $SSH_OPTS root@$IP "journalctl -u massovka-game --since -15min --no-pager -o cat | grep -E 'tg_error|prepare' | tail -5 | cut -c1-400"
+        run: ssh $SSH_OPTS root@$IP "journalctl -u 'massovka-game*' --since -15min --no-pager -o cat | grep -E 'tg_error|prepare' | tail -5 | cut -c1-400"
       # шлёт картинку и файлы в группу тревог и сразу удаляет — владельцу приходят уведомления о
       # «пропавших тревогах» (23.11.2026). Включать вручную: TG_REACH: '1' на время проверки.
       - name: Достаёт ли Telegram до наших серверов

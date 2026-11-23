@@ -246,6 +246,24 @@ jobs:
           mkdir -p deploy/dashboards && cp infra/grafana/*.json deploy/dashboards/
           ls -la deploy
 
+      - name: Матч через выкладку (старт)
+        # синий/зелёный (docs/infra-plan.md › этап 1): четверо играют, пока выкатывается новая версия;
+        # матч обязан доиграться без «комната закрыта». На старой схеме (одна служба) — пропуск
+        if: matrix.role == 'game' && steps.addr.outputs.host != ''
+        id: through
+        env:
+          IP: ${{ steps.srv.outputs.ip }}
+          HOST: ${{ steps.addr.outputs.host }}
+        run: |
+          if ssh $SSH_OPTS root@$IP 'test -s /etc/massovka/active-color'; then
+            ( SMOKE_THROUGH=1 SMOKE_PLAY_MS=150000 pnpm --filter @kto/server smoke "https://$HOST" > /tmp/through.log 2>&1; echo $? > /tmp/through.rc ) &
+            echo "on=1" >> "$GITHUB_OUTPUT"
+            sleep 15
+            head -5 /tmp/through.log || true
+          else
+            echo "старая схема — проверка «через выкладку» начнётся со следующей выкладки"
+          fi
+
       - name: Настроить и выкатить
         env:
           IP: ${{ steps.srv.outputs.ip }}
@@ -329,6 +347,13 @@ jobs:
             printf '%s → ' "$h"; curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' "https://$h/" || true
           done
 
+      - name: Матч через выкладку (итог)
+        if: always() && steps.through.outputs.on == '1'
+        run: |
+          for _ in $(seq 1 60); do [ -f /tmp/through.rc ] && break; sleep 5; done
+          cat /tmp/through.log || true
+          test "$(cat /tmp/through.rc 2>/dev/null)" = 0 || { echo "::error::матч оборвался на выкладке (или не доигрался за 5 минут)"; exit 1; }
+
       - name: Живой прогон (4 игрока, ~30 с)
         if: matrix.role == 'game'
         env:
@@ -352,7 +377,7 @@ jobs:
         env:
           IP: ${{ steps.srv.outputs.ip }}
         run: |
-          ssh $SSH_OPTS root@$IP 'journalctl -u massovka-game -u caddy -u massovka-tunnel -n 60 --no-pager -o cat' | grep -v -E '"(remote_ip|client_ip)"' | cut -c1-300 || true
+          ssh $SSH_OPTS root@$IP 'journalctl -u 'massovka-game*' -u caddy -u massovka-tunnel -n 60 --no-pager -o cat' | grep -v -E '"(remote_ip|client_ip)"' | cut -c1-300 || true
 
       - name: Итог
         if: success()

@@ -216,6 +216,7 @@ fi
 chmod 600 /etc/massovka/secrets.env
 
 envsum_before=$(cat /etc/massovka/*.env 2>/dev/null | sha256sum)
+game_port() { [ "$1" = green ] && echo 8082 || echo 8081; }
 # база стран для замера доступности (geo.ts): привозит game-deploy, если версия поменялась
 if [ -s "$D/geoip.mmdb" ]; then
   install -d /opt/massovka/geoip
@@ -234,8 +235,6 @@ max_rooms=$(( (mem_mb - 600) / 2 ))
 [ "$max_rooms" -gt 2000 ] && max_rooms=2000
 cat > /etc/massovka/game.env <<EOF
 NODE_ENV=production
-PORT=8080
-INSTANCE=blue
 PUBLIC_WS_BASE=wss://$HOST
 PUBLIC_API_BASE=https://$HOST
 SITE_URL=${BOT_SITE:-https://${SITE_HOST:-$HOST}}
@@ -249,6 +248,17 @@ REGION=$region
 GEOIP_DB=$geoip
 EVENTS_UPSTREAM=$events_up
 EOF
+# синий и зелёный экземпляры (выкладка без обрыва, docs/infra-plan.md › этап 1): свой порт, сосед —
+# куда переезжают комнаты при drain. Снаружи Caddy ведёт к активному (/etc/massovka/active-color).
+for c in blue green; do
+  o=$([ $c = blue ] && echo green || echo blue)
+  cat > "/etc/massovka/game-$c.env" <<EOF
+PORT=$(game_port $c)
+INSTANCE=$c
+PEER_HTTP=http://127.0.0.1:$(game_port "$o")
+PEER_WS_URL=wss://$HOST/i/$o/ws
+EOF
+done
 # ключ Telegram-бота привозит выкладка из GitHub Secrets TELEGRAM_BOT_TOKEN (в /tmp/deploy/bot.env),
 # на диске — /etc/massovka/bot.env, только root; читает его systemd при запуске игрового сервера
 if [ -s "$D/bot.env" ]; then install -m 600 "$D/bot.env" /etc/massovka/bot.env; rm -f "$D/bot.env"; fi
@@ -257,9 +267,11 @@ if [ "${ROLE:-game}" = game ]; then rm -f /etc/massovka/bot.env; fi
 envsum_after=$(cat /etc/massovka/*.env 2>/dev/null | sha256sum)
 
 # ───────────── службы ─────────────
-cat > /etc/systemd/system/massovka-game.service <<'EOF'
+# игровой сервер — шаблон на два экземпляра: massovka-game@blue (:8081) и massovka-game@green (:8082);
+# каждый со своей версией (/opt/massovka/color/<цвет>). После drain экземпляр выходит с кодом 0 и не перезапускается.
+cat > /etc/systemd/system/massovka-game@.service <<'EOF'
 [Unit]
-Description=Массовка: игровой сервер
+Description=Массовка: игровой сервер (%i)
 After=network-online.target postgresql.service
 Wants=network-online.target
 
@@ -267,10 +279,11 @@ Wants=network-online.target
 User=game
 Group=game
 EnvironmentFile=/etc/massovka/game.env
+EnvironmentFile=/etc/massovka/game-%i.env
 EnvironmentFile=/etc/massovka/secrets.env
 EnvironmentFile=-/etc/massovka/bot.env
-ExecStart=/opt/node/bin/node --enable-source-maps /opt/massovka/current/server.mjs
-Restart=always
+ExecStart=/opt/node/bin/node --enable-source-maps /opt/massovka/color/%i/server.mjs
+Restart=on-failure
 RestartSec=1
 KillSignal=SIGTERM
 TimeoutStopSec=30
@@ -282,7 +295,7 @@ ProtectHome=yes
 ProtectKernelTunables=yes
 ProtectControlGroups=yes
 ReadOnlyPaths=/opt/massovka
-# клипы «Лучший момент» для Telegram (apps/server/src/clips.ts): /var/lib/massovka-clips, 2 суток
+# клипы «Лучший момент» для Telegram (apps/server/src/clips.ts): /var/lib/massovka-clips, 2 суток, общая у экземпляров
 StateDirectory=massovka-clips
 # память: MemoryHigh/MemoryMax ниже дописывает setup.sh (drop-in) по размеру машины
 
@@ -292,13 +305,13 @@ EOF
 # память игрового сервера — по размеру машины, не больше физической (раньше стояло 2 ГБ при 1 ГБ):
 # выше MemoryHigh ядро тормозит и отжимает службу, MemoryMax — жёсткий потолок вместе с «Фильмом матча».
 # Перегрузку должен ловить MAX_ROOMS («сервер занят»), а не нехватка памяти.
-install -d /etc/systemd/system/massovka-game.service.d
-cat > /etc/systemd/system/massovka-game.service.d/memory.conf <<EOF
+install -d /etc/systemd/system/massovka-game@.service.d
+cat > /etc/systemd/system/massovka-game@.service.d/memory.conf <<EOF
 [Service]
 MemoryHigh=$(( mem_mb * 75 / 100 ))M
 MemoryMax=$(( mem_mb * 90 / 100 ))M
 EOF
-chmod 644 /etc/systemd/system/massovka-game.service.d/memory.conf
+chmod 644 /etc/systemd/system/massovka-game@.service.d/memory.conf
 
 cat > /etc/systemd/system/caddy.service <<'EOF'
 [Unit]
@@ -338,14 +351,15 @@ install -m 755 "$D/caddy.sh" /opt/massovka/bin/caddy.sh
 # наблюдение (метрики, логи, Grafana, копии) — до Caddy: он смотрит, стоит ли Grafana
 if [ -f "$D/observe.sh" ]; then D=$D ROLE=${ROLE:-game} bash "$D/observe.sh" || echo "::warning::наблюдение настроилось не полностью"; fi
 /opt/massovka/bin/caddy.sh
-chmod 644 /etc/systemd/system/massovka-game.service /etc/systemd/system/caddy.service
-chmod 600 /etc/massovka/game.env
+chmod 644 /etc/systemd/system/massovka-game@.service /etc/systemd/system/caddy.service
+chmod 600 /etc/massovka/game.env /etc/massovka/game-blue.env /etc/massovka/game-green.env
 
-# ───────────── выкладка версии ─────────────
+# ───────────── выкладка версии: синий/зелёный без обрыва матчей ─────────────
+# Новая версия поднимается в свободном цвете, Caddy переключается на неё, старый экземпляр уходит в drain:
+# лобби переезжают к новому, матчи доигрываются, затем он выходит сам (до 20 минут).
+# Откат: echo <прежний цвет> > /etc/massovka/active-color; systemctl start massovka-game@<прежний>;
+#        /opt/massovka/bin/caddy.sh; curl -X POST 127.0.0.1:<порт нового>/internal/drain
 say "версия $SHA"
-# код сервера не изменился (правили только настройку) — не перезапускать: идущие матчи не оборвутся
-same=0
-if [ -f /opt/massovka/current/server.mjs ] && cmp -s "$D/server.mjs" /opt/massovka/current/server.mjs; then same=1; fi
 rel="/opt/massovka/releases/$SHA"
 install -d -o game -g game "$rel"
 install -m 644 -o game -g game "$D/server.mjs" "$rel/server.mjs"
@@ -355,25 +369,68 @@ if [ -f "$D/film.tar.gz" ]; then
   tar -xzf "$D/film.tar.gz" -C "$rel"
   chown -R game:game "$rel"
 fi
-ln -sfn "$rel" /opt/massovka/current
-# хранить пять последних версий (откат — переключить ссылку)
-ls -1dt /opt/massovka/releases/*/ | tail -n +6 | xargs -r rm -rf
+# хранить шесть последних версий: две из них могут работать одновременно (активная и доигрывающая)
+ls -1dt /opt/massovka/releases/*/ | tail -n +7 | xargs -r rm -rf
+install -d /opt/massovka/color
 
 systemctl daemon-reload
 systemctl enable --now caddy >/dev/null 2>&1
 systemctl reload caddy || systemctl restart caddy
-systemctl enable massovka-game >/dev/null 2>&1
-if [ "$same" = 1 ] && [ "$envsum_before" = "$envsum_after" ] && ! systemctl show massovka-game -p NeedDaemonReload | grep -q yes && systemctl is-active -q massovka-game; then
-  say "код сервера тот же — без перезапуска"
+
+active=$(cat /etc/massovka/active-color 2>/dev/null || true)
+case "$active" in blue | green) ;; *) active="" ;; esac
+if [ -n "$active" ] && systemctl is-active -q "massovka-game@$active" \
+  && cmp -s "$D/server.mjs" "/opt/massovka/color/$active/server.mjs" \
+  && [ "$envsum_before" = "$envsum_after" ] \
+  && ! systemctl show "massovka-game@$active" -p NeedDaemonReload | grep -q yes; then
+  # код сервера не изменился (правили только настройку) — ничего не трогаем
+  say "код сервера тот же — без перезапуска ($active)"
 else
-  systemctl restart massovka-game
+  new=$([ "$active" = blue ] && echo green || echo blue)
+  # свободный цвет ещё доигрывает матчи прошлой выкладки — подождать (до 15 минут), потом закрыть
+  if systemctl is-active -q "massovka-game@$new"; then
+    say "$new ещё доигрывает прошлую выкладку — жду до 15 минут"
+    for _ in $(seq 1 180); do systemctl is-active -q "massovka-game@$new" || break; sleep 5; done
+    systemctl stop "massovka-game@$new" 2>/dev/null || true
+  fi
+  ln -sfn "$rel" "/opt/massovka/color/$new"
+  systemctl reset-failed "massovka-game@$new" 2>/dev/null || true
+  systemctl start "massovka-game@$new"
+  ok=0
+  for _ in $(seq 1 60); do
+    if curl -fsS "http://127.0.0.1:$(game_port "$new")/readyz" >/dev/null 2>&1; then ok=1; break; fi
+    sleep 1
+  done
+  if [ "$ok" != 1 ]; then
+    journalctl -u "massovka-game@$new" -n 40 --no-pager -o cat || true
+    systemctl stop "massovka-game@$new" || true
+    echo "::error::новая версия ($new) не поднялась — игроки остаются на прежней (${active:-нет})"
+    exit 1
+  fi
+  # одноразовый переход со старой схемы (одна служба на :8080): её матчи обрываются в последний раз
+  if [ -f /etc/systemd/system/massovka-game.service ]; then
+    say "переход на синий/зелёный: старая служба massovka-game останавливается"
+    systemctl disable --now massovka-game.service >/dev/null 2>&1 || true
+    rm -f /etc/systemd/system/massovka-game.service
+    rm -rf /etc/systemd/system/massovka-game.service.d
+    systemctl daemon-reload
+  fi
+  echo "$new" > /etc/massovka/active-color
+  systemctl enable "massovka-game@$new" >/dev/null 2>&1
+  /opt/massovka/bin/caddy.sh
+  say "активный экземпляр: $new ($SHA)"
+  if [ -n "$active" ] && systemctl is-active -q "massovka-game@$active"; then
+    say "$active → drain: лобби переезжают на $new, матчи доигрываются, потом он выйдет сам"
+    curl -fsS -m 10 -X POST "http://127.0.0.1:$(game_port "$active")/internal/drain" && echo || echo "::warning::$active не принял drain"
+    systemctl disable "massovka-game@$active" >/dev/null 2>&1 || true
+  fi
 fi
 
 say "проверка"
-for i in $(seq 1 30); do
+for _ in $(seq 1 30); do
   if curl -fsS http://127.0.0.1:8080/healthz >/dev/null; then break; fi
   sleep 1
 done
 curl -fsS http://127.0.0.1:8080/healthz && echo
-systemctl is-active massovka-game caddy
+systemctl is-active "massovka-game@$(cat /etc/massovka/active-color)" caddy
 echo "Node: $(/opt/node/bin/node -v); Caddy: $(cat /etc/caddy/VERSION 2>/dev/null || echo ?)"

@@ -3,6 +3,9 @@
  * ~30 с игры с «пальцами». Проверяет HTTPS, WebSocket через Caddy, вход, матч, задержку.
  *
  *   pnpm --filter @kto/server smoke https://1-2-3-4.sslip.io
+ *
+ * SMOKE_THROUGH=1 — «матч через выкладку» (game-deploy запускает его до переключения экземпляров):
+ * играем SMOKE_PLAY_MS через все дубли, и связь не должна закрыться (closed) — матч доигрывается на старом.
  */
 import { Rng } from '@kto/game-core';
 import { RemoteSession, ServerLink } from '@kto/net';
@@ -14,6 +17,7 @@ if (!base) {
   process.exit(2);
 }
 const PLAY_MS = Number(process.env.SMOKE_PLAY_MS ?? 30_000);
+const THROUGH = process.env.SMOKE_THROUGH === '1';
 
 function fail(msg: string): never {
   console.error(`::error::${msg}`);
@@ -47,6 +51,8 @@ links.forEach((l, i) =>
     }
   }),
 );
+// комната закрылась посреди матча (выкладка оборвала) — провал
+links.forEach((l, i) => l.onEnd((why) => fail(`игрок ${i}: связь закрыта сервером (${why})`)));
 const t0 = Date.now();
 for (const l of links) await l.connect();
 console.log(`вошли за ${Date.now() - t0} мс`);
@@ -90,7 +96,7 @@ const tEnd = Date.now() + PLAY_MS;
 let lastPos: [number, number] | null = null;
 let standSince = 0;
 let phaseI = 0;
-while (Date.now() < tEnd && probe.phase === 'play') {
+while (Date.now() < tEnd && (THROUGH ? probe.phase !== 'match_end' : probe.phase === 'play')) {
   const me = probe.me();
   const e = me ? probe.world.get(me.eid) : undefined;
   if (e && me?.alive) {
@@ -130,6 +136,7 @@ const worlds = gs.map((g) => g.world.time);
 console.log('задержка, мс:', lat.join(', '));
 console.log('замирания (шагов без данных):', stalls.join(', '));
 console.log('время мира у игроков, мс:', worlds.join(', '));
+console.log('переподключений:', links.map((l) => l.reconnects).join(', '), '· переездов:', links.map((l) => l.moves).join(', '));
 if (gs.some((g) => !g.me())) fail('кто-то не получил свою сущность');
 if (Math.max(...worlds) - Math.min(...worlds) > 1500) fail('миры игроков разошлись больше чем на 1,5 с');
 if (Math.max(...worlds) < PLAY_MS * 0.5) fail('мир почти не двигался');

@@ -18,3 +18,18 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm sim -- --rounds 200
+  infra:
+    # скрипты серверов: синтаксис bash и конфиг Caddy для всех схем (старая, синий/зелёный) — caddy validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: for f in infra/*.sh infra/game/*.sh infra/test/*.sh; do bash -n "$f" || exit 1; done
+      - name: Caddy
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=$(gh release view --repo caddyserver/caddy --json tagName -q .tagName)
+          v=${tag#v}
+          gh release download "$tag" --repo caddyserver/caddy -p "caddy_${v}_linux_amd64.tar.gz" -D /tmp/caddy
+          tar -xzf "/tmp/caddy/caddy_${v}_linux_amd64.tar.gz" -C /tmp/caddy caddy
+          REQUIRE_CADDY=1 CADDY_BIN=/tmp/caddy/caddy infra/test/caddy-config.sh
