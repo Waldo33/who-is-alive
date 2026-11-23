@@ -24,6 +24,7 @@ import type { Kill, Px } from './gore';
 import { clipSupported, clipViaTelegram, openClipOverlay, preloadClipForTelegram, recordClipInBackground, shareClipInTelegram } from './clip-ui';
 import type { ClipPlayer } from './clip';
 import { Audio } from './audio';
+import type { Sfx } from './audio';
 import { frameFor } from './frames';
 import type { CharFrame } from './frames';
 import type { FontColor } from './font';
@@ -244,6 +245,10 @@ export class GameScene extends Phaser.Scene {
   private confetti: { x: number; y: number; vx: number; vy: number; c: number }[] = [];
   private stepSoundAt = 0;
   private lastAttackAt = -9999;
+  /** По кому был последний свой удар: итог удара звучит как свой (награда), а не как чужой. */
+  private lastAttackEid = -1;
+  /** Сколько звёзд взял сам в этом дубле: каждая следующая звучит на тон выше. */
+  private myStarsTaken = 0;
   /** Замах своего персонажа к цели — сразу по нажатию, до ответа хоста. */
   private lunge: { dx: number; dy: number; start: number } | null = null;
   /** Вспышки замаха у цели (белая обводка цели и искры), мс с начала. */
@@ -914,6 +919,7 @@ export class GameScene extends Phaser.Scene {
 
   private doAttack(eid: number): void {
     this.lastAttackAt = this.sim.world.time;
+    this.lastAttackEid = eid;
     // мгновенный отклик: замах, свист и искры у цели. Итог (поф или оглушение) — от хоста
     const me = this.me();
     const w = this.sim.world;
@@ -923,7 +929,7 @@ export class GameScene extends Phaser.Scene {
       const d = Math.hypot(te.x - mine.x, te.y - mine.y) || 1;
       this.lunge = { dx: ((te.x - mine.x) / d) * 3, dy: ((te.y - mine.y) / d) * 2, start: performance.now() };
       this.swingFx.push({ eid, x: te.x, y: te.y, t: 0 });
-      this.audio.play('swing');
+      // замах — только вибрацией: свист из своего телефона выдал бы соседям по комнате, кто бьёт
       haptic('medium');
     }
     this.sim.intent({ k: 'attack', eid });
@@ -939,14 +945,17 @@ export class GameScene extends Phaser.Scene {
         // бьющий известен (ночь Майами, удар по статисту); без него («Жёсткий дубль») — «поф»
         if (this.weaponKills() && ev.attacker !== undefined) this.weaponHit(ev.target, ev.x, ev.y, ev.attacker);
         else {
-          this.audio.play(ev.result === 'player' ? 'hitPlayer' : 'hitBot');
+          // вырезали меня — «вырезан»; мой удар по живому — награда; чужой — событие на поле
+          if (ev.target === myEid) this.audio.play('cut');
+          else if (ev.result === 'player') this.audio.play(this.myHit(ev.target) ? 'hitPlayer' : 'hitOther');
+          else this.audio.play('hitBot');
           this.audio.play('poof');
           this.cameras.main.shake(120, 0.008);
           this.hitStop = 60;
         }
         // вибрация (в Telegram — родная): вырезали меня — сильно; мой удар — успех по живому, ошибка по боту
         if (ev.target === myEid) haptic('heavy');
-        else if (this.sim.world.time - this.lastAttackAt < 200) haptic(ev.result === 'player' ? 'success' : 'error');
+        else if (this.myHit(ev.target)) haptic(ev.result === 'player' ? 'success' : 'error');
         if (ev.target === myEid) {
           // «Жёсткий дубль»: вырезал режиссёр — сразу после окна команды, без удара
           const c = this.sim.world.crowd;
@@ -960,7 +969,8 @@ export class GameScene extends Phaser.Scene {
         }
         break;
       case 'star_taken':
-        this.audio.play('starTake');
+        if (ev.eid === myEid) this.myStarsTaken = Math.min(3, this.myStarsTaken + 1);
+        this.audio.play('starTake', ev.eid === myEid ? this.myStarsTaken : 0);
         if (ev.eid === myEid) haptic('success');
         if (ev.eid !== myEid && this.sim.phase === 'play') this.tip('star');
         if (themePack(this.sim.theme).starSiren && this.sim.phase === 'play') {
@@ -1096,6 +1106,7 @@ export class GameScene extends Phaser.Scene {
       // Telegram: посреди матча — переспросить, если закрывают приложение
       if (!this.init0.tutorial && !this.init0.spectator) setClosingConfirmation(n.phase !== 'match_end');
       if (n.phase === 'play') {
+        this.myStarsTaken = 0;
         this.audio.play('ready');
         this.flashWord(this.t.game.action);
         // присказка темы — только когда нет условия съёмки: его уже прочитали на отсчёте
@@ -1186,13 +1197,24 @@ export class GameScene extends Phaser.Scene {
     this.noPoof.add(eid);
   }
 
+  /** Свой ли это удар: по этой цели я только что бил. */
+  private myHit(target: number): boolean {
+    return target === this.lastAttackEid && this.sim.world.time - this.lastAttackAt < 400;
+  }
+
+  /** Звук удара оружием: вырезали меня, я выбил живого или удар на поле. */
+  private impactSfx(lk: LiveKill): Sfx {
+    if (lk.mine) return 'cut';
+    return lk.k.by !== undefined && lk.k.by === this.me()?.eid ? 'hitPlayer' : 'hitOther';
+  }
+
   /** Момент удара: всё, что должно случиться разом. */
   private weaponImpact(lk: LiveKill): void {
     if (lk.k.mild) {
       // «Без насилия»: без крови, вспышки и тела — жертва исчезает обычным «пуфом»
       if (lk.mine) this.time.delayedCall(0, () => this.showDeath(lk.mine!.sub, false));
       this.audio.play('poof');
-      this.audio.play('hitPlayer');
+      this.audio.play(this.impactSfx(lk));
       this.cameras.main.shake(120, 0.008);
       lk.standIn?.destroy();
       lk.standIn = null;
@@ -1203,7 +1225,8 @@ export class GameScene extends Phaser.Scene {
     }
     if (lk.mine) this.time.delayedCall(0, () => this.showDeath(lk.mine!.sub, true));
     this.audio.play(weaponSfx(lk.k));
-    this.audio.play('hitPlayer');
+    // вырезали меня — дальше звон в ушах (bloodyScreen › knockedOut)
+    if (!lk.mine) this.audio.play(this.impactSfx(lk));
     this.hitStop = 70;
     this.cameras.main.shake(180, 0.016);
     navigator.vibrate?.(30);

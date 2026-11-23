@@ -16,7 +16,7 @@ const G = globalThis as unknown as { __out?: string; __err?: string; __only?: st
 const SFX: Sfx[] = [
   'step', 'hitPlayer', 'hitBot', 'poof', 'starTake', 'starSpawn', 'crowd', 'tick', 'click', 'ready',
   'accuseRight', 'accuseWrong', 'fanfare', 'sad', 'hedge', 'pigeon', 'drum', 'denied', 'count', 'swing',
-  'flicker', 'dusk', 'siren', 'whack', 'clang', 'stab', 'knockedOut',
+  'flicker', 'dusk', 'siren', 'whack', 'clang', 'stab', 'knockedOut', 'hitOther', 'cut',
 ];
 
 // ── поддельные часы: Music планирует ноты по setInterval, в офлайне его крутим сами ──
@@ -143,7 +143,7 @@ void (async () => {
     const only = G.__only ? G.__only.split(',') : null;
     const want = (k: string) => !only || only.some((o) => k.startsWith(o));
     for (const s of SFX) {
-      if (!want(s)) continue;
+      if (!want('sfx:' + s)) continue;
       const x = await render(3.5, { setup: (a) => a.play(s) });
       out['sfx:' + s] = measure(x);
     }
