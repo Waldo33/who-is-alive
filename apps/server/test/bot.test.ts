@@ -48,6 +48,15 @@ describe('Telegram-бот', () => {
     expect(JSON.stringify(send.body)).toContain('https://site.example/r/ABCD?src=tg');
   });
 
+  it('/start без параметра: «Играть» — сразу матч с ИИ, «С друзьями» — новая комната', async () => {
+    const { bot, calls } = makeBot();
+    const upd = { message: { chat: { id: 1, type: 'private' }, text: '/start', from: { language_code: 'ru' } } };
+    await bot.handle('POST', '/hook', { 'x-telegram-bot-api-secret-token': bot.hookSecret }, upd);
+    const kb = (calls.find((c) => c.method === 'sendMessage')!.body as { reply_markup: { inline_keyboard: { text: string; web_app: { url: string } }[][] } }).reply_markup.inline_keyboard;
+    expect(kb[0][0].web_app.url).toBe('https://site.example/sandbox?go&src=tg');
+    expect(kb[1][0].web_app.url).toBe('https://site.example/?create=1&src=tg');
+  });
+
   it('кастинг: первый результат за день окончательный, рейтинг чата по победам и попыткам', async () => {
     const { bot } = makeBot();
     const n = dailyNow();

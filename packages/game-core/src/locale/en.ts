@@ -74,6 +74,7 @@ export const en: Dict = {
     play: 'Play with bots',
     quickPlay: 'Play',
     withFriends: 'With friends',
+    learnFirst: 'How to play — a practice take',
     dailyDone: 'Done · new one tomorrow',
     newYear: 'Happy holidays! The New Year “Office Party” is on',
     createGame: 'Create a game',
@@ -188,6 +189,9 @@ export const en: Dict = {
       vote: ['No move named:', 'guess the majority'],
       spot: ['A circle: someone', 'missed the move'],
       star: ['Someone took a star:', 'bot or actor?'],
+      move: ['Walk like them:', 'tap the field'],
+      crowd: ['Freeze-frame! Tap', 'the named move'],
+      hunt: ['Spot who acts off,', 'walk up and tap them'],
     },
   },
   daily: {

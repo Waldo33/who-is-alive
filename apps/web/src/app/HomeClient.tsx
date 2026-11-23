@@ -30,6 +30,7 @@ export default function HomeClient() {
   const [showCode, setShowCode] = useState(false);
   const [code, setCode] = useState('');
   const [toast, setToast] = useState('');
+  const [newbie, setNewbie] = useState(false);
   // кастинг дня: номер и пройден ли сегодня (localStorage — как на /daily)
   const [daily, setDaily] = useState({ on: false, n: 0, done: false });
   useEffect(() => {
@@ -59,14 +60,11 @@ export default function HomeClient() {
       return;
     }
     // музыка меню: заиграет после первого касания экрана (раньше браузер звук не пустит)
-    // первый запуск — сразу обучение на практике, без описаний, потом матч с ИИ
-    if (!tutorialDone()) {
-      track('page_view', { page: 'home', first: true });
-      // после обучения — сразу матч с ИИ: человеку из ролика без друзей не нужно искать, где играть
-      router.replace(`/learn?next=${encodeURIComponent('/sandbox?go')}`);
-      return;
-    }
-    track('page_view', { page: 'home' });
+    // первый запуск — без обязательного обучения: «Играть» сразу в матч (подсказки — в первом матче),
+    // «Пробный дубль» — по желанию ссылкой под кнопками (обучение пропускали 7 из 9, 20–22.11)
+    const first = !tutorialDone();
+    setNewbie(first);
+    track('page_view', first ? { page: 'home', first: true } : { page: 'home' });
     getAudio().setMusic('menu');
     // «С друзьями» в конце матча с ИИ: сразу создать комнату и позвать
     if (new URLSearchParams(location.search).has('create')) {
@@ -74,7 +72,7 @@ export default function HomeClient() {
       track('invite_create', { from: 'sandbox' });
       void createRef.current();
     }
-  }, [router]);
+  }, []);
   const t = DICTS[lang];
 
   const create = async () => {
@@ -149,6 +147,11 @@ export default function HomeClient() {
           </Link>
         )}
       </div>
+      {newbie && (
+        <Link className="link" href={`/learn?next=${encodeURIComponent('/sandbox?go')}`} onClick={() => track('learn_tap', { from: 'home' })}>
+          {t.start.learnFirst}
+        </Link>
+      )}
       {showCode ? (
         <form
           className="code-form"

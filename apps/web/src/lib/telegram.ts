@@ -206,7 +206,8 @@ export function telegramLang(): 'ru' | 'en' | null {
 }
 
 /**
- * Параметр запуска (?startapp=…): `r_КОД` — комната, `daily` — загадка дня. Telegram передаёт его
+ * Параметр запуска (?startapp=…): `r_КОД` — комната, `play` — сразу матч с ИИ, `friends` — новая
+ * комната, `daily` — загадка дня. Telegram передаёт его
  * и в адресе (`tgWebAppStartParam`) — так он известен сразу, ещё до загрузки SDK.
  */
 export function telegramStart(): string | null {
@@ -229,7 +230,10 @@ export function telegramStartTarget(): string | null {
     /* приватный режим */
   }
   const room = /^r_([A-Z]{4})$/.exec(start);
-  return room ? `/r/${room[1]}?src=tg` : start === 'daily' && featureOn('casting') ? '/daily?src=tg' : null;
+  if (room) return `/r/${room[1]}?src=tg`;
+  if (start === 'play') return '/sandbox?go&src=tg';
+  if (start === 'friends') return '/?create=1&src=tg';
+  return start === 'daily' && featureOn('casting') ? '/daily?src=tg' : null;
 }
 
 /** Ссылка, открывающая игру в Telegram с параметром (или null, если бот ещё не настроен). */

@@ -16,7 +16,7 @@ import {
 } from '@kto/game-core';
 import type { AwardId, ClientSession, CrowdKind, Dict, Entity, GameConfig, Lang, Moment, Notice, RoundRecording, RoundSummary, ThemeText, World, WorldEvent } from '@kto/game-core';
 import { resultCardFile } from './card';
-import { Tutorial } from './tutorial';
+import { Tutorial, tutorialDone } from './tutorial';
 import { mildOn } from '../ui/topbar';
 import { SWING_HIT, aim, armed, armsOf, bodyPose, drawAir, drawFloor, killsFromLog, makeKill, weaponSfx } from './gore';
 import type { ArmColors } from './gore';
@@ -261,6 +261,8 @@ export class GameScene extends Phaser.Scene {
   private specL2: Phaser.GameObjects.BitmapText | null = null;
   /** Подсказка «впервые видишь» в настоящей игре (две строки, до времени). */
   private coachTip: { lines: readonly string[]; until: number } | null = null;
+  /** Новичку: когда подсказать «как искать живого» — в первую спокойную минуту после этого момента. */
+  private huntTipAt = 0;
   private clapSentAt = 0;
   /** Выбивание оружием (облик с kill: 'weapon'): замахи, брызги, пятна и тела — до конца дубля. */
   private goreG!: Phaser.GameObjects.Graphics;
@@ -989,6 +991,7 @@ export class GameScene extends Phaser.Scene {
       }
       case 'crowd':
         if (ev.vote) this.tip('vote');
+        else if (this.newbie) this.tip('crowd');
         this.audio.cutMusic();
         this.audio.play('crowd');
         haptic('warning'); // стоп-кадр: «замри» чувствуется рукой, даже без звука
@@ -1094,6 +1097,11 @@ export class GameScene extends Phaser.Scene {
         // присказка темы — только когда нет условия съёмки: его уже прочитали на отсчёте
         const intro = roundMod(this.sim.mod) === 'none' ? this.themeText()?.intro : undefined;
         if (intro) this.time.delayedCall(900, () => this.sim.phase === 'play' && this.showToast(intro, 2400));
+        // новичок без «Пробного дубля»: как ходить — сразу, как искать живого — когда осмотрелся
+        if (this.newbie && !this.init0.spectator) {
+          this.time.delayedCall(1200, () => this.sim.phase === 'play' && !this.sim.world.isFrozen() && this.tip('move'));
+          this.huntTipAt = performance.now() + 14000 / (this.init0.timeScale ?? 1);
+        }
       }
       if (n.phase === 'accuse') this.audio.play('tick');
       this.syncMusic(n.phase === 'countdown');
@@ -2349,6 +2357,10 @@ export class GameScene extends Phaser.Scene {
     g.clear();
     this.renderFocus();
     let lines: readonly string[] = ['', ''];
+    if (this.huntTipAt && performance.now() > this.huntTipAt && this.sim.phase === 'play' && !this.sim.world.isFrozen() && !this.coachTip) {
+      this.huntTipAt = 0;
+      this.tip('hunt');
+    }
     if (this.tut) lines = this.tut.lines;
     else if (this.coachTip && performance.now() < this.coachTip.until && this.sim.phase === 'play') lines = this.coachTip.lines;
     else this.coachTip = null;
@@ -2443,7 +2455,12 @@ export class GameScene extends Phaser.Scene {
   }
 
   /** «Впервые видишь»: подсказка из двух строк, один раз на устройство для каждого случая. */
-  private tip(key: 'vote' | 'spot' | 'star'): void {
+  /** Игрок не проходил «Пробный дубль» — в первом матче подсказки «ходи», «стоп-кадр», «ищи живого». */
+  private get newbie(): boolean {
+    return !this.tut && !tutorialDone();
+  }
+
+  private tip(key: 'vote' | 'spot' | 'star' | 'move' | 'crowd' | 'hunt'): void {
     if (this.tut) return;
     let seen: string[] = [];
     try {

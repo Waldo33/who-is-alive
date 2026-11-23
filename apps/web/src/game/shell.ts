@@ -82,13 +82,9 @@ export interface ShellOptions {
 }
 
 export function mountSandbox(root: HTMLElement, opts: ShellOptions): () => void {
-  // новичок — сначала обучение на практике, без нажатий (не в автономном файле и не в ?dev)
+  // новичок играет сразу: обучение — по желанию («Как играть»), в первом матче — подсказки сцены
   setTrackContext({ mode: 'sandbox' });
-  if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('dev') && !tutorialDone()) {
-    track('page_view', { page: 'sandbox', first: true });
-    location.replace('/learn?next=/sandbox');
-    return () => {};
-  }
+  if (!tutorialDone()) track('page_view', { page: 'sandbox', first: true });
   const style = document.createElement('style');
   style.textContent = CSS;
   document.head.appendChild(style);

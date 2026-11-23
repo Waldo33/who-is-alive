@@ -37,6 +37,7 @@ const T = {
     start: 'Массовка — пиксельная игра для компании: спрячься в толпе ботов и вычисли друзей раньше, чем они тебя.',
     startCasting: ' А каждый день — «Кастинг дня»: найди актёра в массовке.',
     play: '▶ Играть',
+    friends: '👥 С друзьями',
     daily: '🎬 Кастинг дня',
     inviteTitle: 'Позвать в «Массовку»',
     inviteDesc: 'Карточка с кнопкой: друзья откроют игру прямо в Telegram',
@@ -55,6 +56,7 @@ const T = {
     start: 'Be Nobody is a pixel party game: hide in a crowd of bots and spot your friends before they spot you.',
     startCasting: ' Plus a daily casting: spot the actor among the extras.',
     play: '▶ Play',
+    friends: '👥 With friends',
     daily: '🎬 Daily casting',
     inviteTitle: 'Invite to Be Nobody',
     inviteDesc: 'A card with a button: friends open the game right in Telegram',
@@ -246,18 +248,23 @@ export class Bot {
   private async onStart(msg: NonNullable<Update['message']>): Promise<void> {
     const t = T[langOf(msg.from?.language_code)];
     const param = (msg.text ?? '').split(' ')[1] ?? '';
-    const path = /^r_[A-Z]{4}$/.test(param) ? `/r/${param.slice(2)}` : param === 'daily' && this.casting ? '/daily' : '/';
+    const room = /^r_[A-Z]{4}$/.test(param);
+    // «Играть» — сразу матч с ИИ (одно касание), «С друзьями» — новая комната, чтобы звать
+    const path = room ? `/r/${param.slice(2)}` : param === 'daily' && this.casting ? '/daily' : '/sandbox?go';
     // кнопка web_app — только в личке; в группах — прямая ссылка Mini App
     const priv = msg.chat.type === 'private';
-    const web = (text: string, p: string) => ({ text, web_app: { url: `${this.o.site}${p}?src=tg` } });
+    const web = (text: string, p: string) => ({ text, web_app: { url: `${this.o.site}${p}${p.includes('?') ? '&' : '?'}src=tg` } });
+    const rows = priv
+      ? [[web(t.play, path)], ...(room ? [] : [[web(t.friends, '/?create=1')]]), ...(this.casting ? [[web(t.daily, '/daily')]] : [])]
+      : [
+          [{ text: t.play, url: await this.link(room ? param : 'play') }],
+          ...(room ? [] : [[{ text: t.friends, url: await this.link('friends') }]]),
+          ...(this.casting ? [[{ text: t.daily, url: await this.link('daily') }]] : []),
+        ];
     await this.api('sendMessage', {
       chat_id: msg.chat.id,
       text: t.start + (this.casting ? t.startCasting : ''),
-      reply_markup: {
-        inline_keyboard: priv
-          ? [[web(t.play, path)], ...(this.casting ? [[web(t.daily, '/daily')]] : [])]
-          : [[{ text: t.play, url: await this.link(param || undefined) }], ...(this.casting ? [[{ text: t.daily, url: await this.link('daily') }]] : [])],
-      },
+      reply_markup: { inline_keyboard: rows },
     });
   }
 
