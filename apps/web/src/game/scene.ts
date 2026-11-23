@@ -252,6 +252,8 @@ export class GameScene extends Phaser.Scene {
   private lastAttackEid = -1;
   /** Сколько звёзд взял сам в этом дубле: каждая следующая звучит на тон выше. */
   private myStarsTaken = 0;
+  /** Кто вырезал меня в этом дубле (аналитика round_end). */
+  private outBy: 'director' | 'player' | null = null;
   /** Замах своего персонажа к цели — сразу по нажатию, до ответа хоста. */
   private lunge: { dx: number; dy: number; start: number } | null = null;
   /** Вспышки замаха у цели (белая обводка цели и искры), мс с начала. */
@@ -964,6 +966,7 @@ export class GameScene extends Phaser.Scene {
           const c = this.sim.world.crowd;
           const byDirector = (roundMod(this.sim.mod) === 'hard' || this.cfg.strictCrowd) && !!c && !c.vote && ev.at > c.windowEnd && ev.at < c.windowEnd + 2000;
           const sub = byDirector ? this.t.game.cutByCrowd : undefined;
+          this.outBy = byDirector ? 'director' : 'player';
           // оружием — баннер в момент удара, с кровью на экране и сотрясением (weaponImpact)
           const lk = this.kills.find((k) => k.k.eid === ev.target && !k.hit);
           if (lk) lk.mine = { sub };
@@ -1071,6 +1074,8 @@ export class GameScene extends Phaser.Scene {
       mod: this.sim.mod,
       reason: s.endReason,
       alive: !!me?.alive,
+      // кто вырезал: режиссёр за пропущенную команду («Жёсткий дубль») — сигнал не услышали
+      out: me?.alive ? 'none' : (this.outBy ?? 'player'),
       accused: acc ? (acc.correct ? 'right' : 'wrong') : 'none',
       caught: !!me && s.accusations.some((a) => a.eid === me.eid),
       kill: pts?.kill ?? 0,
@@ -1113,6 +1118,7 @@ export class GameScene extends Phaser.Scene {
       if (!this.init0.tutorial && !this.init0.spectator) setClosingConfirmation(n.phase !== 'match_end');
       if (n.phase === 'play') {
         this.myStarsTaken = 0;
+        this.outBy = null;
         this.audio.play('ready');
         this.flashWord(this.t.game.action);
         // присказка темы — только когда нет условия съёмки: его уже прочитали на отсчёте

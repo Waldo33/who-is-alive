@@ -3,6 +3,7 @@ import type { Lang } from '@kto/game-core';
 import { LANG_KEY } from '../lib/lang';
 import { getAudio } from '../game/audio';
 import { setTelegramBack } from '../lib/telegram';
+import { track } from '../lib/analytics';
 
 /**
  * Верхняя панель всех экранов: «← Назад» слева и шестерёнка справа.
@@ -233,6 +234,7 @@ export function mountTopBar(parent: HTMLElement, init: TopBarOptions): TopBar {
     sheet.querySelectorAll<HTMLButtonElement>('[data-sound]').forEach((b) =>
       b.addEventListener('click', () => {
         const v = b.dataset.sound === 'on';
+        if (v !== soundEnabled()) track('sound_toggle', { what: 'sfx', on: v });
         saveSound(v);
         getAudio().setSfxEnabled(v);
         o.onSound?.(v);
@@ -252,6 +254,7 @@ export function mountTopBar(parent: HTMLElement, init: TopBarOptions): TopBar {
     sheet.querySelectorAll<HTMLButtonElement>('[data-music]').forEach((b) =>
       b.addEventListener('click', () => {
         const v = b.dataset.music === 'on';
+        if (v !== musicEnabled()) track('sound_toggle', { what: 'music', on: v });
         getAudio().setMusicEnabled(v);
         o.onMusic?.(v);
         render();
@@ -259,12 +262,16 @@ export function mountTopBar(parent: HTMLElement, init: TopBarOptions): TopBar {
     );
     sheet.querySelectorAll<HTMLButtonElement>('[data-room-music]').forEach((b) =>
       b.addEventListener('click', () => {
-        o.roomMusic?.onMode?.(b.dataset.roomMusic as RoomMusicMode);
+        const m = b.dataset.roomMusic as RoomMusicMode;
+        if (m !== o.roomMusic?.mode) track('sound_toggle', { what: 'room_music', mode: m });
+        o.roomMusic?.onMode?.(m);
       }),
     );
     sheet.querySelectorAll<HTMLButtonElement>('[data-own-music]').forEach((b) =>
       b.addEventListener('click', () => {
-        o.roomMusic?.onOwn?.(b.dataset.ownMusic === 'on');
+        const on = b.dataset.ownMusic === 'on';
+        if (on !== o.roomMusic?.own) track('sound_toggle', { what: 'own_music', on });
+        o.roomMusic?.onOwn?.(on);
       }),
     );
     sheet.querySelector('.kto-sheet-close')!.addEventListener('click', close);

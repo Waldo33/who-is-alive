@@ -783,6 +783,162 @@
     "defaults": {},
     "overrides": []
    }
+  },
+  {
+   "id": 17,
+   "type": "stat",
+   "title": "Выключили звук, % игроков",
+   "description": "Из игравших матч — сколько выключили музыку или звуки в шестерёнке. Больше 25% — звук раздражает (план звука)",
+   "gridPos": {
+    "x": 0,
+    "y": 39,
+    "w": 6,
+    "h": 8
+   },
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "pg"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "pg"
+     },
+     "refId": "A",
+     "rawQuery": true,
+     "editorMode": "code",
+     "format": "table",
+     "rawSql": "select round(100.0*count(distinct device_id) filter (where name='sound_toggle' and props->>'on'='false' and props->>'what' in ('sfx','music'))\n / nullif(count(distinct device_id) filter (where name='match_start'),0),0) from analytics_events where $__timeFilter(created_at)"
+    }
+   ],
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "colorMode": "none",
+    "graphMode": "none",
+    "textMode": "value"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percent",
+     "decimals": 0
+    },
+    "overrides": []
+   }
+  },
+  {
+   "id": 18,
+   "type": "bargauge",
+   "title": "Что выключают",
+   "description": "sfx — звуки, music — музыка, room_music — режиссёр выбрал «Музыку в дубле», own_music — гость вернул музыку себе",
+   "gridPos": {
+    "x": 6,
+    "y": 39,
+    "w": 9,
+    "h": 8
+   },
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "pg"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "pg"
+     },
+     "refId": "A",
+     "rawQuery": true,
+     "editorMode": "code",
+     "format": "table",
+     "rawSql": "select (props->>'what') || case when props ? 'mode' then ': ' || (props->>'mode') else case when (props->>'on')::boolean then ' вкл' else ' выкл' end end as что,\n count(*) n from analytics_events where name='sound_toggle' and $__timeFilter(created_at) group by 1 order by 2 desc"
+    }
+   ],
+   "options": {
+    "orientation": "horizontal",
+    "displayMode": "basic",
+    "showUnfilled": true,
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": true
+    },
+    "valueMode": "text",
+    "namePlacement": "left",
+    "sizing": "auto"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "none",
+     "decimals": 0,
+     "color": {
+      "mode": "continuous-BlPu"
+     }
+    },
+    "overrides": []
+   }
+  },
+  {
+   "id": 19,
+   "type": "bargauge",
+   "title": "Кто вырезал",
+   "description": "Режиссёр вырезает за пропущенную команду «Море волнуется» («Жёсткий дубль»): растёт — сигнал не слышат",
+   "gridPos": {
+    "x": 15,
+    "y": 39,
+    "w": 9,
+    "h": 8
+   },
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "pg"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "pg"
+     },
+     "refId": "A",
+     "rawQuery": true,
+     "editorMode": "code",
+     "format": "table",
+     "rawSql": "select case props->>'out' when 'director' then 'режиссёр (пропустил команду)' when 'player' then 'игрок' else 'не вырезали' end as кто, count(*) n\n from analytics_events where name='round_end' and props ? 'out' and $__timeFilter(created_at) group by 1 order by 2 desc"
+    }
+   ],
+   "options": {
+    "orientation": "horizontal",
+    "displayMode": "basic",
+    "showUnfilled": true,
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": true
+    },
+    "valueMode": "text",
+    "namePlacement": "left",
+    "sizing": "auto"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "none",
+     "decimals": 0,
+     "color": {
+      "mode": "continuous-BlPu"
+     }
+    },
+    "overrides": []
+   }
   }
  ],
  "templating": {
