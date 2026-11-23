@@ -121,7 +121,7 @@ CI (`.github/workflows/ci.yml`): lint, typecheck, test, `sim --rounds 200`.
 | `apps/web/src/game/scene.ts` | сцена Phaser (~1400 строк): рендер, HUD, оверлеи фаз, ввод, музыка по фазам |
 | `…/game/themes/` | пакеты тем («площадки»): облик толпы, локация, музыка; каждый — свой файл, грузится по требованию (`index.ts › loadTheme`, до старта игры — `loadAllThemes`). Парк — в `sprites.ts`. Новая тема на заданный сеттинг — скилл `.claude/skills/new-theme/SKILL.md` |
 | `…/game/sprites.ts`, `art.ts`, `frames.ts`, `pixels.ts`, `font.ts` | процедурный арт, битмап-шрифт, выбор кадра персонажа |
-| `…/game/audio.ts`, `music.ts` | звук: `getAudio()` (один на приложение), эффекты, музыкальный секвенсор |
+| `…/game/audio.ts`, `music.ts`, `sfx.ts` | звук: `getAudio()` (один на приложение), эффекты (`sfx.ts › Synth`), музыкальный секвенсор; замер на динамике телефона — `pnpm --filter web sound-check`. Новый звук, правка музыки или жалоба на звук — скилл `.claude/skills/sound-design/SKILL.md` |
 | `…/game/clip.ts`, `film.ts`, `clip-ui.ts`, `card.ts` | клип выбывшего и куски фильма (вёрстка под ленты, подсветка героя и врагов, QR), «Фильм матча» (крючок → 3 момента → титры), экраны монтажа, карточка результата. Без DOM (фабрика холстов `pixels.ts`, звук `clip-audio.ts` + `sfx.ts`) — тот же код рисует фильм на сервере |
 | `…/game/shell.ts`, `boot.ts` | оболочка песочницы, запуск Phaser |
 | `…/game/tutorial.ts`, `apps/web/src/ui/TutorialStage.tsx`, `/learn` | «Пробный дубль» — обучение действием (сценарий поверх песочницы без ИИ) |
