@@ -39,6 +39,10 @@ jobs:
           timeout 8 bash -c "</dev/tcp/$MSK/22" && echo "порт 22 Москвы: открыт" || echo "порт 22 Москвы: нет"
           timeout 8 bash -c "</dev/tcp/$MSK/443" && echo "порт 443 Москвы: открыт" || echo "порт 443 Москвы: нет"
           free -m | head -2
+          echo "── сторож"
+          systemctl list-timers massovka-watch.timer --no-pager | head -3
+          for f in /var/lib/massovka-watch/*; do echo "$(basename $f): $(cat $f) мин подряд не работает"; done
+          journalctl -u massovka-watch -n 5 --no-pager -o cat | tail -3
           echo "── 20 попыток соединиться с Москвой (по 3 с)"
           for port in 22 443 80; do
             ok=0; for i in $(seq 1 20); do timeout 3 bash -c "</dev/tcp/$MSK/$port" 2>/dev/null && ok=$((ok+1)); sleep 0.5; done
