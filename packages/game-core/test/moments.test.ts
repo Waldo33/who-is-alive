@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { WorldEvent } from '../src';
-import { MOMENT_MAX_MS, MOMENT_MIN_MS, coreFrom, createLocalSession, findBestMoment, makeConfig, makeReplay, momentEvents, recordRound, worldOf } from '../src';
+import type { FilmCandidate, Moment, WorldEvent } from '../src';
+import { MOMENT_MAX_MS, MOMENT_MIN_MS, coreFrom, createLocalSession, filmHook, findBestMoment, pickFilmMoments, makeConfig, makeReplay, momentEvents, recordRound, worldOf } from '../src';
 
 const players = ['me', 'b', 'c', 'd'].map((pid, i) => ({ pid, name: pid, color: i }));
 
@@ -74,5 +74,32 @@ describe('лучший момент', () => {
       }
     }
     expect(checked).toBeGreaterThan(0);
+  });
+});
+
+describe('фильм матча', () => {
+  const mk = (round: number, score: number, kind: Moment['kind'], hero?: string): FilmCandidate => ({
+    round,
+    hero,
+    moment: { from: 0, to: 6000, score, kind, at: 3000 },
+  });
+
+  it('три ярких момента по порядку дублей, разные герои и победитель', () => {
+    const c = [mk(1, 9, 'knockout', 'a'), mk(2, 8, 'knockout', 'a'), mk(3, 5, 'star3', 'b'), mk(4, 2, 'close'), mk(5, 6, 'knockout', 'c'), mk(6, 8, 'knockout', 'a')];
+    const p = pickFilmMoments(c, { winner: 'c' });
+    expect(p.map((x) => x.round)).toEqual([1, 3, 5]);
+    expect(filmHook(p)!.round).toBe(1);
+  });
+
+  it('не больше одного провала и без слабых, если есть яркие', () => {
+    const c = [mk(1, 7, 'hit_bot', 'a'), mk(2, 7, 'hit_bot', 'b'), mk(3, 6, 'knockout', 'c'), mk(4, 1, 'close')];
+    const p = pickFilmMoments(c);
+    expect(p.filter((x) => x.moment.kind === 'hit_bot')).toHaveLength(1);
+    expect(p.some((x) => x.round === 4)).toBe(false);
+  });
+
+  it('скучный матч — один момент, пустой — ничего', () => {
+    expect(pickFilmMoments([mk(1, 1, 'close'), mk(2, 2, 'close'), mk(3, 0, 'end')])).toHaveLength(1);
+    expect(pickFilmMoments([])).toHaveLength(0);
   });
 });

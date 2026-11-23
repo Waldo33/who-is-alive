@@ -50,6 +50,7 @@ pnpm --filter web clip-preview <папка> 11,12 [тема]   # кадры кл
 pnpm --filter web theme-sheet 4 out.png          # лист темы ×8: костюм, свои позы, иконки команд
 pnpm --filter web theme-video 4 out.mp4          # видео дубля в теме со звуком (нужен запущенный сайт на :3124 и ffmpeg)
 pnpm --filter web clip-video 12 out.webm 4       # клип «Лучший момент» со звуком — как его выгрузит игрок
+pnpm --filter web film-preview <папка> 12 [тема]  # кадры «Фильма матча» (целый матч с ИИ)
 pnpm --filter web standalone          # песочница одним HTML-файлом: apps/web/dist/sandbox.html
 ```
 
@@ -119,14 +120,14 @@ CI (`.github/workflows/ci.yml`): lint, typecheck, test, `sim --rounds 200`.
 | `…/game/themes/` | пакеты тем («площадки»): облик толпы, локация, музыка; каждый — свой файл, грузится по требованию (`index.ts › loadTheme`, до старта игры — `loadAllThemes`). Парк — в `sprites.ts`. Новая тема на заданный сеттинг — скилл `.claude/skills/new-theme/SKILL.md` |
 | `…/game/sprites.ts`, `art.ts`, `frames.ts`, `pixels.ts`, `font.ts` | процедурный арт, битмап-шрифт, выбор кадра персонажа |
 | `…/game/audio.ts`, `music.ts` | звук: `getAudio()` (один на приложение), эффекты, музыкальный секвенсор |
-| `…/game/clip.ts`, `clip-ui.ts`, `card.ts` | клип «Лучший момент» (MediaRecorder), экран монтажа, карточка результата |
+| `…/game/clip.ts`, `film.ts`, `clip-ui.ts`, `card.ts` | клип выбывшего и куски фильма (вёрстка под ленты, подсветка героя и врагов, QR), «Фильм матча» (крючок → 3 момента → титры), экраны монтажа, карточка результата. Без DOM (фабрика холстов `pixels.ts`, звук `clip-audio.ts` + `sfx.ts`) — тот же код рисует фильм на сервере |
 | `…/game/shell.ts`, `boot.ts` | оболочка песочницы, запуск Phaser |
 | `…/game/tutorial.ts`, `apps/web/src/ui/TutorialStage.tsx`, `/learn` | «Пробный дубль» — обучение действием (сценарий поверх песочницы без ИИ) |
 | `apps/web/src/ui/topbar.ts` | верхняя панель «< Назад» + шестерёнка (язык, музыка, звуки, «Как играть») |
 | `apps/web/src/lib/` | `telegram` (Telegram Mini App: SDK, полный экран, родные «Назад», вибрация, ссылки `startapp`, `docs/architecture.md › 4.1`), `features` (флаги фич: `featureOn('casting')` — «Кастинг дня» спрятан), `analytics` (`track` — события воронки на свой сервер, `POST /v1/events`), `share` (поделиться с запасными путями, `withLang` — `?l=` и метка `?src=` в ссылках), `meta` (метаданные превью по языку), `chunk` (перезагрузка при устаревшей вкладке), `preview` (комната с сервера для OG), `game-server`, `env`, `lang`, `name` |
 | `apps/web/public/sw.js` | сервис-воркер PWA |
 | `supabase/migrations/` | схема Supabase (история; сейчас нужна только боту) |
-| `apps/server/` | свой игровой сервер (в проде с 22.11.2026): `server.ts` — HTTP + WebSocket, лимиты, уборка комнат, `/v1/events` (аналитика); `room.ts` — комната и матч (безголовый `HostSession`); `auth.ts` — анонимные токены; `clips.ts` — клипы для Telegram (`/v1/clips`, 2 суток; телефон грузит заранее — `apps/web/src/lib/clips.ts`); `store.ts` — Postgres; `bot.ts` — Telegram-бот (работает на сервере в Нидерландах). Развёртывание — `infra/game/` (`provision.py`, `setup.sh`, `caddy.sh`, `web.sh`, `observe.sh`, `watch.sh`), панели Grafana — `infra/grafana/`. Клиент к нему — `ServerLink` (`packages/net/src/ws.ts`), протокол — `wire.ts`. Запуск: `pnpm --filter @kto/server dev` |
+| `apps/server/` | свой игровой сервер (в проде с 22.11.2026): `server.ts` — HTTP + WebSocket, лимиты, уборка комнат, `/v1/events` (аналитика); `room.ts` — комната и матч (безголовый `HostSession`); `auth.ts` — анонимные токены; `clips.ts` — клипы для Telegram (`/v1/clips`, 2 суток; телефон грузит заранее — `apps/web/src/lib/clips.ts`); `film.ts`, `film-worker.ts`, `film-render.ts` — монтаж «Фильма матча» в отдельном процессе (@napi-rs/canvas, node-web-audio-api, ffmpeg; импортирует сцены из `apps/web/src/game`, поэтому `game-deploy` срабатывает и на них); `store.ts` — Postgres; `bot.ts` — Telegram-бот (работает на сервере в Нидерландах). Развёртывание — `infra/game/` (`provision.py`, `setup.sh`, `caddy.sh`, `web.sh`, `observe.sh`, `watch.sh`), панели Grafana — `infra/grafana/`. Клиент к нему — `ServerLink` (`packages/net/src/ws.ts`), протокол — `wire.ts`. Запуск: `pnpm --filter @kto/server dev` |
 | `supabase/functions/tg-bot/` | прежний сервер бота (Edge Function, история; рабочая копия — `apps/server/src/bot.ts`, `docs/architecture.md › 4.2`) |
 
 ## Как проверять

@@ -21,6 +21,7 @@ import { Snow, useNewYear } from '@/ui/Festive';
 import { inTelegram, telegramReady, telegramShare, telegramShareCard, tgLink } from '@/lib/telegram';
 import { download, shareContent, withLang } from '@/lib/share';
 import { Room, SPECTATE_DELAY_MS } from '@/net/room';
+import { GAME_API } from '@/lib/env';
 import type { RemoteSession } from '@kto/net';
 import type { Audio as GameAudio, RoundMusic } from '@/game/audio';
 import type { RunningGame } from '@/game/boot';
@@ -234,6 +235,17 @@ function GameView({
         onRematch: () => room.rematchWithNewcomers(),
         onSave: (file: File) => download(file),
         onSettings: () => settingsRef.current(),
+        // «Фильм матча» монтирует игровой сервер: состояние приходит по той же связи (ServerLink.film)
+        film: spectator
+          ? undefined
+          : {
+              current: () => {
+                const f = room.link?.film;
+                return f && f.state !== 'none' ? f : null;
+              },
+              on: (h) => room.link?.onFilm(h) ?? (() => undefined),
+              url: (id, ext) => `${GAME_API}/v1/clips/${id}.${ext}`,
+            },
       });
       if (cancelled) running.destroy();
       // отладка и автопроверки: ?dev — сцена в консоли как window.__kto

@@ -1,8 +1,9 @@
 import { PAL, PLAYER_COLORS } from '@kto/assets';
 import { TICK_MS, fmt, makeReplay, worldOf } from '@kto/game-core';
 import type { ArenaDef, Dict, Moment, RoundRecording, World, WorldEvent } from '@kto/game-core';
-import type { ClipSound } from './audio';
-import { fitSize, frame, getArt, scaledCanvas, text } from './art';
+import qrcode from 'qrcode-generator';
+import type { ClipSoundCore } from './clip-audio';
+import { frame, getArt, scaledCanvas, text } from './art';
 import { canvas } from './pixels';
 import type { Art } from './art';
 import { frameFor } from './frames';
@@ -12,24 +13,43 @@ import type { Holder, Kill, Px } from './gore';
 import { isThemeLoaded, themeLook, themePack } from './themes';
 
 /**
- * Клип «Лучший момент» (раздел 11 ТЗ): 1080×1920, ~11 с.
- *   1) момент как его видели игроки — «Найдёшь живых?»;
- *   2) тот же момент с подсветкой живых, именами и следами;
- *   3) заставка с названием и адресом.
- * Рисуется на обычном canvas теми же спрайтами, что игра, ×6 без сглаживания,
- * и пишется в видео через MediaRecorder в реальном времени.
+ * Клип «Лучший момент» (раздел 11 ТЗ) и куски «Фильма матча» (film.ts): 1080×1920.
+ * Рисуется на обычном canvas теми же спрайтами, что игра, целым масштабом без сглаживания.
+ * В браузере пишется в видео через MediaRecorder в реальном времени, на сервере —
+ * кадрами в ffmpeg (apps/server/src/film.ts). Режимы:
+ *   clip    — момент как его видели игроки («Найдёшь живых?») → разбор с подсветкой → концовка с адресом и QR;
+ *   segment — кусок фильма: хлопушка «Дубль N» → разбор (быстрее и короче);
+ *   hook    — крючок фильма: почти стоп-кадр за миг до развязки, крупно, без подсказок.
+ *
+ * Вёрстка — под интерфейс TikTok, Reels и Shorts: всё, что надо прочесть, — в безопасной зоне
+ * (x 10…153, y 37…208 из 180×320); нижняя полоса — только счёт и декор, её закрывает подпись поста.
  */
 const LW = 180;
 const LH = 320;
 const AY = 24;
 const PANEL_Y = 284;
 export const CLIP_SCALE = 6;
-/** Скорость повтора: окно 6 с идёт ~4,8 с; длинное окно (до 8 с) — чуть быстрее, чтобы клип оставался ~11–12 с. */
-const BASE_SPEED = 1.25;
+/** Безопасная зона: плашка подписи и водяной знак. */
+const SAFE_L = 6;
+const SAFE_R = 156;
+const PLATE_Y = 38;
+/** Водяной знак — у нижнего края безопасной зоны: вверху его закрывали бы плашки с именами. */
+const WM_Y = 198;
 const PART_MAX_MS = 5000;
-const OUTRO_MS = 1800;
+const OUTRO_MS = 2600;
 const FLASH_MS = 220;
 const FPS = 30;
+/** Живые загораются по одному (герой — последним), чтобы зритель успел сверить свою догадку. */
+const REVEAL_STEP = 140;
+/** Хлопушка перед куском фильма и крючок фильма. */
+export const CLAP_MS = 450;
+export const HOOK_MS = 1500;
+/** Кусок фильма: сколько мира до и после главного события. */
+const SEG_PRE = 2600;
+const SEG_POST = 900;
+const SEG_PLAIN = 4000;
+
+export type ClipMode = 'clip' | 'segment' | 'hook';
 
 export interface ClipPlayer {
   eid: number;
@@ -51,6 +71,15 @@ export interface ClipInput {
   noGore?: boolean;
   /** Победитель матча (клип из итогов матча): на заставке — его имя и корона над его цветом. */
   winner?: { name: string; color: number };
+  /** Герой ролика — автор клипа или главный участник момента в фильме: сильная подсветка. */
+  hero?: number;
+  /** Масштаб холста: 6 — 1080×1920 (телефон), 2 — 360×640 (сервер, до 1080 растягивает ffmpeg). */
+  scale?: number;
+  mode?: ClipMode;
+  /** Счёт матча после этого дубля (кусок фильма): цвет игрока → очки, в нижней полосе. */
+  score?: { color: number; points: number }[];
+  /** Ссылка в QR концовки (по умолчанию https://site). */
+  link?: string;
 }
 
 export interface ClipResult {
@@ -86,7 +115,6 @@ export function pickClipMime(withAudio = false): string | null {
   return list.find((m) => MediaRecorder.isTypeSupported?.(m)) ?? null;
 }
 
-/** Сцена клипа: состояние повтора и отрисовка любого момента времени. */
 /** Часть повтора: отрезок клипа [c0, c1) показывает мир [w0, w1] (стоп-кадр — w0 = w1). */
 interface Seg {
   c0: number;
@@ -95,20 +123,55 @@ interface Seg {
   w1: number;
 }
 
+/** Части ролика по порядку. */
+type PartKind = 'puzzle' | 'reveal' | 'clap' | 'outro';
+
+/** Темп разбора: обычная скорость, замедление вокруг удара, стоп-кадр, наезд камеры. */
+interface Timing {
+  base: number;
+  slow: number;
+  slowPre: number;
+  slowPost: number;
+  hold: number;
+  cutBefore: number;
+  wideMin: number;
+}
+const CLIP_T: Timing = { base: 1.25, slow: 0.4, slowPre: 700, slowPost: 500, hold: 450, cutBefore: 1600, wideMin: 900 };
+const SEG_T: Timing = { base: 1.4, slow: 0.5, slowPre: 500, slowPost: 400, hold: 400, cutBefore: 1400, wideMin: 700 };
+
 /** Камера разбора: целое увеличение (пиксели остаются чёткими), видна четверть арены. */
 const ZOOM = 2;
-/** Замедление вокруг удара (доля обычной скорости) и стоп-кадр на самом ударе. */
-const SLOW = 0.4;
-const SLOW_PRE = 700;
-const SLOW_POST = 500;
-const HOLD_MS = 450;
-/** За сколько (мира) до удара камера наезжает на схватку. */
-const CUT_BEFORE = 1600;
-/** Сначала показываем всех живых целиком — не меньше этого (мс клипа). */
-const WIDE_MIN_MS = 900;
 const PART1_SPEED = 1.5;
 const PART1_MAX_MS = 4500;
 
+/** QR-код ссылки: модули чёрным по белому с полем 2 модуля, 1 модуль = 1 игровой пиксель. */
+export function drawQr(g: CanvasRenderingContext2D, link: string, x: number, y: number): number {
+  const q = qrcode(0, 'M');
+  q.addData(link);
+  q.make();
+  const n = q.getModuleCount();
+  const size = n + 4;
+  g.fillStyle = PAL.white;
+  g.fillRect(x, y, size, size);
+  g.fillStyle = PAL.ink;
+  for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (q.isDark(r, c)) g.fillRect(x + 2 + c, y + 2 + r, 1, 1);
+  return size;
+}
+
+/** Плашка с именем: у героя — залита его цветом, у остальных — тёмная с цветной полоской. */
+export function namePlate(g: CanvasRenderingContext2D, name: string, cx: number, y: number, color: string, font: string, hero: boolean): void {
+  const w = name.length * 8 + 6;
+  const x = Math.round(Math.max(1, Math.min(LW - w - 1, cx - w / 2)));
+  g.globalAlpha = hero ? 1 : 0.85;
+  g.fillStyle = hero ? color : PAL.ink;
+  g.fillRect(x, Math.round(y), w, 10);
+  g.globalAlpha = 1;
+  if (!hero) {
+    g.fillStyle = color;
+    g.fillRect(x, Math.round(y), 2, 10);
+  }
+  text(g, name, x + 4, Math.round(y) + 1, hero ? PAL.ink : color, font, { align: 'left', outline: null });
+}
 
 /** Сцена клипа: состояние повтора и отрисовка любого момента времени. */
 export class ClipPlayerScene {
@@ -119,68 +182,90 @@ export class ClipPlayerScene {
   private wg: CanvasRenderingContext2D;
   private art: Art;
   private hedges = new Map<number, CanvasPattern | null>();
-  private part1Dur: number;
-  private part2Dur: number;
+  readonly mode: ClipMode;
+  private tm: Timing;
+  /** Показываемое окно мира (у куска фильма — уже окна момента). */
+  private win: { from: number; to: number };
+  private parts: { kind: PartKind; dur: number }[] = [];
   private speed1: number;
   private segs: Seg[];
-  /** Момент клипа (во второй части), когда камера наезжает; Infinity — без наезда. */
+  private revealDur = 0;
+  /** Момент клипа (в разборе), когда камера наезжает; Infinity — без наезда. */
   private cutAt = Infinity;
-  /** Момент клипа (во второй части), когда случился удар. */
+  /** Момент клипа (в разборе), когда случился удар. */
   private hitClip = Infinity;
   private hit: { x: number; y: number } | null = null;
   readonly duration: number;
   private replay: World | null = null;
-  private part = 0;
+  private part = -1;
   private trails = new Map<number, { x: number; y: number }[]>();
   private colors = new Map<number, number>();
+  /** Когда (мс разбора) загорается каждый живой; герой — последним. */
+  private litAt = new Map<number, number>();
   private cam = { x: -1, y: 0 };
   /** Звук клипа (музыка темы и эффекты момента); без него клип немой. */
-  sound: ClipSound | null = null;
+  sound: (ClipSoundCore & { stream?: MediaStream }) | null = null;
   private musicResumeAt = 0;
   private lastLook = -1;
   private lookAt = -Infinity;
   private faded = false;
+  private clapped = false;
   /** Удары оружием (ночь Майами) по журналу дубля: eid жертвы → удар. */
   private kills = new Map<number, Kill>();
   /** Удар момента: в стоп-кадре брызги ещё летят (замедленно). */
   private focusKill: Kill | null = null;
   /** Кто бил (известно после разоблачения) → его удары. */
   private byAttacker = new Map<number, Kill[]>();
+  /** Соперник героя в главном событии: на нём сжимается прицел. */
+  private opp: number | undefined;
 
   constructor(private inp: ClipInput) {
-    const { c, g } = scaledCanvas(LW, LH, CLIP_SCALE);
+    const { c, g } = scaledCanvas(LW, LH, inp.scale ?? CLIP_SCALE);
     this.c = c;
     this.g = g;
     const wc = canvas(inp.arena.width, inp.arena.height);
     this.wc = wc.c;
     this.wg = wc.g;
     this.art = getArt(inp.arena);
+    this.mode = inp.mode ?? 'clip';
+    this.tm = this.mode === 'clip' ? CLIP_T : SEG_T;
     const m = inp.moment;
-    const len = m.to - m.from;
+    const focused = m.kind === 'knockout' || m.kind === 'hit_bot' || m.kind === 'star3';
+    if (this.mode === 'hook') this.win = { from: Math.max(m.from, m.at - 450), to: Math.max(m.from, m.at - 120) };
+    else if (this.mode === 'segment') {
+      this.win = focused
+        ? { from: Math.max(m.from, m.at - SEG_PRE), to: Math.min(m.to, m.at + SEG_POST) }
+        : { from: Math.max(m.from, m.to - SEG_PLAIN), to: m.to };
+    } else this.win = { from: m.from, to: m.to };
+    const len = this.win.to - this.win.from;
     this.speed1 = Math.max(PART1_SPEED, len / PART1_MAX_MS);
-    const speed2 = Math.max(BASE_SPEED, len / PART_MAX_MS);
+    const speed2 = this.mode === 'clip' ? Math.max(this.tm.base, len / PART_MAX_MS) : this.tm.base;
     for (const p of inp.players) this.colors.set(p.eid, p.color);
+    const hero = inp.hero;
+    this.opp = m.attacker === hero ? m.victim : m.victim === hero ? m.attacker : undefined;
 
     // разбор: обычная скорость → замедление → стоп-кадр на ударе → замедление → обычная
-    const focused = m.kind === 'knockout' || m.kind === 'hit_bot' || m.kind === 'star3';
-    const pieces: [number, number, number][] = []; // [w0, w1, скорость] (скорость 0 — стоп-кадр HOLD_MS)
-    if (focused && m.at > m.from && m.at <= m.to) {
-      const s0 = Math.max(m.from, m.at - SLOW_PRE);
-      const s1 = Math.min(m.to, m.at + SLOW_POST);
-      pieces.push([m.from, s0, speed2], [s0, m.at, SLOW], [m.at, m.at, 0], [m.at, s1, SLOW], [s1, m.to, speed2]);
-      const ev = inp.rec.log.find((e) => (e.t === 'hit' && e.at === m.at && (m.victim === undefined || e.target === m.victim)) || (e.t === 'star_taken' && e.at === m.at));
-      if (ev?.t === 'hit') this.hit = { x: ev.x, y: ev.y };
-    } else pieces.push([m.from, m.to, speed2]);
+    const pieces: [number, number, number][] = []; // [w0, w1, скорость] (скорость 0 — стоп-кадр)
+    const { from, to } = this.win;
+    if (this.mode === 'hook') pieces.push([from, to, (to - from) / HOOK_MS]);
+    else if (focused && m.at > from && m.at <= to) {
+      const s0 = Math.max(from, m.at - this.tm.slowPre);
+      const s1 = Math.min(to, m.at + this.tm.slowPost);
+      pieces.push([from, s0, speed2], [s0, m.at, this.tm.slow], [m.at, m.at, 0], [m.at, s1, this.tm.slow], [s1, to, speed2]);
+    } else pieces.push([from, to, speed2]);
+    const ev = inp.rec.log.find((e) => (e.t === 'hit' && e.at === m.at && (m.victim === undefined || e.target === m.victim)) || (e.t === 'star_taken' && e.at === m.at));
+    if (ev?.t === 'hit') this.hit = { x: ev.x, y: ev.y };
     this.segs = [];
     let cms = 0;
     for (const [w0, w1, sp] of pieces) {
-      const d = sp === 0 ? HOLD_MS : (w1 - w0) / sp;
+      // крючок без движения (событие у самого начала дубля) — просто стоп-кадр на HOOK_MS
+      const d = this.mode === 'hook' ? HOOK_MS : sp === 0 ? this.tm.hold : (w1 - w0) / sp;
       if (d <= 0) continue;
       this.segs.push({ c0: cms, c1: cms + d, w0, w1 });
-      if (sp === 0) this.hitClip = cms;
+      if (sp === 0 && this.mode !== 'hook') this.hitClip = cms;
       cms += d;
     }
-    this.part2Dur = cms;
+    this.revealDur = cms;
     const th = inp.rec.theme;
     if (!inp.noGore) {
       for (const k of killsFromLog(inp.rec.log, (tw) => isThemeLoaded(th) && themeLook(th, tw ? 1 : 0).kill === 'weapon')) {
@@ -190,70 +275,93 @@ export class ClipPlayerScene {
     }
     const fk = m.victim !== undefined ? this.kills.get(m.victim) : undefined;
     if (fk && fk.at === m.at && this.hitClip !== Infinity) this.focusKill = fk;
-    this.part1Dur = len / this.speed1;
-    this.duration = this.part1Dur + this.part2Dur + OUTRO_MS;
-    // наезд камеры — если есть на кого: за CUT_BEFORE до удара, но сначала дать увидеть всех
-    if (focused && (m.attacker !== undefined || m.victim !== undefined)) this.cutAt = Math.max(WIDE_MIN_MS, this.clipOf(m.at - CUT_BEFORE));
+
+    if (this.mode === 'clip') this.parts.push({ kind: 'puzzle', dur: len / this.speed1 });
+    if (this.mode === 'segment') this.parts.push({ kind: 'clap', dur: CLAP_MS });
+    this.parts.push({ kind: 'reveal', dur: this.revealDur });
+    if (this.mode === 'clip') this.parts.push({ kind: 'outro', dur: OUTRO_MS });
+    this.duration = this.parts.reduce((a, p) => a + p.dur, 0);
+    // наезд камеры — если есть на кого: за cutBefore до удара, но сначала дать увидеть всех
+    if (this.mode !== 'hook' && focused && (m.attacker !== undefined || m.victim !== undefined)) this.cutAt = Math.max(this.tm.wideMin, this.clipOf(m.at - this.tm.cutBefore));
+    // загораются по одному, герой — последним
+    const order = inp.players.map((p) => p.eid).sort((a, b) => (a === hero ? 1 : b === hero ? -1 : 0));
+    order.forEach((eid, i) => this.litAt.set(eid, i * REVEAL_STEP));
   }
 
-  /** Время мира для момента второй части. */
+  /** Время мира для момента разбора. */
   private worldOf2(local: number): number {
     for (const s of this.segs) {
       if (local < s.c1) return s.w0 + ((Math.max(local, s.c0) - s.c0) / (s.c1 - s.c0)) * (s.w1 - s.w0);
     }
-    return this.inp.moment.to;
+    return this.win.to;
   }
 
-  /** Момент второй части, когда мир доходит до w. */
+  /** Момент разбора, когда мир доходит до w. */
   private clipOf(w: number): number {
     for (const s of this.segs) {
       if (w <= s.w1 && s.w1 > s.w0) return s.c0 + ((Math.max(w, s.w0) - s.w0) / (s.w1 - s.w0)) * (s.c1 - s.c0);
     }
-    return this.part2Dur;
+    return this.revealDur;
   }
 
   /** Нарисовать кадр клипа в момент ms от начала. Вызывать с неубывающим ms. */
   draw(ms: number): void {
-    const part = ms < this.part1Dur ? 1 : ms < this.part1Dur + this.part2Dur ? 2 : 3;
-    if (part !== this.part) {
-      this.part = part;
+    let idx = 0;
+    let start = 0;
+    while (idx < this.parts.length - 1 && ms >= start + this.parts[idx].dur) start += this.parts[idx++].dur;
+    const kind = this.parts[idx].kind;
+    const local = ms - start;
+    if (idx !== this.part) {
+      this.part = idx;
       this.trails.clear();
-      this.replay = part < 3 ? makeReplay(worldOf(this.inp.rec), this.inp.moment.from, this.inp.moment.to) : null;
+      this.replay = kind === 'puzzle' || kind === 'reveal' ? makeReplay(worldOf(this.inp.rec), this.win.from, this.win.to) : null;
       const r = this.replay;
       if (r && this.sound) {
         if (this.musicResumeAt) this.sound.resume();
         this.musicResumeAt = 0;
-        if (part === 1) this.sound.start(this.inp.rec.theme, r.twist);
+        // музыка темы стартует с первой части с миром (у фильма — заново в каждом куске: другая тема)
+        if (idx === 0 || this.parts[idx - 1].kind === 'clap') this.sound.start(this.inp.rec.theme, r.twist);
         else this.sound.setTwist(r.twist);
         r.listeners.push((ev) => this.onEvent(ev));
       }
     }
-    if (part === 3 && this.sound && !this.faded) {
-      // заставка в конце: музыка плавно уходит к концу клипа
-      this.faded = true;
-      this.sound.fadeOut(Math.max(0.3, (this.duration - ms) / 1000));
-    }
-    if (part === 3) {
-      this.drawOutro(ms - this.part1Dur - this.part2Dur);
+    if (kind === 'clap') {
+      if (!this.clapped) {
+        this.clapped = true;
+        this.sound?.play('clap');
+      }
+      this.drawClap(local);
+      this.sound?.pump();
       return;
     }
-    const local = ms - (part === 1 ? 0 : this.part1Dur);
-    const target = part === 1 ? this.inp.moment.from + local * this.speed1 : this.worldOf2(local);
+    if (kind === 'outro') {
+      if (this.sound && !this.faded) {
+        // заставка в конце: музыка плавно уходит к концу клипа
+        this.faded = true;
+        this.sound.fadeOut(Math.max(0.3, (this.duration - ms) / 1000));
+      }
+      this.drawOutro(local);
+      this.sound?.pump();
+      return;
+    }
+    const reveal = kind === 'reveal' && this.mode !== 'hook';
+    const target = kind === 'puzzle' ? this.win.from + local * this.speed1 : this.worldOf2(local);
     const w = this.replay!;
-    while (w.time + TICK_MS <= target && w.time < this.inp.moment.to) {
+    while (w.time + TICK_MS <= target && w.time < this.win.to) {
       w.step();
-      if (part === 2) this.recordTrails(w);
+      if (reveal) this.recordTrails(w);
     }
     if (this.musicResumeAt && w.time >= this.musicResumeAt) {
       this.musicResumeAt = 0;
       this.sound?.resume();
     }
+    this.sound?.pump();
     const alpha = Math.max(0, Math.min(1, (target - w.time) / TICK_MS));
-    const zoomed = part === 2 && local >= this.cutAt;
-    this.drawWorld(w, alpha, part === 2, ms, zoomed, local);
-    this.drawBands(part, local, target);
+    const zoomed = this.mode === 'hook' || (reveal && local >= this.cutAt);
+    this.drawWorld(w, alpha, reveal, ms, zoomed, local);
+    this.drawBands(kind, local, target);
     const g = this.g;
-    if (part === 2 && local < FLASH_MS) {
+    if (reveal && local < FLASH_MS) {
       g.fillStyle = PAL.white;
       g.globalAlpha = 1 - local / FLASH_MS;
       g.fillRect(0, 0, LW, LH);
@@ -261,7 +369,7 @@ export class ClipPlayerScene {
     }
     // вспышка на самом ударе (оружием — красная)
     const sinceHit = local - this.hitClip;
-    if (part === 2 && sinceHit >= 0 && sinceHit < 140) {
+    if (reveal && sinceHit >= 0 && sinceHit < 140) {
       g.fillStyle = this.focusKill ? PAL.red : PAL.white;
       g.globalAlpha = (this.focusKill ? 0.4 : 0.6) * (1 - sinceHit / 140);
       g.fillRect(0, AY, LW, PANEL_Y - AY);
@@ -334,10 +442,17 @@ export class ClipPlayerScene {
     return { x: pts.reduce((a, p) => a + p.x, 0) / pts.length, y: pts.reduce((a, p) => a + p.y, 0) / pts.length };
   }
 
+  /** Горит ли подсветка живого в этот момент разбора. */
+  private lit(eid: number, local: number): boolean {
+    const at = this.litAt.get(eid);
+    return at !== undefined && local >= at;
+  }
+
   private drawWorld(w: World, alpha: number, reveal: boolean, now: number, zoomed: boolean, local: number): void {
     const g = this.wg;
     const a = this.art;
     const m = this.inp.moment;
+    const hero = this.inp.hero;
     const t = w.time - TICK_MS + alpha * TICK_MS;
     const W = this.inp.arena.width;
     const H = this.inp.arena.height;
@@ -347,16 +462,17 @@ export class ClipPlayerScene {
     const ch = a.chars(this.inp.rec.theme, look);
     g.drawImage(loc.arena, 0, 0);
 
-    // следы живых во второй части
+    // следы живых в разборе
     if (reveal) {
       for (const [eid, tr] of this.trails) {
+        if (!this.lit(eid, local)) continue;
         g.fillStyle = PLAYER_COLORS[this.colors.get(eid)!];
         tr.forEach((p, i) => i % 2 === 0 && g.fillRect(p.x, p.y, 1, 1));
       }
     }
 
     // кровь и оружие: время удара момента в стоп-кадре идёт дальше — замедленно
-    const hold = reveal && this.focusKill ? Math.max(0, Math.min(local - this.hitClip, HOLD_MS)) * 0.3 : 0;
+    const hold = reveal && this.focusKill ? Math.max(0, Math.min(local - this.hitClip, this.tm.hold)) * 0.3 : 0;
     const gt = (k: Kill) => t - k.at + (k === this.focusKill ? hold : 0);
     const px: Px = (x, y, pw, ph, c, al = 1) => {
       g.globalAlpha = al;
@@ -374,6 +490,7 @@ export class ClipPlayerScene {
       list.push({ y: p.y, draw: () => frame(g, pr.c, pr.fw, pr.fh, f, p.x - pr.fw / 2, p.y - pr.fh) });
     }
     const pos = new Map<number, { x: number; y: number }>();
+    const pulse = Math.floor(now / 400) % 3 !== 2;
     for (const [idx, e] of w.entities.entries()) {
       const x = Math.round(e.px + (e.x - e.px) * alpha);
       const y = Math.round(e.py + (e.y - e.py) * alpha);
@@ -406,17 +523,25 @@ export class ClipPlayerScene {
       if (sw) fr = { frame: F.S, flip: e.x > sw.x, yoff: 0 };
       const ce = a.charsFor(this.inp.rec.theme, look, idx); // свой костюм фигуры
       const col = this.colors.get(e.eid);
-      const lit = reveal && col !== undefined;
+      const lit = reveal && col !== undefined && this.lit(e.eid, local);
+      const isHero = lit && e.eid === hero;
       // на разборе тусклые все, кроме участников события и живых игроков
       const actor = e.eid === m.attacker || e.eid === m.victim;
       const dim = reveal && !lit && !(zoomed && actor);
       list.push({
         y,
         draw: () => {
+          const ox = x - 7;
+          const oy = y + fr.yoff - 17;
           g.globalAlpha = dim ? 0.4 : 1;
           g.drawImage(a.shadow, x - 5, y - 2);
-          if (lit) frame(g, ce.outline[1 + col!], OL_W, OL_H, fr.frame, x - 7, y + fr.yoff - 17, fr.flip);
-          else if (zoomed && actor) frame(g, ce.outline[0], OL_W, OL_H, fr.frame, x - 7, y + fr.yoff - 17, fr.flip);
+          if (isHero) {
+            // герой: толстый контур своего цвета и белый внутри, вспыхивает
+            const oc = ce.outline[1 + col!];
+            for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) frame(g, oc, OL_W, OL_H, fr.frame, ox + dx, oy + dy, fr.flip);
+            frame(g, pulse ? ce.outline[0] : oc, OL_W, OL_H, fr.frame, ox, oy, fr.flip);
+          } else if (lit) frame(g, ce.outline[1 + col!], OL_W, OL_H, fr.frame, ox, oy, fr.flip);
+          else if (zoomed && actor && reveal) frame(g, ce.outline[0], OL_W, OL_H, fr.frame, ox, oy, fr.flip);
           g.globalAlpha = dim ? 0.45 : 1;
           frame(g, ce.body, CH_W, CH_H, fr.frame, x - 6, y + fr.yoff - CH_H, fr.flip);
           g.globalAlpha = 1;
@@ -440,6 +565,23 @@ export class ClipPlayerScene {
     for (const d of list) d.draw();
     const arms = armsOf(themeLook(this.inp.rec.theme, look).chars.map);
     for (const k of this.kills.values()) drawAir(px, k, gt(k), holders.get(k) ?? null, arms);
+
+    // прицел на сопернике героя: красные уголки сжимаются к удару
+    const sinceHit = local - this.hitClip;
+    const opp = this.opp !== undefined ? w.get(this.opp) : undefined;
+    if (reveal && opp?.alive && sinceHit < 0 && this.lit(this.opp!, local)) {
+      const p = pos.get(opp.eid)!;
+      const k = 1 + Math.max(0, Math.min(4, Math.round((-sinceHit / 1500) * 4)));
+      const x0 = p.x - 7 - k;
+      const x1 = p.x + 7 + k;
+      const y0 = p.y - CH_H - 3 - k;
+      const y1 = p.y + 2 + k;
+      g.fillStyle = PAL.red;
+      for (const [cx, cy, sx, sy] of [[x0, y0, 1, 1], [x1, y0, -1, 1], [x0, y1, 1, -1], [x1, y1, -1, -1]]) {
+        g.fillRect(sx > 0 ? cx : cx - 2, cy, 3, 1);
+        g.fillRect(cx, sy > 0 ? cy : cy - 2, 1, 3);
+      }
+    }
 
     // плавная тема (закат): после смены облика лиловые сумерки тают ~0,9 с
     if (look !== this.lastLook) {
@@ -476,7 +618,6 @@ export class ClipPlayerScene {
     }
 
     // удар: искры расходятся от места удара (по времени клипа — видны и в стоп-кадре)
-    const sinceHit = local - this.hitClip;
     if (reveal && this.hit && sinceHit >= 0 && sinceHit < 700) {
       const r = 4 + Math.floor(sinceHit / 70) * 2;
       g.fillStyle = sinceHit < 210 ? PAL.white : PAL.yellow;
@@ -511,8 +652,9 @@ export class ClipPlayerScene {
       this.cam.y = first ? ty : this.cam.y + (ty - this.cam.y) * 0.18;
       cx = Math.round(this.cam.x);
       cy = Math.round(this.cam.y);
-      // встряска в стоп-кадре удара
-      if (sinceHit >= 0 && sinceHit < HOLD_MS) cx = Math.max(0, Math.min(W - vw, cx + (Math.floor(sinceHit / 60) % 2 ? 1 : -1)));
+      // встряска: в стоп-кадре удара и на крючке фильма
+      const shake = this.mode === 'hook' ? local % 240 < 120 : sinceHit >= 0 && sinceHit < this.tm.hold;
+      if (shake) cx = Math.max(0, Math.min(W - vw, cx + (Math.floor((this.mode === 'hook' ? local : sinceHit) / 60) % 2 ? 1 : -1)));
       out.drawImage(this.wc, cx, cy, vw, vh, 0, AY, W, H);
     } else {
       this.cam.x = -1;
@@ -520,38 +662,62 @@ export class ClipPlayerScene {
     }
     const toScreen = (p: { x: number; y: number }) => ({ x: (p.x - cx) * zoom, y: AY + (p.y - cy) * zoom });
 
-    // имена: на общем плане — всех живых игроков, на разборе — только участников; не налезают друг на друга
+    // имена на плашках над головами (герой — залитая плашка и стрелка); кто вне кадра — стрелка у края
     if (reveal) {
-      const labels: { x: number; y: number; name: string; color: string }[] = [];
+      const labels: { x: number; y: number; name: string; color: string; hero: boolean }[] = [];
+      const edge: { x: number; y: number; dir: 'l' | 'r' | 'u' | 'd'; color: string }[] = [];
       for (const p of this.inp.players) {
         const e = w.get(p.eid);
-        if (!e || !e.alive) continue;
-        if (zoomed && p.eid !== m.attacker && p.eid !== m.victim) continue;
+        if (!e || !e.alive || !this.lit(p.eid, local)) continue;
         const sp = toScreen(pos.get(p.eid)!);
-        if (sp.x < 0 || sp.x > LW || sp.y < AY || sp.y > PANEL_Y + 10) continue;
-        const name = p.name;
-        const half = (name.length * 8) / 2;
-        labels.push({ x: Math.max(half + 1, Math.min(LW - half - 1, sp.x)), y: Math.max(AY + 1, sp.y - (CH_H + 13) * (zoomed ? 1.6 : 1)), name, color: PLAYER_COLORS[p.color] });
+        const color = PLAYER_COLORS[p.color];
+        if (sp.x < 0 || sp.x > LW || sp.y < AY || sp.y > PANEL_Y + 10) {
+          const dx = sp.x < 0 ? -1 : sp.x > LW ? 1 : 0;
+          const dy = sp.y < AY ? -1 : sp.y > PANEL_Y ? 1 : 0;
+          edge.push({
+            x: Math.max(6, Math.min(LW - 7, sp.x)),
+            y: Math.max(AY + 6, Math.min(PANEL_Y - 7, sp.y - 8)),
+            dir: Math.abs(dx) >= Math.abs(dy) ? (dx < 0 ? 'l' : 'r') : dy < 0 ? 'u' : 'd',
+            color,
+          });
+          continue;
+        }
+        const isHero = p.eid === hero;
+        // на крупном плане подписаны только участники события: иначе плашки закрывают схватку
+        if (zoomed && !isHero && p.eid !== m.attacker && p.eid !== m.victim) continue;
+        const head = sp.y - (CH_H + 1) * zoom;
+        labels.push({ x: sp.x, y: Math.max(AY + 1, head - (isHero ? 18 : 12)), name: p.name, color, hero: isHero });
+        if (isHero) {
+          // стрелка над героем
+          const bob = Math.floor(now / 200) % 2;
+          const ay = Math.round(head - 7 + bob);
+          for (let k = 0; k < 4; k++) {
+            out.fillStyle = PAL.ink;
+            out.fillRect(Math.round(sp.x) - 4 + k, ay + k - 1, 9 - 2 * k, 1);
+            out.fillStyle = color;
+            out.fillRect(Math.round(sp.x) - 3 + k, ay + k, 7 - 2 * k, 1);
+          }
+        }
       }
       labels.sort((p, q) => p.y - q.y);
       for (let i = 1; i < labels.length; i++) {
         for (let j = 0; j < i; j++) {
           const A = labels[i];
           const B = labels[j];
-          const overlapX = Math.abs(A.x - B.x) < (A.name.length + B.name.length) * 4 + 2;
+          const overlapX = Math.abs(A.x - B.x) < (A.name.length + B.name.length) * 4 + 8;
           if (overlapX && Math.abs(A.y - B.y) < 11) A.y = B.y + 11;
         }
       }
-      for (const l of labels) text(this.g, l.name, l.x, Math.round(l.y), l.color, this.inp.font);
-      // стрелка над тем, за кем следить, пока удар не случился
-      if (zoomed && sinceHit < 0 && m.attacker !== undefined && this.colors.has(m.attacker)) {
-        const e = w.get(m.attacker);
-        if (e?.alive) {
-          const sp = toScreen(pos.get(m.attacker)!);
-          const bob = Math.floor(now / 200) % 2;
-          out.fillStyle = PLAYER_COLORS[this.colors.get(m.attacker)!];
-          const ay = Math.round(sp.y - (CH_H + 6) * zoom - 4 + bob);
-          for (let k = 0; k < 4; k++) out.fillRect(Math.round(sp.x) - 3 + k, ay + k, 7 - 2 * k, 1);
+      for (const l of labels) namePlate(out, l.name, l.x, l.y, l.color, this.inp.font, l.hero);
+      for (const e of edge) {
+        // треугольник у края, смотрит туда, где игрок
+        for (let k = 0; k < 4; k++) {
+          const len = 7 - 2 * k;
+          out.fillStyle = e.color;
+          if (e.dir === 'l') out.fillRect(Math.round(e.x) - 3 + k, Math.round(e.y) - 3 + k, 1, len);
+          else if (e.dir === 'r') out.fillRect(Math.round(e.x) + 3 - k, Math.round(e.y) - 3 + k, 1, len);
+          else if (e.dir === 'u') out.fillRect(Math.round(e.x) - 3 + k, Math.round(e.y) - 3 + k, len, 1);
+          else out.fillRect(Math.round(e.x) - 3 + k, Math.round(e.y) + 3 - k, len, 1);
         }
       }
     }
@@ -564,7 +730,20 @@ export class ClipPlayerScene {
     return eid === undefined ? undefined : this.inp.players.find((p) => p.eid === eid);
   }
 
-  private drawBands(part: number, local: number, world: number): void {
+  /** Плашка подписи в безопасной зоне: две строки по центру безопасной ширины. */
+  private caption(l1: string, c1: string, l2?: string, c2?: string): void {
+    const g = this.g;
+    g.globalAlpha = 0.8;
+    g.fillStyle = PAL.ink;
+    g.fillRect(SAFE_L, PLATE_Y - 2, SAFE_R - SAFE_L, l2 ? 23 : 12);
+    g.globalAlpha = 1;
+    const cx = (SAFE_L + SAFE_R) / 2;
+    const maxWidth = SAFE_R - SAFE_L - 4;
+    text(g, l1, cx, PLATE_Y, c1, this.inp.font, { outline: null, maxWidth });
+    if (l2) text(g, l2, cx, PLATE_Y + 11, c2 ?? PAL.mist, this.inp.font, { outline: null, maxWidth });
+  }
+
+  private drawBands(kind: PartKind, local: number, world: number): void {
     const g = this.g;
     const t = this.inp.t;
     const font = this.inp.font;
@@ -573,30 +752,81 @@ export class ClipPlayerScene {
     g.fillRect(0, 0, LW, AY);
     g.fillRect(0, PANEL_Y, LW, LH - PANEL_Y);
     text(g, t.meta.title, LW / 2, 8, PAL.yellow, font, { outline: null });
+    // водяной знак: адрес игры весь ролик, в безопасной зоне (ролик обрезают и перезаливают)
+    g.globalAlpha = 0.85;
+    text(g, this.inp.site, SAFE_L + 2, WM_Y, PAL.white, font, { align: 'left', maxWidth: SAFE_R - SAFE_L });
+    g.globalAlpha = 1;
+    this.drawScore();
     const cap = this.inp.captions;
-    const line = (s: string, y: number, color: string) => text(g, s, LW / 2, PANEL_Y + y, color, font, { outline: null, maxWidth: LW - 6 });
-    if (part === 1) {
-      line(cap?.find ?? t.clip.find, 8, PAL.white);
-      line(cap?.findSub ?? fmt(t.clip.round, { n: this.inp.rec.round }), 21, PAL.mist);
+    const blink = Math.floor(local / 400) % 2 === 0;
+    if (this.mode === 'hook') {
+      this.caption(t.clip.hook, PAL.white, t.clip.hookSub, blink ? PAL.yellow : PAL.amber);
+      this.rec(blink);
       return;
     }
-    const blink = Math.floor(local / 400) % 2 === 0;
+    if (kind === 'puzzle') {
+      this.caption(cap?.find ?? t.clip.find, PAL.white, cap?.findSub ?? fmt(t.clip.round, { n: this.inp.rec.round }), PAL.mist);
+      return;
+    }
     const atk = this.player(m.attacker);
     const vic = this.player(m.victim);
     const after = world >= m.at && local >= this.hitClip;
     if (after && atk) {
-      // итог по именам: «Енот / выбил Батона»
-      line(atk.name, 8, PLAYER_COLORS[atk.color]);
-      if (m.kind === 'knockout' && vic) line(fmt(t.clip.koOf, { name: vic.name }), 21, PLAYER_COLORS[vic.color]);
-      else line(m.kind === 'star3' ? t.clip.star3Of : m.kind === 'hit_bot' ? t.clip.botOf : t.clip.kinds[m.kind], 21, blink ? PAL.yellow : PAL.amber);
+      // итог по именам: «Енот / вырезает: Батон»
+      const l2 =
+        m.kind === 'knockout' && vic ? fmt(t.clip.koOf, { name: vic.name }) : m.kind === 'star3' ? t.clip.star3Of : m.kind === 'hit_bot' ? t.clip.botOf : t.clip.kinds[m.kind];
+      this.caption(atk.name, PLAYER_COLORS[atk.color], l2, vic && m.kind === 'knockout' ? PLAYER_COLORS[vic.color] : blink ? PAL.yellow : PAL.amber);
     } else {
-      line(cap?.reveal ?? t.clip.reveal, 8, PAL.white);
-      if (atk && !after && local >= this.cutAt) line(fmt(t.clip.watch, { name: atk.name }), 21, PLAYER_COLORS[atk.color]);
-      else line(cap?.kind ?? (m.kind === 'knockout' && m.selfRole === 'victim' ? t.clip.gotMe : t.clip.kinds[m.kind]), 21, blink ? PAL.yellow : PAL.amber);
+      const l1 = this.mode === 'segment' ? fmt(t.clip.round, { n: this.inp.rec.round }) : (cap?.reveal ?? t.clip.reveal);
+      if (atk && !after && local >= this.cutAt) this.caption(l1, PAL.white, fmt(t.clip.watch, { name: atk.name }), PLAYER_COLORS[atk.color]);
+      else this.caption(l1, PAL.white, cap?.kind ?? (m.kind === 'knockout' && m.selfRole === 'victim' ? t.clip.gotMe : t.clip.kinds[m.kind]), blink ? PAL.yellow : PAL.amber);
     }
-    // «повтор» в углу — как в спортивной трансляции
-    g.fillStyle = PAL.red;
-    if (blink) g.fillRect(LW - 9, AY + 4, 4, 4);
+    this.rec(blink);
+  }
+
+  /** «Повтор» в углу — как в спортивной трансляции. */
+  private rec(on: boolean): void {
+    this.g.fillStyle = PAL.red;
+    if (on) this.g.fillRect(LW - 9, 9, 4, 4);
+  }
+
+  /** Счёт матча после дубля — в нижней полосе цветными квадратиками (кусок фильма). */
+  private drawScore(): void {
+    const sc = this.inp.score;
+    if (!sc?.length) return;
+    const g = this.g;
+    const cell = 26;
+    let x = Math.round(LW / 2 - (sc.length * cell) / 2);
+    for (const s of sc) {
+      g.fillStyle = PLAYER_COLORS[s.color];
+      g.fillRect(x + 2, 297, 7, 7);
+      text(g, String(s.points), x + 11, 296, PAL.white, this.inp.font, { align: 'left', outline: null });
+      x += cell;
+    }
+  }
+
+  /** Хлопушка перед куском фильма: «Дубль N» на чёрном, планка хлопает. */
+  private drawClap(ms: number): void {
+    const g = this.g;
+    g.fillStyle = PAL.ink;
+    g.fillRect(0, 0, LW, LH);
+    const x0 = 40;
+    const w = 100;
+    const y0 = 96;
+    // доска
+    g.fillStyle = PAL.night;
+    g.fillRect(x0, y0 + 14, w, 46);
+    g.fillStyle = PAL.white;
+    g.fillRect(x0, y0 + 14, w, 1);
+    // планка: открыта, к середине — хлопок
+    const shut = ms > CLAP_MS * 0.35;
+    const lift = shut ? 0 : 6;
+    for (let i = 0; i < 10; i++) {
+      g.fillStyle = i % 2 ? PAL.ink : PAL.white;
+      g.fillRect(x0 + i * 10, y0 + 4 - lift + Math.floor((i * lift) / 10), 10, 8);
+    }
+    text(g, fmt(this.inp.t.clip.round, { n: this.inp.rec.round }), LW / 2, y0 + 30, PAL.white, this.inp.font, { outline: null });
+    this.drawScore();
   }
 
   private drawOutro(ms: number): void {
@@ -608,12 +838,13 @@ export class ClipPlayerScene {
     g.fillRect(0, 0, LW, LH);
     const appear = Math.min(1, ms / 300);
     g.globalAlpha = appear;
-    text(g, t.meta.title, LW / 2, 92, PAL.yellow, font, { size: 1.25 });
+    const cx = (SAFE_L + SAFE_R) / 2;
+    text(g, t.meta.title, cx, 40, PAL.yellow, font, { size: 2, maxWidth: SAFE_R - SAFE_L });
     // победитель матча — момент триумфа: «Звезда фильма» и имя его цветом
     const win = this.inp.winner;
     if (win) {
-      text(g, t.card.winner, LW / 2, 36, PAL.mist, font);
-      text(g, win.name, LW / 2, 52, PLAYER_COLORS[win.color], font, { size: 1.25, maxWidth: LW - 12 });
+      text(g, t.card.winner, cx, 62, PAL.mist, font);
+      text(g, win.name, cx, 73, PLAYER_COLORS[win.color], font, { maxWidth: SAFE_R - SAFE_L });
     }
     // хоровод вдвое крупнее: живые в цветах игроков, между ними бот; над победителем — корона
     const ch = a.chars(this.inp.rec.theme);
@@ -622,8 +853,8 @@ export class ClipPlayerScene {
     g.scale(2, 2);
     const cols = [0, 1, -1, 2, 3];
     cols.forEach((col, i) => {
-      const x = 15 + i * 15;
-      const y = 82 + ((i + Math.floor(ms / 320)) % 2);
+      const x = 11 + i * 15;
+      const y = 61 + ((i + Math.floor(ms / 320)) % 2);
       const fr = F.DANCE + (Math.floor((ms + i * 90) / 160) % 4);
       g.drawImage(a.shadow, x - 5, y - 2);
       if (col >= 0) frame(g, ch.outline[1 + col], OL_W, OL_H, fr, x - 7, y - 17);
@@ -631,19 +862,22 @@ export class ClipPlayerScene {
       if (win && col === win.color && crownAt >= 0) frame(g, a.icons.canvas, 8, 8, crownAt, x - 4, y - CH_H - 8);
     });
     g.restore();
-    text(g, t.clip.cta, LW / 2, 196, PAL.white, font);
-    // адрес бывает длинным (who-is-alive.vercel.app — 23 знака): уменьшаем, чтобы влез с полями
-    text(g, this.inp.site, LW / 2, 212, PAL.cyan, font, { size: fitSize(this.inp.site, LW - 12, CLIP_SCALE), maxWidth: LW - 12 });
+    text(g, t.clip.cta, cx, 132, PAL.white, font, { maxWidth: SAFE_R - SAFE_L });
+    // QR и адрес: на чужом экране — сканировать, на своём — запомнить
+    const qr = drawQr(g, this.inp.link ?? `https://${this.inp.site}`, SAFE_L + 4, 146);
+    text(g, t.clip.play1, SAFE_L + qr + 10, 152, PAL.white, font, { align: 'left', outline: null });
+    text(g, t.clip.play2, SAFE_L + qr + 10, 162, PAL.white, font, { align: 'left', outline: null });
+    text(g, this.inp.site, SAFE_L + qr + 10, 174, PAL.cyan, font, { align: 'left', outline: null, maxWidth: SAFE_R - SAFE_L - qr - 10 });
     g.globalAlpha = 1;
   }
 }
 
 /**
- * Записать клип в видео. Идёт в реальном времени (~11 с): MediaRecorder пишет то,
+ * Записать клип (или фильм) в видео в браузере. Идёт в реальном времени: MediaRecorder пишет то,
  * что появляется на холсте. onFrame получает долю готовности 0..1.
  */
 export async function recordClip(
-  scene: ClipPlayerScene,
+  scene: { c: HTMLCanvasElement; duration: number; draw(ms: number): void; sound: (ClipSoundCore & { stream?: MediaStream }) | null },
   mime: string,
   onFrame?: (progress: number) => void,
 ): Promise<ClipResult> {
@@ -651,7 +885,7 @@ export async function recordClip(
   // звук клипа — дорожкой в тот же поток; если браузер не примет запись со звуком — пишем без него
   const sound = scene.sound;
   let rec: MediaRecorder;
-  if (sound) {
+  if (sound?.stream) {
     const withAudio = pickClipMime(true) ?? mime;
     try {
       for (const tr of sound.stream.getAudioTracks()) stream.addTrack(tr);

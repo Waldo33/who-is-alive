@@ -1,8 +1,11 @@
-import { DICTS, TICK_MS, fmt, seasonLeadTheme } from '@kto/game-core';
+import { DICTS, TICK_MS, fmt, recordRound, seasonLeadTheme } from '@kto/game-core';
 import type { GameConfig, PlayerInfo } from '@kto/game-core';
 import { DEFAULT_WIRE_SETTINGS, HostSession } from '@kto/net';
 import type { Channel, PresenceMember, RoomMsg, ServerMsg, Transport, WireError, WireRoom, WireRoomSettings } from '@kto/net';
 import type { Logger } from './log';
+import type { FilmDone, FilmService } from './film';
+// только тип: код монтажа живёт в отдельном процессе (film-worker.ts) и в основную сборку не попадает
+import type { FilmTake } from '../../web/src/game/film';
 
 /** Сезонная тема первого дубля — по московской дате (игроки в основном из России). */
 function seasonLeadThemeNow(now = Date.now()): number {
@@ -47,6 +50,8 @@ export interface RoomOptions {
   /** Во сколько раз быстрее реального времени идёт матч (только тесты). */
   speed?: number;
   onEmpty?: (room: Room) => void;
+  /** «Фильм матча» (film.ts): нет — фильм монтирует телефон. */
+  film?: FilmService;
 }
 
 /**
@@ -87,6 +92,12 @@ export class MatchRunner {
   private steps = 0;
   /** Длительности шагов (мс) — для метрик. */
   stepMs: number[] = [];
+  /** Дубли матча для фильма: запись мира снимается на разоблачении (потом её уже не собрать). */
+  private takes: FilmTake[] = [];
+  /** Шёл дубль (фаза игры) и его разоблачение ещё не снято — снимаем ровно один раз. */
+  private armed = false;
+  /** Снят последний дубль матча (разоблачение): итоги уже известны — можно монтировать фильм. */
+  onLastTake: ((takes: FilmTake[]) => void) | null = null;
 
   constructor(
     room: Room,
@@ -117,10 +128,33 @@ export class MatchRunner {
     const t0 = performance.now();
     this.host.tick();
     this.host.drainNotices();
+    this.noteTake();
     this.steps++;
     const dt = performance.now() - t0;
     if (this.stepMs.length >= 600) this.stepMs.shift();
     this.stepMs.push(dt);
+  }
+
+  /** Разоблачение дубля — запомнить запись мира и итоги (init следующего дубля создаст новые массивы). */
+  private noteTake(): void {
+    const h = this.host;
+    const s = h.summary;
+    if (h.phase === 'play') this.armed = true;
+    if (h.phase !== 'reveal' || !s || !this.armed) return;
+    this.armed = false;
+    this.takes.push({
+      rec: recordRound(h.world, { round: h.round, theme: h.theme, players: s.reveal, playEnd: s.replayTo, kills: s.kills }),
+      summary: s,
+      arena: h.arena,
+    });
+    if (h.sim.lastRound) this.onLastTake?.(this.flushTakes());
+  }
+
+  /** Дубли сыгранного матча (и начать копить заново — к реваншу). */
+  flushTakes(): FilmTake[] {
+    const t = this.takes;
+    this.takes = [];
+    return t;
   }
 
   stop(): void {
@@ -144,6 +178,9 @@ export class Room {
   private readonly log: Logger;
   private readonly speed: number;
   private directorGoneSince = 0;
+  /** Номер фильма: готовый фильм прошлого матча не рассылаем, если уже идёт следующий. */
+  private filmSeq = 0;
+  private film: { n: number; state: 'making' | 'ready' | 'failed'; done?: FilmDone } | null = null;
   closed = false;
 
   constructor(private readonly o: RoomOptions) {
@@ -354,6 +391,10 @@ export class Room {
     const start: RoomMsg = { t: 'match_start', players, cfg, seed, hostId: this.directorId };
     this.broadcastText(JSON.stringify({ t: 'g', ch: 'room', m: start } satisfies ServerMsg));
     this.runner = new MatchRunner(this, players, cfg, seed, this.now, this.speed);
+    const runner = this.runner;
+    this.film = null;
+    this.broadcastText(JSON.stringify({ t: 'film', state: 'none' } satisfies ServerMsg));
+    runner.onLastTake = (takes) => this.startFilm(runner, takes);
     this.lastActive = this.now();
     this.log('info', 'match_start', { room: this.code, humans: humans.length, ai: players.length - humans.length });
     return null;
@@ -395,10 +436,42 @@ export class Room {
     if (this.status === 'playing' && this.runner?.host.phase === 'match_end') {
       this.status = 'lobby';
       this.broadcastRoom();
+      this.filmToAll();
     } else if (this.status === 'lobby' && this.runner && this.runner.host.phase !== 'match_end') {
+      // реванш: фильм прошлого матча больше не рассылаем
+      this.film = null;
       this.status = 'playing';
       this.broadcastRoom();
+      this.broadcastText(JSON.stringify({ t: 'film', state: 'none' } satisfies ServerMsg));
     }
+  }
+
+  /**
+   * «Фильм матча»: монтаж начинается на разоблачении последнего дубля (итоги уже известны) —
+   * пока идут повтор и итоги, фильм почти готов; на экране конца матча его получают все в комнате и зрители.
+   */
+  private startFilm(r: MatchRunner, takes: FilmTake[]): void {
+    const film = this.o.film;
+    if (!film || !takes.length) return;
+    const n = ++this.filmSeq;
+    this.film = { n, state: 'making' };
+    void film
+      .make({ takes, players: r.players.map((p) => ({ pid: p.pid, name: p.name, color: p.color })), match: r.host.sim.outcome(), lang: this.lang })
+      .then((done) => {
+        if (this.closed || this.film?.n !== n) return;
+        this.film = { n, state: done ? 'ready' : 'failed', done: done ?? undefined };
+        // конец матча уже на экране — разослать сразу, иначе дождётся его (filmToAll из pump)
+        if (this.status === 'lobby' && this.runner?.host.phase === 'match_end') this.filmToAll();
+      });
+  }
+
+  /** Разослать, что с фильмом (на экране конца матча). */
+  private filmToAll(): void {
+    const f = this.film;
+    if (!f) return;
+    const msg: ServerMsg =
+      f.state === 'ready' && f.done ? { t: 'film', state: 'ready', id: f.done.id, ext: f.done.ext, thumb: f.done.thumb } : f.state === 'failed' ? { t: 'film', state: 'failed' } : { t: 'film', state: 'making' };
+    this.broadcastText(JSON.stringify(msg));
   }
 
   // ───────────── рассылка ─────────────

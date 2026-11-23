@@ -3,7 +3,6 @@ import { PAL, PLAYER_COLORS, hexToInt } from '@kto/assets';
 import {
   LocalSession,
   createLocalSession,
-  findBestMoment,
   recordRound,
   TICK_MS,
   makeConfig,
@@ -14,15 +13,17 @@ import {
   THEME_RULES,
   roundMod,
 } from '@kto/game-core';
-import type { AwardId, ClientSession, CrowdKind, Dict, Entity, GameConfig, Lang, Moment, Notice, RoundRecording, RoundSummary, ThemeText, World, WorldEvent } from '@kto/game-core';
+import type { AwardId, ClientSession, CrowdKind, Dict, Entity, GameConfig, Lang, Moment, Notice, RoundSummary, ThemeText, World, WorldEvent } from '@kto/game-core';
 import { resultCardFile } from './card';
 import { Tutorial, tutorialDone } from './tutorial';
 import { mildOn } from '../ui/topbar';
 import { SWING_HIT, aim, armed, armsOf, bodyPose, drawAir, drawFloor, killsFromLog, makeKill, weaponSfx } from './gore';
 import type { ArmColors } from './gore';
 import type { Kill, Px } from './gore';
-import { clipSupported, clipViaTelegram, openClipOverlay, preloadClipForTelegram, recordClipInBackground, shareClipInTelegram } from './clip-ui';
-import type { ClipPlayer } from './clip';
+import { clipSupported, clipViaTelegram, openClipOverlay, openFilmOverlay, preloadClipForTelegram, recordClipInBackground, shareClipInTelegram } from './clip-ui';
+import type { FilmFeed } from './clip-ui';
+import { FilmScene, filmInput } from './film';
+import type { FilmTake } from './film';
 import { Audio } from './audio';
 import type { Sfx } from './audio';
 import { frameFor } from './frames';
@@ -49,6 +50,8 @@ const ME = 'me';
 const COLOR_FONT: FontColor[] = ['red', 'blue', 'yellow', 'green'];
 
 export interface SceneInit {
+  /** «Фильм матча» с игрового сервера (комната); нет — фильм монтирует телефон. */
+  film?: FilmFeed;
   playerName: string;
   fontFamily: string;
   audio: Audio;
@@ -297,8 +300,8 @@ export class GameScene extends Phaser.Scene {
   private bloodN = 0;
   private ghostUi: Phaser.GameObjects.GameObject[] = [];
   private starPos = new Map<number, { x: number; y: number }>();
-  /** Лучший момент матча для клипа: запись раунда переживает следующий раунд. */
-  private best: { rec: RoundRecording; moment: Moment; players: ClipPlayer[] } | null = null;
+  /** Дубли матча для «Фильма матча» (если его не смонтирует сервер): запись раунда переживает следующий раунд. */
+  private takes: FilmTake[] = [];
   private cardFile: File | null = null;
   private closeClip: (() => void) | null = null;
   /** Клип выбывшего: последние секунды перед выбиванием, монтируется в фоне — призрак смотрит игру дальше. */
@@ -335,7 +338,7 @@ export class GameScene extends Phaser.Scene {
     this.deathObjs = [];
     this.ghostUi = [];
     this.starPos = new Map();
-    this.best = null;
+    this.takes = [];
     this.cardFile = null;
     this.deathClip = null;
   }
@@ -1095,8 +1098,8 @@ export class GameScene extends Phaser.Scene {
       const dc = this.deathClip;
       if (!dc || dc.status === 'offer' || dc.round < n.round - 1) this.deathClip = null;
       if (n.round === 1) {
-        // реванш: новый матч — новые лучший момент и карточка
-        this.best = null;
+        // реванш: новый матч — новые дубли для фильма и карточка
+        this.takes = [];
         this.cardFile = null;
         this.track('match_start', { players: this.sim.players.length, ai: this.sim.players.filter((p) => p.ai).length, level: this.cfg.strictCrowd ? 'hard' : this.cfg.kidsMode ? 'easy' : 'normal', kids: this.cfg.kidsMode, strict: this.cfg.strictCrowd, rounds: this.cfg.maxRounds, roundSec: this.cfg.roundSec });
       }
@@ -1677,6 +1680,8 @@ export class GameScene extends Phaser.Scene {
         site: location.host,
         captions: known ? { find: c.whoGotMe, reveal: c.reveal, kind: c.gotMe } : { find: c.findMe, reveal: c.thatWasMe, kind: c.whoGotMe },
         noGore: mildOn(),
+        hero: dc.eid,
+        link: `${location.origin}/?src=clip&l=${this.lang}`,
       },
       (p) => {
         if (this.deathClip !== dc) return;
@@ -2836,8 +2841,8 @@ export class GameScene extends Phaser.Scene {
     } else this.addRow(AY + 214, [{ id: 'share2', kind: 'secondary', icon: 'share', label: this.t.game.share, flex: true, release: true, onTap: () => this.share() }]);
     // клип — третьей, тихой кнопкой с кадром плёнки в нижней панели. Открывается касанием: отпускание
     // у нижнего края экрана браузер может забрать себе (Chrome на iPhone); отправка — кнопкой в окне клипа
-    if (this.best && !this.init0.spectator) {
-      this.addRow(PANEL_Y + 3, [{ id: 'clip', kind: 'secondary', icon: 'film', label: this.t.clip.button, flex: true, onTap: () => this.openClip() }]);
+    if ((this.takes.length || this.init0.film?.current()) && !this.init0.spectator) {
+      this.addRow(PANEL_Y + 3, [{ id: 'clip', kind: 'secondary', icon: 'film', label: this.t.clip.film, flex: true, onTap: () => this.openFilm() }]);
       const b = this.buttons.find((x) => x.id === 'clip');
       if (b) Object.assign(b, { x: 3, w: 174 });
     }
@@ -3073,68 +3078,80 @@ export class GameScene extends Phaser.Scene {
     void this.init0.onShare?.(text, files);
   }
 
-  /** Запомнить лучший момент раунда (если он лучше прежних в этом матче). */
+  /** Запомнить дубль для «Фильма матча» (запись мира снимается на разоблачении: потом её не собрать). */
   private noteMoment(): void {
     const s = this.sim.summary;
     if (!s) return;
     try {
       const rec = recordRound(this.sim.world, { round: s.round, theme: this.sim.theme, players: s.reveal, playEnd: s.replayTo, kills: s.kills });
-      const moment = findBestMoment(rec, this.sim.me()?.eid);
-      if (!moment || (this.best && this.best.moment.score > moment.score)) return;
-      const players = s.reveal.map((r) => {
-        const info = this.sim.info(r.pid)!;
-        return { eid: r.eid, name: info.name, color: info.color };
-      });
-      this.best = { rec, moment, players };
+      this.takes.push({ rec, summary: s, arena: this.sim.arena });
     } catch {
-      /* клип — не главное: при сбое просто не предлагаем его */
+      /* фильм — не главное: при сбое просто будет без этого дубля */
     }
   }
 
-  /** Победитель матча для заставки клипа (клип из итогов матча, без «слишком живых»). */
-  private clipWinner(): { name: string; color: number } | undefined {
-    const m = this.sim.match;
-    if (this.sim.phase !== 'match_end' || !m || m.tooAlive || !m.winners[0]) return undefined;
-    const w = this.sim.info(m.winners[0]);
-    return w ? { name: w.name, color: w.color } : undefined;
-  }
-
-  private openClip(): void {
-    const best = this.best;
-    if (!best) return;
+  /**
+   * «Фильм матча»: готовый с сервера (монтируется с разоблачения последнего дубля) — сразу видео;
+   * сервер не монтирует (песочница, старый сервер) или не смог — монтируем на телефоне из дублей матча.
+   */
+  private openFilm(): void {
     this.closeClip?.();
-    this.track('clip_open', { kind: best.moment.kind, self: !!best.moment.selfRole });
-    const m = best.moment;
-    const a = best.players.find((p) => p.eid === m.attacker);
-    const b = best.players.find((p) => p.eid === m.victim);
-    const text = m.kind === 'knockout' && a && b ? fmt(this.t.clip.shareKo, { a: a.name, b: b.name }) : this.t.meta.title;
-    // модуль клипа в основной сборке (не ленивый чанк): после обновления сайта открытая вкладка
-    // не сможет подгрузить чанк, которого уже нет на сервере, и кнопка молча не срабатывала бы
+    const feed = this.init0.film;
+    const text = this.t.clip.filmText;
+    const share = async (file: File, via: string) => {
+      this.track('clip_send', { kind: 'film', type: file.type.split(';')[0], via });
+      await this.init0.onShare?.(text, [file]);
+    };
+    const save = (file: File, via: string) => {
+      this.track('clip_save', { kind: 'film', via });
+      this.init0.onSave?.(file);
+    };
+    const onTelegram = (what: 'story' | 'chat' | 'save', ok: boolean) =>
+      this.track(ok ? (what === 'story' ? 'clip_story' : what === 'chat' ? 'clip_send' : 'clip_save') : 'clip_tg_fail', { kind: 'film', via: 'tg', what });
     try {
-      this.closeClip = openClipOverlay(
-        document.body,
-        { ...best, arena: this.sim.arena, t: this.t, font: this.init0.fontFamily, site: location.host, noGore: mildOn(), winner: this.clipWinner() },
-        this.t,
-        async (file) => {
-          this.track('clip_send', { kind: best.moment.kind, type: file.type.split(';')[0] });
-          await this.init0.onShare?.(text, [file]);
-        },
-        (file) => {
-          this.track('clip_save', { kind: best.moment.kind });
-          this.init0.onSave?.(file);
-        },
-        {
+      if (feed?.current()) {
+        this.track('clip_open', { kind: 'film', via: 'server' });
+        this.closeClip = openFilmOverlay(document.body, feed, this.t, (f) => share(f, 'server'), (f) => save(f, 'server'), {
           text,
-          // внутри Telegram: сторис, видео-карточка в чат, родное «Сохранить»
-          // не вышло — сработает обычный путь и посчитается там
-          onTelegram: (what, ok) =>
-            this.track(ok ? (what === 'story' ? 'clip_story' : what === 'chat' ? 'clip_send' : 'clip_save') : 'clip_tg_fail', { kind: best.moment.kind, via: 'tg', what }),
-        },
-      );
+          onTelegram,
+          fallback: () => this.openLocalFilm(share, save, onTelegram),
+        });
+      } else this.openLocalFilm(share, save, onTelegram);
       this.events.once('shutdown', () => this.closeClip?.());
     } catch {
       this.showToast(this.t.clip.failed, 2500);
     }
+  }
+
+  /** Фильм на телефоне: та же сцена, что на сервере, запись MediaRecorder в реальном времени (~20 с). */
+  private openLocalFilm(
+    share: (f: File, via: string) => Promise<void>,
+    save: (f: File, via: string) => void,
+    onTelegram: (what: 'story' | 'chat' | 'save', ok: boolean) => void,
+  ): void {
+    const m = this.sim.match;
+    const inp = m
+      ? filmInput(this.takes, this.sim.players, m, {
+          t: this.t,
+          font: this.init0.fontFamily,
+          site: location.host,
+          link: `${location.origin}/?src=film&l=${this.lang}`,
+          noGore: mildOn(),
+          self: this.sim.selfPid,
+        })
+      : null;
+    if (!inp) {
+      this.showToast(this.t.clip.failed, 2500);
+      return;
+    }
+    this.track('clip_open', { kind: 'film', via: 'local' });
+    // модуль клипа в основной сборке (не ленивый чанк): после обновления сайта открытая вкладка
+    // не сможет подгрузить чанк, которого уже нет на сервере, и кнопка молча не срабатывала бы
+    this.closeClip = openClipOverlay(document.body, () => new FilmScene(inp), this.t, (f) => share(f, 'local'), (f) => save(f, 'local'), {
+      text: this.t.clip.filmText,
+      onTelegram,
+      making: this.t.clip.filmMaking,
+    });
   }
 }
 

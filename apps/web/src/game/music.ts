@@ -117,10 +117,19 @@ function scaleStep(m: number, step: number): number {
   return n;
 }
 
+/** Таймер ручного режима (`Music.manual`): музыка «играет», но ноты планирует `pump()`. */
+const MANUAL = -1;
+
 export class Music {
   private bus: GainNode | null = null;
   private echo: DelayNode | null = null;
   private timer: number | null = null;
+  /**
+   * Ручной режим: без таймера, ноты планирует `pump()` — так звук фильма матча рендерится
+   * офлайн на сервере (OfflineAudioContext), где время задаёт сам рендер, а не часы.
+   */
+  manual = false;
+  private tickFn: (() => void) | null = null;
   private next = 0;
   private s16 = 0;
   private bar = 0;
@@ -157,7 +166,7 @@ export class Music {
   paused = false;
 
   constructor(
-    private ctx: AudioContext,
+    private ctx: BaseAudioContext,
     private out: AudioNode,
     private noiseBuf: AudioBuffer,
   ) {
@@ -228,14 +237,17 @@ export class Music {
     const T = 0.35;
     for (const l of this.live) {
       if (l.until < now) continue;
-      if (l.src instanceof OscillatorNode) {
-        l.src.detune.cancelScheduledValues(now);
-        l.src.detune.setValueAtTime(0, now);
-        l.src.detune.linearRampToValueAtTime(-2400, now + T);
-      } else if (l.src instanceof AudioBufferSourceNode) {
-        l.src.playbackRate.cancelScheduledValues(now);
-        l.src.playbackRate.setValueAtTime(1, now);
-        l.src.playbackRate.linearRampToValueAtTime(0.25, now + T);
+      // без instanceof: на сервере (node-web-audio-api) глобальных классов узлов нет
+      if ('detune' in l.src) {
+        const o = l.src as OscillatorNode;
+        o.detune.cancelScheduledValues(now);
+        o.detune.setValueAtTime(0, now);
+        o.detune.linearRampToValueAtTime(-2400, now + T);
+      } else if ('playbackRate' in l.src) {
+        const b = l.src as AudioBufferSourceNode;
+        b.playbackRate.cancelScheduledValues(now);
+        b.playbackRate.setValueAtTime(1, now);
+        b.playbackRate.linearRampToValueAtTime(0.25, now + T);
       }
     }
     // ноты планируются чуть вперёд: место паузы — первая ещё не прозвучавшая шестнадцатая
@@ -251,7 +263,8 @@ export class Music {
       bus.gain.cancelScheduledValues(now);
       bus.gain.setValueAtTime(bus.gain.value, now);
       bus.gain.exponentialRampToValueAtTime(0.0001, now + T + 0.05);
-      setTimeout(() => bus.disconnect(), (T + 0.15) * 1000);
+      // при офлайн-записи (manual) всё планируется заранее: отключить шину по таймеру — потерять хвост звука
+      if (!this.manual) setTimeout(() => bus.disconnect(), (T + 0.15) * 1000);
     }
     this.bus = null;
     this.clearTimer();
@@ -311,8 +324,14 @@ export class Music {
   }
 
   private clearTimer(): void {
-    if (this.timer !== null) window.clearInterval(this.timer);
+    if (this.timer !== null && this.timer !== MANUAL) window.clearInterval(this.timer);
     this.timer = null;
+    this.tickFn = null;
+  }
+
+  /** Ручной режим: спланировать ноты до «сейчас» + запас (вызывать каждый кадр). */
+  pump(): void {
+    this.tickFn?.();
   }
 
   private hardStop(): void {
@@ -338,7 +357,8 @@ export class Music {
       }
       this.live = this.live.filter((l) => l.until > now - 0.1);
     };
-    this.timer = window.setInterval(tick, 25);
+    this.tickFn = tick;
+    this.timer = this.manual ? MANUAL : window.setInterval(tick, 25);
     tick();
   }
 

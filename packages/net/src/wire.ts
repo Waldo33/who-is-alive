@@ -89,7 +89,19 @@ export type ServerMsg =
   /** Игра: ch = 'room' — всем, 'private' — лично тебе. */
   | { t: 'g'; ch: 'room' | 'private'; m: unknown }
   /** Пульс, когда долго нет других сообщений: связь жива. */
-  | { t: 'hb' };
+  | { t: 'hb' }
+  /**
+   * «Фильм матча» (apps/server/src/film.ts) после конца матча: монтируется → готов (файл в /v1/clips/<id>.<ext>)
+   * или не вышел (тогда телефон смонтирует сам). Старые клиенты сообщение не знают и пропускают.
+   */
+  /** none — начался новый матч: фильма прошлого больше нет. */
+  | { t: 'film'; state: 'none' }
+  | { t: 'film'; state: 'making' }
+  | { t: 'film'; state: 'ready'; id: string; ext: 'mp4'; thumb: boolean }
+  | { t: 'film'; state: 'failed' };
+
+/** Состояние фильма матча у клиента. */
+export type WireFilm = Extract<ServerMsg, { t: 'film' }>;
 
 /** Буквы кода комнаты (как в Supabase: без похожих I, L, O). */
 export const ROOM_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ';

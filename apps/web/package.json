@@ -14,6 +14,7 @@
     "telegram-assets": "node scripts/make-telegram.mjs",
     "tap-check": "node scripts/tap-check.mjs",
     "clip-preview": "node scripts/clip-preview.mjs",
+    "film-preview": "node scripts/film-preview.mjs",
     "theme-sheet": "node scripts/theme-sheet.mjs",
     "theme-video": "node scripts/theme-video.mjs",
     "clip-video": "node scripts/clip-video.mjs",
@@ -27,6 +28,7 @@
     "next": "15.5.29",
     "phaser": "3.90.0",
     "qrcode": "1.5.4",
+    "qrcode-generator": "1.5.2",
     "react": "19.2.9",
     "react-dom": "19.2.9"
   },
