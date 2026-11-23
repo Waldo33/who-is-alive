@@ -45,7 +45,10 @@ jobs:
           curl -fsS -m5 'http://127.0.0.1:8428/api/v1/query?query=up' | python3 -c 'import json,sys;[print("up", r["metric"].get("job"), r["metric"].get("server"), r["value"][1]) for r in json.load(sys.stdin)["data"]["result"]]'
           curl -fsS -m5 'http://127.0.0.1:8428/api/v1/query?query=count(%7B__name__!=%22%22%7D)' | head -c 200; echo
           curl -fsS -m5 'http://127.0.0.1:9428/select/logsql/query' --data-urlencode 'query=_time:10m | stats by (_stream) count() n' | cut -c1-200 | head -8
-          curl -fsS -m5 http://127.0.0.1:3001/api/health; echo
+          curl -fsS -m5 http://127.0.0.1:3001/api/health | tr -d '\n '; echo
+          for ds in vm vl pg; do printf "источник $ds: "; curl -sS -m15 -u "admin:$(cat /etc/massovka-grafana/admin.pw)" http://127.0.0.1:3001/api/datasources/uid/$ds/health | head -c 200; echo; done
+          curl -sS -m15 -u "admin:$(cat /etc/massovka-grafana/admin.pw)" 'http://127.0.0.1:3001/api/search?type=dash-db' | python3 -c 'import json,sys;[print("панель:", d["title"]) for d in json.load(sys.stdin)]'
+          printf "событий в базе Москвы за сутки: "; PGPASSWORD=$(. /etc/massovka-grafana/pgro.env; echo $PGRO_PASSWORD) psql -h 127.0.0.1 -p 15432 -U grafana_ro -d massovka -Atc "select count(*)||' ('||count(distinct device_id)||' устройств)' from analytics_events where created_at > now()-interval '1 day'"
           curl -sS -m10 -o /dev/null -w "grafana снаружи: %{http_code}\n" https://72-56-73-184.sslip.io/grafana/login
           systemctl list-timers --no-pager | grep -E "backup" || true
           ls -la /var/backups/massovka-msk 2>/dev/null | tail -3
