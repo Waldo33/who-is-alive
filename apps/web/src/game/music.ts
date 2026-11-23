@@ -166,6 +166,8 @@ export class Music {
   private sinceA = 0;
   /** Когда началась песня (время AudioContext). */
   private startedAt = 0;
+  /** Сколько дублей уже начато (с какой части начинать следующий). */
+  private static takes = 0;
   mode: MusicMode = 'off';
   /** Пауза «Море волнуется»: музыка остановлена, но место в песне помним. */
   paused = false;
@@ -204,12 +206,14 @@ export class Music {
     this.rng = rngFrom((Math.random() * 2 ** 31) | 0);
     this.intensity = 0;
     this.tempoMul = 1;
-    this.queue = mode === 'play' ? [this.make('intro'), this.make('A'), this.make('A2'), this.make('B'), this.make('A')] : [];
-    if (hook) this.queue.shift();
+    // каждый дубль — с другой части песни (тема, «B», вариация), а не всегда с того же вступления;
+    // клип (hook) — сразу с темы
+    const v = hook ? 0 : Music.takes++ % 3;
+    this.queue = mode === 'play' ? [[this.make('A'), this.make('A2'), this.make('B'), this.make('A')], [this.make('B'), this.make('A'), this.make('A2')], [this.make('A2'), this.make('B'), this.make('A')]][v] : [];
     this.sec = this.queue.shift() ?? this.make('A');
     this.sinceA = 0;
-    // своя песня темы — со второго круга, где мелодия уже идёт
-    this.bar = hook && this.song ? 8 : 0;
+    // своя песня темы — с разных мест круга; клип — со второго круга, где мелодия уже идёт
+    this.bar = this.song ? (hook ? 8 : [0, 8, 4][v]) : 0;
     this.twistBar = this.bar;
     if (hook) this.intensity = 1;
     this.s16 = 0;
@@ -445,6 +449,8 @@ export class Music {
     // где в песне каждая запланированная шестнадцатая — чтобы пауза продолжилась ровно с неё
     this.sched.push({ t: this.next, bar: this.bar, s16: this.s16 });
     if (this.sched.length > 8) this.sched.shift();
+    // последние 10 с дубля: «часы тикают» — тик-так на каждую долю, слышно на любом динамике
+    if (this.intensity >= 2 && this.s16 % 4 === 0) this.clockTick(this.next, this.s16 % 8 === 0);
     if (this.song) {
       const dt = this.sixteenth();
       this.song.step(this.api, {
@@ -691,6 +697,14 @@ export class Music {
       o.stop(when + dur + 0.02);
       this.live.push({ src: o, until: when + dur });
     });
+  }
+
+  /** Тик часов: щелчок и короткий звон (тик выше, так ниже). */
+  private clockTick(when: number, tick: boolean): void {
+    const bus = this.bus;
+    if (!bus) return;
+    this.hit(0.012, 0.3, tick ? 4200 : 3400, when);
+    this.osc('square', tick ? 3136 : 2637, when, 0.018, 0.05, bus);
   }
 
   /** Бочка: синус вниз — опора, и «тук» на 1–2 кГц — то, что от неё слышно на телефоне. */
