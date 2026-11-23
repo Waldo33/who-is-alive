@@ -23,6 +23,8 @@ jobs:
           [ -n "$TOKEN" ] || { echo "::error::нет ALERTS_BOT_TOKEN"; exit 1; }
           curl -fsS "https://api.telegram.org/bot$TOKEN/getMe" | jq -c '.result | {username, first_name}'
           curl -fsS "https://api.telegram.org/bot$TOKEN/getUpdates" > /tmp/u.json
+          echo "обновлений: $(jq '.result | length' /tmp/u.json), виды: $(jq -c '[.result[] | keys - ["update_id"] | .[0]] | unique' /tmp/u.json)"
+          jq -c '[.result[] | (.my_chat_member.chat // .message.chat // .channel_post.chat // .my_chat_member // empty) | {id, type, title}]' /tmp/u.json
           jq -r '[.result[] | (.my_chat_member.chat // .message.chat // .channel_post.chat // empty) | select(.type != "private") | "\(.id)\t\(.type)\t\(.title)"] | unique | .[]' /tmp/u.json | tee /tmp/chats.tsv
           [ -s /tmp/chats.tsv ] || { echo "::warning::групп не найдено — напиши что-нибудь в группе с ботом и перезапусти"; exit 0; }
           chat=$(tail -1 /tmp/chats.tsv | cut -f1)
