@@ -244,6 +244,8 @@ export const en: Dict = {
     start: 'Action!',
     needTwo: 'Need at least 2 players',
     waitHost: 'Waiting for “Action!”',
+    soundHint: 'Turn sound on — the game signals with it',
+    soundOffHint: 'Sounds are off: see the gear',
     settings: 'Settings',
     roundLength: 'Take length',
     rounds: 'Takes',

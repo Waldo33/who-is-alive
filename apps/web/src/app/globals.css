@@ -132,6 +132,8 @@ button.btn { border: 0; cursor: pointer; border-radius: 0; }
 .lang-switch button { min-width: 44px; min-height: 44px; }
 .lobby-actions { display: flex; flex-direction: column; gap: 10px; align-items: center; width: 100%; max-width: 360px; }
 .lobby-actions .btn { width: 100%; }
+.sound-hint { display: flex; align-items: center; justify-content: center; gap: 8px; margin: 0; font-size: 9px; line-height: 1.6; color: var(--mist); }
+.sound-hint svg { flex: none; color: var(--yellow); }
 .toast { position: fixed; left: 50%; bottom: calc(16px + var(--sab, env(safe-area-inset-bottom))); transform: translateX(-50%);
   background: var(--night); color: var(--sand); font-size: 9px; padding: 10px 14px; box-shadow: 0 0 0 2px var(--ink); z-index: 10; }
 @media (max-width: 360px) { .qr { width: 132px; height: 132px; } .room-code { font-size: 20px; } }

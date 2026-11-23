@@ -2195,6 +2195,8 @@ export class GameScene extends Phaser.Scene {
     if (!this.finalSoundsPlayed) {
       this.finalSoundsPlayed = true;
       s.accusations.forEach((a, i) => this.time.delayedCall(250 + i * 350, () => this.audio.play(a.correct ? 'accuseRight' : 'accuseWrong')));
+      // без звука разоблачение тоже чувствуется рукой: короткий толчок на каждого живого
+      [...alive.keys()].forEach((_, i) => this.time.delayedCall(i * 180, () => haptic('heavy')));
       this.ovDyn.final?.setVisible(true);
     }
   }
