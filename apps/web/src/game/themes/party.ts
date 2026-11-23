@@ -616,6 +616,7 @@ const TRIADS = NY_TRIADS;
 const melodyAt = nyMelodyAt;
 
 const song: Song = {
+  blackout: true,
   step(a: SongApi, st: SongStep) {
     const { s16: s, bar, t, dt, intensity: I, twist } = st;
     const ch = bar % 4;
@@ -640,7 +641,7 @@ const song: Song = {
       if (bar % 4 === 3 && s >= 12 && s % 2 === 0) a.voice('sine', 86 - (s - 12), t, dt, 0.02); // звон в конце круга
       return;
     }
-    // ── свет погас: танцевальный бит «на четыре» ──
+    // ── свет погас: танцевальный бит «на четыре» (вход — «свет вырубили», Music › blackout) ──
     const b = st.barsSinceTwist;
     if (s === 0 && (b === 0 || b % 8 === 0)) a.hit(0.9, 0.15, 4500, t);
     const drop = b % 8 === 7; // такт-сбивка: без бочки, дробь малого

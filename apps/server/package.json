@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "tsx watch src/main.ts",
     "start": "node dist/server.mjs",
-    "build": "esbuild src/main.ts --bundle --platform=node --target=node22 --format=esm --sourcemap --outfile=dist/server.mjs --banner:js=\"import { createRequire } from 'module'; const require = createRequire(import.meta.url);\"",
+    "build": "esbuild src/main.ts --bundle --platform=node --target=node22 --format=esm --sourcemap --outfile=dist/server.mjs --banner:js=\"import { createRequire } from 'module'; const require = createRequire(import.meta.url);\" && pnpm build:film",
+    "build:film": "esbuild src/film-worker.ts --bundle --platform=node --target=node22 --format=esm --sourcemap --outfile=dist/film-worker.mjs --external:@napi-rs/canvas --external:node-web-audio-api --banner:js=\"import { createRequire } from 'module'; const require = createRequire(import.meta.url);\" && mkdir -p dist/fonts && cp ../web/assets/og/press-start-2p-*.woff dist/fonts/",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "smoke": "tsx scripts/smoke.ts"
@@ -14,18 +15,20 @@
   "dependencies": {
     "@kto/game-core": "workspace:*",
     "@kto/net": "workspace:*",
+    "@napi-rs/canvas": "0.1.80",
     "jose": "6.2.18",
+    "node-web-audio-api": "1.0.4",
+    "pg": "8.23.1",
     "ws": "8.23.0",
-    "zod": "3.25.76",
-    "pg": "8.23.1"
+    "zod": "3.25.76"
   },
   "devDependencies": {
     "@types/node": "22.20.5",
+    "@types/pg": "8.23.1",
     "@types/ws": "8.18.2",
     "esbuild": "0.28.2",
     "tsx": "4.23.15",
     "typescript": "5.9.3",
-    "vitest": "3.2.7",
-    "@types/pg": "8.23.1"
+    "vitest": "3.2.7"
   }
 }

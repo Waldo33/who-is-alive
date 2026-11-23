@@ -122,3 +122,50 @@ describe('лимиты', () => {
     await srv.close();
   });
 });
+
+describe('фильм матча в комнате', () => {
+  it('монтаж ставится на разоблачении последнего дубля, готовый фильм приходит всем на конце матча', async () => {
+    let now = 1_000_000;
+    const jobs: { takes: unknown[]; match: { winners: string[] } }[] = [];
+    const film = {
+      make: (job: (typeof jobs)[number]) => {
+        jobs.push(job);
+        return Promise.resolve({ id: 'f'.repeat(20), ext: 'mp4' as const, thumb: true, ms: 1 });
+      },
+    };
+    const room = new Room({
+      code: 'FILM',
+      directorId: 'a',
+      directorName: 'A',
+      settings: { roundSec: 60, maxRounds: 3, kidsMode: false, aiFill: false },
+      lang: 'ru',
+      now: () => now,
+      log: silentLogger,
+      speed: 50,
+      film: film as unknown as import('../src/film').FilmService,
+    });
+    const [pa, pb] = [fakePeer(), fakePeer()];
+    room.join('a', 'A', pa);
+    room.join('b', 'B', pb);
+    expect(room.start('a')).toBeNull();
+    let jobAt = '';
+    for (let i = 0; i < 20000 && room.runner?.host.phase !== 'match_end'; i++) {
+      now += 50;
+      room.pump();
+      // на поле играют боты-заглушки: игроки стоят, дубль кончается по времени
+      if (jobs.length && !jobAt) jobAt = room.runner!.host.phase;
+      await Promise.resolve();
+    }
+    expect(room.runner!.host.phase).toBe('match_end');
+    // монтаж начался заранее — на разоблачении, а не на конце матча
+    expect(jobAt).toBe('reveal');
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0].takes.length).toBe(room.runner!.host.roundsPlayed);
+    expect(jobs[0].match.winners).toEqual(room.runner!.host.match!.winners);
+    await new Promise((r) => setTimeout(r, 0));
+    for (const p of [pa, pb]) {
+      const f = p.got.filter((m) => m.t === 'film');
+      expect(f.at(-1)).toEqual({ t: 'film', state: 'ready', id: 'f'.repeat(20), ext: 'mp4', thumb: true });
+    }
+  });
+});

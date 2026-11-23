@@ -70,13 +70,15 @@ describe('i18n', () => {
       expect(btn(g.rematch) + 2 + btn(g.withFriends), `${g.rematch} + ${g.withFriends}`).toBeLessThanOrEqual(162);
       expect(btn(g.rematch), g.rematch).toBeLessThanOrEqual(162 - 32);
       expect(btn(g.share, true), g.share).toBeLessThanOrEqual(162);
-      expect(btn(t.clip.button, true), t.clip.button).toBeLessThanOrEqual(174);
+      expect(btn(t.clip.film, true), t.clip.film).toBeLessThanOrEqual(174);
       // клип и карточка рисуются тем же шрифтом 8 пикс. на ширине 180
       const c = t.clip;
-      for (const s of [c.button, fmt(c.making, { n: 100 }), c.ready, c.failed, c.find, c.reveal, fmt(c.round, { n: 7 }), ...Object.values(c.kinds), c.cta, ...Object.values(t.card), c.findMe, c.thatWasMe, c.gotMe, c.whoGotMe, c.deathBtnLong, fmt(c.watch, { name: 'Ш'.repeat(12) }), fmt(c.koOf, { name: 'Ш'.repeat(11) }), c.star3Of, c.botOf, c.preparingLong]) {
+      for (const s of [c.film, c.hook, c.hookSub, c.cast, fmt(c.filmMaking, { n: 100 }), fmt(c.making, { n: 100 }), c.ready, c.failed, c.find, c.reveal, fmt(c.round, { n: 7 }), ...Object.values(c.kinds), c.cta, ...Object.values(t.card), c.findMe, c.thatWasMe, c.gotMe, c.whoGotMe, c.deathBtnLong, fmt(c.watch, { name: 'Ш'.repeat(12) }), fmt(c.koOf, { name: 'Ш'.repeat(11) }), c.star3Of, c.botOf, c.preparingLong]) {
         expect(s.length, `${lang}: «${s}»`).toBeLessThanOrEqual(21);
       }
       for (const s of [c.send, c.save, c.close]) expect(s.length).toBeLessThanOrEqual(10);
+      // рядом с QR (33 пикс.) в концовке и титрах фильма — до 12 знаков
+      for (const s of [c.play1, c.play2]) expect(s.length, s).toBeLessThanOrEqual(12);
       // кнопка клипа призрака: 80 пикс. — до 9 знаков (и «100%»)
       for (const s of [c.deathBtn, c.send, c.preparing]) expect(s.length).toBeLessThanOrEqual(9);
     }

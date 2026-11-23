@@ -2,7 +2,12 @@ import { randomBytes } from 'node:crypto';
 import { jsonLogger } from './log';
 import type { LogLevel } from './log';
 import { Bot } from './bot';
+import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { ClipStore } from './clips';
+import { FilmService } from './film';
 import { GameServer } from './server';
 import { MemoryStore, PgStore } from './store';
 import type { Store } from './store';
@@ -54,6 +59,21 @@ const bot = env.TELEGRAM_BOT_TOKEN
   : undefined;
 if (!bot) log('warn', 'TELEGRAM_BOT_TOKEN не задан — бота нет');
 
+// клипы для Telegram и фильмы матча: systemd StateDirectory=massovka-clips (/var/lib/massovka-clips)
+const clips = new ClipStore(env.CLIP_DIR || env.STATE_DIRECTORY || undefined);
+
+// «Фильм матча» монтирует сервер, если есть ffmpeg и шрифты (иначе — телефон, как раньше); FILM=off — выключить
+const ffmpeg = env.FFMPEG || 'ffmpeg';
+const fonts = env.FILM_FONTS || join(dirname(fileURLToPath(import.meta.url)), 'fonts');
+let film: FilmService | undefined;
+if (env.FILM === 'off') log('info', 'film_off');
+else if (spawnSync(ffmpeg, ['-version'], { stdio: 'ignore' }).status !== 0) log('warn', 'film_no_ffmpeg');
+else if (!existsSync(join(fonts, 'press-start-2p-cyrillic-400-normal.woff'))) log('warn', 'film_no_fonts', { fonts });
+else {
+  film = new FilmService({ store: clips, log, fonts, ffmpeg, site: (env.SITE_URL || 'https://benobody.app').replace(/^https?:\/\//, '').replace(/\/$/, '') });
+  log('info', 'film_ready');
+}
+
 const server = new GameServer({
   store,
   bot,
@@ -63,8 +83,8 @@ const server = new GameServer({
   allowedOrigins: env.ALLOWED_ORIGINS ? env.ALLOWED_ORIGINS.split(',').map((s) => s.trim()).filter(Boolean) : '*',
   trustProxy: env.TRUST_PROXY === '1',
   log,
-  // клипы для Telegram: systemd StateDirectory=massovka-clips (/var/lib/massovka-clips)
-  clips: new ClipStore(env.CLIP_DIR || env.STATE_DIRECTORY || undefined),
+  clips,
+  film,
 });
 
 const port = await server.listen(Number(env.PORT) || 8080);

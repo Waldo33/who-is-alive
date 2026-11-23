@@ -14,6 +14,7 @@ import { isBotUA } from '@/lib/bot';
 import { detectLang } from '@/lib/lang';
 import { TopBar } from '@/ui/TopBarView';
 import type { TopBar as Bar } from '@/ui/topbar';
+import { soundEnabled } from '@/ui/topbar';
 import { playerName, saveName } from '@/lib/name';
 import { loadChunk } from '@/lib/chunk';
 import { setTrackContext, shareKind, track } from '@/lib/analytics';
@@ -21,8 +22,9 @@ import { Snow, useNewYear } from '@/ui/Festive';
 import { inTelegram, telegramReady, telegramShare, telegramShareCard, tgLink } from '@/lib/telegram';
 import { download, shareContent, withLang } from '@/lib/share';
 import { Room, SPECTATE_DELAY_MS } from '@/net/room';
+import { GAME_API } from '@/lib/env';
 import type { RemoteSession } from '@kto/net';
-import type { Audio as GameAudio } from '@/game/audio';
+import type { Audio as GameAudio, RoundMusic } from '@/game/audio';
 import type { RunningGame } from '@/game/boot';
 import type { RoomSettings, RoomState } from '@/net/room';
 
@@ -118,6 +120,18 @@ export default function RoomClient({ code, bot = false }: { code: string; bot?: 
   useEffect(() => {
     if (!inGame) getAudio().setMusic('menu');
   }, [inGame]);
+  // музыка дубля: по умолчанию только у режиссёра — 2–4 телефона с одной песней вразнобой глушат
+  // сигналы. Гость может вернуть её себе (own) — только на своём телефоне. Сменился режиссёр
+  // посреди матча — саундтрек переходит к новому
+  const [ownMusic, setOwnMusic] = useState(false);
+  const [sfxOff, setSfxOff] = useState(false);
+  useEffect(() => setSfxOff(!soundEnabled()), []);
+  const roomMusic = state?.settings.roomMusic ?? 'host';
+  useEffect(() => {
+    const level: RoundMusic = ownMusic || roomMusic === 'all' ? 'full' : roomMusic === 'none' ? 'off' : isHostNow ? 'full' : 'quiet';
+    getAudio().setRoundMusic(level);
+  }, [ownMusic, roomMusic, isHostNow]);
+  useEffect(() => () => getAudio().setRoundMusic('full'), []);
   // «Назад» и «Выйти в меню» сразу освобождают место в комнате
   const goHome = () => {
     track(inGame ? 'match_exit' : 'room_leave');
@@ -141,6 +155,19 @@ export default function RoomClient({ code, bot = false }: { code: string; bot?: 
       onBack={inGame ? undefined : goHome}
       onExit={inGame ? goHome : undefined}
       noGear={inGame}
+      onSound={(on) => setSfxOff(!on)}
+      roomMusic={
+        state && state.status !== 'connecting' && state.status !== 'error'
+          ? {
+              mode: roomMusic,
+              director: isHostNow,
+              own: ownMusic,
+              // настройки комнаты меняются только в лобби
+              onMode: !inGame && isHostNow ? (m) => void roomRef.current?.updateSettings({ ...state.settings, roomMusic: m }) : undefined,
+              onOwn: setOwnMusic,
+            }
+          : undefined
+      }
     />
   );
 
@@ -157,7 +184,7 @@ export default function RoomClient({ code, bot = false }: { code: string; bot?: 
     screen = (
       <GameView key={state.gameId} room={roomRef.current!} lang={lang} audio={audioRef} t={t} spectator={watching} onSettings={() => bar.current?.openSettings()} />
     );
-  } else screen = <Lobby t={t} state={state} room={roomRef.current!} onGesture={unlockAudio} />;
+  } else screen = <Lobby t={t} state={state} room={roomRef.current!} onGesture={unlockAudio} sfxOff={sfxOff} />;
   return (
     <>
       {topBar}
@@ -212,6 +239,17 @@ function GameView({
         onRematch: () => room.rematchWithNewcomers(),
         onSave: (file: File) => download(file),
         onSettings: () => settingsRef.current(),
+        // «Фильм матча» монтирует игровой сервер: состояние приходит по той же связи (ServerLink.film)
+        film: spectator
+          ? undefined
+          : {
+              current: () => {
+                const f = room.link?.film;
+                return f && f.state !== 'none' ? f : null;
+              },
+              on: (h) => room.link?.onFilm(h) ?? (() => undefined),
+              url: (id, ext) => `${GAME_API}/v1/clips/${id}.${ext}`,
+            },
       });
       if (cancelled) running.destroy();
       // отладка и автопроверки: ?dev — сцена в консоли как window.__kto
@@ -245,11 +283,14 @@ export function Lobby({
   state,
   room,
   onGesture,
+  sfxOff = false,
 }: {
   t: Dict;
   state: RoomState;
   room: Room;
   onGesture: () => void;
+  /** Звуки игры выключены в шестерёнке — подсказка «где включить». */
+  sfxOff?: boolean;
 }) {
   const [qr, setQr] = useState('');
   const ny = useNewYear();
@@ -417,6 +458,7 @@ export function Lobby({
           <p className="muted">{t.lobby.waitHost}</p>
         )}
         {isHost && !canStart && <p className="muted">{t.lobby.needTwo}</p>}
+        <SoundHint t={t} off={sfxOff} />
       </div>
 
       {toast && (
@@ -425,6 +467,24 @@ export function Lobby({
         </div>
       )}
     </main>
+  );
+}
+
+/** Пиксельный динамик 8×8 (как значок звука в игре). */
+const SPEAKER = ['...o..o.', '..oo.o.o', 'oooo..o.', 'oooo.o.o', 'oooo.o.o', 'oooo..o.', '..oo.o.o', '...o..o.'];
+
+/**
+ * «Включи звук»: сигналы игры («Море волнуется», удары, звёзды) — звуком; беззвучный режим iPhone
+ * игра не видит, поэтому просим заранее. Выключены звуки в шестерёнке — подсказываем, где включить.
+ */
+function SoundHint({ t, off }: { t: Dict; off: boolean }) {
+  return (
+    <p className="sound-hint">
+      <svg viewBox="0 0 8 8" width="16" height="16" aria-hidden="true" shapeRendering="crispEdges" fill="currentColor">
+        {SPEAKER.flatMap((r, y) => [...r].map((c, x) => (c === 'o' ? <rect key={`${x}-${y}`} x={x} y={y} width="1" height="1" /> : null)))}
+      </svg>
+      {off ? t.lobby.soundOffHint : t.lobby.soundHint}
+    </p>
   );
 }
 

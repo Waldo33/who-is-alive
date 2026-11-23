@@ -58,6 +58,13 @@ select f.d0 as "первый день", count(distinct f.device_id) as "новы
  count(distinct a.device_id) filter (where a.d between f.d0 + 2 and f.d0 + 7) as "вернулись за неделю"
 from f left join a on a.device_id = f.device_id where $__timeFilter(f.d0::timestamptz) group by 1 order by 1 desc""",grid(0,30,12,9)),
  table("Ошибки входа в комнату",f"""select coalesce(props->>'error','—') as ошибка, count(*) as раз from analytics_events where name in ('room_error','room_create_fail') and {R} group by 1 order by 2 desc""",grid(12,30,12,9)),
+ stat("Выключили звук, % игроков",f"""select round(100.0*count(distinct device_id) filter (where name='sound_toggle' and props->>'on'='false' and props->>'what' in ('sfx','music'))
+ / nullif(count(distinct device_id) filter (where name='match_start'),0),0) from analytics_events where {R}""",grid(0,39,6,8),unit="percent",
+  desc="Из игравших матч — сколько выключили музыку или звуки в шестерёнке. Больше 25% — звук раздражает (план звука)"),
+ bars("Что выключают",f"""select (props->>'what') || case when props ? 'mode' then ': ' || (props->>'mode') else case when (props->>'on')::boolean then ' вкл' else ' выкл' end end as что,
+ count(*) n from analytics_events where name='sound_toggle' and {R} group by 1 order by 2 desc""",grid(6,39,9,8),desc="sfx — звуки, music — музыка, room_music — режиссёр выбрал «Музыку в дубле», own_music — гость вернул музыку себе"),
+ bars("Кто вырезал",f"""select case props->>'out' when 'director' then 'режиссёр (пропустил команду)' when 'player' then 'игрок' else 'не вырезали' end as кто, count(*) n
+ from analytics_events where name='round_end' and props ? 'out' and {R} group by 1 order by 2 desc""",grid(15,39,9,8),desc="Режиссёр вырезает за пропущенную команду «Море волнуется» («Жёсткий дубль»): растёт — сигнал не слышат"),
 ]
 def dash(uid,title,panels,frm="now-7d",extra=None):
     d={"uid":uid,"title":title,"tags":["massovka"],"timezone":"browser","schemaVersion":39,"version":1,"editable":False,

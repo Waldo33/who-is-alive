@@ -1,5 +1,6 @@
 import { fmt } from '@kto/game-core';
 import type { Dict } from '@kto/game-core';
+import type { WireFilm } from '@kto/net';
 import { ClipPlayerScene, pickClipMime, recordClip } from './clip';
 import { loadTheme } from './themes';
 import { getAudio } from './audio';
@@ -12,6 +13,20 @@ import { inTelegram, telegramClipCaps, telegramClipSave, telegramClipStory, tele
 export interface ClipShareOpts {
   text: string;
   onTelegram?: (what: 'story' | 'chat' | 'save', ok: boolean) => void;
+  /** Надпись монтажа вместо «Монтируем клип… {n}%» (фильм матча). */
+  making?: string;
+}
+
+/** Что можно записать в видео: клип или фильм матча. */
+type Recordable = Parameters<typeof recordClip>[0];
+
+/** «Фильм матча» с игрового сервера (packages/net › ServerLink.film). */
+export interface FilmFeed {
+  /** Что с фильмом этого матча; null — сервер ничего не прислал (монтирует телефон). */
+  current(): WireFilm | null;
+  on(h: (f: WireFilm) => void): () => void;
+  /** Ссылка на файл в хранилище клипов игрового сервера. */
+  url(id: string, ext: string): string;
 }
 
 /**
@@ -20,7 +35,7 @@ export interface ClipShareOpts {
  */
 export function openClipOverlay(
   parent: HTMLElement,
-  input: ClipInput,
+  input: ClipInput | (() => Recordable),
   t: Dict,
   share: (file: File) => Promise<void>,
   save: (file: File) => void,
@@ -60,14 +75,15 @@ export function openClipOverlay(
     root.querySelector<HTMLElement>('.clip-progress')!.hidden = true;
     return close;
   }
-  const scene = new ClipPlayerScene(input);
+  const scene = typeof input === 'function' ? input() : new ClipPlayerScene(input);
   scene.sound = getAudio().clipSound(); // музыка темы и звуки момента — в видео (не в динамики)
   root.querySelector('.clip-frame')!.appendChild(scene.c);
-  status.textContent = fmt(t.clip.making, { n: 0 });
+  const making = (n: number) => (opts?.making ? `${opts.making} ${n}%` : fmt(t.clip.making, { n }));
+  status.textContent = making(0);
 
   void recordClip(scene, mime, (p) => {
     if (closed) return;
-    status.textContent = fmt(t.clip.making, { n: Math.round(p * 100) });
+    status.textContent = making(Math.round(p * 100));
     bar.style.width = `${Math.round(p * 100)}%`;
   })
     .then((res: ClipResult) => {
@@ -147,6 +163,150 @@ export function openClipOverlay(
     .catch(() => {
       if (!closed) status.textContent = t.clip.failed;
     });
+  return close;
+}
+
+/** Файл готового фильма с сервера — один раз на ссылку (для системного «Поделиться» нужен сам файл). */
+const filmFiles = new Map<string, Promise<File | null>>();
+function filmFile(url: string): Promise<File | null> {
+  let p = filmFiles.get(url);
+  if (!p) {
+    p = fetch(url)
+      .then((r) => (r.ok ? r.blob() : null))
+      .then((b) => (b ? new File([b], 'massovka-film.mp4', { type: 'video/mp4' }) : null))
+      .catch(() => null);
+    filmFiles.set(url, p);
+    void p.then((f) => !f && filmFiles.delete(url));
+  }
+  return p;
+}
+
+/**
+ * «Фильм матча» с сервера: пока монтируется — «Монтируем фильм…», готов — видео по ссылке и
+ * «Отправить / В сторис / Сохранить». В Telegram файл с телефона не грузится вовсе — он уже на сервере.
+ * Сервер не смог — fallback (монтаж на телефоне).
+ */
+export function openFilmOverlay(
+  parent: HTMLElement,
+  feed: FilmFeed,
+  t: Dict,
+  share: (file: File) => Promise<void>,
+  save: (file: File) => void,
+  opts: ClipShareOpts & { fallback: () => void },
+): () => void {
+  const root = document.createElement('div');
+  root.className = 'clip-overlay';
+  root.innerHTML = `
+    <div class="clip-box">
+      <div class="clip-frame"></div>
+      <p class="clip-status" role="status"></p>
+      <div class="clip-progress"><i></i></div>
+      <div class="clip-actions" hidden>
+        <button class="btn clip-send">${t.clip.send}</button>
+        <button class="btn clip-story" hidden>${t.clip.story}</button>
+        <button class="btn clip-save">${t.clip.save}</button>
+      </div>
+      <button class="btn clip-close">${t.clip.close}</button>
+    </div>`;
+  parent.appendChild(root);
+  const status = root.querySelector<HTMLElement>('.clip-status')!;
+  const progress = root.querySelector<HTMLElement>('.clip-progress')!;
+  const bar = progress.querySelector<HTMLElement>('i')!;
+  const actions = root.querySelector<HTMLElement>('.clip-actions')!;
+  for (const ev of ['pointerdown', 'pointerup', 'touchstart', 'touchend', 'click']) root.addEventListener(ev, (e) => e.stopPropagation());
+  let closed = false;
+  let shown = false;
+  // монтаж на сервере идёт ~10–15 с: полоска ползёт к 90%, пока не придёт готовый фильм
+  let fake = 0;
+  const timer = setInterval(() => {
+    fake += (90 - fake) * 0.06;
+    bar.style.width = `${Math.round(fake)}%`;
+  }, 250);
+  const close = () => {
+    closed = true;
+    clearInterval(timer);
+    off();
+    root.remove();
+  };
+  root.querySelector('.clip-close')!.addEventListener('click', close);
+  const text = opts.text;
+
+  const show = (f: Extract<WireFilm, { state: 'ready' }>) => {
+    if (shown || closed) return;
+    shown = true;
+    clearInterval(timer);
+    progress.hidden = true;
+    status.textContent = t.clip.ready;
+    const url = feed.url(f.id, f.ext);
+    const shared: SharedClip = { id: f.id, ext: f.ext, url, thumb: f.thumb };
+    const caps = inTelegram() ? telegramClipCaps('video/mp4') : null;
+    // файл качаем сразу, пока смотрят: к «Отправить» он уже в памяти (меню «Поделиться» — только из свежего жеста)
+    const file = caps?.chat && caps.save ? null : filmFile(url);
+    let ready: File | null = null;
+    void file?.then((x) => (ready = x));
+    const v = document.createElement('video');
+    v.src = url;
+    v.muted = true;
+    v.loop = true;
+    v.playsInline = true;
+    v.autoplay = true;
+    v.addEventListener('error', () => v.remove());
+    root.querySelector('.clip-frame')!.appendChild(v);
+    void v.play().catch(() => undefined);
+    actions.hidden = false;
+    const tg = async (what: 'story' | 'chat' | 'save', run: () => Promise<boolean> | boolean): Promise<boolean> => {
+      const ok = await run();
+      opts.onTelegram?.(what, ok);
+      return ok;
+    };
+    /** Файл для системного меню: уже скачан — сразу (свежий жест), иначе дождаться. */
+    const withFile = async (use: (x: File) => void | Promise<void>) => {
+      const x = ready ?? (await (file ?? filmFile(url)));
+      if (x) await use(x);
+      else status.textContent = t.clip.failed;
+    };
+    root.querySelector('.clip-send')!.addEventListener('click', () => {
+      if (caps?.chat) {
+        void tg('chat', () => telegramShareCard({ kind: 'clip', clip: f.id, text, thumb: f.thumb })).then(async (ok) => {
+          if (!ok) await withFile(share);
+        });
+        return;
+      }
+      void withFile(share);
+    });
+    const story = root.querySelector<HTMLButtonElement>('.clip-story')!;
+    if (caps?.story) {
+      story.hidden = false;
+      story.addEventListener('click', () => {
+        void tg('story', () => telegramClipStory(shared, text, t.meta.title)).then((ok) => {
+          if (!ok) status.textContent = t.clip.failed;
+        });
+      });
+    }
+    root.querySelector('.clip-save')!.addEventListener('click', () => {
+      if (caps?.save) {
+        void tg('save', () => telegramClipSave(shared)).then(async (ok) => {
+          if (!ok) await withFile(save);
+        });
+        return;
+      }
+      void withFile(save);
+    });
+  };
+
+  const onFilm = (f: WireFilm) => {
+    if (closed) return;
+    if (f.state === 'ready') show(f);
+    else if (f.state === 'failed' && !shown) {
+      // сервер не смог — смонтируем на телефоне
+      close();
+      opts.fallback();
+    }
+  };
+  const off = feed.on(onFilm);
+  status.textContent = t.clip.filmMaking;
+  const cur = feed.current();
+  if (cur) onFilm(cur);
   return close;
 }
 

@@ -3,7 +3,6 @@ import { PAL, PLAYER_COLORS, hexToInt } from '@kto/assets';
 import {
   LocalSession,
   createLocalSession,
-  findBestMoment,
   recordRound,
   TICK_MS,
   makeConfig,
@@ -14,16 +13,19 @@ import {
   THEME_RULES,
   roundMod,
 } from '@kto/game-core';
-import type { AwardId, ClientSession, CrowdKind, Dict, Entity, GameConfig, Lang, Moment, Notice, RoundRecording, RoundSummary, ThemeText, World, WorldEvent } from '@kto/game-core';
+import type { AwardId, ClientSession, CrowdKind, Dict, Entity, GameConfig, Lang, Moment, Notice, RoundSummary, ThemeText, World, WorldEvent } from '@kto/game-core';
 import { resultCardFile } from './card';
 import { Tutorial, tutorialDone } from './tutorial';
 import { mildOn } from '../ui/topbar';
 import { SWING_HIT, aim, armed, armsOf, bodyPose, drawAir, drawFloor, killsFromLog, makeKill, weaponSfx } from './gore';
 import type { ArmColors } from './gore';
 import type { Kill, Px } from './gore';
-import { clipSupported, clipViaTelegram, openClipOverlay, preloadClipForTelegram, recordClipInBackground, shareClipInTelegram } from './clip-ui';
-import type { ClipPlayer } from './clip';
+import { clipSupported, clipViaTelegram, openClipOverlay, openFilmOverlay, preloadClipForTelegram, recordClipInBackground, shareClipInTelegram } from './clip-ui';
+import type { FilmFeed } from './clip-ui';
+import { FilmScene, filmInput } from './film';
+import type { FilmTake } from './film';
 import { Audio } from './audio';
+import type { Sfx } from './audio';
 import { frameFor } from './frames';
 import type { CharFrame } from './frames';
 import type { FontColor } from './font';
@@ -48,6 +50,8 @@ const ME = 'me';
 const COLOR_FONT: FontColor[] = ['red', 'blue', 'yellow', 'green'];
 
 export interface SceneInit {
+  /** «Фильм матча» с игрового сервера (комната); нет — фильм монтирует телефон. */
+  film?: FilmFeed;
   playerName: string;
   fontFamily: string;
   audio: Audio;
@@ -243,6 +247,12 @@ export class GameScene extends Phaser.Scene {
   private confetti: { x: number; y: number; vx: number; vy: number; c: number }[] = [];
   private stepSoundAt = 0;
   private lastAttackAt = -9999;
+  /** По кому был последний свой удар: итог удара звучит как свой (награда), а не как чужой. */
+  private lastAttackEid = -1;
+  /** Сколько звёзд взял сам в этом дубле: каждая следующая звучит на тон выше. */
+  private myStarsTaken = 0;
+  /** Кто вырезал меня в этом дубле (аналитика round_end). */
+  private outBy: 'director' | 'player' | null = null;
   /** Замах своего персонажа к цели — сразу по нажатию, до ответа хоста. */
   private lunge: { dx: number; dy: number; start: number } | null = null;
   /** Вспышки замаха у цели (белая обводка цели и искры), мс с начала. */
@@ -291,8 +301,8 @@ export class GameScene extends Phaser.Scene {
   private bloodN = 0;
   private ghostUi: Phaser.GameObjects.GameObject[] = [];
   private starPos = new Map<number, { x: number; y: number }>();
-  /** Лучший момент матча для клипа: запись раунда переживает следующий раунд. */
-  private best: { rec: RoundRecording; moment: Moment; players: ClipPlayer[] } | null = null;
+  /** Дубли матча для «Фильма матча» (если его не смонтирует сервер): запись раунда переживает следующий раунд. */
+  private takes: FilmTake[] = [];
   private cardFile: File | null = null;
   private closeClip: (() => void) | null = null;
   /** Клип выбывшего: последние секунды перед выбиванием, монтируется в фоне — призрак смотрит игру дальше. */
@@ -328,13 +338,14 @@ export class GameScene extends Phaser.Scene {
     this.deathObjs = [];
     this.ghostUi = [];
     this.starPos = new Map();
-    this.best = null;
+    this.takes = [];
     this.cardFile = null;
     this.deathClip = null;
   }
 
   create(): void {
     this.cfg = makeConfig(this.init0.cfg);
+    this.audio.setKids(this.cfg.kidsMode);
     const names = [this.init0.playerName || this.t.game.you, ...this.botNames()];
     const players = names.map((name, i) => ({ pid: i === 0 ? ME : `ai${i}`, name, color: i }));
     const seed = this.init0.seed ?? (Date.now() & 0x7fffffff);
@@ -905,6 +916,7 @@ export class GameScene extends Phaser.Scene {
 
   private doAttack(eid: number): void {
     this.lastAttackAt = this.sim.world.time;
+    this.lastAttackEid = eid;
     // мгновенный отклик: замах, свист и искры у цели. Итог (поф или оглушение) — от хоста
     const me = this.me();
     const w = this.sim.world;
@@ -914,7 +926,7 @@ export class GameScene extends Phaser.Scene {
       const d = Math.hypot(te.x - mine.x, te.y - mine.y) || 1;
       this.lunge = { dx: ((te.x - mine.x) / d) * 3, dy: ((te.y - mine.y) / d) * 2, start: performance.now() };
       this.swingFx.push({ eid, x: te.x, y: te.y, t: 0 });
-      this.audio.play('swing');
+      // замах — только вибрацией: свист из своего телефона выдал бы соседям по комнате, кто бьёт
       haptic('medium');
     }
     this.sim.intent({ k: 'attack', eid });
@@ -930,19 +942,23 @@ export class GameScene extends Phaser.Scene {
         // бьющий известен (ночь Майами, удар по статисту); без него («Жёсткий дубль») — «поф»
         if (this.weaponKills() && ev.attacker !== undefined) this.weaponHit(ev.target, ev.x, ev.y, ev.attacker);
         else {
-          this.audio.play(ev.result === 'player' ? 'hitPlayer' : 'hitBot');
+          // вырезали меня — «вырезан»; мой удар по живому — награда; чужой — событие на поле
+          if (ev.target === myEid) this.audio.play('cut');
+          else if (ev.result === 'player') this.audio.play(this.myHit(ev.target) ? 'hitPlayer' : 'hitOther');
+          else this.audio.play('hitBot');
           this.audio.play('poof');
           this.cameras.main.shake(120, 0.008);
           this.hitStop = 60;
         }
         // вибрация (в Telegram — родная): вырезали меня — сильно; мой удар — успех по живому, ошибка по боту
         if (ev.target === myEid) haptic('heavy');
-        else if (this.sim.world.time - this.lastAttackAt < 200) haptic(ev.result === 'player' ? 'success' : 'error');
+        else if (this.myHit(ev.target)) haptic(ev.result === 'player' ? 'success' : 'error');
         if (ev.target === myEid) {
           // «Жёсткий дубль»: вырезал режиссёр — сразу после окна команды, без удара
           const c = this.sim.world.crowd;
           const byDirector = (roundMod(this.sim.mod) === 'hard' || this.cfg.strictCrowd) && !!c && !c.vote && ev.at > c.windowEnd && ev.at < c.windowEnd + 2000;
           const sub = byDirector ? this.t.game.cutByCrowd : undefined;
+          this.outBy = byDirector ? 'director' : 'player';
           // оружием — баннер в момент удара, с кровью на экране и сотрясением (weaponImpact)
           const lk = this.kills.find((k) => k.k.eid === ev.target && !k.hit);
           if (lk) lk.mine = { sub };
@@ -951,7 +967,8 @@ export class GameScene extends Phaser.Scene {
         }
         break;
       case 'star_taken':
-        this.audio.play('starTake');
+        if (ev.eid === myEid) this.myStarsTaken = Math.min(3, this.myStarsTaken + 1);
+        this.audio.play('starTake', ev.eid === myEid ? this.myStarsTaken : 0);
         if (ev.eid === myEid) haptic('success');
         if (ev.eid !== myEid && this.sim.phase === 'play') this.tip('star');
         if (themePack(this.sim.theme).starSiren && this.sim.phase === 'play') {
@@ -989,6 +1006,8 @@ export class GameScene extends Phaser.Scene {
         else if (this.newbie) this.tip('crowd');
         this.audio.cutMusic();
         this.audio.play('crowd');
+        // в стоп-кадре не абсолютная тишина: тихо стрекочет стоящий проектор
+        this.audio.projector((ev.resumeAt - ev.at) / 1000 / (this.init0.timeScale ?? 1) - 0.35, 0.05, 0.35);
         haptic('warning'); // стоп-кадр: «замри» чувствуется рукой, даже без звука
         this.musicResumeAt = ev.windowEnd + 900;
         break;
@@ -1047,6 +1066,8 @@ export class GameScene extends Phaser.Scene {
       mod: this.sim.mod,
       reason: s.endReason,
       alive: !!me?.alive,
+      // кто вырезал: режиссёр за пропущенную команду («Жёсткий дубль») — сигнал не услышали
+      out: me?.alive ? 'none' : (this.outBy ?? 'player'),
       // обвиняют только вырезанные: живому — na
       accused: acc ? (acc.correct ? 'right' : 'wrong') : me?.alive ? 'na' : 'none',
       caught: !!me && s.accusations.some((a) => a.eid === me.eid),
@@ -1076,17 +1097,20 @@ export class GameScene extends Phaser.Scene {
       const dc = this.deathClip;
       if (!dc || dc.status === 'offer' || dc.round < n.round - 1) this.deathClip = null;
       if (n.round === 1) {
-        // реванш: новый матч — новые лучший момент и карточка
-        this.best = null;
+        // реванш: новый матч — новые дубли для фильма и карточка
+        this.takes = [];
         this.cardFile = null;
         this.track('match_start', { players: this.sim.players.length, ai: this.sim.players.filter((p) => p.ai).length, level: this.cfg.strictCrowd ? 'hard' : this.cfg.kidsMode ? 'easy' : 'normal', kids: this.cfg.kidsMode, strict: this.cfg.strictCrowd, rounds: this.cfg.maxRounds, roundSec: this.cfg.roundSec });
       }
     } else if (n.t === 'phase') {
-      if (n.phase === 'countdown') this.audio.play('count');
+      // начало матча — звуковой логотип игры, дальше — обычный отсчёт
+      if (n.phase === 'countdown') this.audio.play(this.sim.round === 1 ? 'logo' : 'count');
       if (n.phase !== 'match_end') this.triumphShown = false;
       // Telegram: посреди матча — переспросить, если закрывают приложение
       if (!this.init0.tutorial && !this.init0.spectator) setClosingConfirmation(n.phase !== 'match_end');
       if (n.phase === 'play') {
+        this.myStarsTaken = 0;
+        this.outBy = null;
         this.audio.play('ready');
         this.flashWord(this.t.game.action);
         // присказка темы — только когда нет условия съёмки: его уже прочитали на отсчёте
@@ -1109,11 +1133,18 @@ export class GameScene extends Phaser.Scene {
         this.trails.clear();
         this.noteMoment();
         this.upgradeDeathClip();
+        // «смотрим отснятое»: проектор нарастает (drum), потом тихо стрекочет под повтором
         this.audio.play('drum');
+        {
+          const c = this.cfg;
+          const ts = this.init0.timeScale ?? 1;
+          this.audio.projector((s.replayTo - s.replayFrom) / c.revealSpeed / 1000 / ts, 0.06, c.revealDrumSec / ts);
+        }
       }
       if (n.phase === 'results' && !this.init0.spectator) this.trackRound();
       if (n.phase === 'match_end') {
-        this.audio.play(this.sim.match?.tooAlive ? 'sad' : 'fanfare');
+        // «Снято!»: хлопушка и логотип (общая фанфара была безлика); «Слишком живые!» — тромбон
+        this.audio.play(this.sim.match?.tooAlive ? 'sad' : 'wrap');
         this.spawnConfetti();
         const m = this.sim.match;
         if (m) {
@@ -1177,13 +1208,24 @@ export class GameScene extends Phaser.Scene {
     this.noPoof.add(eid);
   }
 
+  /** Свой ли это удар: по этой цели я только что бил. */
+  private myHit(target: number): boolean {
+    return target === this.lastAttackEid && this.sim.world.time - this.lastAttackAt < 400;
+  }
+
+  /** Звук удара оружием: вырезали меня, я выбил живого или удар на поле. */
+  private impactSfx(lk: LiveKill): Sfx {
+    if (lk.mine) return 'cut';
+    return lk.k.by !== undefined && lk.k.by === this.me()?.eid ? 'hitPlayer' : 'hitOther';
+  }
+
   /** Момент удара: всё, что должно случиться разом. */
   private weaponImpact(lk: LiveKill): void {
     if (lk.k.mild) {
       // «Без насилия»: без крови, вспышки и тела — жертва исчезает обычным «пуфом»
       if (lk.mine) this.time.delayedCall(0, () => this.showDeath(lk.mine!.sub, false));
       this.audio.play('poof');
-      this.audio.play('hitPlayer');
+      this.audio.play(this.impactSfx(lk));
       this.cameras.main.shake(120, 0.008);
       lk.standIn?.destroy();
       lk.standIn = null;
@@ -1194,7 +1236,8 @@ export class GameScene extends Phaser.Scene {
     }
     if (lk.mine) this.time.delayedCall(0, () => this.showDeath(lk.mine!.sub, true));
     this.audio.play(weaponSfx(lk.k));
-    this.audio.play('hitPlayer');
+    // вырезали меня — дальше звон в ушах (bloodyScreen › knockedOut)
+    if (!lk.mine) this.audio.play(this.impactSfx(lk));
     this.hitStop = 70;
     this.cameras.main.shake(180, 0.016);
     navigator.vibrate?.(30);
@@ -1645,6 +1688,8 @@ export class GameScene extends Phaser.Scene {
         site: location.host,
         captions: known ? { find: c.whoGotMe, reveal: c.reveal, kind: c.gotMe } : { find: c.findMe, reveal: c.thatWasMe, kind: c.whoGotMe },
         noGore: mildOn(),
+        hero: dc.eid,
+        link: `${location.origin}/?src=clip&l=${this.lang}`,
       },
       (p) => {
         if (this.deathClip !== dc) return;
@@ -2158,6 +2203,14 @@ export class GameScene extends Phaser.Scene {
     if (!this.finalSoundsPlayed) {
       this.finalSoundsPlayed = true;
       s.accusations.forEach((a, i) => this.time.delayedCall(250 + i * 350, () => this.audio.play(a.correct ? 'accuseRight' : 'accuseWrong')));
+      // без звука разоблачение тоже чувствуется рукой: короткий толчок на каждого живого
+      // каждый живой — удар (всё выше) и толчок вибрации: разоблачение слышно и чувствуется рукой
+      [...alive.keys()].forEach((_, i) =>
+        this.time.delayedCall(i * 180, () => {
+          this.audio.play('unmask', i + 1);
+          haptic('heavy');
+        }),
+      );
       this.ovDyn.final?.setVisible(true);
     }
   }
@@ -2796,8 +2849,8 @@ export class GameScene extends Phaser.Scene {
     } else this.addRow(AY + 214, [{ id: 'share2', kind: 'secondary', icon: 'share', label: this.t.game.share, flex: true, release: true, onTap: () => this.share() }]);
     // клип — третьей, тихой кнопкой с кадром плёнки в нижней панели. Открывается касанием: отпускание
     // у нижнего края экрана браузер может забрать себе (Chrome на iPhone); отправка — кнопкой в окне клипа
-    if (this.best && !this.init0.spectator) {
-      this.addRow(PANEL_Y + 3, [{ id: 'clip', kind: 'secondary', icon: 'film', label: this.t.clip.button, flex: true, onTap: () => this.openClip() }]);
+    if ((this.takes.length || this.init0.film?.current()) && !this.init0.spectator) {
+      this.addRow(PANEL_Y + 3, [{ id: 'clip', kind: 'secondary', icon: 'film', label: this.t.clip.film, flex: true, onTap: () => this.openFilm() }]);
       const b = this.buttons.find((x) => x.id === 'clip');
       if (b) Object.assign(b, { x: 3, w: 174 });
     }
@@ -3027,68 +3080,80 @@ export class GameScene extends Phaser.Scene {
     void this.init0.onShare?.(text, files);
   }
 
-  /** Запомнить лучший момент раунда (если он лучше прежних в этом матче). */
+  /** Запомнить дубль для «Фильма матча» (запись мира снимается на разоблачении: потом её не собрать). */
   private noteMoment(): void {
     const s = this.sim.summary;
     if (!s) return;
     try {
       const rec = recordRound(this.sim.world, { round: s.round, theme: this.sim.theme, players: s.reveal, playEnd: s.replayTo, kills: s.kills });
-      const moment = findBestMoment(rec, this.sim.me()?.eid);
-      if (!moment || (this.best && this.best.moment.score > moment.score)) return;
-      const players = s.reveal.map((r) => {
-        const info = this.sim.info(r.pid)!;
-        return { eid: r.eid, name: info.name, color: info.color };
-      });
-      this.best = { rec, moment, players };
+      this.takes.push({ rec, summary: s, arena: this.sim.arena });
     } catch {
-      /* клип — не главное: при сбое просто не предлагаем его */
+      /* фильм — не главное: при сбое просто будет без этого дубля */
     }
   }
 
-  /** Победитель матча для заставки клипа (клип из итогов матча, без «слишком живых»). */
-  private clipWinner(): { name: string; color: number } | undefined {
-    const m = this.sim.match;
-    if (this.sim.phase !== 'match_end' || !m || m.tooAlive || !m.winners[0]) return undefined;
-    const w = this.sim.info(m.winners[0]);
-    return w ? { name: w.name, color: w.color } : undefined;
-  }
-
-  private openClip(): void {
-    const best = this.best;
-    if (!best) return;
+  /**
+   * «Фильм матча»: готовый с сервера (монтируется с разоблачения последнего дубля) — сразу видео;
+   * сервер не монтирует (песочница, старый сервер) или не смог — монтируем на телефоне из дублей матча.
+   */
+  private openFilm(): void {
     this.closeClip?.();
-    this.track('clip_open', { kind: best.moment.kind, self: !!best.moment.selfRole });
-    const m = best.moment;
-    const a = best.players.find((p) => p.eid === m.attacker);
-    const b = best.players.find((p) => p.eid === m.victim);
-    const text = m.kind === 'knockout' && a && b ? fmt(this.t.clip.shareKo, { a: a.name, b: b.name }) : this.t.meta.title;
-    // модуль клипа в основной сборке (не ленивый чанк): после обновления сайта открытая вкладка
-    // не сможет подгрузить чанк, которого уже нет на сервере, и кнопка молча не срабатывала бы
+    const feed = this.init0.film;
+    const text = this.t.clip.filmText;
+    const share = async (file: File, via: string) => {
+      this.track('clip_send', { kind: 'film', type: file.type.split(';')[0], via });
+      await this.init0.onShare?.(text, [file]);
+    };
+    const save = (file: File, via: string) => {
+      this.track('clip_save', { kind: 'film', via });
+      this.init0.onSave?.(file);
+    };
+    const onTelegram = (what: 'story' | 'chat' | 'save', ok: boolean) =>
+      this.track(ok ? (what === 'story' ? 'clip_story' : what === 'chat' ? 'clip_send' : 'clip_save') : 'clip_tg_fail', { kind: 'film', via: 'tg', what });
     try {
-      this.closeClip = openClipOverlay(
-        document.body,
-        { ...best, arena: this.sim.arena, t: this.t, font: this.init0.fontFamily, site: location.host, noGore: mildOn(), winner: this.clipWinner() },
-        this.t,
-        async (file) => {
-          this.track('clip_send', { kind: best.moment.kind, type: file.type.split(';')[0] });
-          await this.init0.onShare?.(text, [file]);
-        },
-        (file) => {
-          this.track('clip_save', { kind: best.moment.kind });
-          this.init0.onSave?.(file);
-        },
-        {
+      if (feed?.current()) {
+        this.track('clip_open', { kind: 'film', via: 'server' });
+        this.closeClip = openFilmOverlay(document.body, feed, this.t, (f) => share(f, 'server'), (f) => save(f, 'server'), {
           text,
-          // внутри Telegram: сторис, видео-карточка в чат, родное «Сохранить»
-          // не вышло — сработает обычный путь и посчитается там
-          onTelegram: (what, ok) =>
-            this.track(ok ? (what === 'story' ? 'clip_story' : what === 'chat' ? 'clip_send' : 'clip_save') : 'clip_tg_fail', { kind: best.moment.kind, via: 'tg', what }),
-        },
-      );
+          onTelegram,
+          fallback: () => this.openLocalFilm(share, save, onTelegram),
+        });
+      } else this.openLocalFilm(share, save, onTelegram);
       this.events.once('shutdown', () => this.closeClip?.());
     } catch {
       this.showToast(this.t.clip.failed, 2500);
     }
+  }
+
+  /** Фильм на телефоне: та же сцена, что на сервере, запись MediaRecorder в реальном времени (~20 с). */
+  private openLocalFilm(
+    share: (f: File, via: string) => Promise<void>,
+    save: (f: File, via: string) => void,
+    onTelegram: (what: 'story' | 'chat' | 'save', ok: boolean) => void,
+  ): void {
+    const m = this.sim.match;
+    const inp = m
+      ? filmInput(this.takes, this.sim.players, m, {
+          t: this.t,
+          font: this.init0.fontFamily,
+          site: location.host,
+          link: `${location.origin}/?src=film&l=${this.lang}`,
+          noGore: mildOn(),
+          self: this.sim.selfPid,
+        })
+      : null;
+    if (!inp) {
+      this.showToast(this.t.clip.failed, 2500);
+      return;
+    }
+    this.track('clip_open', { kind: 'film', via: 'local' });
+    // модуль клипа в основной сборке (не ленивый чанк): после обновления сайта открытая вкладка
+    // не сможет подгрузить чанк, которого уже нет на сервере, и кнопка молча не срабатывала бы
+    this.closeClip = openClipOverlay(document.body, () => new FilmScene(inp), this.t, (f) => share(f, 'local'), (f) => save(f, 'local'), {
+      text: this.t.clip.filmText,
+      onTelegram,
+      making: this.t.clip.filmMaking,
+    });
   }
 }
 

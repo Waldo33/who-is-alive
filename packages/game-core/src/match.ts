@@ -781,23 +781,37 @@ export class MatchSim {
     this.notices.push({ t: 'score', pid, delta, reason });
   }
 
-  private advanceAfterResults(): void {
+  /**
+   * Этот дубль — последний в матче. Очки начисляются в конце дубля, поэтому уже на разоблачении
+   * известно, чем кончится матч (сервер по этому заранее монтирует «Фильм матча»).
+   */
+  get lastRound(): boolean {
     const top = Math.max(...Object.values(this.scores));
-    if (top >= this.cfg.scoreToWin || this.round >= this.cfg.maxRounds) {
-      const leaders = this.players.filter((p) => this.scores[p.pid] === top).map((p) => p.pid);
-      let winners = leaders;
-      let tooAlive = false;
-      if (leaders.length > 1) {
-        const k = Math.max(...leaders.map((pid) => this.matchKills[pid]));
-        winners = leaders.filter((pid) => this.matchKills[pid] === k);
-        tooAlive = winners.length > 1;
-      }
-      this.match = {
-        winners,
-        tooAlive,
-        scores: { ...this.scores },
-        awards: pickMatchAwards(this.roundAwards, this.matchKills),
-      };
+    return top >= this.cfg.scoreToWin || this.round >= this.cfg.maxRounds;
+  }
+
+  /** Итоги матча по уже начисленным очкам — те же, что будут на match_end. */
+  outcome(): MatchSummary {
+    const top = Math.max(...Object.values(this.scores));
+    const leaders = this.players.filter((p) => this.scores[p.pid] === top).map((p) => p.pid);
+    let winners = leaders;
+    let tooAlive = false;
+    if (leaders.length > 1) {
+      const k = Math.max(...leaders.map((pid) => this.matchKills[pid]));
+      winners = leaders.filter((pid) => this.matchKills[pid] === k);
+      tooAlive = winners.length > 1;
+    }
+    return {
+      winners,
+      tooAlive,
+      scores: { ...this.scores },
+      awards: pickMatchAwards(this.roundAwards, this.matchKills),
+    };
+  }
+
+  private advanceAfterResults(): void {
+    if (this.lastRound) {
+      this.match = this.outcome();
       this.setPhase('match_end', 0);
     } else {
       this.startRound();

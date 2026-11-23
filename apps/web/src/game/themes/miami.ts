@@ -607,19 +607,20 @@ const song: Song = {
     const root = NIGHT_ROOTS[ch];
     const tri = NIGHT_TRIADS[ch];
     if (st.barsSinceTwist === 0 && s === 0) a.hit(1.2, 0.14, 4500, t);
-    if (part !== 'break' && s % 4 === 0) a.kick(t, 0.34, 150);
+    if (part !== 'break' && s % 4 === 0) a.kick(t, 0.28, 150);
     // бас шестнадцатыми с «качелями»: на бочке тише
-    if (part !== 'break' || s % 4 === 0) a.voice('sawtooth', root + 12, t, dt * 0.8, s % 4 === 0 ? 0.05 : 0.11);
+    if (part !== 'break' || s % 4 === 0) a.voice('sawtooth', root + 12, t, dt * 0.8, s % 4 === 0 ? 0.06 : 0.13);
     if (part !== 'intro' && part !== 'break' ? s === 4 || s === 12 : false) a.hit(0.35, 0.16, 1400, t);
     if (part !== 'intro' && s % 4 === 2) a.hit(0.09, 0.06, 7000, t);
     if (I >= 1 && s % 2 === 1) a.hit(0.03, 0.03, 8500, t);
-    if (part !== 'intro') {
+    // арпеджио — со второго такта вступления: на телефоне ночь слышна им, а не басом
+    if (part !== 'intro' || b >= 2) {
       const n = [0, 1, 2, 1][s % 4];
-      a.voice('pulse', root + 24 + tri[n] + (s % 8 >= 4 ? 12 : 0), t, dt * 0.7, 0.035);
+      a.voice('pulse', root + 24 + tri[n] + (s % 8 >= 4 ? 12 : 0), t, dt * 0.7, part === 'intro' ? 0.05 : 0.07);
     }
     if (part === 'lead' || part === 'break') {
       const m = melody(NIGHT_MEL_AT, NIGHT_MEL, ch, s);
-      if (m) a.voice('square', m[0], t, dt * m[1] * 0.85, 0.045);
+      if (m) a.voice('square', m[0], t, dt * m[1] * 0.85, 0.06);
     }
     if (part === 'break' && b === 15 && s >= 8) a.hit(0.05, 0.06 + (s - 8) * 0.012, 1400, t);
   },

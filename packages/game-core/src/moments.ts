@@ -294,3 +294,62 @@ export function recordRound(
 ): RoundRecording {
   return { ...info, nav: world.nav, speed: world.speed, log: world.log, keyframes: world.keyframes };
 }
+
+/** Кандидат в «Фильм матча»: лучший момент дубля и его герой (pid). */
+export interface FilmCandidate {
+  round: number;
+  moment: Moment;
+  /** Кто герой момента: выбил, собрал звёзды, ударил бота. */
+  hero?: string;
+}
+
+/** Сколько моментов в фильме: больше трёх — ролик длиннее 20 с, его не досматривают в ленте. */
+export const FILM_MAX = 3;
+/** Ниже этого момент — фон (ходили рядом), в фильм не берём, если есть что-то ярче. */
+const FILM_MIN_SCORE = 4;
+/** Бонус за нового героя: в фильме должны быть разные игроки, а победитель — хотя бы раз. */
+const FILM_NEW_HERO = 3.5;
+const FILM_WINNER = 2;
+
+/**
+ * Три момента для фильма матча из лучших моментов дублей: по очкам, с бонусом за разнообразие героев
+ * и за победителя, не больше одного провала; результат — по порядку дублей (виден ход матча).
+ * Если ярких нет — хотя бы один, самый сильный.
+ */
+export function pickFilmMoments<T extends FilmCandidate>(cands: readonly T[], opts: { max?: number; winner?: string } = {}): T[] {
+  const max = opts.max ?? FILM_MAX;
+  const pool = cands.filter((c) => c.moment.kind !== 'end');
+  const strong = pool.filter((c) => c.moment.score >= FILM_MIN_SCORE);
+  const left = [...(strong.length ? strong : pool)];
+  const out: T[] = [];
+  const heroes = new Set<string>();
+  while (out.length < max && left.length) {
+    let bi = -1;
+    let bs = -Infinity;
+    left.forEach((c, i) => {
+      // второй провал (удар по боту) — уже не смешно
+      if (c.moment.kind === 'hit_bot' && out.some((o) => o.moment.kind === 'hit_bot')) return;
+      let s = c.moment.score;
+      if (c.hero && !heroes.has(c.hero)) s += FILM_NEW_HERO;
+      if (c.hero && c.hero === opts.winner && !heroes.has(c.hero)) s += FILM_WINNER;
+      // при равенстве — позже (ближе к развязке матча)
+      if (bi < 0 || s > bs + 1e-9 || (Math.abs(s - bs) < 1e-9 && c.round > left[bi].round)) {
+        bs = s;
+        bi = i;
+      }
+    });
+    if (bi < 0) break;
+    const [c] = left.splice(bi, 1);
+    out.push(c);
+    if (c.hero) heroes.add(c.hero);
+    // после ярких — только яркие: слабый момент не добираем ради числа
+    if (!strong.length) break;
+  }
+  if (!out.length && cands.length) out.push([...cands].sort((a, b) => b.moment.score - a.moment.score)[0]);
+  return out.sort((a, b) => a.round - b.round);
+}
+
+/** Крючок фильма — самый сильный из выбранных моментов. */
+export function filmHook<T extends FilmCandidate>(picked: readonly T[]): T | undefined {
+  return [...picked].sort((a, b) => b.moment.score - a.moment.score || b.round - a.round)[0];
+}
