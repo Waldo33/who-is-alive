@@ -147,6 +147,12 @@ void (async () => {
       const x = await render(3.5, { setup: (a) => a.play(s) });
       out['sfx:' + s] = measure(x);
     }
+    // детский режим: мягкие удары вместо треска и звона
+    for (const s of ['hitPlayer', 'hitOther', 'hitBot', 'cut', 'knockedOut', 'whack'] as Sfx[]) {
+      if (!want('kids:' + s)) continue;
+      const x = await render(3.5, { setup: (a) => (a.setKids(true), a.play(s)) });
+      out['kids:' + s] = measure(x);
+    }
     for (let th = 0; th < THEME_COUNT; th++) await loadTheme(th);
     const music = (key: string, len: number, mode: MusicMode, theme: number, opts: { twist?: boolean; intensity?: number; from?: number } = {}) =>
       render(len, {

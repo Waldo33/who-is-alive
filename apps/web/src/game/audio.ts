@@ -70,6 +70,10 @@ export class Audio {
   private music: Music | null = null;
   private twist = false;
   private synth: Synth | null = null;
+  private kids = false;
+  /** Когда последний раз звучал каждый эффект и когда начались последние важные (P1). */
+  private lastAt = new Map<Sfx, number>();
+  private p1At: number[] = [];
   /** Звуки игры (эффекты). */
   enabled = true;
   /** Музыка. */
@@ -146,6 +150,7 @@ export class Audio {
     musicBus.connect(this.roundGain).connect(this.duck);
     this.music = new Music(this.ctx, musicBus, this.noiseBuf);
     this.synth = new Synth(this.ctx, this.sfx, this.noiseBuf);
+    this.synth.kids = this.kids;
     // WebKit (iPhone, Telegram) создаёт контекст из жеста приостановленным: запустить в этом же
     // касании и сыграть пустой звук — иначе музыка меню заиграет только со второго касания,
     // а им обычно бывает «Играть»
@@ -274,13 +279,33 @@ export class Audio {
     g.linearRampToValueAtTime(1, t + sec);
   }
 
+  /**
+   * Сыграть эффект. Правила смеси (звуковой гайд): одинаковый звук не чаще раза в 120 мс; важных
+   * (P1) одновременно не больше двух — третий ждёт 80 мс, чтобы не слиться в кашу.
+   */
   play(name: Sfx, step = 0): void {
-    if (!this.ctx || !this.enabled) return;
+    const ctx = this.ctx;
+    if (!ctx || !this.enabled) return;
+    const now = ctx.currentTime;
+    if (now - (this.lastAt.get(name) ?? -1) < 0.12) return;
+    this.lastAt.set(name, now);
+    let delay = 0;
+    if (P1.has(name)) {
+      this.p1At = this.p1At.filter((t) => t > now - 0.15);
+      if (this.p1At.length >= 2) delay = 0.08;
+      this.p1At.push(now + delay);
+    }
     if (name === 'knockedOut') this.concuss();
     else if (name === 'cut') this.cutOut();
     else if (P1.has(name)) this.duckMusic(0.355, 0.6);
     else if (P2.has(name)) this.duckMusic(0.63, 0.4);
-    this.synth?.play(name, step);
+    this.synth?.playAt(delay, name, step);
+  }
+
+  /** Детский режим комнаты: мягкие тембры, без звона в ушах и оружия (sfx.ts › KIDS). */
+  setKids(on: boolean): void {
+    this.kids = on;
+    if (this.synth) this.synth.kids = on;
   }
 
   /** Стрёкот проектора на sec секунд через when (разоблачение, стоп-кадр «Море волнуется»). Тихий фон. */

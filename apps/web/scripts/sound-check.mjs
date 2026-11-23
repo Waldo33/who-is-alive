@@ -49,6 +49,8 @@ for (let th = 0; th < 7; th++) {
   TARGETS[`music:${th}:twist`] = [-44, -36, 'изнанка ≤ −36'];
 }
 TARGETS['music:accuse'] = [-42, -38, 'обвинение'];
+for (const k of ['hitPlayer', 'cut', 'knockedOut', 'hitBot']) TARGETS['kids:' + k] = [-36, -29, 'детский: P1'];
+for (const k of ['hitOther', 'whack']) TARGETS['kids:' + k] = [-42, -33, 'детский: P2'];
 TARGETS['music:6:blackout-gap'] = [-200, -70, 'тишина после «свет вырубили»'];
 
 const out = await build({ entryPoints: ['scripts/sound-check-entry.ts'], bundle: true, format: 'iife', write: false, logLevel: 'warning' });

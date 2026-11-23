@@ -15,18 +15,93 @@ export type Sfx =
 export const P1: ReadonlySet<Sfx> = new Set<Sfx>(['hitPlayer', 'hitBot', 'starTake', 'crowd', 'ready', 'knockedOut', 'cut', 'drum', 'accuseRight', 'accuseWrong', 'unmask', 'wrap', 'logo']);
 export const P2: ReadonlySet<Sfx> = new Set<Sfx>(['hitOther', 'whack', 'clang', 'stab', 'starSpawn', 'flicker', 'dusk']);
 
+/**
+ * Частые звуки: каждый раз чуть другие (±30 центов, ±1,5 дБ), чтобы за три матча не стать
+ * «пулемётом». Сигналы (команда, старт, логотип) не меняются — их узнают по звуку.
+ */
+const VARY: ReadonlySet<Sfx> = new Set<Sfx>(['step', 'hitPlayer', 'hitOther', 'hitBot', 'poof', 'starSpawn', 'tick', 'click', 'hedge', 'pigeon', 'whack', 'clang', 'stab', 'swing', 'unmask']);
+
+/** Детский режим: без оружия, звона в ушах и пилы — удары «поф» и бумажный хлопок. */
+const KIDS: Partial<Record<Sfx, Sfx>> = { whack: 'hitOther', clang: 'hitOther', stab: 'hitOther', knockedOut: 'cut', siren: 'starSpawn' };
+
 export class Synth {
+  /** Сдвиг высоты и громкости текущего эффекта (вариации). */
+  private det = 1;
+  private lvl = 1;
+  /** Задержка текущего эффекта, с (третий важный звук ждёт, пока прозвучат два). */
+  private base = 0;
+  /** Детский режим (настройка комнаты): мягкие тембры. */
+  kids = false;
+
   constructor(
     private readonly ctx: BaseAudioContext,
     private readonly out: AudioNode,
     private readonly noiseBuf: AudioBuffer,
   ) {}
 
+  /** Сыграть с задержкой delay секунд (правила смеси — audio.ts › play). */
+  playAt(delay: number, name: Sfx, step = 0): void {
+    this.base = delay;
+    try {
+      this.play(name, step);
+    } finally {
+      this.base = 0;
+    }
+  }
+
   /**
    * Сыграть эффект сейчас (по часам контекста). step — ступень для звуков с нарастанием (звезда).
    * Телефон не играет ниже ~350 Гц: всё важное звучит обертонами 1–5 кГц, бас — только опора.
    */
   play(name: Sfx, step = 0): void {
+    if (this.kids) {
+      name = KIDS[name] ?? name;
+      if (this.kidsPlay(name)) return;
+    }
+    if (VARY.has(name)) {
+      this.det = Math.pow(2, ((Math.random() * 2 - 1) * 30) / 1200);
+      this.lvl = Math.pow(10, ((Math.random() * 2 - 1) * 1.5) / 20);
+    }
+    try {
+      this.voice(name, step);
+    } finally {
+      this.det = 1;
+      this.lvl = 1;
+    }
+  }
+
+  /** Детский режим: свои мягкие удары. true — сыграно. */
+  private kidsPlay(name: Sfx): boolean {
+    switch (name) {
+      // бумажный хлопок и мажорная квинта: награда без треска
+      case 'hitPlayer':
+        this.paperPop();
+        this.tone('triangle', 1047, 1047, 0.1, 0.3, 0.05);
+        this.tone('triangle', 1568, 1568, 0.24, 0.3, 0.14);
+        return true;
+      case 'hitOther': this.paperPop(); return true;
+      // «упс»: хлопок и мягкое «у-у» вниз, без звона в ушах
+      case 'cut':
+        this.paperPop();
+        this.tone('triangle', 660, 440, 0.25, 0.3, 0.12);
+        this.tone('triangle', 520, 330, 0.35, 0.28, 0.4);
+        return true;
+      // бот: мягкое «боинг» вместо зуммера
+      case 'hitBot': this.tone('triangle', 900, 260, 0.32, 0.55); this.tone('square', 1800, 520, 0.2, 0.1); return true;
+      case 'accuseWrong': this.tone('triangle', 660, 440, 0.35, 0.3); return true;
+      case 'sad': [784, 740, 698].forEach((f, i) => this.tone('triangle', f, f * 0.98, 0.3, 0.2, i * 0.3)); return true;
+      default: return false;
+    }
+  }
+
+  /** Бумажный хлопок: короткий широкий шум сверху и мягкий «пф». */
+  private paperPop(): void {
+    this.noise(0.04, 1, 2600);
+    this.noise(0.14, 0.9, 1200, 0.01);
+    this.tone('triangle', 760, 420, 0.1, 0.3, 0.01);
+  }
+
+  private voice(name: Sfx, step: number): void {
     switch (name) {
       case 'step': this.noise(0.03, 0.05, 1800); break;
       // ты выбил живого — самый яркий звук игры: треск, удар и мажорная квинта вверх
@@ -81,7 +156,7 @@ export class Synth {
         break;
       }
       // звезда появилась: звоночек сверху, музыку не перебивает
-      case 'starSpawn': this.tone('sine', 2093, 2093, 0.18, 0.22); this.tone('triangle', 3136, 3136, 0.14, 0.12, 0.06); break;
+      case 'starSpawn': this.tone('sine', 2093, 2093, 0.18, 0.26); this.tone('triangle', 3136, 3136, 0.14, 0.14, 0.06); break;
       case 'crowd': this.tone('square', 880, 880, 0.12, 0.28); this.tone('square', 660, 660, 0.18, 0.28, 0.14); break;
       case 'tick': this.tone('square', 1500, 1500, 0.03, 0.12); break;
       case 'count': this.tone('square', 520, 520, 0.12, 0.2); break;
@@ -211,7 +286,7 @@ export class Synth {
 
   private sadTail(when: number): void {
     const ctx = this.ctx;
-    const t = ctx.currentTime + when;
+    const t = ctx.currentTime + this.base + when;
     const o = ctx.createOscillator();
     o.type = 'sawtooth';
     o.frequency.setValueAtTime(330, t);
@@ -233,14 +308,14 @@ export class Synth {
 
   private tone(type: OscillatorType, f0: number, f1: number, dur: number, vol: number, when = 0, out?: AudioNode): void {
     const ctx = this.ctx;
-    const t = ctx.currentTime + when;
+    const t = ctx.currentTime + this.base + when;
     const o = ctx.createOscillator();
     const g = ctx.createGain();
     o.type = type;
-    o.frequency.setValueAtTime(f0, t);
-    o.frequency.exponentialRampToValueAtTime(Math.max(20, f1), t + dur);
+    o.frequency.setValueAtTime(f0 * this.det, t);
+    o.frequency.exponentialRampToValueAtTime(Math.max(20, f1 * this.det), t + dur);
     g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(vol, t + 0.005);
+    g.gain.exponentialRampToValueAtTime(vol * this.lvl, t + 0.005);
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
     o.connect(g).connect(out ?? this.out);
     o.start(t);
@@ -249,22 +324,18 @@ export class Synth {
 
   private noise(dur: number, vol: number, freq: number, when = 0, out?: AudioNode): void {
     const ctx = this.ctx;
-    const t = ctx.currentTime + when;
+    const t = ctx.currentTime + this.base + when;
     const s = ctx.createBufferSource();
     s.buffer = this.noiseBuf;
     const f = ctx.createBiquadFilter();
     f.type = 'bandpass';
-    f.frequency.value = freq;
+    f.frequency.value = freq * this.det;
     const g = ctx.createGain();
-    g.gain.setValueAtTime(vol, t);
+    g.gain.setValueAtTime(vol * this.lvl, t);
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
     s.connect(f).connect(g).connect(out ?? this.out);
     s.start(t, Math.random() * 0.5);
     s.stop(t + dur + 0.02);
   }
 
-  /**
-   * Сыграть эффект. step — ступень для звуков с нарастанием: звезда (1-я, 2-я, 3-я своя —
-   * каждая на тон выше).
-   */
 }

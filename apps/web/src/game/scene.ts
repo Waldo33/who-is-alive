@@ -347,6 +347,7 @@ export class GameScene extends Phaser.Scene {
 
   create(): void {
     this.cfg = makeConfig(this.init0.cfg);
+    this.audio.setKids(this.cfg.kidsMode);
     const names = [this.init0.playerName || this.t.game.you, ...this.botNames()];
     const players = names.map((name, i) => ({ pid: i === 0 ? ME : `ai${i}`, name, color: i }));
     const seed = this.init0.seed ?? (Date.now() & 0x7fffffff);
