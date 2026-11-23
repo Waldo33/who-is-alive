@@ -172,13 +172,56 @@ export function clipViaTelegram(file: File): boolean {
 
 /** Начать загрузку заранее (тот же файл второй раз не грузится). */
 export function preloadClipForTelegram(file: File): Promise<SharedClip | null> | null {
-  return clipViaTelegram(file) ? shareableClip(file) : null;
+  return clipViaTelegram(file) ? shareableClip(file, thumbFromVideo(file)) : null;
+}
+
+/**
+ * Обложка из кадра середины видео (JPEG 360 px) — без неё карточка в чате пустая: Telegram берёт
+ * обложку только в JPEG. Не вышло за 4 с (бывает в iOS) — без обложки.
+ */
+function thumbFromVideo(file: File): Promise<Blob | null> {
+  return new Promise((resolve) => {
+    const v = document.createElement('video');
+    const url = URL.createObjectURL(file);
+    let over = false;
+    const done = (b: Blob | null) => {
+      if (over) return;
+      over = true;
+      clearTimeout(timer);
+      v.removeAttribute('src');
+      v.load();
+      URL.revokeObjectURL(url);
+      resolve(b);
+    };
+    const timer = setTimeout(() => done(null), 4000);
+    v.muted = true;
+    v.playsInline = true;
+    v.preload = 'auto';
+    v.addEventListener('loadeddata', () => {
+      v.currentTime = Number.isFinite(v.duration) && v.duration > 0 ? v.duration / 2 : 1;
+    });
+    v.addEventListener('seeked', () => {
+      try {
+        const c = document.createElement('canvas');
+        c.width = 360;
+        c.height = v.videoWidth ? Math.round((v.videoHeight * 360) / v.videoWidth) : 640;
+        const g = c.getContext('2d')!;
+        g.imageSmoothingEnabled = false;
+        g.drawImage(v, 0, 0, c.width, c.height);
+        c.toBlob((b) => done(b), 'image/jpeg', 0.85);
+      } catch {
+        done(null);
+      }
+    });
+    v.addEventListener('error', () => done(null));
+    v.src = url;
+  });
 }
 
 /** Клип видео-карточкой в чат Telegram (ждёт загрузку, если она ещё идёт). false — нужен обычный путь. */
 export async function shareClipInTelegram(file: File, text: string): Promise<boolean> {
   if (!clipViaTelegram(file)) return false;
-  const c = await shareableClip(file);
+  const c = await shareableClip(file, thumbFromVideo(file));
   return !!c && (await telegramShareCard({ kind: 'clip', clip: c.id, text, thumb: c.thumb }));
 }
 
