@@ -214,6 +214,13 @@ fi
 chmod 600 /etc/massovka/secrets.env
 
 envsum_before=$(cat /etc/massovka/*.env 2>/dev/null | sha256sum)
+# потолок комнат под память машины: нагрузочный прогон 23.11 — около 1,5 МБ на комнату (250 комнат = 440 МБ);
+# на сайт, базу, Caddy и «Фильм матча» оставляем ~600 МБ, комнату считаем по 2 МБ с запасом.
+# 1 ГБ → ~150 комнат, 2 ГБ → ~650, 4 ГБ → ~1650. Больше лимита — «сервер занят», а не подкачка и лаги у всех.
+mem_mb=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)
+max_rooms=$(( (mem_mb - 600) / 2 ))
+[ "$max_rooms" -lt 50 ] && max_rooms=50
+[ "$max_rooms" -gt 2000 ] && max_rooms=2000
 cat > /etc/massovka/game.env <<EOF
 NODE_ENV=production
 PORT=8080
@@ -226,6 +233,7 @@ TG_APP_NAME=play
 CLIP_BASE=${CLIP_BASE:-https://api.benobody.app}
 TRUST_PROXY=1
 LOG_LEVEL=info
+MAX_ROOMS=$max_rooms
 EOF
 # ключ Telegram-бота привозит выкладка из GitHub Secrets TELEGRAM_BOT_TOKEN (в /tmp/deploy/bot.env),
 # на диске — /etc/massovka/bot.env, только root; читает его systemd при запуске игрового сервера
@@ -262,11 +270,21 @@ ProtectControlGroups=yes
 ReadOnlyPaths=/opt/massovka
 # клипы «Лучший момент» для Telegram (apps/server/src/clips.ts): /var/lib/massovka-clips, 2 суток
 StateDirectory=massovka-clips
-MemoryMax=2G
+# память: MemoryHigh/MemoryMax ниже дописывает setup.sh (drop-in) по размеру машины
 
 [Install]
 WantedBy=multi-user.target
 EOF
+# память игрового сервера — по размеру машины, не больше физической (раньше стояло 2 ГБ при 1 ГБ):
+# выше MemoryHigh ядро тормозит и отжимает службу, MemoryMax — жёсткий потолок вместе с «Фильмом матча».
+# Перегрузку должен ловить MAX_ROOMS («сервер занят»), а не нехватка памяти.
+install -d /etc/systemd/system/massovka-game.service.d
+cat > /etc/systemd/system/massovka-game.service.d/memory.conf <<EOF
+[Service]
+MemoryHigh=$(( mem_mb * 75 / 100 ))M
+MemoryMax=$(( mem_mb * 90 / 100 ))M
+EOF
+chmod 644 /etc/systemd/system/massovka-game.service.d/memory.conf
 
 cat > /etc/systemd/system/caddy.service <<'EOF'
 [Unit]

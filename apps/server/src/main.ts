@@ -15,7 +15,8 @@ import type { Store } from './store';
 /**
  * Запуск игрового сервера. Настройки — из окружения:
  *   PORT (8080), AUTH_SIGNING_KEY (обязателен в проде), INSTANCE (blue | green),
- *   PUBLIC_WS_BASE (wss://api.<домен>), ALLOWED_ORIGINS (через запятую), TRUST_PROXY=1, LOG_LEVEL.
+ *   PUBLIC_WS_BASE (wss://api.<домен>), ALLOWED_ORIGINS (через запятую), TRUST_PROXY=1, LOG_LEVEL,
+ *   MAX_ROOMS — потолок комнат под память машины (~1,5 МБ на комнату, считает setup.sh; иначе 2000).
  */
 const env = process.env;
 const log = jsonLogger((env.LOG_LEVEL as LogLevel) || 'info');
@@ -82,6 +83,7 @@ const server = new GameServer({
   publicWsBase: env.PUBLIC_WS_BASE || undefined,
   allowedOrigins: env.ALLOWED_ORIGINS ? env.ALLOWED_ORIGINS.split(',').map((s) => s.trim()).filter(Boolean) : '*',
   trustProxy: env.TRUST_PROXY === '1',
+  maxRooms: Number(env.MAX_ROOMS) > 0 ? Number(env.MAX_ROOMS) : undefined,
   log,
   clips,
   film,
