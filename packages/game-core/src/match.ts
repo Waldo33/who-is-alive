@@ -504,13 +504,15 @@ export class MatchSim {
    * кто не повторил названный жест (не нажал, не тот, опоздал), загорается прожектор — круг
    * со смещённым центром. Зазевавшихся ботов он ловит так же. В «Жёстком дубле» не повторивший
    * (не нажал или не тот жест) вырезан, опоздавший — только подсвечен. «Толпа решает» не судится: там угадывают, меньшинство видно и так.
+   * Жест от вырезанного («Хлопушка») судится: не угадавших подсвечивают так же, но не вырезают даже в «Жёстком дубле»
+   * (решение владельца, 23.11.2026).
    */
   private judgeTick(t: number): void {
     const c = this.world.crowd;
-    if (!c || c.vote || this.hardChecked === c.warnAt || t <= c.windowEnd + LAG_GRACE_MS) return;
+    if (!c || (c.vote && !c.ghost) || this.hardChecked === c.warnAt || t <= c.windowEnd + LAG_GRACE_MS) return;
     this.hardChecked = c.warnAt;
     const cfg = this.cfg;
-    const hard = roundMod(this.mod) === 'hard' || cfg.strictCrowd;
+    const hard = !c.vote && (roundMod(this.mod) === 'hard' || cfg.strictCrowd);
     const slips: number[] = [];
     for (const p of this.pr) {
       if (!p.alive || (p.crowdAnswered === c.warnAt && p.crowdPick === c.kind && !p.crowdLate)) continue;

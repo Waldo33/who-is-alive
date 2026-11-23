@@ -218,6 +218,35 @@ describe('Напряжение: новые механики', () => {
     expect(b.clapsLeft).toBe(sim.cfg.ghostClaps - 1);
   });
 
+  it('жест от вырезанного: не угадавших подсвечивает прожектор, но не вырезает даже в «Жёстком дубле»', () => {
+    const sim = new MatchSim(makeConfig({ roundMods: false, botQuirkPerMin: 0 }), players, 87);
+    runUntil(sim, () => sim.phase === 'play');
+    inner(sim).mod = 1; // hard
+    const b = sim.playerRound('b')!;
+    b.alive = false;
+    sim.world.get(b.eid)!.alive = false;
+    const spots: Extract<WorldEvent, { t: 'spot' }>[] = [];
+    sim.world.listeners.push((ev) => ev.t === 'spot' && spots.push(ev));
+    runUntil(sim, () => sim.ghostCrowdAt() !== null);
+    sim.intent('b', { k: 'clap', kind: 'jump' });
+    sim.tick();
+    runUntil(sim, () => !!sim.world.crowd?.ghost);
+    const c = sim.world.crowd!;
+    spots.length = 0;
+    sim.intent('a', { k: 'crowd', kind: 'jump' }); // угадал
+    sim.intent('c', { k: 'crowd', kind: 'dance' }); // не угадал
+    // d не нажал ничего
+    runUntil(sim, () => sim.world.time > c.windowEnd + 900);
+    const near = (pid: string) => {
+      const e = sim.world.get(sim.playerRound(pid)!.eid)!;
+      return spots.some((s) => Math.hypot(s.x - e.x, s.y - e.y) <= sim.cfg.spotJitter + 1);
+    };
+    expect(spots).toHaveLength(2);
+    expect(near('c')).toBe(true);
+    expect(near('d')).toBe(true);
+    for (const pid of ['a', 'c', 'd']) expect(sim.playerRound(pid)!.alive).toBe(true);
+  });
+
   it('«Хлопушка» во время команды толпы встаёт в очередь, а не «не сейчас»; перед сужением — уже нельзя', () => {
     const sim = new MatchSim(makeConfig({ roundMods: false }), players, 85);
     runUntil(sim, () => sim.phase === 'play');
