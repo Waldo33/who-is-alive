@@ -15,6 +15,7 @@ import { detectLang } from '@/lib/lang';
 import { TopBar } from '@/ui/TopBarView';
 import type { TopBar as Bar } from '@/ui/topbar';
 import { soundEnabled } from '@/ui/topbar';
+import { featureOn } from '@/lib/features';
 import { playerName, saveName } from '@/lib/name';
 import { loadChunk } from '@/lib/chunk';
 import { setTrackContext, shareKind, track } from '@/lib/analytics';
@@ -133,6 +134,33 @@ export default function RoomClient({ code, bot = false }: { code: string; bot?: 
     getAudio().setRoundMusic(level);
   }, [ownMusic, roomMusic, isHostNow]);
   useEffect(() => () => getAudio().setRoundMusic('full'), []);
+  // оркестр из телефонов в лобби: одна песня по часам сервера, партия — по месту в комнате
+  // (режиссёр — бас и барабаны, гости — мелодия, арпеджио, аккорды)
+  const orchOn = !!state?.settings.orchestra && state.status === 'lobby';
+  const orchKey = orchOn ? orderedOnline(state).join(',') : '';
+  useEffect(() => {
+    const room = roomRef.current;
+    if (!orchKey || !room || !state) {
+      getAudio().setOrchestra(null);
+      return;
+    }
+    const ids = orchKey.split(',');
+    const part = ids.indexOf(state.selfId);
+    let live = true;
+    void room.serverNow().then((now) => {
+      if (live) getAudio().setOrchestra(now && part >= 0 && ids.length > 1 ? { part, parts: ids.length, now } : null);
+    });
+    return () => {
+      live = false;
+    };
+    // партии меняются, когда меняется состав (orchKey); остальное состояние комнаты не важно
+  }, [orchKey]);
+  useEffect(() => {
+    // отладка и автопроверки: ?dev — звук в консоли как window.__ktoAudio
+    if (new URLSearchParams(location.search).has('dev')) (window as unknown as { __ktoAudio: GameAudio }).__ktoAudio = getAudio();
+    return () => getAudio().setOrchestra(null);
+  }, []);
+  const orchFlag = useMemo(() => featureOn('orchestra'), []);
   // «Назад» и «Выйти в меню» сразу освобождают место в комнате
   const goHome = () => {
     track(inGame ? 'match_exit' : 'room_leave');
@@ -157,6 +185,11 @@ export default function RoomClient({ code, bot = false }: { code: string; bot?: 
       onExit={inGame ? goHome : undefined}
       noGear={inGame}
       onSound={(on) => setSfxOff(!on)}
+      orchestra={
+        orchFlag && isHostNow && state?.status === 'lobby'
+          ? { on: !!state.settings.orchestra, onToggle: (on) => void roomRef.current?.updateSettings({ ...state.settings, orchestra: on }) }
+          : undefined
+      }
       roomMusic={
         state && state.status !== 'connecting' && state.status !== 'error'
           ? {
@@ -521,6 +554,14 @@ export function Lobby({
       )}
     </main>
   );
+}
+
+/** Участники в сети по порядку партий оркестра: режиссёр, потом кто раньше пришёл. */
+function orderedOnline(s: RoomState): string[] {
+  return s.members
+    .filter((m) => m.online)
+    .sort((a, b) => (a.userId === s.hostId ? -1 : b.userId === s.hostId ? 1 : a.joinedAt - b.joinedAt))
+    .map((m) => m.userId);
 }
 
 /** Пиксельный динамик 8×8 (как значок звука в игре). */

@@ -69,6 +69,28 @@ export class Room {
     return this.state.hostId === this.state.selfId;
   }
 
+  /** Сдвиг часов сервера (оркестр из телефонов); null — ещё не мерили или сервер не ответил. */
+  private clockOff: number | null = null;
+  private clockAt = 0;
+
+  /**
+   * Время сервера, мс — общее для всех телефонов комнаты (оркестр). Замер — при первом вызове
+   * и раз в 30 с; до замера — null.
+   */
+  async serverNow(): Promise<(() => number) | null> {
+    const link = this.link;
+    if (!link) return null;
+    if (this.clockOff === null || Date.now() - this.clockAt > 30_000) {
+      const off = await link.serverClock();
+      if (off !== null) {
+        this.clockOff = off;
+        this.clockAt = Date.now();
+      }
+    }
+    const off = this.clockOff;
+    return off === null ? null : () => Date.now() + off;
+  }
+
   subscribe(fn: (s: RoomState) => void): () => void {
     this.listeners.add(fn);
     fn(this.state);

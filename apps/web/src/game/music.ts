@@ -21,6 +21,26 @@ const ROOT = 57;
 
 export type MusicMode = 'off' | 'menu' | 'play' | 'accuse';
 
+/**
+ * Оркестр из телефонов (план звука, вариант Б; пока — музыка лобби): одна песня по часам сервера,
+ * у каждого телефона своя партия. part — номер телефона (0 — режиссёр), parts — сколько телефонов.
+ */
+export interface Orchestra {
+  part: number;
+  parts: number;
+  /** Время сервера, мс — общее для всех телефонов комнаты. */
+  now: () => number;
+}
+
+/** Партии оркестра: кто что играет при 1–4 телефонах. Режиссёр — бас и барабаны. */
+type Role = 'bass' | 'drums' | 'lead' | 'arp' | 'pad';
+const ORCH_ROLES: Role[][][] = [
+  [['bass', 'drums', 'lead', 'arp', 'pad']],
+  [['bass', 'drums'], ['lead', 'arp', 'pad']],
+  [['bass', 'drums'], ['lead'], ['arp', 'pad']],
+  [['bass', 'drums'], ['lead'], ['arp'], ['pad']],
+];
+
 export interface Flavor {
   /** Сдвиг тональности, полутоны. */
   transpose: number;
@@ -168,6 +188,9 @@ export class Music {
   private startedAt = 0;
   /** Сколько дублей уже начато (с какой части начинать следующий). */
   private static takes = 0;
+  /** Оркестр из телефонов (музыка меню): общие часы и партии этого телефона. */
+  private orch: Orchestra | null = null;
+  private roles: Set<Role> | null = null;
   mode: MusicMode = 'off';
   /** Пауза «Море волнуется»: музыка остановлена, но место в песне помним. */
   paused = false;
@@ -194,7 +217,7 @@ export class Music {
    * Новый раунд (или новая фаза): тема раунда задаёт характер, вариации — новые.
    * hook — сразу с темы (без вступления) и с напряжением: клип в ленте должен зацепить с первой секунды.
    */
-  start(mode: MusicMode, style?: { flavor: Flavor; song?: Song }, hook = false): void {
+  start(mode: MusicMode, style?: { flavor: Flavor; song?: Song }, hook = false, orch: Orchestra | null = null): void {
     this.hardStop();
     this.mode = mode;
     this.paused = false;
@@ -219,8 +242,51 @@ export class Music {
     this.s16 = 0;
     this.openBus();
     this.next = this.ctx.currentTime + 0.06;
+    this.orch = mode === 'menu' && orch && orch.parts > 1 ? orch : null;
+    this.roles = this.orch ? new Set(ORCH_ROLES[Math.min(4, this.orch.parts) - 1][Math.min(this.orch.part, 3)] ?? []) : null;
+    if (this.orch) this.alignBar(true);
     this.startedAt = this.next;
     this.run();
+  }
+
+  /** Длина такта музыки меню, мс. */
+  private barMs(): number {
+    return (4 * 60000) / this.flavor.bpm;
+  }
+
+  /**
+   * Оркестр: следующий такт — по часам сервера, одинаково на всех телефонах. Номер такта от
+   * общего начала отсчёта выбирает место в песне (меню повторяется каждые 8 тактов), а задержка
+   * вывода звука устройства (Bluetooth, старый Android) вычитается. first — начать песню; иначе
+   * подстройка на начале каждого такта, если часы разошлись больше чем на 12 мс.
+   */
+  private alignBar(first: boolean): void {
+    const o = this.orch;
+    if (!o) return;
+    const ctx = this.ctx as AudioContext;
+    const lat = (ctx.outputLatency || ctx.baseLatency || 0) * 1000;
+    const bar = this.barMs();
+    const sNow = o.now();
+    // время сервера, когда прозвучит запланированное на this.next
+    const sAtNext = sNow + (this.next - ctx.currentTime) * 1000 + lat;
+    if (first) {
+      const idx = Math.ceil((sAtNext + 120) / bar);
+      this.next += (idx * bar - sAtNext) / 1000;
+      this.bar = ((idx % 8) + 8) % 8;
+      this.s16 = 0;
+      return;
+    }
+    const idx = Math.round(sAtNext / bar);
+    const drift = idx * bar - sAtNext;
+    // вкладка спала или часы прыгнули — встать на такт сразу; иначе подтягивать понемногу
+    if (Math.abs(drift) > 100) this.next += drift / 1000;
+    else if (Math.abs(drift) > 12) this.next += Math.max(-0.05, Math.min(0.05, drift / 1000));
+    this.bar = ((idx % 8) + 8) % 8;
+  }
+
+  /** Играет ли эту партию наш телефон (оркестр); без оркестра — все. */
+  private plays(r: Role): boolean {
+    return !this.roles || this.roles.has(r);
   }
 
   /**
@@ -539,6 +605,7 @@ export class Music {
 
   /** Меню: тема четвертями на чётных тактах, арпеджио восьмыми на нечётных; щётки и римшот. */
   private stepMenu(): void {
+    if (this.orch && this.s16 === 0) this.alignBar(false);
     const f = this.flavor;
     const dt = 60 / f.bpm / 4;
     const s = this.s16;
@@ -546,15 +613,24 @@ export class Music {
     const motif = this.bar % 4;
     const phrase = Math.floor(this.bar / 4) % 2; // каждые 4 такта — другая подача
     const lead = (i: number) => LEAD[motif * 4 + (i % 4)];
-    if (s === 0 || s === 8) this.voice(f.bass, BASS[motif * 4 + s / 4], t, 0.7, 0.14);
-    if (s === 14) this.voice(f.bass, BASS[motif * 4 + 3], t, 0.15, 0.1);
-    if (s % 4 === 2) this.hit(0.05, 0.022, 7000, t);
-    if (s === 12) this.hit(0.03, 0.04, 2500, t);
+    if (this.plays('bass')) {
+      if (s === 0 || s === 8) this.voice(f.bass, BASS[motif * 4 + s / 4], t, 0.7, 0.14);
+      if (s === 14) this.voice(f.bass, BASS[motif * 4 + 3], t, 0.15, 0.1);
+    }
+    if (this.plays('drums')) {
+      if (s % 4 === 2) this.hit(0.05, 0.022, 7000, t);
+      if (s === 12) this.hit(0.03, 0.04, 2500, t);
+    }
     if (phrase === 0 ? this.bar % 2 === 0 : this.bar % 2 === 1) {
-      if (s % 4 === 0) this.voice(f.lead, lead(s / 4), t, 0.45, 0.07);
-    } else if (s % 2 === 0) {
+      if (s % 4 === 0 && this.plays('lead')) this.voice(f.lead, lead(s / 4), t, 0.45, 0.07);
+    } else if (s % 2 === 0 && this.plays('arp')) {
       const notes = [0, 1, 2, 3].map(lead).sort((a, b) => a - b);
       this.voice(f.lead, notes[[0, 1, 2, 3, 2, 1, 3, 2][s / 2]] + 12, t, 0.2, 0.045);
+    }
+    // оркестр: четвёртому телефону — тихий аккорд-подушка из нот такта (без оркестра его нет)
+    if (this.orch && this.roles?.has('pad') && s === 0) {
+      const notes = [0, 1, 2, 3].map(lead).sort((a, b) => a - b);
+      for (const n of notes.slice(0, 3)) this.voice('triangle', n, t, dt * 15, 0.025);
     }
     this.next += dt;
     this.s16 = (s + 1) % 16;
@@ -567,6 +643,7 @@ export class Music {
    * с подголоском; в конце круга — звон сверху вниз.
    */
   private stepMenuNewYear(): void {
+    if (this.orch && this.s16 === 0) this.alignBar(false);
     const f = this.flavor;
     const dt = 60 / f.bpm / 4;
     const s = this.s16;
@@ -575,12 +652,16 @@ export class Music {
     const root = NY_ROOTS[ch];
     const tri = NY_TRIADS[ch];
     const phrase = Math.floor(this.bar / 4) % 2;
-    if (s === 0) this.voice(f.bass, root, t, dt * 6, 0.13);
-    if (s === 8) this.voice(f.bass, root + 7, t, dt * 6, 0.11);
-    if (s === 0) for (const iv of tri) this.voice('sine', root + 24 + iv, t, dt * 14, 0.018);
-    if (s % 2 === 0) this.hit(0.025, s % 4 === 2 ? 0.03 : 0.018, 8500, t);
-    if (s === 12 && this.bar % 2 === 1) this.hit(0.04, 0.035, 2600, t);
-    const m = nyMelodyAt(ch, s);
+    if (this.plays('bass')) {
+      if (s === 0) this.voice(f.bass, root, t, dt * 6, 0.13);
+      if (s === 8) this.voice(f.bass, root + 7, t, dt * 6, 0.11);
+    }
+    if (s === 0 && this.plays('pad')) for (const iv of tri) this.voice('sine', root + 24 + iv, t, dt * 14, this.orch ? 0.03 : 0.018);
+    if (this.plays('drums')) {
+      if (s % 2 === 0) this.hit(0.025, s % 4 === 2 ? 0.03 : 0.018, 8500, t);
+      if (s === 12 && this.bar % 2 === 1) this.hit(0.04, 0.035, 2600, t);
+    }
+    const m = this.plays('lead') ? nyMelodyAt(ch, s) : null;
     if (m) {
       if (phrase === 0) {
         this.voice('sine', m[0] + 12, t, dt * 0.7, 0.03);
@@ -590,7 +671,7 @@ export class Music {
         this.voice('sine', m[0] + 7, t, dt * 0.6, 0.015);
       }
     }
-    if (ch === 3 && s >= 12 && s % 2 === 0) this.voice('sine', 91 - (s - 12) * 2, t, dt * 1.5, 0.02);
+    if (ch === 3 && s >= 12 && s % 2 === 0 && this.plays('arp')) this.voice('sine', 91 - (s - 12) * 2, t, dt * 1.5, 0.02);
     this.next += dt;
     this.s16 = (s + 1) % 16;
     if (this.s16 === 0) this.bar++;

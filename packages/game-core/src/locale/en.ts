@@ -290,6 +290,7 @@ export const en: Dict = {
     roomMusicDirector: 'Director',
     roomMusicMineToo: 'Me too',
     roomMusicMine: 'Me',
+    orchestra: 'Orchestra',
     on: 'On',
     off: 'Off',
     howTo: 'How to play',

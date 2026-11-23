@@ -335,6 +335,8 @@ export const ru = {
     roomMusicDirector: 'Режиссёру',
     roomMusicMineToo: 'И мне',
     roomMusicMine: 'Мне',
+    /** Оркестр из телефонов в лобби: одна песня, у каждого телефона своя партия. */
+    orchestra: 'Оркестр',
     on: 'Вкл',
     off: 'Выкл',
     howTo: 'Как играть',

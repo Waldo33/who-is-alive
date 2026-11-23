@@ -1,6 +1,6 @@
 import { Music } from './music';
 import { themePack } from './themes';
-import type { MusicMode } from './music';
+import type { MusicMode, Orchestra } from './music';
 import { P1, P2, Synth } from './sfx';
 import type { Sfx } from './sfx';
 import { clipMix, makeNoise } from './clip-audio';
@@ -82,6 +82,7 @@ export class Audio {
   private want: { mode: MusicMode; theme: number } = { mode: 'off', theme: 0 };
   /** Музыка дубля на этом телефоне (комната); в песочнице — full. */
   private round: RoundMusic = 'full';
+  private orch: Orchestra | null = null;
   private roundGain: GainNode | null = null;
 
   constructor() {
@@ -198,6 +199,20 @@ export class Audio {
     this.apply(restart || !same);
   }
 
+  /**
+   * Оркестр из телефонов в лобби (музыка меню): одна песня по часам сервера, своя партия у каждого
+   * телефона. null — обычная музыка меню. Смена партии — песня встаёт заново на следующий такт.
+   */
+  setOrchestra(o: Orchestra | null): void {
+    const same = (a: Orchestra | null, b: Orchestra | null) => (!a && !b) || (!!a && !!b && a.part === b.part && a.parts === b.parts);
+    if (same(o, this.orch)) {
+      this.orch = o;
+      return;
+    }
+    this.orch = o;
+    if (this.want.mode === 'menu') this.apply(true);
+  }
+
   /** Музыка дубля на этом телефоне (комната). Меняется на ходу: сменился режиссёр — меняется и звук. */
   setRoundMusic(r: RoundMusic): void {
     if (r === this.round) return;
@@ -223,7 +238,7 @@ export class Audio {
       return;
     }
     if (force || m.mode !== mode || (!m.running && !m.paused)) {
-      m.start(mode, themePack(theme).music);
+      m.start(mode, themePack(theme).music, false, mode === 'menu' ? this.orch : null);
       m.setTwist(this.twist);
     }
   }

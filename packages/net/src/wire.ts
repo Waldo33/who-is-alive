@@ -24,6 +24,8 @@ export const RoomSettingsSchema = z.object({
    * Эффекты и обрыв «Море волнуется» — у всех при любом выборе. Старые клиенты поля не шлют.
    */
   roomMusic: z.enum(['host', 'all', 'none']).optional(),
+  /** «Оркестр из телефонов» в лобби: одна песня по часам сервера, у каждого телефона своя партия. */
+  orchestra: z.boolean().optional(),
 });
 export type WireRoomSettings = z.infer<typeof RoomSettingsSchema>;
 
@@ -44,6 +46,8 @@ export const ClientMsg = z.discriminatedUnion('t', [
   z.object({ t: z.literal('join') }),
   /** Игровое сообщение хосту (`GuestMsg`), проверяется схемой у хоста. */
   z.object({ t: z.literal('g'), m: z.unknown() }),
+  /** Часы сервера (оркестр из телефонов): c — время клиента, вернётся в ответе. */
+  z.object({ t: z.literal('clock'), c: z.number() }),
 ]);
 export type ClientMsg = z.infer<typeof ClientMsg>;
 
@@ -90,6 +94,8 @@ export type ServerMsg =
   | { t: 'g'; ch: 'room' | 'private'; m: unknown }
   /** Пульс, когда долго нет других сообщений: связь жива. */
   | { t: 'hb' }
+  /** Ответ на `clock`: c — время клиента из запроса, s — время сервера (Date.now), мс. */
+  | { t: 'clock'; c: number; s: number }
   /**
    * «Фильм матча» (apps/server/src/film.ts) после конца матча: монтируется → готов (файл в /v1/clips/<id>.<ext>)
    * или не вышел (тогда телефон смонтирует сам). Старые клиенты сообщение не знают и пропускают.

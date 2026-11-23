@@ -77,6 +77,8 @@ export interface TopBarOptions {
    * у режиссёра» или «ни у кого» может вернуть музыку себе (onOwn) — только на своём телефоне.
    */
   roomMusic?: { mode: RoomMusicMode; director: boolean; own: boolean; onMode?: (m: RoomMusicMode) => void; onOwn?: (on: boolean) => void };
+  /** Оркестр из телефонов в лобби (флаг `orchestra`): режиссёр включает для всей комнаты. */
+  orchestra?: { on: boolean; onToggle: (on: boolean) => void };
 }
 
 export type RoomMusicMode = 'host' | 'all' | 'none';
@@ -193,6 +195,14 @@ export function mountTopBar(parent: HTMLElement, init: TopBarOptions): TopBar {
           <button type="button" data-music="off" aria-pressed="${!mus}">${t.ui.off}</button>
         </div></div>
         ${roomMusicRow()}
+        ${
+          o.orchestra
+            ? `<div class="kto-set"><span>${t.ui.orchestra}</span><div class="kto-seg" role="group" aria-label="${t.ui.orchestra}">
+                <button type="button" data-orch="on" aria-pressed="${o.orchestra.on}">${t.ui.on}</button>
+                <button type="button" data-orch="off" aria-pressed="${!o.orchestra.on}">${t.ui.off}</button>
+              </div></div>`
+            : ''
+        }
         <div class="kto-set"><span>${t.ui.sfx}</span><div class="kto-seg" role="group" aria-label="${t.ui.sfx}">
           <button type="button" data-sound="on" aria-pressed="${on}">${t.ui.on}</button>
           <button type="button" data-sound="off" aria-pressed="${!on}">${t.ui.off}</button>
@@ -265,6 +275,13 @@ export function mountTopBar(parent: HTMLElement, init: TopBarOptions): TopBar {
         const m = b.dataset.roomMusic as RoomMusicMode;
         if (m !== o.roomMusic?.mode) track('sound_toggle', { what: 'room_music', mode: m });
         o.roomMusic?.onMode?.(m);
+      }),
+    );
+    sheet.querySelectorAll<HTMLButtonElement>('[data-orch]').forEach((b) =>
+      b.addEventListener('click', () => {
+        const on = b.dataset.orch === 'on';
+        if (on !== o.orchestra?.on) track('sound_toggle', { what: 'orchestra', on });
+        o.orchestra?.onToggle(on);
       }),
     );
     sheet.querySelectorAll<HTMLButtonElement>('[data-own-music]').forEach((b) =>

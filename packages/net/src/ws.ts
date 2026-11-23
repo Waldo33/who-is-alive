@@ -158,6 +158,14 @@ export class ServerLink implements Transport {
         return;
       case 'hb':
         return;
+      case 'clock': {
+        const w = this.clockWait.get(m.c);
+        if (w) {
+          this.clockWait.delete(m.c);
+          w(m.s);
+        }
+        return;
+      }
       case 'film':
         this.film = m;
         for (const h of this.filmHandlers) h(m);
@@ -181,6 +189,37 @@ export class ServerLink implements Transport {
     for (const h of this.roomHandlers) h(r);
     const list = this.presence();
     for (const h of this.presenceHandlers) h(list);
+  }
+
+  private clockWait = new Map<number, (s: number) => void>();
+
+  /**
+   * Сдвиг часов сервера относительно Date.now(), мс (оркестр из телефонов): несколько замеров,
+   * берётся самый быстрый ответ — у него меньше всего ошибка (половина пути туда-обратно).
+   * null — не ответил (старый сервер, нет связи).
+   */
+  async serverClock(samples = 6): Promise<number | null> {
+    let best: { rtt: number; off: number } | null = null;
+    for (let i = 0; i < samples; i++) {
+      const c = Date.now() + i / 1000;
+      const t0 = performance.now();
+      const s = await new Promise<number | null>((resolve) => {
+        const timer = setTimeout(() => {
+          this.clockWait.delete(c);
+          resolve(null);
+        }, 2000);
+        this.clockWait.set(c, (v) => {
+          clearTimeout(timer);
+          resolve(v);
+        });
+        this.raw({ t: 'clock', c });
+      });
+      if (s === null) continue;
+      const rtt = performance.now() - t0;
+      const off = s - (Date.now() - rtt / 2);
+      if (!best || rtt < best.rtt) best = { rtt, off };
+    }
+    return best ? best.off : null;
   }
 
   private raw(msg: unknown): void {

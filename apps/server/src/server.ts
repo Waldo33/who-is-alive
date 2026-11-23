@@ -459,6 +459,10 @@ export class GameServer {
     const room = st.room;
     const uid = st.userId;
     if (!room || !uid) return;
+    if (m.t === 'clock') {
+      peer.send(JSON.stringify({ t: 'clock', c: m.c, s: this.now() } satisfies ServerMsg));
+      return;
+    }
     let err: WireError | null = null;
     switch (m.t) {
       case 'g':

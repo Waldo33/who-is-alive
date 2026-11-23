@@ -142,6 +142,22 @@ describe('игровой сервер: лобби', () => {
     expect(ls[1].room!.members.map((m) => m.userId)).toEqual([users[1].userId, users[2].userId]);
   });
 
+  it('часы сервера для оркестра: сдвиг относительно своих часов и настройки оркестра и музыки', async () => {
+    const { http, ws } = await boot();
+    const [a, b] = await Promise.all([anon(http), anon(http)]);
+    const { code } = await create(http, a.token);
+    const la = link(ws, a, code, 'А');
+    const lb = link(ws, b, code, 'Б');
+    await la.connect();
+    await lb.connect();
+    // сервер и клиенты на одной машине: сдвиг — почти ноль
+    const off = await la.serverClock(4);
+    expect(off).not.toBeNull();
+    expect(Math.abs(off!)).toBeLessThan(50);
+    la.updateSettings({ roundSec: 75, maxRounds: 5, kidsMode: false, aiFill: false, roomMusic: 'all', orchestra: true });
+    await until(() => !!lb.room?.settings.orchestra && lb.room.settings.roomMusic === 'all', 3000, 'настройки звука дошли');
+  });
+
   it('старт — только режиссёр и только если игроков хватает; пока идёт матч, новый — зритель', async () => {
     const { http, ws } = await boot();
     const [a, b, c] = await Promise.all([anon(http), anon(http), anon(http)]);
