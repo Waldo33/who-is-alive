@@ -273,6 +273,7 @@ export const en: Dict = {
     sound: 'Sound',
     music: 'Music',
     sfx: 'Sounds',
+    mild: 'No violence',
     on: 'On',
     off: 'Off',
     howTo: 'How to play',
