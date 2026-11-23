@@ -5,7 +5,7 @@
 export type Sfx =
   | 'step' | 'hitPlayer' | 'hitBot' | 'poof' | 'starTake' | 'starSpawn' | 'crowd' | 'tick'
   | 'click' | 'ready' | 'accuseRight' | 'accuseWrong' | 'fanfare' | 'sad' | 'hedge' | 'pigeon' | 'drum' | 'denied' | 'count' | 'swing' | 'flicker' | 'dusk' | 'siren' | 'whack' | 'clang' | 'stab' | 'knockedOut'
-  | 'hitOther' | 'cut' | 'clap' | 'logo' | 'wrap' | 'unmask';
+  | 'hitOther' | 'cut' | 'clap' | 'logo' | 'wrap' | 'unmask' | 'rewind';
 
 /**
  * Приоритет эффекта (звуковой гайд, план звука): P1 — меняет решение игрока, обязан пробиться
@@ -209,6 +209,12 @@ export class Synth {
       // замах — только у бьющего, поэтому тихий (сосед по комнате не должен слышать, кто бил)
       // хлопушка перед дублем в фильме матча
       case 'clap': this.clapper(); break;
+      // перемотка плёнки (фильм матча после крючка): визг вверх и шорох ленты
+      case 'rewind':
+        this.tone('square', 420, 2600, 0.5, 0.09);
+        this.tone('square', 640, 3400, 0.5, 0.06, 0.04);
+        this.noise(0.5, 0.2, 3200);
+        break;
       // живой раскрыт: удар и нота; каждый следующий живой — выше (step — его номер)
       case 'unmask': {
         const k = Math.pow(2, (Math.max(1, step) - 1) * 3 / 12);
