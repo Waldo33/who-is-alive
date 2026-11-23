@@ -29,7 +29,8 @@ export const RoomSettingsSchema = z.object({
 });
 export type WireRoomSettings = z.infer<typeof RoomSettingsSchema>;
 
-export const DEFAULT_WIRE_SETTINGS: WireRoomSettings = { roundSec: 75, maxRounds: 5, kidsMode: false, aiFill: false };
+/** Как `DEFAULT_SETTINGS` клиента: ИИ-актёры включены (комната от старого клиента или бота без настроек — тоже с ИИ). */
+export const DEFAULT_WIRE_SETTINGS: WireRoomSettings = { roundSec: 75, maxRounds: 5, kidsMode: false, aiFill: true };
 
 const Name = z.string().max(40);
 
