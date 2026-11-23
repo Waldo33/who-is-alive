@@ -69,7 +69,7 @@ function botFingers(rig: Rig, rng: Rng): void {
         if (near) g.intent({ k: 'attack', eid: near.eid });
       }
     }
-    if (g.phase === 'accuse' && me.accused === null && rng.chance(0.05)) {
+    if (g.phase === 'play' && !me.alive && me.accused === null && rng.chance(0.05)) {
       const any = g.world.alive().find((e) => e.eid !== me.eid);
       if (any) g.intent({ k: 'accuse', eid: any.eid });
     }
@@ -85,7 +85,7 @@ describe('сетевая игра', () => {
     const rng = new Rng(9);
     let compared = 0;
     let maxDiff = 0;
-    for (let i = 0; i < 20 * 70 && rig.host.phase !== 'accuse'; i++) {
+    for (let i = 0; i < 20 * 70 && rig.host.phase !== 'reveal'; i++) {
       rig.step();
       botFingers(rig, rng);
       for (const g of rig.guests) {
@@ -116,7 +116,7 @@ describe('сетевая игра', () => {
       seenPhases.add(rig.guests[0].phase);
     }
     const g = rig.guests[0];
-    expect([...seenPhases].sort()).toEqual(['accuse', 'countdown', 'match_end', 'play', 'results', 'reveal'].sort());
+    expect([...seenPhases].sort()).toEqual(['countdown', 'match_end', 'play', 'results', 'reveal'].sort());
     expect(g.match).not.toBeNull();
     expect(g.scores).toEqual(rig.host.scores);
     expect(g.match!.winners).toEqual(rig.host.match!.winners);
@@ -176,7 +176,7 @@ describe('сетевая игра', () => {
   it('по сети не узнать, кто живой: ни события мира, ни ключевые кадры не содержат игроков', () => {
     const rig = makeRig([50, 120], 0, 5);
     const rng = new Rng(5);
-    for (let i = 0; i < 20 * 70 && rig.host.phase !== 'accuse'; i++) {
+    for (let i = 0; i < 20 * 70 && rig.host.phase !== 'reveal'; i++) {
       rig.step();
       botFingers(rig, rng);
     }
@@ -287,7 +287,7 @@ describe('сетевая игра', () => {
     const rng = new Rng(7);
     let late = 0;
     let total = 0;
-    for (let i = 0; i < 20 * 70 && rig.host.phase !== 'accuse'; i++) {
+    for (let i = 0; i < 20 * 70 && rig.host.phase !== 'reveal'; i++) {
       rig.step();
       botFingers(rig, rng);
       if (i < 20 * 20) continue;

@@ -4,6 +4,7 @@ import { createHash, randomInt } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { CLIP_MIME, ClipStore } from './clips';
+import type { FilmService } from './film';
 import type { AddressInfo } from 'node:net';
 import { WebSocketServer } from 'ws';
 import type { WebSocket } from 'ws';
@@ -42,6 +43,8 @@ export interface GameServerOptions {
   bot?: Bot;
   /** Клипы для Telegram (/v1/clips); нет — во временной папке. */
   clips?: ClipStore;
+  /** «Фильм матча» (film.ts); нет — фильм монтирует телефон. */
+  film?: FilmService;
 }
 
 /** Лимиты (docs/server-migration.md › 3.3). */
@@ -251,6 +254,7 @@ export class GameServer {
       now: this.now,
       log: this.log,
       speed: this.speed,
+      film: this.o.film,
     });
     this.rooms.set(code, room);
     this.log('info', 'room_created', { room: code, user: hashId(userId) });
@@ -309,6 +313,9 @@ export class GameServer {
     // место под клипы для Telegram: тревога сторожа на 80% лимита (пора S3), график в Grafana
     const c = await this.clips.usage();
     lines.push(`game_clips_bytes ${c.bytes}`, `game_clips_count ${c.count}`, `game_clips_limit_bytes ${c.limit}`);
+    // фильм матча: сколько смонтировано, неудач, очередь, время последнего (тревога, если монтаж встал)
+    const f = this.o.film;
+    if (f) lines.push(`game_films_total ${f.made}`, `game_films_failed_total ${f.failed}`, `game_film_queue ${f.queued}`, `game_film_last_ms ${f.lastMs}`);
     res.writeHead(200, { 'content-type': 'text/plain; version=0.0.4' });
     res.end(lines.join('\n') + '\n');
   }

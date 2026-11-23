@@ -1,6 +1,6 @@
 import type { Channel, PresenceMember, Transport } from './transport';
 import { WIRE_VERSION } from './wire';
-import type { ServerMsg, WireError, WireRoom, WireRoomSettings } from './wire';
+import type { ServerMsg, WireError, WireFilm, WireRoom, WireRoomSettings } from './wire';
 
 export interface ServerLinkOptions {
   /** Адрес WebSocket экземпляра сервера, например wss://api.benobody.app/i/blue/ws. */
@@ -42,6 +42,9 @@ export class ServerLink implements Transport {
   private roomHandlers = new Set<Listener<WireRoom>>();
   private errorHandlers = new Set<Listener<WireError>>();
   private endHandlers = new Set<Listener<'kicked' | 'closed' | WireError>>();
+  private filmHandlers = new Set<Listener<WireFilm>>();
+  /** Последнее известие о фильме матча (сбрасывает клиент, когда начинается новый матч). */
+  film: WireFilm | null = null;
   private firstJoin: { resolve: (r: WireRoom) => void; reject: (e: Error) => void } | null = null;
   private name: string;
   /** Переподключений за жизнь связи — для статистики сети. */
@@ -155,7 +158,17 @@ export class ServerLink implements Transport {
         return;
       case 'hb':
         return;
+      case 'film':
+        this.film = m;
+        for (const h of this.filmHandlers) h(m);
+        return;
     }
+  }
+
+  /** Фильм матча: монтируется, готов или не вышел. */
+  onFilm(h: Listener<WireFilm>): () => void {
+    this.filmHandlers.add(h);
+    return () => this.filmHandlers.delete(h);
   }
 
   private end(why: 'kicked' | 'closed' | WireError): void {

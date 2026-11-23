@@ -70,6 +70,11 @@ export interface SongStep {
 /** Своя песня темы: вместо общего мотива — свой шаг секвенсора. */
 export interface Song {
   step(api: SongApi, st: SongStep): void;
+  /**
+   * Вход в изнанку «свет вырубили»: песня проседает, как плёнка, секунда тишины — и изнанка
+   * начинается с удара (Корпоратив). Иначе изнанка вступает сразу.
+   */
+  blackout?: boolean;
 }
 
 /** Меню и лобби: та же тема «лаунжем» — медленно, мягко, с эхом. */
@@ -91,6 +96,8 @@ interface Live {
 }
 
 const mtf = (m: number) => 440 * Math.pow(2, (m - 69) / 12);
+/** Ниже этой частоты нота получает обертон октавой выше (телефон не играет ниже ~350 Гц). */
+const BASS_HZ = 200;
 
 function rngFrom(seed: number): () => number {
   let s = seed >>> 0 || 1;
@@ -115,10 +122,19 @@ function scaleStep(m: number, step: number): number {
   return n;
 }
 
+/** Таймер ручного режима (`Music.manual`): музыка «играет», но ноты планирует `pump()`. */
+const MANUAL = -1;
+
 export class Music {
   private bus: GainNode | null = null;
   private echo: DelayNode | null = null;
   private timer: number | null = null;
+  /**
+   * Ручной режим: без таймера, ноты планирует `pump()` — так звук фильма матча рендерится
+   * офлайн на сервере (OfflineAudioContext), где время задаёт сам рендер, а не часы.
+   */
+  manual = false;
+  private tickFn: (() => void) | null = null;
   private next = 0;
   private s16 = 0;
   private bar = 0;
@@ -148,12 +164,16 @@ export class Music {
   private live: Live[] = [];
   private pulse: PeriodicWave;
   private sinceA = 0;
+  /** Когда началась песня (время AudioContext). */
+  private startedAt = 0;
+  /** Сколько дублей уже начато (с какой части начинать следующий). */
+  private static takes = 0;
   mode: MusicMode = 'off';
   /** Пауза «Море волнуется»: музыка остановлена, но место в песне помним. */
   paused = false;
 
   constructor(
-    private ctx: AudioContext,
+    private ctx: BaseAudioContext,
     private out: AudioNode,
     private noiseBuf: AudioBuffer,
   ) {
@@ -170,8 +190,11 @@ export class Music {
     return this.timer !== null;
   }
 
-  /** Новый раунд (или новая фаза): тема раунда задаёт характер, вариации — новые. */
-  start(mode: MusicMode, style?: { flavor: Flavor; song?: Song }): void {
+  /**
+   * Новый раунд (или новая фаза): тема раунда задаёт характер, вариации — новые.
+   * hook — сразу с темы (без вступления) и с напряжением: клип в ленте должен зацепить с первой секунды.
+   */
+  start(mode: MusicMode, style?: { flavor: Flavor; song?: Song }, hook = false): void {
     this.hardStop();
     this.mode = mode;
     this.paused = false;
@@ -183,13 +206,20 @@ export class Music {
     this.rng = rngFrom((Math.random() * 2 ** 31) | 0);
     this.intensity = 0;
     this.tempoMul = 1;
-    this.queue = mode === 'play' ? [this.make('intro'), this.make('A'), this.make('A2'), this.make('B'), this.make('A')] : [];
+    // каждый дубль — с другой части песни (тема, «B», вариация), а не всегда с того же вступления;
+    // клип (hook) — сразу с темы
+    const v = hook ? 0 : Music.takes++ % 3;
+    this.queue = mode === 'play' ? [[this.make('A'), this.make('A2'), this.make('B'), this.make('A')], [this.make('B'), this.make('A'), this.make('A2')], [this.make('A2'), this.make('B'), this.make('A')]][v] : [];
     this.sec = this.queue.shift() ?? this.make('A');
     this.sinceA = 0;
-    this.bar = 0;
+    // своя песня темы — с разных мест круга; клип — со второго круга, где мелодия уже идёт
+    this.bar = this.song ? (hook ? 8 : [0, 8, 4][v]) : 0;
+    this.twistBar = this.bar;
+    if (hook) this.intensity = 1;
     this.s16 = 0;
     this.openBus();
     this.next = this.ctx.currentTime + 0.06;
+    this.startedAt = this.next;
     this.run();
   }
 
@@ -206,6 +236,29 @@ export class Music {
     if (on === this.twist) return;
     this.twist = on;
     this.twistBar = this.bar;
+    // не в самом начале песни: клип и новый дубль могут начаться сразу в изнанке
+    if (on && this.song?.blackout && this.running && this.mode === 'play' && this.ctx.currentTime - this.startedAt > 0.5) this.blackout();
+  }
+
+  /** «Свет вырубили»: звучащее проседает вниз (0,35 с), секунда тишины, потом музыка возвращается. */
+  private blackout(): void {
+    const bus = this.bus;
+    if (!bus) return;
+    const now = this.ctx.currentTime;
+    const T = 0.35;
+    for (const l of this.live) {
+      if (l.until < now || !('detune' in l.src)) continue;
+      const o = l.src as OscillatorNode;
+      o.detune.cancelScheduledValues(now);
+      o.detune.setValueAtTime(0, now);
+      o.detune.linearRampToValueAtTime(-1200, now + T);
+    }
+    const full = bus.gain.value;
+    bus.gain.cancelScheduledValues(now);
+    bus.gain.setValueAtTime(full, now);
+    bus.gain.exponentialRampToValueAtTime(0.0001, now + T);
+    bus.gain.setValueAtTime(0.0001, now + 1.0);
+    bus.gain.exponentialRampToValueAtTime(full, now + 1.04);
   }
 
   /** Уровень напряжения 0–2 (меняется на следующей доле). */
@@ -223,14 +276,17 @@ export class Music {
     const T = 0.35;
     for (const l of this.live) {
       if (l.until < now) continue;
-      if (l.src instanceof OscillatorNode) {
-        l.src.detune.cancelScheduledValues(now);
-        l.src.detune.setValueAtTime(0, now);
-        l.src.detune.linearRampToValueAtTime(-2400, now + T);
-      } else if (l.src instanceof AudioBufferSourceNode) {
-        l.src.playbackRate.cancelScheduledValues(now);
-        l.src.playbackRate.setValueAtTime(1, now);
-        l.src.playbackRate.linearRampToValueAtTime(0.25, now + T);
+      // без instanceof: на сервере (node-web-audio-api) глобальных классов узлов нет
+      if ('detune' in l.src) {
+        const o = l.src as OscillatorNode;
+        o.detune.cancelScheduledValues(now);
+        o.detune.setValueAtTime(0, now);
+        o.detune.linearRampToValueAtTime(-2400, now + T);
+      } else if ('playbackRate' in l.src) {
+        const b = l.src as AudioBufferSourceNode;
+        b.playbackRate.cancelScheduledValues(now);
+        b.playbackRate.setValueAtTime(1, now);
+        b.playbackRate.linearRampToValueAtTime(0.25, now + T);
       }
     }
     // ноты планируются чуть вперёд: место паузы — первая ещё не прозвучавшая шестнадцатая
@@ -246,7 +302,8 @@ export class Music {
       bus.gain.cancelScheduledValues(now);
       bus.gain.setValueAtTime(bus.gain.value, now);
       bus.gain.exponentialRampToValueAtTime(0.0001, now + T + 0.05);
-      setTimeout(() => bus.disconnect(), (T + 0.15) * 1000);
+      // при офлайн-записи (manual) всё планируется заранее: отключить шину по таймеру — потерять хвост звука
+      if (!this.manual) setTimeout(() => bus.disconnect(), (T + 0.15) * 1000);
     }
     this.bus = null;
     this.clearTimer();
@@ -279,7 +336,17 @@ export class Music {
   private openBus(): void {
     this.bus = this.ctx.createGain();
     this.bus.gain.value = 0.32;
-    this.bus.connect(this.out);
+    // подача под динамик телефона: низ тише (его слышно обертонами), середина ярче
+    const low = this.ctx.createBiquadFilter();
+    low.type = 'lowshelf';
+    low.frequency.value = 180;
+    low.gain.value = -7;
+    const mid = this.ctx.createBiquadFilter();
+    mid.type = 'peaking';
+    mid.frequency.value = 2200;
+    mid.Q.value = 0.7;
+    mid.gain.value = 4;
+    this.bus.connect(low).connect(mid).connect(this.out);
     this.drive = null;
     this.echo = null;
     if (this.flavor.echo) {
@@ -296,8 +363,14 @@ export class Music {
   }
 
   private clearTimer(): void {
-    if (this.timer !== null) window.clearInterval(this.timer);
+    if (this.timer !== null && this.timer !== MANUAL) window.clearInterval(this.timer);
     this.timer = null;
+    this.tickFn = null;
+  }
+
+  /** Ручной режим: спланировать ноты до «сейчас» + запас (вызывать каждый кадр). */
+  pump(): void {
+    this.tickFn?.();
   }
 
   private hardStop(): void {
@@ -323,7 +396,8 @@ export class Music {
       }
       this.live = this.live.filter((l) => l.until > now - 0.1);
     };
-    this.timer = window.setInterval(tick, 25);
+    this.tickFn = tick;
+    this.timer = this.manual ? MANUAL : window.setInterval(tick, 25);
     tick();
   }
 
@@ -375,6 +449,8 @@ export class Music {
     // где в песне каждая запланированная шестнадцатая — чтобы пауза продолжилась ровно с неё
     this.sched.push({ t: this.next, bar: this.bar, s16: this.s16 });
     if (this.sched.length > 8) this.sched.shift();
+    // последние 10 с дубля: «часы тикают» — тик-так на каждую долю, слышно на любом динамике
+    if (this.intensity >= 2 && this.s16 % 4 === 0) this.clockTick(this.next, this.s16 % 8 === 0);
     if (this.song) {
       const dt = this.sixteenth();
       this.song.step(this.api, {
@@ -520,15 +596,28 @@ export class Music {
     if (this.s16 === 0) this.bar++;
   }
 
-  /** Обвинение: сердцебиение и тихое тиканье. */
+  /**
+   * Обвинение: сердцебиение с «туком» на 1 кГц и тиканье часов, всё чаще к концу (фаза ~5 с).
+   * Слышно на любом динамике: удар сердца — щелчок сверху, бас — только опора.
+   */
   private stepAccuse(): void {
-    const dt = 60 / 76 / 4;
+    const sec = this.ctx.currentTime - this.startedAt;
+    const bpm = 76 + Math.min(1, sec / 5) * 40;
+    const dt = 60 / bpm / 4;
     const t = this.next;
     const s = this.s16;
-    if (s === 0) this.kick(t, 0.32, 70);
-    if (s === 2) this.kick(t, 0.18, 60);
-    if (s % 4 === 0) this.hit(0.02, 0.03, 5000, t);
-    if (s === 8 && this.bar % 2 === 1) this.voice('triangle', BASS[(this.bar * 4) % 16] + 12, t, 0.6, 0.04);
+    const beat = (v: number, from: number) => {
+      this.kick(t, v, from);
+      this.hit(0.035, v * 4, 1000, t);
+      this.osc('triangle', 520, t, 0.06, v * 0.9, this.bus!);
+    };
+    if (s === 0) beat(0.32, 70);
+    if (s === 3) beat(0.2, 60);
+    if (s % 4 === 0) {
+      this.hit(0.015, 0.3, 3200, t);
+      this.osc('square', s % 8 ? 1760 : 2093, t, 0.02, 0.14, this.bus!);
+    }
+    if (s === 8 && this.bar % 2 === 1) this.voice('triangle', BASS[(this.bar * 4) % 16] + 24, t, 0.6, 0.08);
     this.next += dt;
     this.s16 = (s + 1) % 16;
     if (this.s16 === 0) this.bar++;
@@ -537,17 +626,30 @@ export class Music {
   private voice(type: OscillatorType | 'pulse', midi: number, when: number, dur: number, vol: number): void {
     const bus = this.bus;
     if (!bus) return;
+    const freq = mtf(midi + this.flavor.transpose);
+    // низкие ноты чистым тоном телефон не играет: громкость басу даёт не уровень, а обертоны
+    let v = vol;
+    if (freq < BASS_HZ) {
+      if (type === 'triangle' || type === 'sine') {
+        this.osc('square', freq * 2, when, dur, vol * (type === 'sine' ? 0.28 : 0.38), bus);
+        v = vol * 0.75;
+      } else v = vol * 0.8;
+    }
+    this.osc(type, freq, when, dur, v, bus, this.echo && type !== this.flavor.bass ? this.echo : null);
+  }
+
+  private osc(type: OscillatorType | 'pulse', freq: number, when: number, dur: number, vol: number, bus: AudioNode, echo: AudioNode | null = null): void {
     const ctx = this.ctx;
     const o = ctx.createOscillator();
     if (type === 'pulse') o.setPeriodicWave(this.pulse);
     else o.type = type;
-    o.frequency.setValueAtTime(mtf(midi + this.flavor.transpose), when);
+    o.frequency.setValueAtTime(freq, when);
     const g = ctx.createGain();
     g.gain.setValueAtTime(0.0001, when);
     g.gain.exponentialRampToValueAtTime(vol, when + 0.005);
     g.gain.exponentialRampToValueAtTime(0.0001, when + dur);
     o.connect(g).connect(bus);
-    if (this.echo && type !== this.flavor.bass) g.connect(this.echo);
+    if (echo) g.connect(echo);
     o.start(when);
     o.stop(when + dur + 0.02);
     this.live.push({ src: o, until: when + dur });
@@ -570,9 +672,13 @@ export class Music {
       const lp = ctx.createBiquadFilter();
       lp.type = 'lowpass';
       lp.frequency.value = 2600;
+      // гул ниже 120 Гц у гитары телефон не играет, а громкость он съедает
+      const hp = ctx.createBiquadFilter();
+      hp.type = 'highpass';
+      hp.frequency.value = 120;
       const out = ctx.createGain();
       out.gain.value = 0.55;
-      shaper.connect(lp).connect(out).connect(bus);
+      shaper.connect(hp).connect(lp).connect(out).connect(bus);
       this.drive = shaper;
     }
     const g = ctx.createGain();
@@ -593,6 +699,15 @@ export class Music {
     });
   }
 
+  /** Тик часов: щелчок и короткий звон (тик выше, так ниже). */
+  private clockTick(when: number, tick: boolean): void {
+    const bus = this.bus;
+    if (!bus) return;
+    this.hit(0.012, 0.3, tick ? 4200 : 3400, when);
+    this.osc('square', tick ? 3136 : 2637, when, 0.018, 0.05, bus);
+  }
+
+  /** Бочка: синус вниз — опора, и «тук» на 1–2 кГц — то, что от неё слышно на телефоне. */
   private kick(when: number, vol = 0.3, from = 150): void {
     const bus = this.bus;
     if (!bus) return;
@@ -601,12 +716,14 @@ export class Music {
     o.frequency.setValueAtTime(from, when);
     o.frequency.exponentialRampToValueAtTime(42, when + 0.12);
     const g = this.ctx.createGain();
-    g.gain.setValueAtTime(vol, when);
+    g.gain.setValueAtTime(vol * 0.8, when);
     g.gain.exponentialRampToValueAtTime(0.0001, when + 0.16);
     o.connect(g).connect(bus);
     o.start(when);
     o.stop(when + 0.18);
     this.live.push({ src: o, until: when + 0.16 });
+    this.hit(0.018, vol * 0.9, 1600, when);
+    this.osc('square', Math.min(from, 160) * 2, when, 0.04, vol * 0.25, bus);
   }
 
   private hit(dur: number, vol: number, freq: number, when: number): void {

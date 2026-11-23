@@ -60,6 +60,15 @@ install -d /etc/systemd/journald.conf.d
 printf '[Journal]\nSystemMaxUse=500M\n' > /etc/systemd/journald.conf.d/90-massovka.conf
 systemctl restart systemd-journald
 
+# ───────────── ffmpeg: «Фильм матча» монтирует игровой сервер (apps/server/src/film.ts) ─────────────
+if [ "${ROLE:-game}" = game ] && ! command -v ffmpeg >/dev/null; then
+  say "ffmpeg"
+  # нет ffmpeg — сервер просто не монтирует фильмы (их смонтирует телефон), выкладку не роняем
+  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends ffmpeg >/dev/null 2>&1 \
+    || { apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends ffmpeg >/dev/null; } \
+    || echo "::warning::ffmpeg не поставился — фильм матча будет монтировать телефон"
+fi
+
 # ───────────── Postgres (аналитика, рейтинг бота) ─────────────
 if ! command -v psql >/dev/null; then
   say "Postgres"
@@ -309,6 +318,11 @@ rel="/opt/massovka/releases/$SHA"
 install -d -o game -g game "$rel"
 install -m 644 -o game -g game "$D/server.mjs" "$rel/server.mjs"
 [ -f "$D/server.mjs.map" ] && install -m 644 -o game -g game "$D/server.mjs.map" "$rel/server.mjs.map"
+# процесс монтажа фильма матча, его шрифты и нативные модули — рядом с server.mjs той же версии
+if [ -f "$D/film.tar.gz" ]; then
+  tar -xzf "$D/film.tar.gz" -C "$rel"
+  chown -R game:game "$rel"
+fi
 ln -sfn "$rel" /opt/massovka/current
 # хранить пять последних версий (откат — переключить ссылку)
 ls -1dt /opt/massovka/releases/*/ | tail -n +6 | xargs -r rm -rf

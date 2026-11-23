@@ -14,6 +14,8 @@ on:
       - 'packages/net/**'
       - 'packages/game-core/**'
       - 'infra/game/**'
+      # «Фильм матча» монтирует сервер теми же сценами, что телефон (apps/server/src/film-render.ts)
+      - 'apps/web/src/game/**'
       - '.github/workflows/game-deploy.yml'
 
 concurrency:
@@ -62,6 +64,19 @@ jobs:
 
       - name: Сборка
         run: pnpm --filter @kto/server build
+
+      - name: Нативные модули фильма матча
+        # @napi-rs/canvas (кадры) и node-web-audio-api (звук) — готовые сборки под linux-x64;
+        # процесс монтажа (film-worker.mjs) берёт их из node_modules рядом с собой
+        working-directory: apps/server/dist
+        run: |
+          v() { node -p "require('../package.json').dependencies['$1']"; }
+          printf '{"name":"film-natives","private":true}' > package.json
+          npm install --no-save --no-package-lock --omit=dev "@napi-rs/canvas@$(v @napi-rs/canvas)" "node-web-audio-api@$(v node-web-audio-api)"
+          rm package.json
+          node --input-type=module -e "await import('@napi-rs/canvas'); await import('node-web-audio-api'); console.log('нативные модули грузятся')"
+          tar -czf ../film.tar.gz node_modules fonts film-worker.mjs film-worker.mjs.map
+          ls -la ../film.tar.gz
 
       - name: Сервер в Timeweb (найти или создать)
         id: srv
@@ -151,7 +166,7 @@ jobs:
             mv /tmp/caddy/caddy deploy/caddy
             echo "$tag" > deploy/caddy.version
           else echo "Caddy $tag уже стоит"; fi
-          cp apps/server/dist/server.mjs apps/server/dist/server.mjs.map infra/game/setup.sh infra/game/caddy.sh infra/game/watch.sh infra/game/observe.sh deploy/
+          cp apps/server/dist/server.mjs apps/server/dist/server.mjs.map apps/server/film.tar.gz infra/game/setup.sh infra/game/caddy.sh infra/game/watch.sh infra/game/observe.sh deploy/
           ls -la deploy
 
       - name: Привезти наблюдение (если нужно)
@@ -293,6 +308,18 @@ jobs:
         env:
           HOST: ${{ steps.addr.outputs.host }}
         run: pnpm --filter @kto/server smoke "https://$HOST"
+
+      - name: Фильм матча на сервере (самопроверка)
+        # матч с ИИ и монтаж фильма прямо на сервере, тем же процессом, что после матчей у игроков:
+        # нативные модули, ffmpeg, шрифты и время на этом vCPU. Не вышло — игроки монтируют на телефоне
+        if: matrix.role == 'game'
+        env:
+          IP: ${{ steps.srv.outputs.ip }}
+        run: |
+          out=$(ssh $SSH_OPTS root@$IP 'cd /opt/massovka/current && command -v ffmpeg >/dev/null && free -m | head -2 && runuser -u game -- nice -n 15 /opt/node/bin/node film-worker.mjs --selftest' 2>&1) && ok=1 || ok=0
+          echo "$out" | tail -8
+          if [ "$ok" = 1 ]; then echo "фильм: $(echo "$out" | tail -1)" >> "$GITHUB_STEP_SUMMARY"
+          else echo "::warning::фильм матча на сервере не смонтировался — игроки монтируют на телефоне"; fi
 
       - name: Логи сервера (последние)
         if: always() && steps.srv.outputs.ip != ''

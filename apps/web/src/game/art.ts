@@ -121,10 +121,7 @@ export function tint(src: HTMLCanvasElement, color: string): HTMLCanvasElement {
 
 /** Холст с целочисленным масштабом: рисуем в «игровых» пикселях, получаем чёткие квадраты. */
 export function scaledCanvas(w: number, h: number, scale: number): { c: HTMLCanvasElement; g: CanvasRenderingContext2D } {
-  const c = document.createElement('canvas');
-  c.width = w * scale;
-  c.height = h * scale;
-  const g = c.getContext('2d')!;
+  const { c, g } = canvas(w * scale, h * scale);
   g.imageSmoothingEnabled = false;
   g.setTransform(scale, 0, 0, scale, 0, 0);
   return { c, g };

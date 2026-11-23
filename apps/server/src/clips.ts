@@ -12,7 +12,7 @@
  */
 import { randomBytes } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
-import { mkdir, readdir, rm, stat } from 'node:fs/promises';
+import { mkdir, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import type { IncomingMessage } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -59,6 +59,23 @@ export class ClipStore {
       return { status: size < 0 ? 413 : 400, body: { error: size < 0 ? 'too_big' : 'bad_clip' } };
     }
     return { status: 200, body: { id, ext } };
+  }
+
+  /**
+   * Готовый файл с этого же сервера (фильм матча, film.ts): переложить в хранилище под случайным именем.
+   * Файл уже лежит в этой папке (монтаж пишет сюда же — переименование без копирования).
+   */
+  async adopt(path: string, ext: 'mp4', thumb?: Buffer | null): Promise<{ id: string; thumb: boolean }> {
+    await mkdir(this.dir, { recursive: true });
+    await this.sweep();
+    const id = randomBytes(10).toString('hex');
+    await rename(path, join(this.dir, `${id}.${ext}`));
+    let hasThumb = false;
+    if (thumb && thumb.length <= THUMB_MAX) {
+      await writeFile(join(this.dir, `${id}.jpg`), thumb);
+      hasThumb = true;
+    }
+    return { id, thumb: hasThumb };
   }
 
   /** Обложка к уже загруженному клипу. */

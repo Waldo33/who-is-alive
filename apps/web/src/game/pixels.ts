@@ -1,8 +1,24 @@
 /** Мелкие помощники для процедурных пиксельных заглушек. */
 export type Ctx = CanvasRenderingContext2D;
 
+/**
+ * Откуда берутся холсты. В браузере — `document.createElement('canvas')`; игровой сервер
+ * рисует фильм матча теми же спрайтами через @napi-rs/canvas и подставляет свою фабрику.
+ */
+let makeCanvas: () => HTMLCanvasElement = () => document.createElement('canvas');
+export function setCanvasFactory(f: () => HTMLCanvasElement): void {
+  makeCanvas = f;
+}
+/** Пустой холст из текущей фабрики. */
+export function newCanvas(w: number, h: number): HTMLCanvasElement {
+  const c = makeCanvas();
+  c.width = w;
+  c.height = h;
+  return c;
+}
+
 export function canvas(w: number, h: number): { c: HTMLCanvasElement; g: Ctx } {
-  const c = document.createElement('canvas');
+  const c = makeCanvas();
   c.width = w;
   c.height = h;
   const g = c.getContext('2d')!;
