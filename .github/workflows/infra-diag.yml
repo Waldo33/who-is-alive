@@ -58,6 +58,7 @@ jobs:
           ls -ld /var/lib/massovka-clips 2>&1; ls /var/lib/massovka-clips | wc -l
           echo "── сторож"
           systemctl list-timers massovka-watch.timer --no-pager | head -3
+          curl -s -m5 --data-urlencode 'query={__name__=~"game_clips_.*",server="msk"}' http://127.0.0.1:8428/api/v1/query | jq -c '[.data.result[] | {(.metric.__name__): .value[1]}]'
           for f in /var/lib/massovka-watch/*; do echo "$(basename $f): $(cat $f) мин подряд не работает"; done
           journalctl -u massovka-watch -n 5 --no-pager -o cat | tail -3
           echo "── 20 попыток соединиться с Москвой (по 3 с)"
