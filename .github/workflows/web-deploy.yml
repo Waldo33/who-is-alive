@@ -83,3 +83,17 @@ jobs:
         env:
           IP: ${{ steps.srv.outputs.ip }}
         run: ssh $SSH_OPTS root@$IP 'journalctl -u massovka-web -n 40 --no-pager -o cat' | cut -c1-300 || true
+
+      - name: Тревога о неудачной выкладке
+        if: failure()
+        env:
+          TOKEN: ${{ secrets.ALERTS_BOT_TOKEN }}
+          CHAT: '-5387784292'
+          URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          [ -n "$TOKEN" ] || exit 0
+          text="🔴 Выкладка сайта не прошла: $(git log -1 --format=%s | cut -c1-80)
+          $URL"
+          curl -s -m 15 -X POST "https://api.telegram.org/bot$TOKEN/sendMessage" -H 'Content-Type: application/json' \
+            -d "$(jq -nc --arg c "$CHAT" --arg t "$text" '{chat_id: $c, text: $t, disable_web_page_preview: true}')" >/dev/null || true
+

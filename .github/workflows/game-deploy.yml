@@ -45,6 +45,8 @@ jobs:
       SERVER_NAME: ${{ matrix.name }}
       SERVER_PRESETS: ${{ matrix.presets }}
       ROLE: ${{ matrix.role }}
+      # группа «benobody alerts» (id чата не секрет без ключа бота)
+      ALERTS_CHAT: '-5387784292'
       SSH_OPTS: -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=20 -o ServerAliveInterval=15 -o LogLevel=ERROR
     steps:
       - uses: actions/checkout@v4
@@ -146,7 +148,7 @@ jobs:
             mv /tmp/caddy/caddy deploy/caddy
             echo "$tag" > deploy/caddy.version
           else echo "Caddy $tag уже стоит"; fi
-          cp apps/server/dist/server.mjs apps/server/dist/server.mjs.map infra/game/setup.sh infra/game/caddy.sh deploy/
+          cp apps/server/dist/server.mjs apps/server/dist/server.mjs.map infra/game/setup.sh infra/game/caddy.sh infra/game/watch.sh deploy/
           ls -la deploy
 
       - name: Настроить и выкатить
@@ -157,11 +159,16 @@ jobs:
           BOT_IP: ${{ steps.infra.outputs.ip }}
           MOSCOW_IP: ${{ steps.moscow.outputs.ip }}
           TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          ALERTS_TOKEN: ${{ secrets.ALERTS_BOT_TOKEN }}
         run: |
           ssh $SSH_OPTS root@$IP 'rm -rf /tmp/deploy && mkdir -p /tmp/deploy'
           # ключ бота — только серверу бота, файлом по SSH (не в командной строке и не в логах)
           if [ "$ROLE" = infra ] && [ -n "$TG_TOKEN" ]; then
             ( umask 077; printf 'TELEGRAM_BOT_TOKEN=%s\n' "$TG_TOKEN" > deploy/bot.env )
+          fi
+          # бот тревог — только сторожу в Нидерландах
+          if [ "$ROLE" = infra ] && [ -n "$ALERTS_TOKEN" ]; then
+            ( umask 077; printf 'ALERTS_BOT_TOKEN=%s\nALERTS_CHAT=%s\n' "$ALERTS_TOKEN" "$ALERTS_CHAT" > deploy/alerts.env )
           fi
           # открытый ключ туннеля сервера бота — Москве (вход только для проброса порта)
           if [ "$ROLE" = game ] && [ -n "$BOT_IP" ]; then
@@ -242,3 +249,15 @@ jobs:
         run: |
           echo "### ${{ matrix.role }}: https://$HOST" >> "$GITHUB_STEP_SUMMARY"
           echo "версия ${GITHUB_SHA::12}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Тревога о неудачной выкладке
+        if: failure()
+        env:
+          TOKEN: ${{ secrets.ALERTS_BOT_TOKEN }}
+          URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          [ -n "$TOKEN" ] || exit 0
+          text="🔴 Выкладка сервера (${{ matrix.role }}) не прошла: $(git log -1 --format=%s | cut -c1-80)
+          $URL"
+          curl -s -m 15 -X POST "https://api.telegram.org/bot$TOKEN/sendMessage" -H 'Content-Type: application/json' \
+            -d "$(jq -nc --arg c "$ALERTS_CHAT" --arg t "$text" '{chat_id: $c, text: $t, disable_web_page_preview: true}')" >/dev/null || true

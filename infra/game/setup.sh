@@ -148,6 +148,35 @@ if [ "${ROLE:-game}" = game ] && [ -s "$D/tunnel.pub" ]; then
   chmod 600 /var/lib/tunnel/.ssh/authorized_keys
 fi
 
+# ───────────── сторож и тревоги (сервер в Нидерландах) ─────────────
+if [ -s "$D/alerts.env" ]; then install -m 600 "$D/alerts.env" /etc/massovka/alerts.env; rm -f "$D/alerts.env"; fi
+if [ "${ROLE:-game}" = infra ] && [ -f /etc/massovka/alerts.env ] && [ -f "$D/watch.sh" ]; then
+  say "сторож: проверки раз в минуту, тревоги в Telegram"
+  command -v jq >/dev/null || { apt-get update -qq; DEBIAN_FRONTEND=noninteractive apt-get install -y -qq jq >/dev/null; }
+  install -d /opt/massovka/bin
+  install -m 755 "$D/watch.sh" /opt/massovka/bin/watch.sh
+  cat > /etc/systemd/system/massovka-watch.service <<'EOF'
+[Unit]
+Description=Массовка: сторож (сайт, игра, бот, туннель)
+[Service]
+Type=oneshot
+ExecStart=/opt/massovka/bin/watch.sh
+TimeoutStartSec=170
+EOF
+  cat > /etc/systemd/system/massovka-watch.timer <<'EOF'
+[Unit]
+Description=Массовка: сторож раз в минуту
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+AccuracySec=5s
+[Install]
+WantedBy=timers.target
+EOF
+  systemctl daemon-reload
+  systemctl enable --now massovka-watch.timer >/dev/null 2>&1
+fi
+
 # ───────────── Node и Caddy ─────────────
 if [ -f "$D/node.tar.xz" ]; then
   ver=$(cat "$D/node.version")

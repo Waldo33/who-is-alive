@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# Сторож (сервер в Нидерландах, раз в минуту): сайт, игра, бот, туннель в Москву.
+# Тревога в Telegram — если проверка не проходит 5 минут подряд; «восстановлено» — когда снова в порядке.
+# Связь Нидерланды → Москва режется фильтрами (новые соединения проходят на 20–40%), поэтому каждая
+# внешняя проверка делает до 6 попыток с коротким таймаутом: хоть одна удалась — значит, работает.
+set -uo pipefail
+. /etc/massovka/alerts.env   # ALERTS_BOT_TOKEN, ALERTS_CHAT
+STATE=/var/lib/massovka-watch
+LIMIT=5
+mkdir -p "$STATE"
+
+send() {
+  curl -s -m 15 -X POST "https://api.telegram.org/bot${ALERTS_BOT_TOKEN}/sendMessage" \
+    -H 'Content-Type: application/json' \
+    -d "$(jq -nc --arg c "$ALERTS_CHAT" --arg t "$1" '{chat_id: $c, text: $t, disable_web_page_preview: true}')" >/dev/null || true
+}
+
+# внешний адрес: до 6 попыток; ok — если ответ с нужным кодом
+http_ok() {
+  local url=$1 want=${2:-200} code
+  for _ in 1 2 3 4 5 6; do
+    code=$(curl -s -o /dev/null -w '%{http_code}' --connect-timeout 3 -m 8 "$url" || true)
+    [ "$code" = "$want" ] && return 0
+    sleep 1
+  done
+  return 1
+}
+
+# учёт: name, ok(0/1), описание для тревоги
+check() {
+  local name=$1 ok=$2 what=$3 f="$STATE/$1" n
+  n=$(cat "$f" 2>/dev/null || echo 0)
+  if [ "$ok" = 0 ]; then
+    if [ "$n" -ge "$LIMIT" ]; then send "✅ Восстановлено: $what"; fi
+    echo 0 > "$f"
+  else
+    n=$((n + 1))
+    echo "$n" > "$f"
+    if [ "$n" = "$LIMIT" ]; then send "🔴 Не работает уже $LIMIT мин: $what"; fi
+    # напоминание раз в час, пока не починится
+    if [ "$n" -gt "$LIMIT" ] && [ $(((n - LIMIT) % 60)) = 0 ]; then send "🔴 Всё ещё не работает ($n мин): $what"; fi
+  fi
+}
+
+http_ok https://benobody.app/; check site $? "сайт benobody.app"
+http_ok https://api.benobody.app/healthz; check game $? "игровой сервер api.benobody.app"
+# бот через Москву — заодно проверка туннеля
+http_ok https://api.benobody.app/tg/info; check bot_via_msk $? "бот через Москву (туннель Нидерланды → Москва)"
+
+# бот у себя: вебхук на месте, Telegram не жалуется на доставку
+st=$(curl -s -m 15 http://127.0.0.1:8080/tg/status || true)
+if echo "$st" | jq -e '.webhook == true and ((.pending // 0) < 100)' >/dev/null 2>&1; then r=0; else r=1; fi
+check bot_webhook $r "вебхук Telegram-бота (ошибка: $(echo "$st" | jq -r '.lastError // "нет ответа"' 2>/dev/null))"
+
+# место на диске и память самого сервера в Нидерландах
+disk=$(df --output=pcent / | tail -1 | tr -dc 0-9)
+[ "${disk:-0}" -lt 90 ]; check nl_disk $? "диск сервера в Нидерландах заполнен на ${disk}%"
+exit 0
