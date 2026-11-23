@@ -32,6 +32,8 @@ export const DEFAULT_CONFIG = {
   maxRounds: 5,
   // тема всех дублей: -1 — случайный порядок (themes.ts); песочница: ?dev&theme=4
   fixedTheme: -1,
+  // тема первого дубля каждого матча: -1 — нет; в новогодний сезон — «Корпоратив» (seasonLeadTheme)
+  leadTheme: -1,
 
   // боты
   botWanderRadius: [20, 80] as [number, number],

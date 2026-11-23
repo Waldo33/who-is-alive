@@ -799,6 +799,12 @@ export class MatchSim {
     const order = this.rng.shuffle(Array.from({ length: THEME_COUNT }, (_, i) => i));
     // реванш не начинается с той же темы, которой закончился прошлый матч
     if (this.round > 0 && order[0] === last) order.push(order.shift()!);
+    // сезонная тема (под Новый год — «Корпоратив») открывает матч; кончился ею прошлый — идёт второй
+    const lead = this.cfg.leadTheme;
+    if (lead >= 0 && lead < THEME_COUNT) {
+      order.splice(order.indexOf(lead), 1);
+      order.splice(this.round > 0 && last === lead ? 1 : 0, 0, lead);
+    }
     this.themeOrder = order;
   }
 

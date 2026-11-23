@@ -69,6 +69,16 @@ export const THEME_RULES: readonly ThemeRules[] = [
 
 export const THEME_COUNT = THEME_RULES.length;
 
+/** Новогодний сезон: с 1 декабря по 14 января (месяц с нуля, как в Date). */
+export function isNewYearSeason(month0: number, day: number): boolean {
+  return month0 === 11 || (month0 === 0 && day <= 14);
+}
+
+/** Тема первого дубля в сезон: «Корпоратив» под Новый год, иначе -1 (config.leadTheme). */
+export function seasonLeadTheme(month0: number, day: number): number {
+  return isNewYearSeason(month0, day) ? THEME_RULES.findIndex((r) => r.id === 'party') : -1;
+}
+
 export function themeRules(theme: number): ThemeRules {
   return THEME_RULES[theme] ?? THEME_RULES[0];
 }

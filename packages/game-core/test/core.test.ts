@@ -11,6 +11,8 @@ import {
   plazaArena,
   planPath,
   THEME_COUNT,
+  THEME_RULES,
+  seasonLeadTheme,
   themeRules,
 } from '../src';
 import type { WorldEvent } from '../src';
@@ -433,3 +435,37 @@ describe('загадка дня', () => {
   });
 });
 
+
+describe('новогодний сезон', () => {
+  const party = THEME_RULES.findIndex((r) => r.id === 'party');
+
+  it('«Корпоратив» — с 1 декабря по 14 января', () => {
+    expect(seasonLeadTheme(10, 30)).toBe(-1);
+    expect(seasonLeadTheme(11, 1)).toBe(party);
+    expect(seasonLeadTheme(0, 14)).toBe(party);
+    expect(seasonLeadTheme(0, 15)).toBe(-1);
+  });
+
+  it('в сезон матч открывается «Корпоративом», остальные темы на месте', () => {
+    for (let seed = 1; seed <= 30; seed++) {
+      const sim = new MatchSim(makeConfig({ leadTheme: party }), players, seed);
+      expect(sim.themeOrder[0]).toBe(party);
+      expect([...sim.themeOrder].sort((a, b) => a - b)).toEqual(Array.from({ length: THEME_COUNT }, (_, i) => i));
+    }
+  });
+
+  it('реванш после дубля «Корпоратив» начинается с другой темы, «Корпоратив» — вторым', () => {
+    const sim = new MatchSim(makeConfig({ leadTheme: party }), players, 5);
+    sim.theme = party;
+    (sim as unknown as { rematch(): void }).rematch();
+    expect(sim.themeOrder[0]).not.toBe(party);
+    expect(sim.themeOrder[1]).toBe(party);
+    expect(sim.theme).not.toBe(party);
+  });
+
+  it('вне сезона порядок тем как раньше', () => {
+    const a = new MatchSim(makeConfig(), players, 9).themeOrder;
+    const b = new MatchSim(makeConfig({ leadTheme: -1 }), players, 9).themeOrder;
+    expect(b).toEqual(a);
+  });
+});

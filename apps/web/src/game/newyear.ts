@@ -6,6 +6,8 @@
  * Посмотреть вне сезона: `?season=ny` (выключить в сезоне — `?season=off`); выбор помнится
  * до закрытия вкладки.
  */
+import { isNewYearSeason } from '@kto/game-core';
+
 export function newYearSeason(d = new Date()): boolean {
   if (typeof window !== 'undefined') {
     try {
@@ -18,8 +20,7 @@ export function newYearSeason(d = new Date()): boolean {
       /* приватный режим: по дате */
     }
   }
-  const m = d.getMonth();
-  return m === 11 || (m === 0 && d.getDate() <= 14);
+  return isNewYearSeason(d.getMonth(), d.getDate());
 }
 
 // ───────────── общий мотив (соль мажор: G – Em – Am – D; мелодия своя) ─────────────

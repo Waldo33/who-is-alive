@@ -1,4 +1,4 @@
-import { DEFAULT_CONFIG, DICTS } from '@kto/game-core';
+import { DEFAULT_CONFIG, DICTS, THEME_RULES } from '@kto/game-core';
 import { detectLang } from '../lib/lang';
 import { download, shareContent, withLang } from '../lib/share';
 import { setTrackContext, shareKind, track } from '../lib/analytics';
@@ -10,6 +10,7 @@ import { PAL } from '@kto/assets';
 import { getAudio } from './audio';
 import { bootGame } from './boot';
 import type { RunningGame } from './boot';
+import { newYearSeason } from './newyear';
 
 /**
  * Оболочка песочницы: стартовый экран, «рамка автомата», заглушка горизонтали, дев-панель (?dev).
@@ -215,6 +216,8 @@ export function mountSandbox(root: HTMLElement, opts: ShellOptions): () => void 
   // ?dev&theme=N — все дубли в одной теме (посмотреть новую площадку)
   const themeQ = dev ? new URLSearchParams(location.search).get('theme') : null;
   if (themeQ !== null && Number.isInteger(Number(themeQ))) overrides = { fixedTheme: Number(themeQ) };
+  // под Новый год матч открывается «Корпоративом» (как на сервере; ?season=ny — посмотреть вне сезона)
+  else if (newYearSeason()) overrides = { leadTheme: THEME_RULES.findIndex((r) => r.id === 'party') };
 
   const toast = (s: string) => {
     toastEl.textContent = s;

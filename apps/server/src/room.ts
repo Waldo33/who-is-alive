@@ -1,8 +1,14 @@
-import { DICTS, TICK_MS, fmt } from '@kto/game-core';
+import { DICTS, TICK_MS, fmt, seasonLeadTheme } from '@kto/game-core';
 import type { GameConfig, PlayerInfo } from '@kto/game-core';
 import { DEFAULT_WIRE_SETTINGS, HostSession } from '@kto/net';
 import type { Channel, PresenceMember, RoomMsg, ServerMsg, Transport, WireError, WireRoom, WireRoomSettings } from '@kto/net';
 import type { Logger } from './log';
+
+/** Сезонная тема первого дубля — по московской дате (игроки в основном из России). */
+function seasonLeadThemeNow(now = Date.now()): number {
+  const d = new Date(now + 3 * 3600_000);
+  return seasonLeadTheme(d.getUTCMonth(), d.getUTCDate());
+}
 
 /** Одно соединение игрока (WebSocket или тестовая заглушка). */
 export interface Peer {
@@ -337,6 +343,7 @@ export class Room {
       maxRounds: this.settings.maxRounds,
       kidsMode: this.settings.kidsMode,
       strictCrowd: !!this.settings.strictCrowd,
+      leadTheme: seasonLeadThemeNow(),
     };
     const seed = Math.floor(Math.random() * 2 ** 31);
     this.runner?.stop();
