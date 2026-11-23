@@ -5,7 +5,7 @@
 - `docs/architecture.md` — как устроены ядро, сеть, Supabase, клиент, звук, клип, превью;
 - `docs/gotchas.md` — грабли, на которые уже наступали (Safari, Chrome на iPhone, Realtime, iOS-звук…);
 - `docs/roadmap.md` — что сделано, что дальше, отложенные решения и что нужно от владельца.
-- `docs/server-migration.md` — план переезда на свой сервер (Timeweb Cloud, Казань: игровой сервер + инфраструктура, мониторинг, деплой через GitHub Actions).
+- `docs/server-migration.md` — переезд на свои серверы (Timeweb Cloud: Москва — игра и сайт, Нидерланды — бот и наблюдение; как сделано — раздел 12).
 
 Язык проекта — **русский**: комментарии в коде, сообщения коммитов, общение с владельцем. Владелец не программист в этом проекте: формулирует задачи как игрок («у друга лагает», «не успеваю нажать»), часто тестирует с iPhone (Safari и Chrome) и пишет прямо из приложения Claude на телефоне. Делай всё сам до конца, проверяй и коротко отчитывайся, что изменилось для игрока.
 
@@ -24,8 +24,12 @@
 - Монорепо **pnpm 10.18.3**, Node 22, TypeScript 5.9 strict, ESLint 9 (flat config в корне), Vitest 3.
 - `apps/web` — **Next.js 15.5** (App Router, React 19) + **Phaser 3.90**. Работает на своём сервере (Next standalone за Caddy, `.github/workflows/web-deploy.yml`, `infra/game/web.sh`). Vercel (проект `who-is-alive`, `prj_J1ZWu5Ncozw0FtcgTVoQGQFLrUNm`, команда `team_KRSpd6ofFYaA171W5rl60kY7`) — только перенаправление старого адреса (`redirects` в `next.config.ts` при `VERCEL`, пересборка лишь при изменении `next.config.ts`).
 - **Свой игровой сервер** `apps/server` (Timeweb Cloud, Москва, `https://api.benobody.app`, с 22.11.2026): комнаты, лобби и матчи для всех — матч считает сервер, у всех игроков `RemoteSession` поверх `ServerLink`. Выкладка — `.github/workflows/game-deploy.yml` на каждый push в `apps/server`, `packages/*`, `infra/game` (живой прогон четырёх игроков в конце). Адрес для клиента — `GAME_API` в `apps/web/src/lib/env.ts`.
-- **Свой сервер** (Timeweb Cloud, Москва, 1 vCPU / 1 ГБ, `129.101.104.99`): игровой сервер (`api.benobody.app`), сайт (`benobody.app`), Postgres (аналитика `analytics_events`), Caddy с сертификатами, копия базы раз в сутки. Секреты рождаются на сервере (`/etc/massovka/secrets.env`) или приходят из GitHub Secrets (`TWC_TOKEN`, `TELEGRAM_BOT_TOKEN`).
-- **Supabase** (ref `wivildtgfkpuxvqoamqg`, Франкфурт) — **только Telegram-бот** (Edge Function `supabase/functions/tg-bot`, рейтинг кастинга `tg_daily_scores`): из Москвы `api.telegram.org` закрыт (проверено 23.11.2026), поэтому бот там. Копия бота на Node — `apps/server/src/bot.ts` (`/tg/*`), включится, когда будет выход к Telegram. Старые таблицы комнат и аналитика до 23.11 лежат в Supabase. Сервисных ключей в репозитории нет и быть не должно.
+- **Два своих сервера** (Timeweb Cloud, всё ставит `game-deploy` по SSH, ключ выводится из `TWC_TOKEN`):
+  - **Москва** `massovka-game` (1 vCPU / 1 ГБ, `129.101.104.99`): игровой сервер (`api.benobody.app`), сайт (`benobody.app`), Postgres (аналитика `analytics_events`), Caddy с сертификатами, копия базы раз в сутки.
+  - **Нидерланды** `massovka-infra` (1 vCPU / 2 ГБ, `72.56.73.184`, `72-56-73-184.sslip.io`): Telegram-бот (`apps/server/src/bot.ts`, из Москвы `api.telegram.org` закрыт), сторож с тревогами в Telegram (`infra/game/watch.sh`), наблюдение (`infra/game/observe.sh`): VictoriaMetrics, VictoriaLogs, **Grafana** — `https://72-56-73-184.sslip.io/grafana/` (логин `admin`, пароль — секрет `GRAFANA_PASSWORD`; панели — `infra/grafana/generate.py`), ночная копия базы Москвы.
+  - Связь: соединения Москва → Нидерланды режет фильтр, поэтому **туннель SSH поднимают Нидерланды** (`massovka-tunnel`): бот, логи Москвы сюда; база, метрики Москвы оттуда. `/tg/*` на `api.benobody.app` идёт через него.
+  - Секреты рождаются на сервере (`/etc/massovka/secrets.env`, папка закрыта — настройки служб лежат отдельно) или приходят из GitHub Secrets (`TWC_TOKEN`, `TELEGRAM_BOT_TOKEN`, `ALERTS_BOT_TOKEN`, `GRAFANA_PASSWORD`) файлами по SSH — не в командной строке.
+- **Supabase** (ref `wivildtgfkpuxvqoamqg`, Франкфурт) — больше не используется: там остались старые таблицы комнат, рейтинг кастинга и аналитика до 23.11 (`supabase/` — история). Сервисных ключей в репозитории нет и быть не должно.
 - `packages/game-core` — правила игры, чистый детерминированный TS.
 - `packages/net` — сетевой слой: транспорт, хост, гость, протокол (zod).
 - `packages/assets` — палитра 32 цвета `PAL`, `PLAYER_COLORS`.
@@ -122,8 +126,8 @@ CI (`.github/workflows/ci.yml`): lint, typecheck, test, `sim --rounds 200`.
 | `apps/web/src/lib/` | `telegram` (Telegram Mini App: SDK, полный экран, родные «Назад», вибрация, ссылки `startapp`, `docs/architecture.md › 4.1`), `features` (флаги фич: `featureOn('casting')` — «Кастинг дня» спрятан), `analytics` (`track` — события воронки на свой сервер, `POST /v1/events`), `share` (поделиться с запасными путями, `withLang` — `?l=` и метка `?src=` в ссылках), `meta` (метаданные превью по языку), `chunk` (перезагрузка при устаревшей вкладке), `preview` (комната с сервера для OG), `game-server`, `env`, `lang`, `name` |
 | `apps/web/public/sw.js` | сервис-воркер PWA |
 | `supabase/migrations/` | схема Supabase (история; сейчас нужна только боту) |
-| `apps/server/` | свой игровой сервер (в проде с 22.11.2026): `server.ts` — HTTP + WebSocket, лимиты, уборка комнат, `/v1/events` (аналитика); `room.ts` — комната и матч (безголовый `HostSession`); `auth.ts` — анонимные токены; `store.ts` — Postgres; `bot.ts` — бот (пока выключен, см. Supabase). Развёртывание — `infra/game/` (`provision.py`, `setup.sh`, `caddy.sh`, `web.sh`). Клиент к нему — `ServerLink` (`packages/net/src/ws.ts`), протокол — `wire.ts`. Запуск: `pnpm --filter @kto/server dev` |
-| `supabase/functions/tg-bot/` | сервер Telegram-бота (Edge Function): `/start`, инлайн «@бот», карточки `shareMessage`, рейтинг загадки в чате (`docs/architecture.md › 4.2`) |
+| `apps/server/` | свой игровой сервер (в проде с 22.11.2026): `server.ts` — HTTP + WebSocket, лимиты, уборка комнат, `/v1/events` (аналитика); `room.ts` — комната и матч (безголовый `HostSession`); `auth.ts` — анонимные токены; `store.ts` — Postgres; `bot.ts` — Telegram-бот (работает на сервере в Нидерландах). Развёртывание — `infra/game/` (`provision.py`, `setup.sh`, `caddy.sh`, `web.sh`, `observe.sh`, `watch.sh`), панели Grafana — `infra/grafana/`. Клиент к нему — `ServerLink` (`packages/net/src/ws.ts`), протокол — `wire.ts`. Запуск: `pnpm --filter @kto/server dev` |
+| `supabase/functions/tg-bot/` | прежний сервер бота (Edge Function, история; рабочая копия — `apps/server/src/bot.ts`, `docs/architecture.md › 4.2`) |
 
 ## Как проверять
 

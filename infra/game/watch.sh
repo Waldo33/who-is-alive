@@ -55,4 +55,17 @@ check bot_webhook $r "вебхук Telegram-бота (ошибка: $(echo "$st"
 # место на диске и память самого сервера в Нидерландах
 disk=$(df --output=pcent / | tail -1 | tr -dc 0-9)
 [ "${disk:-0}" -lt 90 ]; check nl_disk $? "диск сервера в Нидерландах заполнен на ${disk}%"
+
+# наблюдение: метрики собираются со всех источников (Москва — через туннель), Grafana жива
+if [ -x /usr/local/bin/victoria-metrics ]; then
+  down=$(curl -s -m 5 'http://127.0.0.1:8428/api/v1/query?query=up==0' | jq -r '[.data.result[] | .metric.job + "/" + .metric.server] | join(", ")' 2>/dev/null)
+  [ -n "${down+x}" ] && curl -s -m 5 -o /dev/null http://127.0.0.1:8428/health && [ -z "$down" ]
+  check metrics $? "сбор метрик${down:+ (не отвечает: $down)}"
+  curl -s -m 5 -o /dev/null -f http://127.0.0.1:3001/api/health; check grafana $? "Grafana"
+fi
+# ночная копия базы Москвы: свежей суток с запасом (раз в сутки в 03:40 UTC)
+if systemctl is-enabled -q massovka-msk-backup.timer 2>/dev/null; then
+  [ -n "$(find /var/backups/massovka-msk -name '*.dump' -mmin -1560 2>/dev/null | head -1)" ]
+  check msk_backup $? "копия базы Москвы старше 26 часов"
+fi
 exit 0
