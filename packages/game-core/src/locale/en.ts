@@ -292,6 +292,8 @@ export const en: Dict = {
     send: 'Send',
     save: 'Save',
     story: 'To story',
+    preparing: 'Loading…',
+    preparingLong: 'Preparing video…',
     close: 'Close',
     failed: 'Clip failed',
     noClip: 'No video in this browser',

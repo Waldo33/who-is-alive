@@ -1,7 +1,4 @@
-import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
-import { mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import type { Logger } from './log';
 import type { Store } from './store';
 
@@ -15,10 +12,8 @@ import type { Store } from './store';
  *   POST /hook    — обновления от Telegram: /start и инлайн-запросы «@бот …»;
  *   POST /daily   — результат «Кастинга дня» из Mini App (подписанный initData) → рейтинг этого чата;
  *   POST /board   — рейтинг «Кастинга дня» в чате;
- *   POST /prepare — карточка «поделиться» для WebApp.shareMessage (комната, кастинг, приглашение, клип);
- *   POST /clip    — клип «Лучший момент» из Mini App (видео в теле, initData в заголовке x-tg-init) →
- *                   { id, ext }; POST /clip/<id>/thumb — обложка JPEG; GET /clips/<id>.<ext> — файл
- *                   (для сторис, скачивания и видео-карточки в чат). Хранится 2 суток.
+ *   POST /prepare — карточка «поделиться» для WebApp.shareMessage (комната, кастинг, приглашение,
+ *                   клип — видео лежит на игровом сервере в Москве, `clips.ts`, сюда приходит только id).
  *
  * Вебхук проверяет секретный заголовок (выводится из ключа бота), Mini App — подпись initData.
  */
@@ -34,8 +29,8 @@ export interface BotOptions {
   features?: string[];
   store: Store;
   log: Logger;
-  /** Папка клипов (systemd StateDirectory); по умолчанию — во временной. */
-  clipDir?: string;
+  /** Где лежат клипы (игровой сервер в Москве, `clips.ts`): https://api.benobody.app. */
+  clipBase?: string;
   /** Подмена api.telegram.org (тесты). */
   fetchImpl?: typeof fetch;
 }
@@ -106,15 +101,8 @@ export interface InitData {
 export interface BotReply {
   status: number;
   body: unknown;
-  /** Отдать файл вместо JSON (клип, обложка). */
-  file?: { path: string; mime: string; name: string };
 }
 
-const CLIP_MAX = 12 * 1024 * 1024;
-const THUMB_MAX = 400 * 1024;
-const CLIP_TTL_MS = 48 * 3600_000;
-const CLIP_DIR_MAX = 1024 * 1024 * 1024;
-const CLIP_MIME: Record<string, string> = { mp4: 'video/mp4', webm: 'video/webm', jpg: 'image/jpeg' };
 const CLIP_ID = /^[0-9a-f]{20}$/;
 
 interface PrepareBody {
@@ -122,16 +110,10 @@ interface PrepareBody {
   kind?: string;
   code?: string;
   squares?: string;
-  /** kind 'clip': id загруженного клипа и подпись. */
+  /** kind 'clip': id клипа на игровом сервере, подпись, есть ли обложка. */
   clip?: string;
   text?: string;
-}
-
-async function exists(path: string): Promise<boolean> {
-  return stat(path).then(
-    (s) => s.isFile(),
-    () => false,
-  );
+  thumb?: boolean;
 }
 
 export class Bot {
@@ -141,9 +123,6 @@ export class Bot {
   private me: { username: string; supports_inline_queries?: boolean } | null = null;
   private meAt = 0;
   readonly hookSecret: string;
-  private readonly clipDir: string;
-  /** Загрузки клипов по игроку: не больше 12 за 10 минут. */
-  private readonly clipUploads = new Map<number, number[]>();
 
   constructor(private readonly o: BotOptions) {
     this.app = o.app ?? 'play';
@@ -151,7 +130,6 @@ export class Bot {
     this.f = o.fetchImpl ?? fetch;
     // секрет вебхука выводится из ключа бота — хранить отдельно не нужно (так же было в Supabase)
     this.hookSecret = createHash('sha256').update('kto-hook:' + o.token).digest('hex').slice(0, 48);
-    this.clipDir = o.clipDir ?? join(tmpdir(), 'massovka-clips');
   }
 
   private get hookUrl(): string {
@@ -225,11 +203,6 @@ export class Bot {
         return { status: 200, body: { ok: true } };
       }
       if (method === 'POST' && path === '/prepare') return await this.onPrepare(body as PrepareBody);
-      if (method === 'POST' && path === '/clip') return await this.onClip(headers, body);
-      const thumb = /^\/clip\/([0-9a-f]{20})\/thumb$/.exec(path);
-      if (method === 'POST' && thumb) return await this.onClipThumb(headers, body, thumb[1]);
-      const file = /^\/clips\/([0-9a-f]{20})\.(mp4|webm|jpg)$/.exec(path);
-      if (method === 'GET' && file) return await this.clipFile(file[1], file[2]);
       if (method === 'POST' && (path === '/daily' || path === '/board')) return await this.onDaily(body as { initData?: string; n?: number; tries?: number; won?: boolean }, path === '/daily');
       return { status: 404, body: { error: 'not_found' } };
     } catch (e) {
@@ -372,8 +345,8 @@ export class Bot {
     if (body.kind === 'room' && /^[A-Z]{4}$/.test(body.code ?? '')) result = await this.roomCard(t, body.code!);
     else if (body.kind === 'daily' && this.casting) result = await this.dailyCard(t, SQUARES.test(body.squares ?? '') ? body.squares! : '');
     else if (body.kind === 'clip' && CLIP_ID.test(body.clip ?? '')) {
-      result = await this.clipCard(t, body.clip!, typeof body.text === 'string' ? body.text.slice(0, 200) : '');
-      if (!result) return { status: 404, body: { error: 'no_clip' } };
+      if (!this.o.clipBase) return { status: 503, body: { error: 'no_clips' } };
+      result = await this.clipCard(t, body.clip!, typeof body.text === 'string' ? body.text.slice(0, 200) : '', body.thumb === true);
     } else result = await this.inviteCard(t);
     const msg = await this.api<{ id: string }>('savePreparedInlineMessage', {
       user_id: init.user.id,
@@ -387,84 +360,19 @@ export class Bot {
 
   // ───────────── клипы ─────────────
 
-  /** Видео-карточка: клип (mp4 — его забирает сервер Telegram), подпись и кнопка «Играть». */
-  private async clipCard(t: Texts, id: string, text: string) {
-    const video = join(this.clipDir, `${id}.mp4`);
-    if (!(await exists(video))) return null;
-    const base = `${this.o.apiBase}/tg/clips/${id}`;
-    const thumb = (await exists(join(this.clipDir, `${id}.jpg`))) ? `${base}.jpg` : `${this.o.site}/icons/icon-192.png`;
+  /** Видео-карточка: клип (mp4 в Москве — его забирает сервер Telegram), подпись и кнопка «Играть». */
+  private async clipCard(t: Texts, id: string, text: string, thumb: boolean) {
+    const base = `${this.o.clipBase}/v1/clips/${id}`;
     return {
       type: 'video',
       id: 'clip-' + id,
       video_url: `${base}.mp4`,
       mime_type: 'video/mp4',
-      thumbnail_url: thumb,
+      thumbnail_url: thumb ? `${base}.jpg` : `${this.o.site}/icons/icon-192.png`,
       title: t.clipTitle,
       caption: text || t.inviteText,
       reply_markup: { inline_keyboard: [[{ text: t.play, url: await this.link('play') }]] },
     };
-  }
-
-  private clipUser(headers: Record<string, string | string[] | undefined>): InitData | null {
-    const h = headers['x-tg-init'];
-    return this.verify(typeof h === 'string' ? h : '');
-  }
-
-  private clipRateOk(user: number, now = Date.now()): boolean {
-    const list = (this.clipUploads.get(user) ?? []).filter((t) => now - t < 600_000);
-    if (list.length >= 12) return false;
-    list.push(now);
-    this.clipUploads.set(user, list);
-    return true;
-  }
-
-  private async onClip(headers: Record<string, string | string[] | undefined>, body: unknown): Promise<BotReply> {
-    const init = this.clipUser(headers);
-    if (!init) return { status: 401, body: { error: 'bad_init' } };
-    const type = String(headers['content-type'] ?? '').split(';')[0].trim();
-    const ext = type === 'video/mp4' ? 'mp4' : type === 'video/webm' ? 'webm' : null;
-    if (!ext || !Buffer.isBuffer(body) || body.length < 1000 || body.length > CLIP_MAX) return { status: 400, body: { error: 'bad_clip' } };
-    if (!this.clipRateOk(init.user.id)) return { status: 429, body: { error: 'rate_limited' } };
-    await mkdir(this.clipDir, { recursive: true });
-    await this.sweepClips();
-    const id = randomBytes(10).toString('hex');
-    await writeFile(join(this.clipDir, `${id}.${ext}`), body);
-    return { status: 200, body: { id, ext } };
-  }
-
-  private async onClipThumb(headers: Record<string, string | string[] | undefined>, body: unknown, id: string): Promise<BotReply> {
-    if (!this.clipUser(headers)) return { status: 401, body: { error: 'bad_init' } };
-    if (!Buffer.isBuffer(body) || body.length > THUMB_MAX || body[0] !== 0xff || body[1] !== 0xd8) return { status: 400, body: { error: 'bad_thumb' } };
-    if (!(await exists(join(this.clipDir, `${id}.mp4`))) && !(await exists(join(this.clipDir, `${id}.webm`)))) return { status: 404, body: { error: 'no_clip' } };
-    await writeFile(join(this.clipDir, `${id}.jpg`), body);
-    return { status: 200, body: { ok: true } };
-  }
-
-  private async clipFile(id: string, ext: string): Promise<BotReply> {
-    const path = join(this.clipDir, `${id}.${ext}`);
-    if (!(await exists(path))) return { status: 404, body: { error: 'no_clip' } };
-    return { status: 200, body: null, file: { path, mime: CLIP_MIME[ext], name: ext === 'jpg' ? `massovka-${id}.jpg` : `massovka-${id}.${ext}` } };
-  }
-
-  /** Убрать клипы старше двух суток; папка больше 1 ГБ — сначала самые старые. */
-  private async sweepClips(now = Date.now()): Promise<void> {
-    const files: { path: string; t: number; size: number }[] = [];
-    try {
-      for (const name of await readdir(this.clipDir)) {
-        const path = join(this.clipDir, name);
-        const st = await stat(path).catch(() => null);
-        if (st?.isFile()) files.push({ path, t: st.mtimeMs, size: st.size });
-      }
-    } catch {
-      return;
-    }
-    files.sort((a, b) => a.t - b.t);
-    let total = files.reduce((n, f) => n + f.size, 0);
-    for (const f of files) {
-      if (now - f.t < CLIP_TTL_MS && total < CLIP_DIR_MAX) break;
-      await rm(f.path, { force: true });
-      total -= f.size;
-    }
   }
 
   /** Проверка initData по документации Telegram: HMAC-SHA256 с ключом HMAC("WebAppData", токен); не старше суток. */

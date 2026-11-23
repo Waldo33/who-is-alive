@@ -1,5 +1,5 @@
 import { createHmac } from 'node:crypto';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -18,7 +18,7 @@ function initData(user: object, extra: Record<string, string> = {}, auth = Math.
   return p.toString();
 }
 
-function makeBot(clipDir?: string) {
+function makeBot() {
   const calls: { method: string; body: Record<string, unknown> }[] = [];
   const fetchImpl = (async (url: string, init: { body: string }) => {
     const method = url.split('/').pop()!;
@@ -28,7 +28,7 @@ function makeBot(clipDir?: string) {
     return new Response(JSON.stringify({ ok: true, result }));
   }) as unknown as typeof fetch;
   const store = new MemoryStore();
-  const bot = new Bot({ token: TOKEN, apiBase: 'https://api.example', site: 'https://site.example', store, log: silentLogger, fetchImpl, features: ['casting'], clipDir });
+  const bot = new Bot({ token: TOKEN, apiBase: 'https://api.example', site: 'https://site.example', store, log: silentLogger, fetchImpl, features: ['casting'], clipBase: 'https://msk.example' });
   return { bot, calls, store };
 }
 
@@ -84,58 +84,51 @@ describe('Telegram-бот', () => {
     expect(JSON.stringify(prep.body)).toContain('https://t.me/be_nobody_bot/play?startapp=r_WXYZ');
   });
 
-  it('клип: загрузка с подписью initData, файл по ссылке, видео-карточка в чат', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'clips-'));
-    const { bot, calls } = makeBot(dir);
-    const video = Buffer.alloc(5000, 7);
+  it('видео-карточка клипа: ссылка на игровой сервер (Москва), подпись, обложка', async () => {
+    const { bot, calls } = makeBot();
     const init = initData({ id: 9, language_code: 'ru' });
-    expect((await bot.handle('POST', '/clip', { 'content-type': 'video/mp4' }, video)).status).toBe(401);
-    expect((await bot.handle('POST', '/clip', { 'content-type': 'text/plain', 'x-tg-init': init }, video)).status).toBe(400);
-    const up = await bot.handle('POST', '/clip', { 'content-type': 'video/mp4;codecs=avc1', 'x-tg-init': init }, video);
-    const { id, ext } = up.body as { id: string; ext: string };
-    expect(ext).toBe('mp4');
-    expect(id).toMatch(/^[0-9a-f]{20}$/);
-    const jpg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3]);
-    expect((await bot.handle('POST', `/clip/${id}/thumb`, { 'x-tg-init': init }, jpg)).status).toBe(200);
-    const f = await bot.handle('GET', `/clips/${id}.mp4`, {}, null);
-    expect(f.file?.mime).toBe('video/mp4');
-    expect(readFileSync(f.file!.path).length).toBe(5000);
-    expect((await bot.handle('GET', `/clips/${'0'.repeat(20)}.mp4`, {}, null)).status).toBe(404);
-    expect((await bot.handle('GET', `/clips/../../etc/passwd`, {}, null)).file).toBeUndefined();
-    const r = await bot.handle('POST', '/prepare', {}, { initData: init, kind: 'clip', clip: id, text: 'Вырезал!' });
+    const id = 'ab'.repeat(10);
+    const r = await bot.handle('POST', '/prepare', {}, { initData: init, kind: 'clip', clip: id, text: 'Вырезал!', thumb: true });
     expect(r.body).toEqual({ id: 'prep1' });
     const res = calls.find((c) => c.method === 'savePreparedInlineMessage')!.body.result as Record<string, string>;
     expect(res.type).toBe('video');
-    expect(res.video_url).toBe(`https://api.example/tg/clips/${id}.mp4`);
-    expect(res.thumbnail_url).toBe(`https://api.example/tg/clips/${id}.jpg`);
+    expect(res.video_url).toBe(`https://msk.example/v1/clips/${id}.mp4`);
+    expect(res.thumbnail_url).toBe(`https://msk.example/v1/clips/${id}.jpg`);
     expect(res.caption).toBe('Вырезал!');
-    expect((await bot.handle('POST', '/prepare', {}, { initData: init, kind: 'clip', clip: 'f'.repeat(20) })).status).toBe(404);
   });
 });
 
-describe('клип через HTTP-сервер', () => {
-  it('сырое тело до 12 МБ доходит до бота, файл отдаётся с attachment', async () => {
+describe('клипы на игровом сервере (/v1/clips)', () => {
+  it('загрузка потоком с токеном игрока, обложка, файл с attachment; без токена и больше 12 МБ — нет', async () => {
     const { GameServer } = await import('../src/server');
+    const { ClipStore } = await import('../src/clips');
     const dir = mkdtempSync(join(tmpdir(), 'clips-'));
-    const { bot } = makeBot(dir);
-    const srv = new GameServer({ authSecret: 'test-secret-test-secret-test-secret!!', log: silentLogger, bot });
+    const srv = new GameServer({ authSecret: 'test-secret-test-secret-test-secret!!', log: silentLogger, clips: new ClipStore(dir) });
     const port = await srv.listen(0, '127.0.0.1');
+    const base = `http://127.0.0.1:${port}`;
     try {
+      const { token } = (await (await fetch(`${base}/v1/auth/anon`, { method: 'POST' })).json()) as { token: string };
       const video = Buffer.alloc(3 * 1024 * 1024, 3);
-      const up = await fetch(`http://127.0.0.1:${port}/tg/clip`, {
-        method: 'POST',
-        headers: { 'content-type': 'video/mp4', 'x-tg-init': initData({ id: 4 }), origin: 'https://benobody.app' },
-        body: video,
-      });
+      expect((await fetch(`${base}/v1/clips`, { method: 'POST', headers: { 'content-type': 'video/mp4' }, body: video })).status).toBe(401);
+      const auth = { authorization: `Bearer ${token}` };
+      expect((await fetch(`${base}/v1/clips`, { method: 'POST', headers: { ...auth, 'content-type': 'text/plain' }, body: video })).status).toBe(400);
+      const big = await fetch(`${base}/v1/clips`, { method: 'POST', headers: { ...auth, 'content-type': 'video/mp4' }, body: Buffer.alloc(13 * 1024 * 1024) });
+      expect(big.status).toBe(413);
+      const up = await fetch(`${base}/v1/clips`, { method: 'POST', headers: { ...auth, 'content-type': 'video/mp4;codecs=avc1', origin: 'https://benobody.app' }, body: video });
       expect(up.status).toBe(200);
-      expect(up.headers.get('access-control-allow-origin')).toBe('https://benobody.app');
-      const { id } = (await up.json()) as { id: string };
-      const f = await fetch(`http://127.0.0.1:${port}/tg/clips/${id}.mp4`);
+      const { id, ext } = (await up.json()) as { id: string; ext: string };
+      expect(ext).toBe('mp4');
+      const jpg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3]);
+      expect((await fetch(`${base}/v1/clips/${id}/thumb`, { method: 'POST', headers: auth, body: Buffer.from('nope') })).status).toBe(400);
+      expect((await fetch(`${base}/v1/clips/${id}/thumb`, { method: 'POST', headers: auth, body: jpg })).status).toBe(200);
+      const f = await fetch(`${base}/v1/clips/${id}.mp4`);
       expect(f.status).toBe(200);
+      expect(f.headers.get('content-type')).toBe('video/mp4');
       expect(f.headers.get('content-disposition')).toContain('attachment');
       expect((await f.arrayBuffer()).byteLength).toBe(video.length);
-      const pre = await fetch(`http://127.0.0.1:${port}/tg/clip`, { method: 'OPTIONS', headers: { origin: 'https://benobody.app' } });
-      expect(pre.headers.get('access-control-allow-headers')).toContain('x-tg-init');
+      expect((await fetch(`${base}/v1/clips/${id}.jpg`)).status).toBe(200);
+      expect((await fetch(`${base}/v1/clips/${'0'.repeat(20)}.mp4`)).status).toBe(404);
+      expect(readdirSync(dir).sort()).toEqual([`${id}.jpg`, `${id}.mp4`]);
     } finally {
       await srv.close();
     }

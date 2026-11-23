@@ -4,8 +4,9 @@ import { ClipPlayerScene, pickClipMime, recordClip } from './clip';
 import { loadTheme } from './themes';
 import { getAudio } from './audio';
 import type { ClipInput, ClipResult } from './clip';
-import { inTelegram, telegramClipCaps, telegramClipSave, telegramClipStory, telegramShareCard, telegramUploadClip } from '../lib/telegram';
-import type { TgClip } from '../lib/telegram';
+import { shareableClip } from '../lib/clips';
+import type { SharedClip } from '../lib/clips';
+import { inTelegram, telegramClipCaps, telegramClipSave, telegramClipStory, telegramShareCard } from '../lib/telegram';
 
 /** Подпись клипа и учёт действий внутри Telegram (сторис, видео в чат, «Сохранить»). */
 export interface ClipShareOpts {
@@ -72,11 +73,12 @@ export function openClipOverlay(
     .then((res: ClipResult) => {
       if (closed) return;
       const file = new File([res.blob], `kto-tut-zhivoy.${res.ext}`, { type: res.mime });
-      // Telegram: файл из встроенного браузера не отдать — клип уходит на сервер бота сразу,
-      // пока человек смотрит превью; обложка — последний кадр (заставка с итогом)
+      // Telegram: файл из встроенного браузера не отдать — клип уходит на игровой сервер сразу,
+      // пока человек смотрит превью (к нажатию ссылка обычно готова); обложка — последний кадр
       const caps = inTelegram() ? telegramClipCaps(res.mime) : null;
-      const tgClip: Promise<TgClip | null> | null =
-        caps && (caps.story || caps.chat || caps.save) ? thumbOf(scene.c).then((th) => telegramUploadClip(file, th)) : null;
+      const tgClip = caps && (caps.story || caps.chat || caps.save) ? shareableClip(file, thumbOf(scene.c)) : null;
+      let tgReady = false;
+      void tgClip?.then(() => (tgReady = true));
       status.textContent = t.clip.ready;
       root.querySelector<HTMLElement>('.clip-progress')!.hidden = true;
       actions.hidden = false;
@@ -90,36 +92,56 @@ export function openClipOverlay(
       v.addEventListener('error', () => v.remove());
       scene.c.replaceWith(v);
       void v.play().catch(() => undefined);
-      const viaTg = async (what: 'story' | 'chat' | 'save', run: (c: TgClip) => Promise<boolean> | boolean): Promise<boolean> => {
-        // пока клип грузится на сервер — кнопки ждут (нажатие не теряется)
-        actions.classList.add('busy');
-        const c = tgClip && (await tgClip);
+      // Одно действие за раз: пока клип догружается, кнопки ждут — «Готовлю видео…»; нажали ещё —
+      // выполнится только последнее нажатие и один раз (раньше каждое открывало своё окно)
+      let next: ((c: SharedClip | null) => Promise<void>) | null = null;
+      let running = false;
+      const act = async (run: (c: SharedClip | null) => Promise<void>): Promise<void> => {
+        next = run;
+        if (running) return;
+        running = true;
+        if (!tgReady) {
+          actions.classList.add('busy');
+          status.textContent = t.clip.preparingLong;
+        }
+        const c = tgClip ? await tgClip : null;
         actions.classList.remove('busy');
+        status.textContent = c || !tgClip ? t.clip.ready : t.clip.failed;
+        const go = next;
+        next = null;
+        try {
+          await go(c);
+        } finally {
+          running = false;
+        }
+      };
+      const tg = async (what: 'story' | 'chat' | 'save', c: SharedClip | null, run: (c: SharedClip) => Promise<boolean> | boolean): Promise<boolean> => {
         const ok = !!c && (await run(c));
         opts?.onTelegram?.(what, ok);
         return ok;
       };
       const text = opts?.text ?? t.meta.title;
       root.querySelector('.clip-send')!.addEventListener('click', () => {
-        void (async () => {
-          if (caps?.chat && (await viaTg('chat', (c) => telegramShareCard({ kind: 'clip', clip: c.id, text })))) return;
-          await share(file);
-        })();
+        // не Telegram — сразу системное меню (ему нужен свежий жест, без ожиданий)
+        if (!caps?.chat) return void share(file);
+        void act(async (c) => {
+          if (!(await tg('chat', c, (x) => telegramShareCard({ kind: 'clip', clip: x.id, text, thumb: x.thumb })))) await share(file);
+        });
       });
       const story = root.querySelector<HTMLButtonElement>('.clip-story')!;
       if (caps?.story) {
         story.hidden = false;
         story.addEventListener('click', () => {
-          void viaTg('story', (c) => telegramClipStory(c, text, t.meta.title)).then((ok) => {
-            if (!ok) status.textContent = t.clip.failed;
+          void act(async (c) => {
+            if (!(await tg('story', c, (x) => telegramClipStory(x, text, t.meta.title)))) status.textContent = t.clip.failed;
           });
         });
       }
       root.querySelector('.clip-save')!.addEventListener('click', () => {
-        void (async () => {
-          if (caps?.save && (await viaTg('save', telegramClipSave))) return;
-          save(file);
-        })();
+        if (!caps?.save) return save(file);
+        void act(async (c) => {
+          if (!(await tg('save', c, telegramClipSave))) save(file);
+        });
       });
     })
     .catch(() => {
@@ -143,11 +165,21 @@ function thumbOf(c: HTMLCanvasElement): Promise<Blob | null> {
   }
 }
 
-/** Клип видео-карточкой в чат Telegram (загрузка — по нажатию). false — не вышло, нужен обычный путь. */
+/** Клип пойдёт в Telegram видео-карточкой (мы в Telegram, и он это умеет). */
+export function clipViaTelegram(file: File): boolean {
+  return inTelegram() && telegramClipCaps(file.type).chat;
+}
+
+/** Начать загрузку заранее (тот же файл второй раз не грузится). */
+export function preloadClipForTelegram(file: File): Promise<SharedClip | null> | null {
+  return clipViaTelegram(file) ? shareableClip(file) : null;
+}
+
+/** Клип видео-карточкой в чат Telegram (ждёт загрузку, если она ещё идёт). false — нужен обычный путь. */
 export async function shareClipInTelegram(file: File, text: string): Promise<boolean> {
-  if (!inTelegram() || !telegramClipCaps(file.type).chat) return false;
-  const c = await telegramUploadClip(file);
-  return !!c && (await telegramShareCard({ kind: 'clip', clip: c.id, text }));
+  if (!clipViaTelegram(file)) return false;
+  const c = await shareableClip(file);
+  return !!c && (await telegramShareCard({ kind: 'clip', clip: c.id, text, thumb: c.thumb }));
 }
 
 /** Можно ли записать клип в этом браузере. */

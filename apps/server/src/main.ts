@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { jsonLogger } from './log';
 import type { LogLevel } from './log';
 import { Bot } from './bot';
+import { ClipStore } from './clips';
 import { GameServer } from './server';
 import { MemoryStore, PgStore } from './store';
 import type { Store } from './store';
@@ -47,8 +48,8 @@ const bot = env.TELEGRAM_BOT_TOKEN
       features: (env.FEATURES ?? '').split(',').map((s) => s.trim()).filter(Boolean),
       store,
       log,
-      // клипы для Telegram: systemd StateDirectory=massovka-clips (/var/lib/massovka-clips)
-      clipDir: env.CLIP_DIR || env.STATE_DIRECTORY || undefined,
+      // клипы лежат на игровом сервере в Москве (clips.ts), бот только оформляет карточку
+      clipBase: env.CLIP_BASE || env.PUBLIC_API_BASE || undefined,
     })
   : undefined;
 if (!bot) log('warn', 'TELEGRAM_BOT_TOKEN не задан — бота нет');
@@ -62,6 +63,8 @@ const server = new GameServer({
   allowedOrigins: env.ALLOWED_ORIGINS ? env.ALLOWED_ORIGINS.split(',').map((s) => s.trim()).filter(Boolean) : '*',
   trustProxy: env.TRUST_PROXY === '1',
   log,
+  // клипы для Telegram: systemd StateDirectory=massovka-clips (/var/lib/massovka-clips)
+  clips: new ClipStore(env.CLIP_DIR || env.STATE_DIRECTORY || undefined),
 });
 
 const port = await server.listen(Number(env.PORT) || 8080);

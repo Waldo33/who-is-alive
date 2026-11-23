@@ -213,6 +213,8 @@ PUBLIC_WS_BASE=wss://$HOST
 PUBLIC_API_BASE=https://$HOST
 SITE_URL=${BOT_SITE:-https://${SITE_HOST:-$HOST}}
 TG_APP_NAME=play
+# клипы для Telegram лежат на игровом сервере в Москве — бот (Нидерланды) даёт ссылки туда
+CLIP_BASE=${CLIP_BASE:-https://api.benobody.app}
 TRUST_PROXY=1
 LOG_LEVEL=info
 EOF
@@ -249,7 +251,7 @@ ProtectHome=yes
 ProtectKernelTunables=yes
 ProtectControlGroups=yes
 ReadOnlyPaths=/opt/massovka
-# клипы «Лучший момент» для Telegram (бот): /var/lib/massovka-clips, 2 суток
+# клипы «Лучший момент» для Telegram (apps/server/src/clips.ts): /var/lib/massovka-clips, 2 суток
 StateDirectory=massovka-clips
 MemoryMax=2G
 

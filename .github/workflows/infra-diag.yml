@@ -56,7 +56,6 @@ jobs:
           for u in node_exporter victoria-metrics victoria-logs grafana systemd-journal-upload; do echo "· $u"; journalctl -u $u -n 4 --no-pager -o cat | tr '\\t' ' ' | cut -c1-220; done
           echo "── клипы Telegram"
           ls -ld /var/lib/massovka-clips 2>&1; ls /var/lib/massovka-clips | wc -l
-          curl -sS -m10 -o /dev/null -w "клип через NL: %{http_code}\n" https://72-56-73-184.sslip.io/tg/clips/00000000000000000000.mp4
           echo "── сторож"
           systemctl list-timers massovka-watch.timer --no-pager | head -3
           for f in /var/lib/massovka-watch/*; do echo "$(basename $f): $(cat $f) мин подряд не работает"; done
@@ -70,15 +69,10 @@ jobs:
           ok=0; for i in $(seq 1 10); do timeout 3 bash -c "</dev/tcp/140.82.112.3/443" 2>/dev/null && ok=$((ok+1)); done; echo "github 443: $ok из 10"
           ip -4 addr show | grep inet | grep -v 127.0.0 | awk '{print "свой адрес:", $2}'
           SH
-      - name: Клипы через Москву (с раннера)
+      - name: Клипы на игровом сервере (с раннера)
         run: |
-          curl -sS -m20 -w " ← клип: %{http_code}\n" https://api.benobody.app/tg/clips/00000000000000000000.mp4
-          curl -sS -m20 -w " ← загрузка без подписи: %{http_code}\n" -X POST -H 'content-type: video/mp4' --data-binary 'x' https://api.benobody.app/tg/clip
-          curl -sS -m20 -o /dev/null -D - -X OPTIONS -H 'origin: https://benobody.app' https://api.benobody.app/tg/clip | grep -i allow-headers
-      - name: Скорость загрузки клипа (4 МБ)
-        env:
-          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-        run: python3 infra/game/clip-speed.py
+          curl -sS -m20 -w " ← клип: %{http_code}\n" https://api.benobody.app/v1/clips/00000000000000000000.mp4
+          curl -sS -m20 -w " ← загрузка без токена: %{http_code}\n" -X POST -H 'content-type: video/mp4' --data-binary 'x' https://api.benobody.app/v1/clips
       # шлёт картинку и файлы в группу тревог и сразу удаляет — владельцу приходят уведомления о
       # «пропавших тревогах» (23.11.2026). Включать вручную: TG_REACH: '1' на время проверки.
       - name: Достаёт ли Telegram до наших серверов

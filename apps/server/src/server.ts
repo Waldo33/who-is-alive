@@ -3,6 +3,7 @@ import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import { createHash, randomInt } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
+import { CLIP_MIME, ClipStore } from './clips';
 import type { AddressInfo } from 'node:net';
 import { WebSocketServer } from 'ws';
 import type { WebSocket } from 'ws';
@@ -39,6 +40,8 @@ export interface GameServerOptions {
   store?: Store;
   /** Telegram-бот (маршруты /tg/*); нет ключа — бота нет. */
   bot?: Bot;
+  /** Клипы для Telegram (/v1/clips); нет — во временной папке. */
+  clips?: ClipStore;
 }
 
 /** Лимиты (docs/server-migration.md › 3.3). */
@@ -72,6 +75,7 @@ export class GameServer {
   readonly instance: string;
   draining = false;
   private readonly auth: Auth;
+  private readonly clips: ClipStore;
   private readonly wss: WebSocketServer;
   private readonly log: Logger;
   private readonly now: () => number;
@@ -93,6 +97,7 @@ export class GameServer {
 
   constructor(private readonly o: GameServerOptions) {
     this.auth = new Auth(o.authSecret);
+    this.clips = o.clips ?? new ClipStore(undefined, () => this.now());
     this.instance = o.instance ?? 'blue';
     this.log = o.log ?? jsonLogger();
     this.now = o.now ?? Date.now;
@@ -201,15 +206,13 @@ export class GameServer {
       }
       if (p === '/v1/rooms' && req.method === 'POST') return this.createRoom(req, res);
       if (p === '/v1/events' && req.method === 'POST') return this.events(req, res);
+      if (p.startsWith('/v1/clips')) return this.clipRoute(req, res, p);
       if (p.startsWith('/tg/')) {
         if (!this.o.bot) return this.reply(res, 503, { error: 'no_bot' });
         // вебхук Telegram — без лимита (его проверяет секретный заголовок), остальное — по адресу
         if (p !== '/tg/hook' && !this.botRate.take(this.ip(req), this.now())) return this.reply(res, 429, { error: 'rate_limited' });
-        // клип и обложка — сырые байты (видео до 12 МБ), остальное — JSON
-        const raw = req.method === 'POST' && (p === '/tg/clip' || p.endsWith('/thumb'));
-        const body = req.method !== 'POST' ? null : raw ? await readRaw(req, 12 * 1024 * 1024 + 1) : await readJson(req, 65_536);
+        const body = req.method === 'POST' ? await readJson(req, 65_536) : null;
         const r = await this.o.bot.handle(req.method ?? 'GET', p.slice(3), req.headers, body);
-        if (r.file) return this.sendFile(req, res, r.file);
         return this.reply(res, r.status, r.body);
       }
       const m = /^\/v1\/rooms\/([A-Za-z]{4})$/.exec(p);
@@ -326,6 +329,29 @@ export class GameServer {
     }
     res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
     res.end(JSON.stringify(body));
+  }
+
+  /** Клипы для Telegram (`clips.ts`): загрузка — с токеном игрока, файл — по ссылке. */
+  private async clipRoute(req: IncomingMessage, res: ServerResponse, p: string): Promise<void> {
+    if (p === '/v1/clips' && req.method === 'POST') {
+      const user = await this.bearer(req);
+      if (!user) return this.reply(res, 401, { error: 'bad_token' });
+      const r = await this.clips.upload(user, req);
+      return this.reply(res, r.status, r.body);
+    }
+    const thumb = /^\/v1\/clips\/([0-9a-f]{20})\/thumb$/.exec(p);
+    if (thumb && req.method === 'POST') {
+      if (!(await this.bearer(req))) return this.reply(res, 401, { error: 'bad_token' });
+      const r = await this.clips.thumb(thumb[1], req);
+      return this.reply(res, r.status, r.body);
+    }
+    const f = /^\/v1\/clips\/([0-9a-f]{20})\.(mp4|webm|jpg)$/.exec(p);
+    if (f && (req.method === 'GET' || req.method === 'HEAD')) {
+      const path = await this.clips.file(f[1], f[2]);
+      if (!path) return this.reply(res, 404, { error: 'no_clip' });
+      return this.sendFile(req, res, { path, mime: CLIP_MIME[f[2]], name: `massovka-${f[1].slice(0, 6)}.${f[2]}` });
+    }
+    return this.reply(res, 404, { error: 'not_found' });
   }
 
   /** Файл клипа: целиком (до 12 МБ) — для сторис, скачивания из Telegram и видео-карточки. */
@@ -463,18 +489,6 @@ export class GameServer {
     peer.send(JSON.stringify({ t: 'error', code, fatal } satisfies ServerMsg));
     if (fatal) ws?.close(4004, code);
   }
-}
-
-/** Сырые байты тела; больше limit — null (дочитывать не нужно: соединение закроется ответом). */
-async function readRaw(req: IncomingMessage, limit: number): Promise<Buffer | null> {
-  const chunks: Buffer[] = [];
-  let size = 0;
-  for await (const c of req) {
-    size += (c as Buffer).length;
-    if (size > limit) return null;
-    chunks.push(c as Buffer);
-  }
-  return Buffer.concat(chunks);
 }
 
 async function readJson(req: IncomingMessage, limit = 8192): Promise<unknown> {

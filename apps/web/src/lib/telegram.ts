@@ -14,6 +14,7 @@
  * Вне Telegram всё здесь — пустые вызовы. Скрипт Telegram грузится только внутри Telegram.
  */
 import { GAME_API, TG_APP } from './env';
+import type { SharedClip } from './clips';
 import { featureOn } from './features';
 import { LANG_KEY } from './lang';
 import { savedName, saveName } from './name';
@@ -308,7 +309,7 @@ async function botPost<T>(path: string, body: Record<string, unknown>): Promise<
   }
 }
 
-export type ShareCard = { kind: 'room'; code: string } | { kind: 'daily'; squares: string } | { kind: 'invite' } | { kind: 'clip'; clip: string; text: string };
+export type ShareCard = { kind: 'room'; code: string } | { kind: 'daily'; squares: string } | { kind: 'invite' } | { kind: 'clip'; clip: string; text: string; thumb: boolean };
 
 /**
  * Поделиться карточкой с кнопкой «Играть» (Bot API 8.0): Telegram показывает выбор чата поверх игры
@@ -345,15 +346,8 @@ export async function telegramDailyBoard(n: number, result: { tries: number; won
 }
 
 // ───────────── клип «Лучший момент» в Telegram ─────────────
-// Внутри Telegram файл из браузера не скачать и не передать в сторис: клип сначала уходит на сервер
-// бота (2 суток, случайное имя), а дальше — ссылкой: сторис, «Сохранить» и видео-карточка в чат.
-
-export interface TgClip {
-  id: string;
-  ext: string;
-  /** Ссылка для телефона (через Москву). */
-  url: string;
-}
+// Внутри Telegram файл из браузера не скачать и не передать в сторис: клип лежит на игровом
+// сервере (`lib/clips.ts`), а дальше — ссылкой: сторис, «Сохранить» и видео-карточка в чат.
 
 /** Что из клипа умеет этот Telegram: в сторис (7.8, только mp4), в чат и скачать (8.0). */
 export function telegramClipCaps(mime: string): { story: boolean; chat: boolean; save: boolean } {
@@ -365,36 +359,8 @@ export function telegramClipCaps(mime: string): { story: boolean; chat: boolean;
   };
 }
 
-async function botUpload(path: string, file: Blob, ms: number): Promise<Response | null> {
-  const w = await bootTelegram();
-  if (!w?.initData) return null;
-  const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), ms);
-  try {
-    return await fetch(`${BOT_FN}${path}`, {
-      method: 'POST',
-      headers: { 'Content-Type': file.type.split(';')[0], 'x-tg-init': w.initData },
-      body: file,
-      signal: ctl.signal,
-    });
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-/** Загрузить клип (и обложку) на сервер бота. null — не вышло. */
-export async function telegramUploadClip(file: Blob, thumb?: Blob | null): Promise<TgClip | null> {
-  const r = await botUpload('/clip', file, 60_000);
-  if (!r?.ok) return null;
-  const { id, ext } = (await r.json()) as { id: string; ext: string };
-  if (thumb) await botUpload(`/clip/${id}/thumb`, thumb, 15_000);
-  return { id, ext, url: `${BOT_FN}/clips/${id}.${ext}` };
-}
-
 /** Клип в сторис: подпись и (у премиума) ссылка «Играть». */
-export function telegramClipStory(clip: TgClip, text: string, linkName: string): boolean {
+export function telegramClipStory(clip: SharedClip, text: string, linkName: string): boolean {
   if (!app?.shareToStory) return false;
   const link = tgLink('play');
   try {
@@ -409,7 +375,7 @@ export function telegramClipStory(clip: TgClip, text: string, linkName: string):
 }
 
 /** «Сохранить» внутри Telegram — родное окно загрузки. */
-export function telegramClipSave(clip: TgClip): boolean {
+export function telegramClipSave(clip: SharedClip): boolean {
   if (!app?.downloadFile) return false;
   try {
     app.downloadFile({ url: clip.url, file_name: `massovka.${clip.ext}` });

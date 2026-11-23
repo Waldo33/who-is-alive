@@ -21,7 +21,7 @@ import { mildOn } from '../ui/topbar';
 import { SWING_HIT, aim, armed, armsOf, bodyPose, drawAir, drawFloor, killsFromLog, makeKill, weaponSfx } from './gore';
 import type { ArmColors } from './gore';
 import type { Kill, Px } from './gore';
-import { clipSupported, openClipOverlay, recordClipInBackground, shareClipInTelegram } from './clip-ui';
+import { clipSupported, clipViaTelegram, openClipOverlay, preloadClipForTelegram, recordClipInBackground, shareClipInTelegram } from './clip-ui';
 import type { ClipPlayer } from './clip';
 import { Audio } from './audio';
 import { frameFor } from './frames';
@@ -152,6 +152,10 @@ interface DeathClip {
   progress: number;
   file: File | null;
   killer?: number;
+  /** Игрок сам нажал «Клип» — готовый клип в Telegram грузим заранее (к «Отправить» ссылка готова). */
+  asked?: boolean;
+  /** Идёт отправка в Telegram (ждём загрузку): повторные нажатия не открывают новых окон. */
+  sharing?: boolean;
 }
 
 export class GameScene extends Phaser.Scene {
@@ -1574,7 +1578,9 @@ export class GameScene extends Phaser.Scene {
         ? wide ? c.deathBtnLong : c.deathBtn
         : dc.status === 'rendering'
           ? wide ? fmt(c.making, { n: Math.round(dc.progress * 100) }) : `${Math.round(dc.progress * 100)}%`
-          : c.send;
+          : dc.sharing
+            ? wide ? c.preparingLong : c.preparing
+            : c.send;
     // origin 0.5: центр по кнопке, целый пиксель для нечётной ширины
     text.setText(label);
     text.x = b.x + b.w / 2 - (text.width % 2) / 2;
@@ -1588,15 +1594,28 @@ export class GameScene extends Phaser.Scene {
       const kName = k ? this.sim.info(k.pid)?.name : undefined;
       const file = dc.file;
       const text = kName ? fmt(this.t.clip.deathTextBy, { name: kName }) : this.t.clip.deathText;
+      const type = file.type.split(';')[0];
+      // не Telegram — сразу системное меню (ему нужен свежий жест)
+      if (!clipViaTelegram(file)) {
+        this.track('clip_send', { kind: 'death', type });
+        void this.init0.onShare?.(text, [file]);
+        return;
+      }
+      // Telegram: видео-карточкой в чат. Пока клип догружается — «Готовлю…», нажатия не копятся
+      if (dc.sharing) return;
+      dc.sharing = true;
+      this.updateDeathClipLabel();
       void (async () => {
-        // Telegram: видео-карточкой в чат; не вышло — как везде
         const tg = await shareClipInTelegram(file, text);
-        this.track('clip_send', { kind: 'death', type: file.type.split(';')[0], ...(tg ? { via: 'tg_card' } : {}) });
+        dc.sharing = false;
+        this.updateDeathClipLabel();
+        this.track('clip_send', { kind: 'death', type, via: tg ? 'tg_card' : 'tg_fallback' });
         if (!tg) await this.init0.onShare?.(text, [file]);
       })();
       return;
     }
     if (dc.status !== 'offer') return;
+    dc.asked = true;
     this.track('clip_open', { kind: 'death' });
     this.renderDeathClip(dc);
   }
@@ -1650,6 +1669,8 @@ export class GameScene extends Phaser.Scene {
       }
       dc.file = file;
       dc.status = 'ready';
+      // сам просил клип — в Telegram начинаем грузить сразу (автоматический монтаж — только по нажатию)
+      if (dc.asked) void preloadClipForTelegram(file);
       // подсказка-тост легла бы прямо на кнопку — хватает новой надписи и звука
       this.updateDeathClipLabel();
       this.audio.play('starTake');
