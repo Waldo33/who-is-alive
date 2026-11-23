@@ -20,6 +20,13 @@ $(if [ -n "${BOT_UPSTREAM:-}" ]; then cat <<BOT
 	}
 BOT
 fi)
+$(if [ -x /opt/grafana/bin/grafana ]; then cat <<GRAFANA
+	# Grafana (сервер в Нидерландах): графики, логи, продуктовые метрики; вход — admin и пароль владельца
+	handle /grafana/* {
+		reverse_proxy 127.0.0.1:3001
+	}
+GRAFANA
+fi)
 	handle {
 		# метрики — только изнутри
 		@internal path /metrics
@@ -27,10 +34,7 @@ fi)
 		# X-Forwarded-For Caddy ставит сам (адрес клиента) — по нему лимиты на сервере
 		reverse_proxy 127.0.0.1:8080
 	}
-	log {
-		output stdout
-		format json
-	}
+	# журнал запросов не пишем: в нём адреса игроков, а логи уходят в общее хранилище
 }
 CADDY
 if [ -n "${SITE_HOST:-}" ]; then

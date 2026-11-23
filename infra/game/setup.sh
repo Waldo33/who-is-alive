@@ -120,13 +120,13 @@ if [ "${ROLE:-game}" = infra ] && [ -n "${TUNNEL_TO:-}" ]; then
   unit_before=$(cat /etc/systemd/system/massovka-tunnel.service 2>/dev/null | sha256sum)
   cat > /etc/systemd/system/massovka-tunnel.service <<EOF
 [Unit]
-Description=Массовка: туннель в Москву (бот, логи)
+Description=Массовка: туннель в Москву (бот; логи Москвы сюда; база, метрики Москвы отсюда)
 After=network-online.target
 Wants=network-online.target
 StartLimitIntervalSec=0
 
 [Service]
-ExecStart=/usr/bin/ssh -N -i /etc/massovka/tunnel_ed25519 -o ExitOnForwardFailure=yes -o ConnectTimeout=5 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/etc/massovka/tunnel_known_hosts -R 127.0.0.1:9090:127.0.0.1:8080 tunnel@$TUNNEL_TO
+ExecStart=/usr/bin/ssh -N -i /etc/massovka/tunnel_ed25519 -o ExitOnForwardFailure=yes -o ConnectTimeout=5 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/etc/massovka/tunnel_known_hosts -R 127.0.0.1:9090:127.0.0.1:8080 -R 127.0.0.1:9428:127.0.0.1:9428 -L 127.0.0.1:15432:127.0.0.1:5432 -L 127.0.0.1:18080:127.0.0.1:8080 -L 127.0.0.1:19100:127.0.0.1:9100 tunnel@$TUNNEL_TO
 # новые соединения в Москву из-за фильтров проходят через раз (20–40%), уже открытое держится:
 # пробуем часто и коротко, а без нужды не переподключаемся
 Restart=always
@@ -143,7 +143,8 @@ if [ "${ROLE:-game}" = game ] && [ -s "$D/tunnel.pub" ]; then
   say "вход для туннеля из Нидерландов (только проброс 127.0.0.1:9090)"
   id tunnel >/dev/null 2>&1 || useradd --system --create-home --home /var/lib/tunnel --shell /usr/sbin/nologin tunnel
   install -d -m 700 -o tunnel -g tunnel /var/lib/tunnel/.ssh
-  echo "restrict,port-forwarding,permitlisten=\"127.0.0.1:9090\" $(cat "$D/tunnel.pub")" > /var/lib/tunnel/.ssh/authorized_keys
+  # можно: открыть у себя 9090 (бот) и 9428 (логи → Нидерланды); пройти к базе, метрикам игры и машины
+  echo "restrict,port-forwarding,permitlisten=\"127.0.0.1:9090\",permitlisten=\"127.0.0.1:9428\",permitopen=\"127.0.0.1:5432\",permitopen=\"127.0.0.1:8080\",permitopen=\"127.0.0.1:9100\" $(cat "$D/tunnel.pub")" > /var/lib/tunnel/.ssh/authorized_keys
   chown tunnel:tunnel /var/lib/tunnel/.ssh/authorized_keys
   chmod 600 /var/lib/tunnel/.ssh/authorized_keys
 fi
@@ -289,6 +290,8 @@ BOT_UPSTREAM=${BOT_UPSTREAM:-}
 EOF
 install -d /opt/massovka/bin
 install -m 755 "$D/caddy.sh" /opt/massovka/bin/caddy.sh
+# наблюдение (метрики, логи, Grafana, копии) — до Caddy: он смотрит, стоит ли Grafana
+if [ -f "$D/observe.sh" ]; then D=$D ROLE=${ROLE:-game} bash "$D/observe.sh" || echo "::warning::наблюдение настроилось не полностью"; fi
 /opt/massovka/bin/caddy.sh
 chmod 644 /etc/systemd/system/massovka-game.service /etc/systemd/system/caddy.service
 chmod 600 /etc/massovka/game.env

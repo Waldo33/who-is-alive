@@ -1,0 +1,794 @@
+{
+ "uid": "massovka-product",
+ "title": "Массовка — игроки и матчи",
+ "tags": [
+  "massovka"
+ ],
+ "timezone": "browser",
+ "schemaVersion": 39,
+ "version": 1,
+ "editable": false,
+ "time": {
+  "from": "now-7d",
+  "to": "now"
+ },
+ "refresh": "",
+ "panels": [
+  {
+   "id": 1,
+   "type": "stat",
+   "title": "Игроков (устройств)",
+   "description": "",
+   "gridPos": {
+    "x": 0,
+    "y": 0,
+    "w": 4,
+    "h": 4
+   },
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "pg"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "pg"
+     },
+     "refId": "A",
+     "rawQuery": true,
+     "editorMode": "code",
+     "format": "table",
+     "rawSql": "select count(distinct device_id) from analytics_events where $__timeFilter(created_at)"
+    }
+   ],
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "colorMode": "none",
+    "graphMode": "none",
+    "textMode": "value"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "none",
+     "decimals": 0
+    },
+    "overrides": []
+   }
+  },
+  {
+   "id": 2,
+   "type": "stat",
+   "title": "Новых игроков",
+   "description": "Устройства, впервые зашедшие в выбранный период",
+   "gridPos": {
+    "x": 4,
+    "y": 0,
+    "w": 4,
+    "h": 4
+   },
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "pg"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "pg"
+     },
+     "refId": "A",
+     "rawQuery": true,
+     "editorMode": "code",
+     "format": "table",
+     "rawSql": "select count(*) from (select device_id, min(created_at) f from analytics_events group by 1) d where $__timeFilter(f)"
+    }
+   ],
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "colorMode": "none",
+    "graphMode": "none",
+    "textMode": "value"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "none",
+     "decimals": 0
+    },
+    "overrides": []
+   }
+  },
+  {
+   "id": 3,
+   "type": "stat",
+   "title": "Матчей начато",
+   "description": "Считается у режиссёра, чтобы не умножать на игроков",
+   "gridPos": {
+    "x": 8,
+    "y": 0,
+    "w": 4,
+    "h": 4
+   },
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "pg"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "pg"
+     },
+     "refId": "A",
+     "rawQuery": true,
+     "editorMode": "code",
+     "format": "table",
+     "rawSql": "select count(*) from analytics_events where name='match_start' and (props->>'host')::boolean is true and $__timeFilter(created_at)"
+    }
+   ],
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "colorMode": "none",
+    "graphMode": "none",
+    "textMode": "value"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "none",
+     "decimals": 0
+    },
+    "overrides": []
+   }
+  },
+  {
+   "id": 4,
+   "type": "stat",
+   "title": "Матчей доиграно",
+   "description": "",
+   "gridPos": {
+    "x": 12,
+    "y": 0,
+    "w": 4,
+    "h": 4
+   },
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "pg"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "pg"
+     },
+     "refId": "A",
+     "rawQuery": true,
+     "editorMode": "code",
+     "format": "table",
+     "rawSql": "select count(*) from analytics_events where name='match_end' and (props->>'host')::boolean is true and $__timeFilter(created_at)"
+    }
+   ],
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "colorMode": "none",
+    "graphMode": "none",
+    "textMode": "value"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "none",
+     "decimals": 0
+    },
+    "overrides": []
+   }
+  },
+  {
+   "id": 5,
+   "type": "stat",
+   "title": "Комнат создано",
+   "description": "",
+   "gridPos": {
+    "x": 16,
+    "y": 0,
+    "w": 4,
+    "h": 4
+   },
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "pg"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "pg"
+     },
+     "refId": "A",
+     "rawQuery": true,
+     "editorMode": "code",
+     "format": "table",
+     "rawSql": "select count(*) from analytics_events where name='room_create' and $__timeFilter(created_at)"
+    }
+   ],
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "colorMode": "none",
+    "graphMode": "none",
+    "textMode": "value"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "none",
+     "decimals": 0
+    },
+    "overrides": []
+   }
+  },
+  {
+   "id": 6,
+   "type": "stat",
+   "title": "Поделились",
+   "description": "Приглашения, клипы, карточки",
+   "gridPos": {
+    "x": 20,
+    "y": 0,
+    "w": 4,
+    "h": 4
+   },
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "pg"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "pg"
+     },
+     "refId": "A",
+     "rawQuery": true,
+     "editorMode": "code",
+     "format": "table",
+     "rawSql": "select count(*) from analytics_events where name in ('share','clip_send','invite') and $__timeFilter(created_at)"
+    }
+   ],
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "colorMode": "none",
+    "graphMode": "none",
+    "textMode": "value"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "none",
+     "decimals": 0
+    },
+    "overrides": []
+   }
+  },
+  {
+   "id": 7,
+   "type": "timeseries",
+   "title": "Игроки по дням",
+   "description": "",
+   "gridPos": {
+    "x": 0,
+    "y": 4,
+    "w": 12,
+    "h": 8
+   },
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "pg"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "pg"
+     },
+     "refId": "A",
+     "rawQuery": true,
+     "editorMode": "code",
+     "format": "time_series",
+     "rawSql": "select $__timeGroupAlias(created_at,1d), count(distinct device_id) as \"игроки\", count(distinct device_id) filter (where name in ('match_start')) as \"играли матч\" from analytics_events where $__timeFilter(created_at) group by 1 order by 1"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "bars",
+      "fillOpacity": 60,
+      "barAlignment": 0,
+      "stacking": {
+       "mode": "none"
+      }
+     },
+     "decimals": 0
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   }
+  },
+  {
+   "id": 8,
+   "type": "timeseries",
+   "title": "Матчи по дням",
+   "description": "",
+   "gridPos": {
+    "x": 12,
+    "y": 4,
+    "w": 12,
+    "h": 8
+   },
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "pg"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "pg"
+     },
+     "refId": "A",
+     "rawQuery": true,
+     "editorMode": "code",
+     "format": "time_series",
+     "rawSql": "select $__timeGroupAlias(created_at,1d), count(*) filter (where name='match_start' and (props->>'host')::boolean is true) as \"начато\", count(*) filter (where name='match_end' and (props->>'host')::boolean is true) as \"доиграно\", count(*) filter (where name='match_exit') as \"вышли посреди\" from analytics_events where $__timeFilter(created_at) group by 1 order by 1"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "bars",
+      "fillOpacity": 60,
+      "barAlignment": 0,
+      "stacking": {
+       "mode": "none"
+      }
+     },
+     "decimals": 0
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   }
+  },
+  {
+   "id": 9,
+   "type": "bargauge",
+   "title": "Воронка (устройства за период)",
+   "description": "Сколько устройств дошли до шага (шаг мог быть и без предыдущего)",
+   "gridPos": {
+    "x": 0,
+    "y": 12,
+    "w": 12,
+    "h": 10
+   },
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "pg"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "pg"
+     },
+     "refId": "A",
+     "rawQuery": true,
+     "editorMode": "code",
+     "format": "table",
+     "rawSql": "select шаг, n from (with e as (select device_id, name, props from analytics_events where $__timeFilter(created_at))\nselect 'Зашли' as шаг, count(distinct device_id) as n, 1 as o from e\nunion all select 'Начали обучение', count(distinct device_id), 2 from e where name='tutorial_start'\nunion all select 'В комнате', count(distinct device_id), 3 from e where name in ('room_create','room_join')\nunion all select 'Позвали друзей', count(distinct device_id), 4 from e where name in ('invite','invite_tap','invite_create')\nunion all select 'Матч начат', count(distinct device_id), 5 from e where name='match_start'\nunion all select 'Матч доигран', count(distinct device_id), 6 from e where name='match_end'\nunion all select 'Ещё матч', count(distinct device_id), 7 from e where name='rematch'\nunion all select 'Поделились клипом', count(distinct device_id), 8 from e where name in ('clip_send','share')\n) f order by o"
+    }
+   ],
+   "options": {
+    "orientation": "horizontal",
+    "displayMode": "basic",
+    "showUnfilled": true,
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": true
+    },
+    "valueMode": "text",
+    "namePlacement": "left",
+    "sizing": "auto"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "none",
+     "decimals": 0,
+     "color": {
+      "mode": "continuous-BlPu"
+     }
+    },
+    "overrides": []
+   }
+  },
+  {
+   "id": 10,
+   "type": "bargauge",
+   "title": "Откуда пришли (первый источник)",
+   "description": "src0: метка ?src= в первой ссылке, ref — с другого сайта, direct — напрямую",
+   "gridPos": {
+    "x": 12,
+    "y": 12,
+    "w": 6,
+    "h": 10
+   },
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "pg"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "pg"
+     },
+     "refId": "A",
+     "rawQuery": true,
+     "editorMode": "code",
+     "format": "table",
+     "rawSql": "select coalesce(nullif(src0,''),'—') as источник, count(*) as n from (\n  select distinct on (device_id) device_id, props->>'src0' as src0 from analytics_events where $__timeFilter(created_at) order by device_id, created_at) d\ngroup by 1 order by 2 desc limit 12"
+    }
+   ],
+   "options": {
+    "orientation": "horizontal",
+    "displayMode": "basic",
+    "showUnfilled": true,
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": true
+    },
+    "valueMode": "text",
+    "namePlacement": "left",
+    "sizing": "auto"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "none",
+     "decimals": 0,
+     "color": {
+      "mode": "continuous-BlPu"
+     }
+    },
+    "overrides": []
+   }
+  },
+  {
+   "id": 11,
+   "type": "bargauge",
+   "title": "Где играют",
+   "description": "",
+   "gridPos": {
+    "x": 18,
+    "y": 12,
+    "w": 6,
+    "h": 10
+   },
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "pg"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "pg"
+     },
+     "refId": "A",
+     "rawQuery": true,
+     "editorMode": "code",
+     "format": "table",
+     "rawSql": "select coalesce(props->>'app', props->>'br', '—') as где, count(distinct device_id) n from analytics_events where $__timeFilter(created_at) group by 1 order by 2 desc limit 10"
+    }
+   ],
+   "options": {
+    "orientation": "horizontal",
+    "displayMode": "basic",
+    "showUnfilled": true,
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": true
+    },
+    "valueMode": "text",
+    "namePlacement": "left",
+    "sizing": "auto"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "none",
+     "decimals": 0,
+     "color": {
+      "mode": "continuous-BlPu"
+     }
+    },
+    "overrides": []
+   }
+  },
+  {
+   "id": 12,
+   "type": "bargauge",
+   "title": "Как кончаются дубли",
+   "description": "stars — три звезды, time — время вышло, last — остался один…",
+   "gridPos": {
+    "x": 0,
+    "y": 22,
+    "w": 8,
+    "h": 8
+   },
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "pg"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "pg"
+     },
+     "refId": "A",
+     "rawQuery": true,
+     "editorMode": "code",
+     "format": "table",
+     "rawSql": "select coalesce(props->>'reason','—') as причина, count(*) n from analytics_events where name='round_end' and (props->>'host')::boolean is true and $__timeFilter(created_at) group by 1 order by 2 desc"
+    }
+   ],
+   "options": {
+    "orientation": "horizontal",
+    "displayMode": "basic",
+    "showUnfilled": true,
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": true
+    },
+    "valueMode": "text",
+    "namePlacement": "left",
+    "sizing": "auto"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "none",
+     "decimals": 0,
+     "color": {
+      "mode": "continuous-BlPu"
+     }
+    },
+    "overrides": []
+   }
+  },
+  {
+   "id": 13,
+   "type": "bargauge",
+   "title": "Обвинения игроков",
+   "description": "",
+   "gridPos": {
+    "x": 8,
+    "y": 22,
+    "w": 8,
+    "h": 8
+   },
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "pg"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "pg"
+     },
+     "refId": "A",
+     "rawQuery": true,
+     "editorMode": "code",
+     "format": "table",
+     "rawSql": "select case props->>'accused' when 'right' then 'угадал' when 'wrong' then 'ошибся' else 'не обвинял' end as обвинение, count(*) n from analytics_events where name='round_end' and $__timeFilter(created_at) group by 1 order by 2 desc"
+    }
+   ],
+   "options": {
+    "orientation": "horizontal",
+    "displayMode": "basic",
+    "showUnfilled": true,
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": true
+    },
+    "valueMode": "text",
+    "namePlacement": "left",
+    "sizing": "auto"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "none",
+     "decimals": 0,
+     "color": {
+      "mode": "continuous-BlPu"
+     }
+    },
+    "overrides": []
+   }
+  },
+  {
+   "id": 14,
+   "type": "table",
+   "title": "Дубль в среднем (на игрока)",
+   "description": "",
+   "gridPos": {
+    "x": 16,
+    "y": 22,
+    "w": 8,
+    "h": 8
+   },
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "pg"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "pg"
+     },
+     "refId": "A",
+     "rawQuery": true,
+     "editorMode": "code",
+     "format": "table",
+     "rawSql": "select round(avg((props->>'kill')::numeric),2) as \"выбил\", round(avg((props->>'stars')::numeric),2) as \"звёзды\", round(100.0*avg(((props->>'alive')::boolean)::int),0) as \"выжил, %\", round(100.0*avg(((props->>'caught')::boolean)::int),0) as \"раскрыт, %\", count(*) as \"дублей\"\nfrom analytics_events where name='round_end' and $__timeFilter(created_at)"
+    }
+   ],
+   "options": {
+    "showHeader": true
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   }
+  },
+  {
+   "id": 15,
+   "type": "table",
+   "title": "Возвраты по дню первого входа",
+   "description": "",
+   "gridPos": {
+    "x": 0,
+    "y": 30,
+    "w": 12,
+    "h": 9
+   },
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "pg"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "pg"
+     },
+     "refId": "A",
+     "rawQuery": true,
+     "editorMode": "code",
+     "format": "table",
+     "rawSql": "with f as (select device_id, min(created_at)::date d0 from analytics_events group by 1),\na as (select distinct device_id, created_at::date d from analytics_events)\nselect f.d0 as \"первый день\", count(distinct f.device_id) as \"новых\",\n count(distinct a.device_id) filter (where a.d = f.d0 + 1) as \"вернулись на 2-й день\",\n count(distinct a.device_id) filter (where a.d between f.d0 + 2 and f.d0 + 7) as \"вернулись за неделю\"\nfrom f left join a on a.device_id = f.device_id where $__timeFilter(f.d0::timestamptz) group by 1 order by 1 desc"
+    }
+   ],
+   "options": {
+    "showHeader": true
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   }
+  },
+  {
+   "id": 16,
+   "type": "table",
+   "title": "Ошибки входа в комнату",
+   "description": "",
+   "gridPos": {
+    "x": 12,
+    "y": 30,
+    "w": 12,
+    "h": 9
+   },
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "pg"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "pg"
+     },
+     "refId": "A",
+     "rawQuery": true,
+     "editorMode": "code",
+     "format": "table",
+     "rawSql": "select coalesce(props->>'error','—') as ошибка, count(*) as раз from analytics_events where name in ('room_error','room_create_fail') and $__timeFilter(created_at) group by 1 order by 2 desc"
+    }
+   ],
+   "options": {
+    "showHeader": true
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   }
+  }
+ ],
+ "templating": {
+  "list": []
+ },
+ "annotations": {
+  "list": []
+ }
+}
