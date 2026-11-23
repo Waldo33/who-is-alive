@@ -47,6 +47,16 @@ http_ok https://api.benobody.app/healthz; check game $? "игровой серв
 # бот через Москву — заодно проверка туннеля
 http_ok https://api.benobody.app/tg/info; check bot_via_msk $? "бот через Москву (туннель Нидерланды → Москва)"
 
+# IPv6: у серверов его нет, поэтому записей AAAA у домена быть не должно — иначе телефоны с IPv6
+# уходят мимо игры (22.11 benobody.app и www смотрели на заглушку Timeweb)
+v6=""
+command -v dig >/dev/null && for h in benobody.app www.benobody.app api.benobody.app; do
+  # спрашиваем публичный резолвер: getent на сервере без IPv6 записи AAAA может не запрашивать
+  a=$(dig +short +time=3 +tries=2 AAAA "$h" @8.8.8.8 2>/dev/null | grep ':' | tr '\n' ' ')
+  [ -n "$a" ] && v6="$v6 $h→$a"
+done
+[ -z "$v6" ]; check dns_aaaa $? "у домена есть записи AAAA (IPv6), а у серверов IPv6 нет:$v6— удалить в панели DNS"
+
 # бот у себя: вебхук на месте, Telegram не жалуется на доставку
 st=$(curl -s -m 15 http://127.0.0.1:8080/tg/status || true)
 if echo "$st" | jq -e '.webhook == true and ((.pending // 0) < 100)' >/dev/null 2>&1; then r=0; else r=1; fi

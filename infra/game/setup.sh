@@ -163,6 +163,8 @@ if [ -s "$D/alerts.env" ]; then install -m 600 "$D/alerts.env" /etc/massovka/ale
 if [ "${ROLE:-game}" = infra ] && [ -f /etc/massovka/alerts.env ] && [ -f "$D/watch.sh" ]; then
   say "сторож: проверки раз в минуту, тревоги в Telegram"
   command -v jq >/dev/null || { apt-get update -qq; DEBIAN_FRONTEND=noninteractive apt-get install -y -qq jq >/dev/null; }
+  # dig — сторож проверяет, что у домена нет лишних записей AAAA
+  command -v dig >/dev/null || { apt-get update -qq; DEBIAN_FRONTEND=noninteractive apt-get install -y -qq dnsutils >/dev/null; }
   install -d /opt/massovka/bin
   install -m 755 "$D/watch.sh" /opt/massovka/bin/watch.sh
   cat > /etc/systemd/system/massovka-watch.service <<'EOF'

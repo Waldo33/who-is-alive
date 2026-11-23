@@ -27,7 +27,14 @@ jobs:
           echo "SOA:"; dig +short SOA "$DOMAIN" @1.1.1.1 || true
           echo "A:"; dig +short A "$DOMAIN" @8.8.8.8 || true
           echo "A api.:"; dig +short A "api.$DOMAIN" @8.8.8.8 || true
-          for h in "$DOMAIN" "www.$DOMAIN" "api.$DOMAIN"; do echo "AAAA $h: $(dig +short AAAA "$h" @8.8.8.8 | tr "\n" " ")"; done
+          # IPv6: у наших серверов его нет — любая запись AAAA уводит телефоны с IPv6 мимо игры (на заглушку)
+          bad=""
+          for h in "$DOMAIN" "www.$DOMAIN" "api.$DOMAIN"; do
+            v6=$(dig +short AAAA "$h" @8.8.8.8 | tr "\n" " ")
+            echo "AAAA $h: ${v6:-нет}"
+            [ -n "$v6" ] && bad="$bad $h"
+          done
+          if [ -n "$bad" ]; then echo "::warning::лишние записи AAAA:$bad — удалить в панели DNS (у серверов нет IPv6)"; else echo "AAAA: лишних нет"; fi
           echo "RDAP реестра .app (статус, NS, регистратор, даты):"
           curl -sS "https://pubapi.registry.google/rdap/domain/$DOMAIN" -o /tmp/rdap.json -w 'HTTP %{http_code}\n' || true
           jq -r '"статус: \(.status // [] | join(", "))", "NS: \([.nameservers[]?.ldhName] | join(", "))", (.events[]? | "\(.eventAction): \(.eventDate)"), ([.entities[]? | select(.roles | index("registrar")) | .vcardArray[1][]? | select(.[0] == "fn") | .[3]] | "регистратор: \(join(", "))")' /tmp/rdap.json 2>/dev/null || head -c 300 /tmp/rdap.json
