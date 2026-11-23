@@ -18,6 +18,7 @@ jobs:
       TWC_TOKEN: ${{ secrets.TWC_TOKEN }}
       SSH_OPTS: -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=20 -o LogLevel=ERROR
       FIND_ONLY: '1'
+      TG_REACH: '0'
     steps:
       - uses: actions/checkout@v4
       - run: python3 -m venv /tmp/py && /tmp/py/bin/pip install -q cryptography
@@ -78,7 +79,10 @@ jobs:
         env:
           TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         run: python3 infra/game/clip-speed.py
+      # шлёт картинку и файлы в группу тревог и сразу удаляет — владельцу приходят уведомления о
+      # «пропавших тревогах» (23.11.2026). Включать вручную: TG_REACH: '1' на время проверки.
       - name: Достаёт ли Telegram до наших серверов
+        if: env.TG_REACH == '1'
         env:
           TOKEN: ${{ secrets.ALERTS_BOT_TOKEN }}
           CHAT: '-5387784292'

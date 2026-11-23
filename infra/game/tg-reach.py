@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Достают ли серверы Telegram до наших адресов: sendPhoto по ссылке в чат тревог, сообщение сразу
-удаляется. Токен — ALERTS_BOT_TOKEN (секрет), не печатается."""
+удаляется. Токен — ALERTS_BOT_TOKEN (секрет), не печатается.
+Владельцу при этом приходят уведомления о сообщениях, которых в чате уже нет, — поэтому в infra-diag
+шаг выключен (TG_REACH: '1' — включить на одну проверку)."""
 import json, os, urllib.parse, urllib.request
 
 tok, chat = os.environ["TOKEN"], os.environ["CHAT"]
