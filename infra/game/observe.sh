@@ -143,7 +143,7 @@ Description=VictoriaLogs (логи обоих серверов, 30 дней)
 After=network-online.target
 [Service]
 User=victoria
-ExecStart=/usr/local/bin/victoria-logs -storageDataPath=/var/lib/victoria/logs -retentionPeriod=30d -httpListenAddr=127.0.0.1:9428 -retention.maxDiskSpaceUsageBytes=6GiB
+ExecStart=/usr/local/bin/victoria-logs -storageDataPath=/var/lib/victoria/logs -retentionPeriod=30d -httpListenAddr=127.0.0.1:9428 -retention.maxDiskSpaceUsageBytes=6GiB -memory.allowedPercent=15
 Restart=always
 NoNewPrivileges=yes
 [Install]
