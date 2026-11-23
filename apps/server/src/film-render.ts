@@ -57,7 +57,11 @@ const SCALE = 3;
  * рабочего ядра, а фильм должен успеть за разоблачение и итоги последнего дубля (~22 с).
  */
 const FPS = 24;
-const RATE = 48000;
+/**
+ * Звук фильма считается на 32 кГц (до 16 кГц — динамик телефона выше не играет), на треть быстрее
+ * 48 кГц; ffmpeg пересчитывает в 48 кГц для AAC.
+ */
+const RATE = 32000;
 const FONT = '"Press Start 2P", "Press Start 2P Latin"';
 
 type NapiCanvas = { encode(f: 'jpeg', q: number): Promise<Buffer>; getContext(k: '2d'): CanvasRenderingContext2D };
@@ -168,6 +172,7 @@ export async function renderFilm(job: FilmJob, o: FilmRenderOpts): Promise<FilmR
   const audio = join(o.tmp, `film-${id}.wav`);
   const out = join(o.tmp, `film-${id}.mp4`);
   let thumb: Buffer | null = null;
+  let rendered: unknown = null;
   try {
     // кадры → ffmpeg; заодно планируется звук (по часам кадра)
     await run(
@@ -177,21 +182,38 @@ export async function renderFilm(job: FilmJob, o: FilmRenderOpts): Promise<FilmR
         // ultrafast вдвое быстрее veryfast, на пиксельной картинке разницы не видно; crf 26 держит файл ~6 МБ
         '-crf', '26', '-threads', '1', '-an', silent],
       async (stdin) => {
-        for (let k = 0; k < frames; k++) {
+        const frame = async (k: number): Promise<void> => {
           now = k / FPS;
           const c = film.frame(Math.min((k * 1000) / FPS, film.duration)) as unknown as NapiCanvas;
           if (k === 0) thumb = await c.encode('jpeg', 85);
           const px = c.getContext('2d').getImageData(0, 0, W, H).data;
           if (!stdin.write(Buffer.from(px.buffer, px.byteOffset, px.byteLength))) await once(stdin, 'drain');
+        };
+        // звук рендерится вместе с кадрами: на границе кадра офлайн-контекст встаёт, кадр рисуется
+        // (и планирует свои звуки), рендер едет дальше. Если запланировать весь фильм заранее,
+        // node-web-audio-api обходит все будущие ноты на каждом шаге — время растёт квадратично
+        let failed: unknown = null;
+        for (let k = 1; k < frames; k++) {
+          void octx.suspend(k / FPS).then(async () => {
+            try {
+              if (!failed) await frame(k);
+            } catch (e) {
+              failed = e;
+            }
+            void octx.resume();
+          });
         }
+        await frame(0);
+        rendered = await octx.startRendering();
+        if (failed) throw failed;
       },
     );
-    // звук целиком запланирован по часам кадров — теперь отрисовать его разом (stop() не зовём: он отключил бы смесь)
-    const rendered = await octx.startRendering();
     await writeFile(audio, wav(rendered as unknown as Parameters<typeof wav>[0]));
     await run(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', '-i', silent, '-i', audio, '-c:v', 'copy',
-      // громкость лент (Reels, TikTok, Shorts выравнивают к −14 LUFS) и пики с запасом под AAC — у каждого фильма одинаково
-      '-af', 'volume=-4dB,loudnorm=I=-14:TP=-2:LRA=11', '-ar', '48000', '-c:a', 'aac', '-b:a', '128k', '-shortest', '-movflags', '+faststart', out]);
+      // громкость уже выставлена смесью (FILM_LEVEL_DB в film.ts): −14…−16 LUFS, как у лент (Reels, TikTok,
+      // Shorts выравнивают к −14), пики ниже −0,7 dBFS — loudnorm не нужен. Кодер AAC fast вчетверо быстрее
+      // twoloop и не даёт выбросов пиков выше 0 dBFS на «квадратных» волнах чиптюна
+      '-ar', '48000', '-c:a', 'aac', '-aac_coder', 'fast', '-b:a', '128k', '-shortest', '-movflags', '+faststart', out]);
   } finally {
     await rm(silent, { force: true });
     await rm(audio, { force: true });
