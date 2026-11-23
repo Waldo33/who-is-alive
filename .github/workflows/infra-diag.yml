@@ -53,6 +53,11 @@ jobs:
           systemctl list-timers --no-pager | grep -E "backup" || true
           ls -la /var/backups/massovka-msk 2>/dev/null | tail -3
           for u in node_exporter victoria-metrics victoria-logs grafana systemd-journal-upload; do echo "· $u"; journalctl -u $u -n 4 --no-pager -o cat | tr '\\t' ' ' | cut -c1-220; done
+          echo "── клипы Telegram"
+          ls -ld /var/lib/massovka-clips 2>&1; ls /var/lib/massovka-clips | wc -l
+          curl -sS -m10 -o /dev/null -w "клип через NL: %{http_code}\n" https://72-56-73-184.sslip.io/tg/clips/00000000000000000000.mp4
+          curl -sS -m10 -w " ← клип через Москву: %{http_code}\n" https://api.benobody.app/tg/clips/00000000000000000000.mp4
+          curl -sS -m10 -o /dev/null -w "загрузка без подписи: %{http_code}\n" -X POST -H 'content-type: video/mp4' --data-binary 'x' https://api.benobody.app/tg/clip
           echo "── сторож"
           systemctl list-timers massovka-watch.timer --no-pager | head -3
           for f in /var/lib/massovka-watch/*; do echo "$(basename $f): $(cat $f) мин подряд не работает"; done
