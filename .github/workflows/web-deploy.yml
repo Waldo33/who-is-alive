@@ -89,10 +89,10 @@ jobs:
             sleep 5
           done
           for p in / /sandbox /r/ABCD /manifest.webmanifest "/og?l=ru" /icons/icon-192.png; do
-            printf '%-24s ' "$p"; curl -s -o /dev/null -w '%{http_code} %{size_download}B %{time_total}s\n' "https://$SITE$p"
+            printf '%-24s ' "$p"; curl -s --retry 3 --retry-all-errors -o /dev/null -w '%{http_code} %{size_download}B %{time_total}s\n' "https://$SITE$p"
           done
-          test "$(curl -s -o /dev/null -w '%{http_code}' "https://$SITE/")" = 200
-          test "$(curl -s -o /dev/null -w '%{http_code}' "https://$SITE/sandbox")" = 200
+          test "$(curl -s --retry 3 --retry-all-errors -o /dev/null -w '%{http_code}' "https://$SITE/")" = 200
+          test "$(curl -s --retry 3 --retry-all-errors -o /dev/null -w '%{http_code}' "https://$SITE/sandbox")" = 200
 
       - name: Логи сайта
         if: always() && steps.srv.outputs.ip != ''
