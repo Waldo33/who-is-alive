@@ -61,9 +61,10 @@ export function getAudio(): Audio {
 }
 
 /**
- * Громкость музыки относительно эффектов: ×3 (+9,5 дБ). При ×1 музыка в дубле шла на 8 дБ тише
- * эффектов (−47 дБ RMS против −38), в меню — около −49 дБ: на динамике телефона её почти не было
- * слышно (жалоба владельца, 23.11.2026). Пики в дубле остаются ниже −12 дБ. Клип пишет свою смесь.
+ * Громкость музыки относительно эффектов: ×3 (+9,5 дБ). При ×1 музыку на динамике телефона почти
+ * не было слышно (жалоба владельца, 23.11.2026). С 24.11 музыка подаётся под телефон (обертоны
+ * баса, «тук» бочки, низ тише — music.ts › openBus): в дубле она −40…−44 дБ на динамике, а важные
+ * эффекты (P1) — на 10 дБ громче неё. Проверка — `pnpm --filter web sound-check`. Клип пишет свою смесь.
  */
 export const MUSIC_GAIN = 3;
 
@@ -127,9 +128,15 @@ export class Audio {
     comp.threshold.value = -14;
     comp.ratio.value = 4;
     comp.connect(this.ctx.destination);
+    // ниже ~90 Гц телефон не играет ничего, а выравниватель из-за этого баса зажимал бы всё остальное
+    const hp = this.ctx.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.value = 90;
+    hp.Q.value = 0.7;
+    hp.connect(comp);
     this.master = this.ctx.createGain();
     this.master.gain.value = 0.5;
-    this.master.connect(comp);
+    this.master.connect(hp);
     this.sfx = this.ctx.createGain();
     this.sfx.gain.value = this.enabled ? 1 : 0;
     this.sfx.connect(this.master);
@@ -322,9 +329,9 @@ export class Audio {
         break;
       // чужой удар по живому: тот же треск и удар, но без мажора — событие, не награда
       case 'hitOther':
-        this.noise(0.03, 0.9, 3400);
-        this.noise(0.18, 0.8, 1200);
-        this.tone('square', 480, 120, 0.24, 0.3);
+        this.noise(0.03, 1, 3400);
+        this.noise(0.18, 0.9, 1200);
+        this.tone('square', 480, 120, 0.24, 0.36);
         break;
       // ударил бота: нисходящее «бум» и глухой зуммер — смешно, не тревожно
       case 'hitBot':
@@ -375,7 +382,7 @@ export class Audio {
         this.tone('square', 1175, 1175, 0.16, 0.32, 0.2);
         break;
       case 'accuseRight': [523, 659, 784].forEach((f, i) => this.tone('triangle', f, f, 0.25, 0.2, i * 0.07)); break;
-      case 'accuseWrong': this.tone('sawtooth', 220, 110, 0.4, 0.18); this.tone('sawtooth', 233, 100, 0.4, 0.12); break;
+      case 'accuseWrong': this.tone('sawtooth', 440, 220, 0.4, 0.16); this.tone('sawtooth', 466, 200, 0.4, 0.1); break;
       case 'fanfare': [523, 659, 784, 1047, 784, 1047].forEach((f, i) => this.tone('square', f, f, 0.16, 0.16, i * 0.12)); break;
       // «Слишком живые!» — грустный тромбон: три ступени вниз и долгая нота с вибрато
       case 'sad': [392, 370, 349].forEach((f, i) => this.tone('sawtooth', f, f * 0.98, 0.32, 0.12, i * 0.36)); this.sadTail(1.08); break;
@@ -513,7 +520,11 @@ export class Audio {
       curve[i] = Math.tanh(x); // тихое — как есть, громкое — скругляется к 0,76
     }
     soft.curve = curve;
-    master.connect(comp).connect(makeup).connect(soft).connect(dest);
+    const hp = ctx.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.value = 90;
+    hp.Q.value = 0.7;
+    master.connect(hp).connect(comp).connect(makeup).connect(soft).connect(dest);
     const duck = ctx.createGain();
     duck.connect(master);
     const sfx = ctx.createGain();

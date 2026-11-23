@@ -717,9 +717,27 @@ function fill(a: SongApi, s: number, t: number): void {
   a.kick(t, 0.22, [240, 200, 165, 130][s - 12]);
 }
 
+/**
+ * Подвал тише исходного: был громче офиса на 15 дБ (на телефоне — на 24 дБ) и топил эффекты.
+ * «Громче» в подвале слышно плотностью и перегрузом, а не уровнем (план звука: не больше +6 дБ).
+ */
+const BASEMENT_LEVEL = 0.16;
+
+/** Те же инструменты, но тише в level раз. */
+function quieter(a: SongApi, level: number): SongApi {
+  return {
+    voice: (type, midi, when, dur, vol) => a.voice(type, midi, when, dur, vol * level),
+    kick: (when, vol = 0.3, from) => a.kick(when, vol * level, from),
+    hit: (dur, vol, freq, when) => a.hit(dur, vol * level, freq, when),
+    power: (midi, when, dur, vol, iv) => a.power(midi, when, dur, vol * level, iv),
+    rng: () => a.rng(),
+  };
+}
+
 const song: Song = {
-  step(a: SongApi, st: SongStep) {
+  step(full: SongApi, st: SongStep) {
     const { s16: s, bar, t, dt, intensity: I, twist } = st;
+    const a = twist ? quieter(full, BASEMENT_LEVEL) : full;
     const ch = bar % 4;
     const root = ROOTS[ch];
     const tri = TRIADS[ch];
@@ -728,15 +746,15 @@ const song: Song = {
       if (s % 2 === 0) a.voice('triangle', root + (s === 14 ? 12 : 0), t, dt * 1.6, 0.13);
       if (s % 2 === 0) {
         const n = PICK[s / 2];
-        a.voice('pulse', root + 24 + (n === 3 ? 12 : tri[n]), t, dt * 1.8, 0.04);
+        a.voice('pulse', root + 24 + (n === 3 ? 12 : tri[n]), t, dt * 1.8, 0.05);
       }
       if (s % 4 === 2) a.hit(0.03, 0.035, 7000, t);
       if (s === 4 || s === 12) a.hit(0.03, 0.07, 2600, t); // римшот
       if (s === 0 || s === 10 || (I >= 1 && s === 8)) a.kick(t, 0.17, 110);
       if (I >= 2 && s % 2 === 1) a.hit(0.02, 0.025, 8000, t);
-      // со второго круга — мелодия чистым звуком (намёк на подвал)
-      const m = bar % 16 >= 8 ? melodyAt(ch, s) : null;
-      if (m) a.voice('square', m[0] - 12, t, dt * m[1] * 0.9, 0.03);
+      // мелодия чистым звуком с первого такта (намёк на подвал), со второго круга — ярче
+      const m = melodyAt(ch, s);
+      if (m) a.voice('square', m[0] - 12, t, dt * m[1] * 0.9, bar % 16 >= 8 ? 0.045 : 0.03);
       if (bar % 4 === 3 && s >= 14) a.hit(0.04, 0.05, 2600, t);
       return;
     }

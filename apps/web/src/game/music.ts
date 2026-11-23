@@ -91,6 +91,8 @@ interface Live {
 }
 
 const mtf = (m: number) => 440 * Math.pow(2, (m - 69) / 12);
+/** Ниже этой частоты нота получает обертон октавой выше (телефон не играет ниже ~350 Гц). */
+const BASS_HZ = 200;
 
 function rngFrom(seed: number): () => number {
   let s = seed >>> 0 || 1;
@@ -148,6 +150,8 @@ export class Music {
   private live: Live[] = [];
   private pulse: PeriodicWave;
   private sinceA = 0;
+  /** Когда началась песня (время AudioContext). */
+  private startedAt = 0;
   mode: MusicMode = 'off';
   /** Пауза «Море волнуется»: музыка остановлена, но место в песне помним. */
   paused = false;
@@ -190,6 +194,7 @@ export class Music {
     this.s16 = 0;
     this.openBus();
     this.next = this.ctx.currentTime + 0.06;
+    this.startedAt = this.next;
     this.run();
   }
 
@@ -279,7 +284,17 @@ export class Music {
   private openBus(): void {
     this.bus = this.ctx.createGain();
     this.bus.gain.value = 0.32;
-    this.bus.connect(this.out);
+    // подача под динамик телефона: низ тише (его слышно обертонами), середина ярче
+    const low = this.ctx.createBiquadFilter();
+    low.type = 'lowshelf';
+    low.frequency.value = 180;
+    low.gain.value = -7;
+    const mid = this.ctx.createBiquadFilter();
+    mid.type = 'peaking';
+    mid.frequency.value = 2200;
+    mid.Q.value = 0.7;
+    mid.gain.value = 4;
+    this.bus.connect(low).connect(mid).connect(this.out);
     this.drive = null;
     this.echo = null;
     if (this.flavor.echo) {
@@ -520,15 +535,28 @@ export class Music {
     if (this.s16 === 0) this.bar++;
   }
 
-  /** Обвинение: сердцебиение и тихое тиканье. */
+  /**
+   * Обвинение: сердцебиение с «туком» на 1 кГц и тиканье часов, всё чаще к концу (фаза ~5 с).
+   * Слышно на любом динамике: удар сердца — щелчок сверху, бас — только опора.
+   */
   private stepAccuse(): void {
-    const dt = 60 / 76 / 4;
+    const sec = this.ctx.currentTime - this.startedAt;
+    const bpm = 76 + Math.min(1, sec / 5) * 40;
+    const dt = 60 / bpm / 4;
     const t = this.next;
     const s = this.s16;
-    if (s === 0) this.kick(t, 0.32, 70);
-    if (s === 2) this.kick(t, 0.18, 60);
-    if (s % 4 === 0) this.hit(0.02, 0.03, 5000, t);
-    if (s === 8 && this.bar % 2 === 1) this.voice('triangle', BASS[(this.bar * 4) % 16] + 12, t, 0.6, 0.04);
+    const beat = (v: number, from: number) => {
+      this.kick(t, v, from);
+      this.hit(0.035, v * 4, 1000, t);
+      this.osc('triangle', 520, t, 0.06, v * 0.9, this.bus!);
+    };
+    if (s === 0) beat(0.32, 70);
+    if (s === 3) beat(0.2, 60);
+    if (s % 4 === 0) {
+      this.hit(0.015, 0.3, 3200, t);
+      this.osc('square', s % 8 ? 1760 : 2093, t, 0.02, 0.14, this.bus!);
+    }
+    if (s === 8 && this.bar % 2 === 1) this.voice('triangle', BASS[(this.bar * 4) % 16] + 24, t, 0.6, 0.08);
     this.next += dt;
     this.s16 = (s + 1) % 16;
     if (this.s16 === 0) this.bar++;
@@ -537,17 +565,30 @@ export class Music {
   private voice(type: OscillatorType | 'pulse', midi: number, when: number, dur: number, vol: number): void {
     const bus = this.bus;
     if (!bus) return;
+    const freq = mtf(midi + this.flavor.transpose);
+    // низкие ноты чистым тоном телефон не играет: громкость басу даёт не уровень, а обертоны
+    let v = vol;
+    if (freq < BASS_HZ) {
+      if (type === 'triangle' || type === 'sine') {
+        this.osc('square', freq * 2, when, dur, vol * (type === 'sine' ? 0.28 : 0.38), bus);
+        v = vol * 0.75;
+      } else v = vol * 0.8;
+    }
+    this.osc(type, freq, when, dur, v, bus, this.echo && type !== this.flavor.bass ? this.echo : null);
+  }
+
+  private osc(type: OscillatorType | 'pulse', freq: number, when: number, dur: number, vol: number, bus: AudioNode, echo: AudioNode | null = null): void {
     const ctx = this.ctx;
     const o = ctx.createOscillator();
     if (type === 'pulse') o.setPeriodicWave(this.pulse);
     else o.type = type;
-    o.frequency.setValueAtTime(mtf(midi + this.flavor.transpose), when);
+    o.frequency.setValueAtTime(freq, when);
     const g = ctx.createGain();
     g.gain.setValueAtTime(0.0001, when);
     g.gain.exponentialRampToValueAtTime(vol, when + 0.005);
     g.gain.exponentialRampToValueAtTime(0.0001, when + dur);
     o.connect(g).connect(bus);
-    if (this.echo && type !== this.flavor.bass) g.connect(this.echo);
+    if (echo) g.connect(echo);
     o.start(when);
     o.stop(when + dur + 0.02);
     this.live.push({ src: o, until: when + dur });
@@ -570,9 +611,13 @@ export class Music {
       const lp = ctx.createBiquadFilter();
       lp.type = 'lowpass';
       lp.frequency.value = 2600;
+      // гул ниже 120 Гц у гитары телефон не играет, а громкость он съедает
+      const hp = ctx.createBiquadFilter();
+      hp.type = 'highpass';
+      hp.frequency.value = 120;
       const out = ctx.createGain();
       out.gain.value = 0.55;
-      shaper.connect(lp).connect(out).connect(bus);
+      shaper.connect(hp).connect(lp).connect(out).connect(bus);
       this.drive = shaper;
     }
     const g = ctx.createGain();
@@ -593,6 +638,7 @@ export class Music {
     });
   }
 
+  /** Бочка: синус вниз — опора, и «тук» на 1–2 кГц — то, что от неё слышно на телефоне. */
   private kick(when: number, vol = 0.3, from = 150): void {
     const bus = this.bus;
     if (!bus) return;
@@ -601,12 +647,14 @@ export class Music {
     o.frequency.setValueAtTime(from, when);
     o.frequency.exponentialRampToValueAtTime(42, when + 0.12);
     const g = this.ctx.createGain();
-    g.gain.setValueAtTime(vol, when);
+    g.gain.setValueAtTime(vol * 0.8, when);
     g.gain.exponentialRampToValueAtTime(0.0001, when + 0.16);
     o.connect(g).connect(bus);
     o.start(when);
     o.stop(when + 0.18);
     this.live.push({ src: o, until: when + 0.16 });
+    this.hit(0.018, vol * 0.9, 1600, when);
+    this.osc('square', Math.min(from, 160) * 2, when, 0.04, vol * 0.25, bus);
   }
 
   private hit(dur: number, vol: number, freq: number, when: number): void {
