@@ -4,8 +4,8 @@ import Link from 'next/link';
 import QRCode from 'qrcode';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { PAL, PLAYER_COLORS } from '@kto/assets';
-import { DICTS, fmt } from '@kto/game-core';
+import { PAL } from '@kto/assets';
+import { DICTS, fmt, tp } from '@kto/game-core';
 import type { Dict, Lang } from '@kto/game-core';
 import { getAudio } from '@/game/audio';
 import { tutorialDone } from '@/game/tutorial';
@@ -19,6 +19,7 @@ import { playerName, saveName } from '@/lib/name';
 import { loadChunk } from '@/lib/chunk';
 import { setTrackContext, shareKind, track } from '@/lib/analytics';
 import { Snow, useNewYear } from '@/ui/Festive';
+import { Actor } from '@/ui/Actor';
 import { inTelegram, telegramReady, telegramShare, telegramShareCard, tgLink } from '@/lib/telegram';
 import { download, shareContent, withLang } from '@/lib/share';
 import { Room, SPECTATE_DELAY_MS } from '@/net/room';
@@ -184,7 +185,7 @@ export default function RoomClient({ code, bot = false }: { code: string; bot?: 
     screen = (
       <GameView key={state.gameId} room={roomRef.current!} lang={lang} audio={audioRef} t={t} spectator={watching} onSettings={() => bar.current?.openSettings()} />
     );
-  } else screen = <Lobby t={t} state={state} room={roomRef.current!} onGesture={unlockAudio} sfxOff={sfxOff} />;
+  } else screen = <Lobby t={t} lang={lang} state={state} room={roomRef.current!} onGesture={unlockAudio} sfxOff={sfxOff} />;
   return (
     <>
       {topBar}
@@ -280,12 +281,14 @@ function ErrorScreen({ t, errorKey }: { t: Dict; errorKey: string }) {
 
 export function Lobby({
   t,
+  lang,
   state,
   room,
   onGesture,
   sfxOff = false,
 }: {
   t: Dict;
+  lang: Lang;
   state: RoomState;
   room: Room;
   onGesture: () => void;
@@ -356,110 +359,160 @@ export function Lobby({
   };
 
   const slots = [0, 1, 2, 3].map((i) => state.members[i]);
+  // главная внизу: пока звать некого, кроме себя, — «Позвать в массовку»; потом «Мотор!», а «Позвать» — в шапку
+  const inviteFirst = isHost && !canStart;
+  const [sheet, setSheet] = useState(false);
+  const [bigQr, setBigQr] = useState(false);
+  const st = state.settings;
+  const summary = [
+    fmt(t.lobby.sec, { n: st.roundSec }),
+    tp(lang, t.lobby.roundsN, st.maxRounds),
+    t.start.levels[levelOf(st)],
+    ...(st.aiFill ? [t.lobby.aiFill] : []),
+  ].join(' · ');
 
   return (
-    <main className="lobby">
+    <main className="lobby lobby2">
       {ny && <Snow />}
-      <h1 className="lobby-logo">{t.meta.title}</h1>
 
-      <section className="invite-card" aria-label={t.lobby.codeLabel}>
-        {qr ? <img className="qr" src={qr} alt="" width={168} height={168} /> : <div className="qr" />}
-        <div className="code-block">
+      {/* приглашение одной строкой: QR (тап — крупно, для камеры друга), код, «Позвать» второй кнопкой */}
+      <section className="inv" aria-label={t.lobby.codeLabel}>
+        <button className="inv-qr" onClick={() => setBigQr(true)} aria-label={t.lobby.qrBig}>
+          {qr ? <img src={qr} alt="" width={96} height={96} /> : <span />}
+        </button>
+        <div className="inv-code">
           <span className="muted">{t.lobby.codeLabel}</span>
           <span className="room-code">{state.code}</span>
+          {!inviteFirst && (
+            <button className="btn small alt" onClick={invite}>
+              {t.lobby.inviteShort}
+            </button>
+          )}
         </div>
       </section>
-      <button className="btn" onClick={invite}>
-        {t.lobby.invite}
-      </button>
 
-      <section className="players" aria-label={fmt(t.lobby.players, { n: state.members.length })}>
-        <h2>{fmt(t.lobby.players, { n: state.members.length })}</h2>
-        <ul>
-          {slots.map((m, i) =>
-            m ? (
-              <li key={m.userId} className={m.online ? '' : 'offline'}>
-                <i className="swatch" style={{ background: PLAYER_COLORS[m.color] }} />
-                {m.userId === state.selfId && editing ? (
-                  <NameEditor
-                    initial={m.name}
-                    label={t.lobby.rename}
-                    onDone={(n) => {
-                      setEditing(false);
-                      if (n && n !== m.name) {
-                        saveName(n);
-                        void room.rename(n);
-                      }
-                    }}
-                  />
-                ) : (
-                  <button
-                    className="name"
-                    disabled={m.userId !== state.selfId}
-                    onClick={() => setEditing(true)}
-                    aria-label={m.userId === state.selfId ? t.lobby.rename : undefined}
-                  >
-                    {m.name}
-                    {m.userId === state.selfId && <span className="tag-you"> · {t.lobby.you}</span>}
-                  </button>
-                )}
-                <span className="badges">
-                  {m.userId === state.hostId && <span className="badge host">{t.lobby.host}</span>}
-                  {m.ready && <span className="badge ready">{t.lobby.ready}</span>}
-                </span>
-                {isHost && m.userId !== state.selfId && (
-                  <button
-                    className={`kick ${kickAsk === m.userId ? 'ask' : ''}`}
-                    aria-label={fmt(t.lobby.kick, { name: m.name })}
-                    onClick={() => {
-                      if (kickAsk !== m.userId) {
-                        setKickAsk(m.userId);
-                        setTimeout(() => setKickAsk((k) => (k === m.userId ? '' : k)), 3000);
-                        return;
-                      }
-                      setKickAsk('');
-                      void room.kick(m.userId).then((ok) => !ok && flash(t.lobby.errors.unknown));
-                    }}
-                  >
-                    {kickAsk === m.userId ? t.lobby.kickConfirm : '✕'}
-                  </button>
-                )}
-              </li>
-            ) : (
-              <li key={'empty' + i} className="empty">
-                <i className="swatch" />
-                <span className="muted">{state.settings.aiFill ? t.lobby.aiSlot : t.lobby.emptySlot}</span>
-              </li>
-            ),
-          )}
-        </ul>
+      {/* игроки — сетка 2×2: человечек цвета игрока, имя, плашка; готовый машет */}
+      <section className="cast" aria-label={fmt(t.lobby.players, { n: state.members.length })}>
+        {slots.map((m, i) =>
+          m ? (
+            <div key={m.userId} className={`cast-card${m.online ? '' : ' offline'}${kickAsk === m.userId ? ' ask' : ''}${m.userId === state.selfId && editing ? ' editing' : ''}`}>
+              <Actor color={m.color} waving={m.ready || m.userId === state.hostId} />
+              {m.userId === state.selfId && editing ? (
+                <NameEditor
+                  initial={m.name}
+                  label={t.lobby.rename}
+                  onDone={(n) => {
+                    setEditing(false);
+                    if (n && n !== m.name) {
+                      saveName(n);
+                      void room.rename(n);
+                    }
+                  }}
+                />
+              ) : (
+                <button
+                  className="name"
+                  disabled={m.userId !== state.selfId}
+                  onClick={() => setEditing(true)}
+                  aria-label={m.userId === state.selfId ? t.lobby.rename : undefined}
+                >
+                  {m.name}
+                </button>
+              )}
+              <span className="badges">
+                {m.userId === state.selfId && <span className="badge you">{t.lobby.you}</span>}
+                {m.userId === state.hostId && <span className="badge host">{t.lobby.host}</span>}
+                {m.ready && <span className="badge ready">{t.lobby.ready}</span>}
+              </span>
+              {isHost && m.userId !== state.selfId && (
+                <button
+                  className="kick"
+                  aria-label={fmt(t.lobby.kick, { name: m.name })}
+                  onClick={() => {
+                    if (kickAsk !== m.userId) {
+                      setKickAsk(m.userId);
+                      setTimeout(() => setKickAsk((k) => (k === m.userId ? '' : k)), 3000);
+                      return;
+                    }
+                    setKickAsk('');
+                    void room.kick(m.userId).then((ok) => !ok && flash(t.lobby.errors.unknown));
+                  }}
+                >
+                  ✕
+                </button>
+              )}
+              {kickAsk === m.userId && <span className="ask-label">{t.lobby.kickConfirm}</span>}
+            </div>
+          ) : (
+            <div key={'empty' + i} className="cast-card empty">
+              <Actor empty />
+              <span className="muted">{st.aiFill ? t.lobby.aiSlot : t.lobby.emptySlot}</span>
+              {st.aiFill && <span className="badges"><span className="badge ai">{t.lobby.aiTag}</span></span>}
+            </div>
+          ),
+        )}
       </section>
 
-      {isHost && <Settings t={t} settings={state.settings} onChange={(s) => void room.updateSettings(s)} />}
+      {/* настройки — сводкой; режиссёр меняет их в нижнем листе, гость просто видит условия */}
+      {isHost ? (
+        <button className="summary" onClick={() => setSheet(true)} aria-label={t.lobby.settings}>
+          <span>{summary}</span>
+          <span className="summary-edit">&gt;</span>
+        </button>
+      ) : (
+        <p className="summary">{summary}</p>
+      )}
 
-      <div className="lobby-actions">
-        {!isHost && (
-          <button className={`btn ${me?.ready ? 'on' : ''}`} aria-pressed={!!me?.ready} onClick={() => {
-              onGesture();
-              void room.setReady(!me?.ready);
-            }}>
-            {me?.ready ? `✓ ${t.lobby.ready}` : t.lobby.imReady}
-          </button>
-        )}
+      {/* «Включи звук» — в потоке под условиями, чтобы нижняя кнопка его не закрыла */}
+      <SoundHint t={t} off={sfxOff} />
+
+      {/* главное действие прибито к низу */}
+      <div className="lobby-dock">
         {isHost ? (
-          <button className="btn" disabled={!canStart} onClick={() => {
-              onGesture();
-              track('lobby_start', { members: state.members.length, online: online.length, level: levelOf(state.settings), kids: !!state.settings.kidsMode, strict: !!state.settings.strictCrowd, aiFill: !!state.settings.aiFill });
-              void room.startMatch();
-            }}>
-            {t.lobby.start}
-          </button>
+          inviteFirst ? (
+            <button className="btn" onClick={invite}>
+              {t.lobby.invite}
+            </button>
+          ) : (
+            <button className="btn" onClick={() => {
+                onGesture();
+                track('lobby_start', { members: state.members.length, online: online.length, level: levelOf(st), kids: !!st.kidsMode, strict: !!st.strictCrowd, aiFill: !!st.aiFill });
+                void room.startMatch();
+              }}>
+              {t.lobby.start}
+            </button>
+          )
         ) : (
-          <p className="muted">{t.lobby.waitHost}</p>
+          <>
+            <button className={`btn ${me?.ready ? 'on' : ''}`} aria-pressed={!!me?.ready} onClick={() => {
+                onGesture();
+                void room.setReady(!me?.ready);
+              }}>
+              {me?.ready ? `✓ ${t.lobby.ready}` : t.lobby.imReady}
+            </button>
+            {me?.ready && <p className="muted">{t.lobby.waitHost}</p>}
+          </>
         )}
-        {isHost && !canStart && <p className="muted">{t.lobby.needTwo}</p>}
-        <SoundHint t={t} off={sfxOff} />
       </div>
+
+      {sheet && (
+        <div className="lobby-sheet" role="dialog" aria-label={t.lobby.settings} onClick={(e) => e.target === e.currentTarget && setSheet(false)}>
+          <div className="lobby-sheet-box">
+            <Settings t={t} settings={st} onChange={(s2) => void room.updateSettings(s2)} />
+            <button className="btn small" onClick={() => setSheet(false)}>
+              {t.lobby.done}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {bigQr && (
+        <button className="qr-full" onClick={() => setBigQr(false)} aria-label={t.ui.close}>
+          {qr && <img src={qr} alt="" />}
+          <span className="room-code">{state.code}</span>
+          <span className="muted">{t.lobby.qrHint}</span>
+        </button>
+      )}
 
       {toast && (
         <div className="toast" role="status">
