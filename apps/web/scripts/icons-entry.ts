@@ -5,9 +5,9 @@
 import { PAL } from '@kto/assets';
 import { tint } from '../src/game/art';
 import { canvas } from '../src/game/pixels';
-import { CH_H, CH_W, F, OL_H, OL_W, THEMES, makeCharacterSheets, makeMark } from '../src/game/sprites';
+import { CH_H, CH_W, F, OL_H, OL_W, PARK_CHARS, makeCharacterSheets, makeMark } from '../src/game/sprites';
 
-const sheets = makeCharacterSheets(THEMES[0]);
+const sheets = makeCharacterSheets(PARK_CHARS);
 const glow = tint(sheets.outline, PAL.yellow);
 /** «?» из игры, но с жёлтой заливкой вместо серой. */
 const qMark = (() => {
