@@ -83,9 +83,13 @@ export function themeRules(theme: number): ThemeRules {
   return THEME_RULES[theme] ?? THEME_RULES[0];
 }
 
-/** Удар по живому сейчас виден всем (изнанка с exposeKiller, не детский режим). */
-export function killerExposed(theme: number, twistOn: boolean, kidsMode: boolean): boolean {
-  return twistOn && !kidsMode && !!themeRules(theme).twist?.exposeKiller;
+/**
+ * Удар по живому сейчас виден всем (изнанка с exposeKiller). От сложности не зависит: «Лёгкая»
+ * (kidsMode) — про время на реакцию, а кровь и оружие выключает личная настройка «Без насилия» —
+ * тогда замах тот же, но пустыми руками (решение владельца, задача 1.2).
+ */
+export function killerExposed(theme: number, twistOn: boolean): boolean {
+  return twistOn && !!themeRules(theme).twist?.exposeKiller;
 }
 
 /** Эмоция, которую в изнанке показывают все (и боты, и кнопка эмоции у игроков), или null. */

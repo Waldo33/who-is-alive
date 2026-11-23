@@ -214,7 +214,7 @@ describe('Напряжение: новые механики', () => {
     expect(open / total).toBeGreaterThan(0.95);
   });
 
-  it('ночь Майами: кто бил, видно всем (attacker в hit); днём и в детском режиме — тайна', () => {
+  it('ночь Майами: кто бил, видно всем (attacker в hit) и на «Лёгкой»; днём — тайна', () => {
     const hitOf = (kids: boolean, twist: boolean) => {
       const sim = new MatchSim(makeConfig({ roundMods: false, fixedTheme: 5, kidsMode: kids }), players, 91);
       runUntil(sim, () => sim.phase === 'play');
@@ -237,6 +237,8 @@ describe('Напряжение: новые механики', () => {
     };
     expect(hitOf(false, true).attacker).toBeDefined();
     expect(hitOf(false, false).attacker).toBeUndefined();
-    expect(hitOf(true, true).attacker).toBeUndefined();
+    // «Лёгкая» (kidsMode) не прячет замах: кровь выключает только «Без насилия» на устройстве
+    expect(hitOf(true, true).attacker).toBeDefined();
+    expect(hitOf(true, false).attacker).toBeUndefined();
   });
 });

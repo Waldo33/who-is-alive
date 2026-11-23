@@ -188,7 +188,7 @@ describe('сетевая игра', () => {
         for (const ev of msg.ev) {
           if (ev.t === 'twist') twist = ev.on;
           // кто бил, виден только там, где это решила тема (ночь Майами)
-          if (ev.t === 'hit' && ev.result === 'player' && !killerExposed(rig.host.sim.theme, twist, false)) expect(ev.attacker).toBeUndefined();
+          if (ev.t === 'hit' && ev.result === 'player' && !killerExposed(rig.host.sim.theme, twist)) expect(ev.attacker).toBeUndefined();
         }
       }
     }

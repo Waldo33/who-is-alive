@@ -1147,7 +1147,6 @@ export class GameScene extends Phaser.Scene {
   /**
    * Ночь Майами и т. п.: выбивают оружием, а не «пофом». С личной настройкой «Без насилия» замах
    * тот же (его видят все — правило темы), но пустыми руками и с «пуфом» вместо крови и тела.
-   * В детском режиме бьющий не раскрыт (hit без attacker) — там всегда «поф».
    */
   private weaponKills(): boolean {
     if (this.sim.phase !== 'play') return false;
@@ -1635,7 +1634,7 @@ export class GameScene extends Phaser.Scene {
         font: this.init0.fontFamily,
         site: location.host,
         captions: known ? { find: c.whoGotMe, reveal: c.reveal, kind: c.gotMe } : { find: c.findMe, reveal: c.thatWasMe, kind: c.whoGotMe },
-        noGore: this.cfg.kidsMode || mildOn(),
+        noGore: mildOn(),
       },
       (p) => {
         if (this.deathClip !== dc) return;
@@ -3067,7 +3066,7 @@ export class GameScene extends Phaser.Scene {
     try {
       this.closeClip = openClipOverlay(
         document.body,
-        { ...best, arena: this.sim.arena, t: this.t, font: this.init0.fontFamily, site: location.host, noGore: this.cfg.kidsMode || mildOn(), winner: this.clipWinner() },
+        { ...best, arena: this.sim.arena, t: this.t, font: this.init0.fontFamily, site: location.host, noGore: mildOn(), winner: this.clipWinner() },
         this.t,
         async (file) => {
           this.track('clip_send', { kind: best.moment.kind, type: file.type.split(';')[0] });

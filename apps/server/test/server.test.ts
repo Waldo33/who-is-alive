@@ -270,7 +270,7 @@ describe('игровой сервер: матч', () => {
       if (msg.t === 'ev') {
         for (const ev of msg.ev) {
           if (ev.t === 'twist') twist = ev.on;
-          if (ev.t === 'hit' && ev.result === 'player' && !killerExposed(room.runner!.host.sim.theme, twist, false)) expect(ev.attacker).toBeUndefined();
+          if (ev.t === 'hit' && ev.result === 'player' && !killerExposed(room.runner!.host.sim.theme, twist)) expect(ev.attacker).toBeUndefined();
         }
       }
     }

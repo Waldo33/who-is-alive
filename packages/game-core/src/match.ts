@@ -996,7 +996,7 @@ export class MatchSim {
       if (n) n.hit = true;
       if (victim.autopilot) this.bots.remove(victim.eid);
       // обычно кто бил — тайна; ночью в Майами замах виден всем (themes.ts › exposeKiller)
-      const attacker = killerExposed(this.theme, this.world.twist, cfg.kidsMode) ? p.eid : undefined;
+      const attacker = killerExposed(this.theme, this.world.twist) ? p.eid : undefined;
       this.emit({ t: 'hit', target, result: 'player', x: hx, y: hy, ...(attacker !== undefined ? { attacker } : {}), at: t });
     } else {
       p.botHits++;
