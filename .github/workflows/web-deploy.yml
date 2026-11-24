@@ -36,7 +36,7 @@ jobs:
     timeout-minutes: 50
     strategy:
       # на время переезда сайт живёт на обоих серверах (docs/infra-plan.md › этап 3): сначала Европа;
-      # новый сервер настраивает game-deploy — сайт ждёт его до 25 минут
+      # новый сервер настраивает game-deploy — сайт ждёт его до 25 минут (Европа готова с 24.11)
       max-parallel: 1
       fail-fast: false
       matrix:
