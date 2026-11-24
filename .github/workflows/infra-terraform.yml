@@ -1,0 +1,75 @@
+# Серверы в Timeweb Cloud из кода (infra/terraform, docs/terraform.md).
+#   PR и push в main с правкой infra/terraform — только план (ничего не меняется); сводка — в Summary прогона.
+#   Применить — вручную: Actions › infra-terraform › Run workflow, apply = true (лучше ночью: смена тарифа
+#   перезагружает сервер, матчи и сайт рвутся на 2–3 минуты). Удаление и пересоздание серверов запрещены.
+# Состояние Terraform не хранится: перед каждым запуском discover.py находит живые серверы, и они подхватываются import'ом.
+name: infra-terraform
+
+on:
+  pull_request:
+    paths:
+      - 'infra/terraform/**'
+      - '.github/workflows/infra-terraform.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'infra/terraform/**'
+      - '.github/workflows/infra-terraform.yml'
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: 'Применить план (иначе только показать)'
+        type: boolean
+        default: false
+
+concurrency:
+  # один Terraform за раз, применение не отменяется
+  group: infra-terraform
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: infra/terraform
+    env:
+      TWC_TOKEN: ${{ secrets.TWC_TOKEN }}
+      TF_IN_AUTOMATION: '1'
+      TF_INPUT: '0'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+          terraform_wrapper: false
+
+      - name: Формат
+        run: terraform fmt -check -diff
+
+      - name: Какие серверы уже есть
+        run: |
+          python3 -m venv /tmp/py && /tmp/py/bin/pip install -q cryptography
+          /tmp/py/bin/python discover.py
+
+      - name: init
+        run: terraform init
+
+      - name: План
+        run: |
+          terraform plan -out=plan.tfplan -no-color | grep -v -i 'root_pass\|vnc_pass'
+          terraform show -json plan.tfplan > plan.json
+
+      - name: Сводка (удаление и пересоздание — стоп)
+        run: python3 summary.py < plan.json | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Применить
+        if: github.event_name == 'workflow_dispatch' && inputs.apply && github.ref == 'refs/heads/main'
+        run: |
+          terraform apply -no-color plan.tfplan | grep -v -i 'root_pass\|vnc_pass'
+          terraform output -json servers | python3 -c 'import json,sys; [print(k, v["name"], "тариф", v["preset"], v["cpu"], "vCPU", v["ram"], "МБ", v["ipv4"]) for k, v in json.load(sys.stdin).items()]'

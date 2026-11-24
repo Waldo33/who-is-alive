@@ -182,12 +182,16 @@ def main():
         drop(servers[0])
         servers = []
     # тариф сменили (Cloud NL-15 без своего IPv4 так и не открыл SSH, 24.11; решение владельца — NL-30),
-    # а сервер старого тарифа ни разу не открыл SSH — в нём ничего нет: удалить и создать на новом
+    # а сервер старого тарифа так и не получил IPv4 — в нём ничего нет: удалить и создать на новом.
+    # Только без IPv4: тариф живого сервера теперь меняет Terraform (infra/terraform), и сервер с базой,
+    # который на минуту не ответил по SSH (перезагрузка после смены тарифа), удаляться не должен
     if servers and os.environ.get('RECREATE_BROKEN') == '1' and servers[0].get('preset_id') not in PRESETS:
-        ip0 = ipv4(servers[0])
-        if not ip0 or not port_open(ip0, 22, 30):
+        if not ipv4(servers[0]):
             drop(servers[0])
             servers = []
+        else:
+            print(f'::warning::у {NAME} тариф {servers[0].get("preset_id")}, а в SERVER_PRESETS {PRESETS} — сервер живой, не трогаю (тариф — infra/terraform/servers.tf)')
+    created = False
     if servers:
         s = servers[0]
         print(f'сервер есть: id={s["id"]}, статус={s.get("status")}')
@@ -215,6 +219,7 @@ def main():
             print(f'сервер создан: id={s["id"]}, тариф {preset}')
             ip, s = wait(s['id'])
             if ip:
+                created = True
                 break
             # только что созданный не поднялся (статус error) — удалить и попробовать следующий тариф
             drop(s)
@@ -223,8 +228,9 @@ def main():
             sys.exit(1)
     sid = s['id']
     # Cloud NL-15 создаётся без IPv4: заказанный потом адрес система видит только после перезагрузки
-    # (24.11: адрес есть, SSH 15 минут молчит). Порт 22 не отвечает — перезагрузить один раз
-    if os.environ.get('RECREATE_BROKEN') == '1' and not port_open(ip, 22, 90):
+    # (24.11: адрес есть, SSH 15 минут молчит). Порт 22 не отвечает — перезагрузить один раз.
+    # Только только что созданный: живой сервер с игроками из-за минутной заминки SSH не перезагружаем
+    if created and os.environ.get('RECREATE_BROKEN') == '1' and not port_open(ip, 22, 90):
         print('SSH не отвечает — перезагружаю сервер (новый IPv4 появится в системе)')
         r = api('POST', f'/servers/{sid}/reboot', {}, soft=True)
         if '_error' in r:
