@@ -27,6 +27,8 @@ on:
       - 'infra/ci-wait.sh'
 
 concurrency:
+  # одна выкладка за раз; ожидать может только одна — более новая отменяет ожидающую,
+  # поэтому переезд (infra-move.yml) идёт в своей группе и сам ждёт, пока выкладка закончится
   group: game-deploy
   cancel-in-progress: false
 
