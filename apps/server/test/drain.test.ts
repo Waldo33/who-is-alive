@@ -28,6 +28,12 @@ async function until(cond: () => boolean, ms = 5000, what = 'условие'): P
   }
 }
 
+/** Все, кроме режиссёра, жмут «Готов»; ждём, пока режиссёр это увидит (без этого сервер не стартует). */
+async function readyUp(director: ServerLink, others: ServerLink[]): Promise<void> {
+  for (const l of others) l.setReady(true);
+  await until(() => (director.room?.members.filter((m) => m.ready).length ?? 0) >= others.length, 3000, 'все «Готов»');
+}
+
 /** Пара экземпляров, знающих друг друга. */
 async function pair(speed = 1, drainMs?: number) {
   const drained: string[] = [];
@@ -107,6 +113,7 @@ describe('выкладка без обрыва: drain и переезд комн
     la.onMessage((ch, m) => {
       if (ch === 'room' && (m as RoomMsg).t === 'match_start') starts.push(m as RoomMsg);
     });
+    await readyUp(la, [lc]);
     la.start();
     await until(() => starts.length === 1, 3000, 'старт');
     const room = b.srv.rooms.get(code)!;
