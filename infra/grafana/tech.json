@@ -233,6 +233,15 @@
      "refId": "D",
      "expr": "game_connections{server=\"msk\"}",
      "legendFormat": "соединения"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vm"
+     },
+     "refId": "E",
+     "expr": "max(game_rooms_limit{server=\"msk\"})",
+     "legendFormat": "потолок комнат"
     }
    ],
    "fieldConfig": {
@@ -257,7 +266,7 @@
   {
    "id": 6,
    "type": "timeseries",
-   "title": "Шаг матча, p99 (бюджет — 50 мс)",
+   "title": "Шаг матча, p99 (норма < 1 мс, тревога — 20, бюджет — 50)",
    "description": "",
    "gridPos": {
     "x": 12,

@@ -317,5 +317,50 @@ EOF
   # первая копия — сразу, не дожидаясь ночи
   ls /var/backups/massovka-msk/*.dump >/dev/null 2>&1 || systemctl start --no-block massovka-msk-backup.service
 fi
+
+# ───────────── проверка копии: раз в неделю восстановить в черновую базу и посчитать строки ─────────────
+# копия, которую нельзя восстановить, — не копия (docs/infra-plan.md › этап 4); итог — файл для сторожа
+if [ -f /etc/massovka-grafana/pgro.env ]; then
+  cat > /opt/massovka/bin/backup-check.sh <<'EOF'
+#!/bin/sh
+# последняя копия базы Москвы → черновая база massovka_restore_check → сколько событий и игроков → удалить
+out=/var/lib/postgresql/backup-check.status
+f=$(ls -1t /var/backups/massovka-msk/*.dump 2>/dev/null | head -1)
+if [ -z "$f" ]; then echo "fail нет копий" > "$out"; exit 1; fi
+dropdb --if-exists massovka_restore_check 2>/dev/null
+if ! createdb massovka_restore_check || ! pg_restore --no-owner --no-privileges -d massovka_restore_check "$f" 2>/tmp/backup-check.err; then
+  echo "fail не восстановилась: $(basename "$f") $(tail -1 /tmp/backup-check.err)" > "$out"
+  dropdb --if-exists massovka_restore_check 2>/dev/null
+  exit 1
+fi
+n=$(psql -tA -d massovka_restore_check -c "select count(*) from analytics_events" 2>/dev/null)
+d=$(psql -tA -d massovka_restore_check -c "select count(distinct device_id) from analytics_events" 2>/dev/null)
+dropdb --if-exists massovka_restore_check
+if [ -z "$n" ]; then echo "fail нет таблицы analytics_events в $(basename "$f")" > "$out"; exit 1; fi
+echo "ok $(basename "$f") событий=$n телефонов=$d" > "$out"
+EOF
+  chmod 755 /opt/massovka/bin/backup-check.sh
+  unit massovka-backup-check.service >/dev/null <<'EOF'
+[Unit]
+Description=Массовка: проверка, что копия базы Москвы восстанавливается
+[Service]
+Type=oneshot
+User=postgres
+ExecStart=/opt/massovka/bin/backup-check.sh
+EOF
+  unit massovka-backup-check.timer >/dev/null <<'EOF'
+[Unit]
+Description=Массовка: проверка копии базы раз в неделю
+[Timer]
+OnCalendar=Mon *-*-* 04:30:00
+Persistent=true
+[Install]
+WantedBy=timers.target
+EOF
+  systemctl enable massovka-backup-check.timer >/dev/null 2>&1
+  systemctl restart massovka-backup-check.timer
+  # первая проверка — сразу
+  [ -s /var/lib/postgresql/backup-check.status ] || systemctl start --no-block massovka-backup-check.service
+fi
 sleep 3
 say "наблюдение готово: $(systemctl is-active victoria-metrics victoria-logs grafana node_exporter systemd-journal-upload | tr '\n' ' ')"

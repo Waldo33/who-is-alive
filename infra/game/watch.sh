@@ -43,6 +43,27 @@ check() {
 }
 
 http_ok https://benobody.app/; check site $? "сайт benobody.app"
+# песочница — отдельная страница сайта (Next рендерит её сам): 5xx здесь при живой главной — сломанная сборка
+http_ok https://benobody.app/sandbox; check site_sandbox $? "страница песочницы benobody.app/sandbox"
+
+# сертификаты (Caddy продлевает сам; не продлил — узнаём за две недели). Раз в час: связь до Москвы
+# режется фильтром, поэтому без ответа просто ждём следующего часа, тревожит только известный срок
+if [ "$(date +%M)" = 17 ] || [ ! -s "$STATE/cert_days" ]; then
+  min=""
+  for h in benobody.app api.benobody.app; do
+    for _ in 1 2 3 4 5 6; do
+      end=$(echo | timeout 8 openssl s_client -connect "$h:443" -servername "$h" 2>/dev/null | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2)
+      [ -n "$end" ] && break
+      sleep 1
+    done
+    [ -z "$end" ] && continue
+    d=$(( ($(date -d "$end" +%s) - $(date +%s)) / 86400 ))
+    if [ -z "$min" ] || [ "$d" -lt "$min" ]; then min=$d; fi
+  done
+  [ -n "$min" ] && echo "$min" > "$STATE/cert_days"
+fi
+cd_=$(cat "$STATE/cert_days" 2>/dev/null || echo "")
+if [ -n "$cd_" ]; then [ "$cd_" -ge 14 ]; check cert $? "сертификат benobody.app истекает через $cd_ дн. — Caddy не продлил"; fi
 http_ok https://api.benobody.app/healthz; check game $? "игровой сервер api.benobody.app"
 # бот через Москву — заодно проверка туннеля
 http_ok https://api.benobody.app/tg/info; check bot_via_msk $? "бот через Москву (туннель Нидерланды → Москва)"
@@ -86,6 +107,9 @@ if [ -x /usr/local/bin/victoria-metrics ]; then
     m=$(vm "1 - node_memory_MemAvailable_bytes{server=\"$s\"} / node_memory_MemTotal_bytes{server=\"$s\"}" | awk '{print $NF}' | head -1)
     if [ -n "$m" ]; then within "$m" 0.92; check "mem_$s" $? "память сервера $name занята на $(pct "$m")%"; fi
   done
+  # шаг матча на сервере: обычно меньше 1 мс; дольше 20 мс в p99 — сервер не успевает, у игроков лаги
+  st=$(vm 'max(game_step_ms_p99{server="msk"})' | awk '{print $NF}' | head -1)
+  if [ -n "$st" ]; then within "$st" 20; check step_msk $? "матчи в Москве тормозят: шаг p99 $(printf '%.0f' "$st") мс (норма < 1)"; fi
   # ошибки JS с телефонов (lib/errors.ts): больше 30 за 10 минут — что-то сломали выкладкой
   e=$(vm 'sum(increase(game_client_errors_total{server="msk"}[10m]))' | awk '{print $NF}' | head -1)
   if [ -n "$e" ]; then within "$e" 30; check client_errors $? "ошибки на телефонах: $(printf '%.0f' "$e") за 10 минут (VictoriaLogs: client_error)"; fi
@@ -99,6 +123,12 @@ if [ -x /usr/local/bin/victoria-metrics ]; then
   # клипы для Telegram в Москве: лимит папки 1 ГБ, старые вытесняются — на 80% пора думать об S3
   c=$(vm 'max(game_clips_bytes{server="msk"}) / max(game_clips_limit_bytes{server="msk"})' | awk '{print $NF}' | head -1)
   if [ -n "$c" ]; then within "$c" 0.8; check clips_msk $? "место под клипы в Москве занято на $(pct "$c")% из 1 ГБ (пора S3)"; fi
+fi
+# копия восстанавливается (раз в неделю, observe.sh › backup-check): итог не старше 8 суток и «ok»
+if systemctl is-enabled -q massovka-backup-check.timer 2>/dev/null && [ -s /var/lib/postgresql/backup-check.status ]; then
+  bc=$(cat /var/lib/postgresql/backup-check.status)
+  [ "${bc%% *}" = ok ] && [ -n "$(find /var/lib/postgresql/backup-check.status -mmin -11520 2>/dev/null)" ]
+  check backup_restore $? "копия базы Москвы не восстанавливается или давно не проверялась: ${bc#* }"
 fi
 # ночная копия базы Москвы: свежей суток с запасом (раз в сутки в 03:40 UTC)
 if systemctl is-enabled -q massovka-msk-backup.timer 2>/dev/null; then
