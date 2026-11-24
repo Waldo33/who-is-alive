@@ -357,7 +357,9 @@ jobs:
             up=""; [ -s deploy/tunnel.pub ] && up="http://127.0.0.1:9090"
             vars="HOST=$HOST ALT_HOST=$SSLIP SITE_HOST=benobody.app SITE_REDIRECT=https://who-is-alive.vercel.app BOT_UPSTREAM=$up"
           else
-            vars="HOST=$HOST BOT_SITE=https://benobody.app TUNNEL_TO=$MOSCOW_IP TUNNEL_EU_TO=$EU_IP"
+            # игра живёт в Европе (переезд 24.11): аналитика с замера — туда (туннель :28080), Grafana,
+            # копии базы и сторож — тоже туда
+            vars="HOST=$HOST BOT_SITE=https://benobody.app TUNNEL_TO=$MOSCOW_IP TUNNEL_EU_TO=$EU_IP GAME_SITE=eu EVENTS_TO=28080"
           fi
           ssh $SSH_OPTS root@$IP "ROLE=$ROLE $vars SHA=${GITHUB_SHA::12} bash /tmp/deploy/setup.sh"
 
