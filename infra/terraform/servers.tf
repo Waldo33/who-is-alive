@@ -39,21 +39,17 @@ data "twc_os" "ubuntu" {
   version = "24.04"
 }
 
-# Живые серверы не создаются заново: перед каждым планом Terraform подхватывает их по id.
-# Состояние (state) нигде не хранится — оно собирается из Timeweb на каждом запуске, поэтому
-# нет ни бакета, ни пароля root в файле состояния (docs/terraform.md › «Без состояния»).
-import {
-  for_each = local.existing
-  to       = twc_server.this[each.key]
-  id       = each.value
-}
+# Живые серверы не создаются заново: перед каждым планом import.sh подхватывает их по id
+# (terraform import). Состояние (state) нигде не хранится — оно собирается из Timeweb на каждом
+# запуске, поэтому нет ни бакета, ни пароля root в файле состояния (docs/terraform.md › «Без состояния»).
 
 resource "twc_server" "this" {
   for_each = local.servers
 
   name      = each.value.name
   preset_id = each.value.preset
-  # ОС и ключ нужны только при создании; у живого сервера их не трогаем (ignore_changes)
+  # ОС и ключ нужны только при создании; у живого сервера их не трогаем (ignore_changes).
+  # os_id нельзя менять никогда: провайдер шлёт его в PATCH — это переустановка системы
   os_id                     = data.twc_os.ubuntu.id
   ssh_keys_ids              = var.ssh_key_ids
   is_root_password_required = false
