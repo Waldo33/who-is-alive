@@ -31,7 +31,13 @@ const SAFE_L = 6;
 const SAFE_R = 156;
 const REWIND_MS = 500;
 export const FINALE_MS = 4600;
-export const CREDITS_MS = 4000;
+export const CREDITS_MS = 3200;
+/**
+ * Момент триумфа победителя — последним кадром фильма, как в игре после последнего дубля (scene.ts ›
+ * showTriumph): поле темнеет, победитель крупно пляшет в луче с короной, имя его цветом, фанфары,
+ * конфетти; музыка уходит к концу. Просьба владельца (ноябрь 2026): «момент триумфа в конце».
+ */
+export const TRIUMPH_MS = 2600;
 /** Ирис: сужение в конце куска и раскрытие после хлопушки. */
 const IRIS_CLOSE_MS = 380;
 const IRIS_OPEN_MS = 320;
@@ -121,7 +127,8 @@ type Piece =
   | { kind: 'scene'; scene: ClipPlayerScene; dur: number }
   | { kind: 'rewind'; dur: number }
   | { kind: 'finale'; dur: number }
-  | { kind: 'credits'; dur: number };
+  | { kind: 'credits'; dur: number }
+  | { kind: 'triumph'; dur: number };
 
 const smooth = (p: number) => {
   const x = Math.max(0, Math.min(1, p));
@@ -157,7 +164,8 @@ export class FilmScene {
     this.pieces.push(scenePiece(new ClipPlayerScene({ ...base, ...h, mode: 'feature', keepMusic: true })));
     // остальные моменты — коротко, по порядку дублей; не влезают в FILM_CAP_MS — уходят самые слабые
     let extra = inp.rounds.filter((r) => r !== h).map((r) => ({ r, scene: new ClipPlayerScene({ ...base, ...r, mode: 'segment', keepMusic: true }) }));
-    const fixed = this.pieces.reduce((a, p) => a + p.dur, 0) + FINALE_MS + CREDITS_MS;
+    const triumph = inp.winner && !inp.tooAlive ? TRIUMPH_MS : 0;
+    const fixed = this.pieces.reduce((a, p) => a + p.dur, 0) + FINALE_MS + CREDITS_MS + triumph;
     while (extra.length && fixed + extra.reduce((a, x) => a + x.scene.duration, 0) > FILM_CAP_MS) {
       const weakest = extra.reduce((a, x) => (x.r.moment.score < a.r.moment.score ? x : a));
       extra = extra.filter((x) => x !== weakest);
@@ -165,6 +173,7 @@ export class FilmScene {
     for (const x of extra) this.pieces.push(scenePiece(x.scene));
     this.pieces.push({ kind: 'finale', dur: FINALE_MS });
     this.pieces.push({ kind: 'credits', dur: CREDITS_MS });
+    if (triumph) this.pieces.push({ kind: 'triumph', dur: triumph });
     this.bloops = (inp.bloopers ?? []).slice(0, 2).map((b) => new ClipPlayerScene({ ...base, ...b, mode: 'blooper', keepMusic: true }));
     this.duration = this.pieces.reduce((a, p) => a + p.dur, 0);
   }
@@ -240,7 +249,18 @@ export class FilmScene {
       this.drawFinale(local);
       return this.c;
     }
-    this.cue('credits', () => this.sound?.fadeOut(Math.max(0.3, (this.duration - ms) / 1000)));
+    if (p.kind === 'triumph') {
+      this.cue('triumph', () => {
+        this.sound?.play('fanfare');
+        // музыка уходит к концу фильма; фанфары и «Снято!» звучат поверх
+        this.sound?.fadeOut(Math.max(0.3, (this.duration - ms) / 1000));
+      });
+      this.drawTriumph(local);
+      this.sound?.pump();
+      return this.c;
+    }
+    // без триумфа (ничья, «слишком заметные») музыка уходит на титрах
+    if (i === this.pieces.length - 1) this.cue('credits', () => this.sound?.fadeOut(Math.max(0.3, (this.duration - ms) / 1000)));
     this.drawCredits(local);
     this.sound?.pump();
     return this.c;
@@ -790,6 +810,34 @@ export class FilmScene {
     }
     this.figure(art, 0, cx, floor, 3, this.dance(ms), win.color);
     this.crown(ms, cx, floor - CH_H * 3 - 2, art);
+  }
+
+  /** Момент триумфа: победитель ×4 пляшет в луче, корона, имя его цветом, конфетти. */
+  private drawTriumph(ms: number): void {
+    const win = this.inp.winner;
+    if (!win) return;
+    const g = this.g;
+    const art = getArt(this.inp.hook.arena);
+    const cx = (SAFE_L + SAFE_R) / 2;
+    const W = SAFE_R - SAFE_L;
+    this.backdrop(0.9);
+    // вход: первые 200 мс поле темнеет из титров — фигура поднимается снизу
+    const rise = Math.round((1 - smooth(ms / 260)) * 30);
+    const floor = 168 + rise;
+    this.beam(cx, floor, 30);
+    const hop = Math.floor(ms / 160) % 2 ? -3 : 0;
+    this.figure(art, 0, cx, floor + hop, 4, this.dance(ms), win.color);
+    // корона уже на голове (упала в финале) — подпрыгивает вместе с ним
+    const at = art.icons.names.indexOf('crown');
+    if (at >= 0) {
+      g.save();
+      g.scale(3, 3);
+      frame(g, art.icons.canvas, 8, 8, at, Math.round(cx / 3) - 4, Math.round((floor + hop - CH_H * 4 - 3) / 3) - 8);
+      g.restore();
+    }
+    text(g, this.inp.t.game.winner.replace(/:$/, ''), cx, 44, PAL.yellow, this.inp.font, { size: 2, maxWidth: W });
+    text(g, win.name, cx, 182 + rise, PLAYER_COLORS[win.color], this.inp.font, { size: 2, maxWidth: W });
+    this.confetti(ms + 800);
   }
 
   /** Луч прожектора сверху и пятно света на полу. */

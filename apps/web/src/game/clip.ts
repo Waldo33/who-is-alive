@@ -73,7 +73,7 @@ export function irisFull(cx: number, cy: number): number {
 
 /** Кусок фильма: сколько мира до и после главного события. */
 const SEG_PRE = 2600;
-const SEG_POST = 900;
+const SEG_POST = 1600;
 const SEG_PLAIN = 4000;
 
 /**
@@ -192,7 +192,7 @@ const SEG_T: Timing = { base: 1.4, slow: 0.5, slowPre: 500, slowPost: 400, hold:
 /** Главный момент фильма: темп клипа, но короче замедление и хвост — чтобы в фильм влез ещё момент. */
 const FEAT_T: Timing = { base: 1.35, slow: 0.45, slowPre: 600, slowPost: 350, hold: 450, cutBefore: 1500, wideMin: 900 };
 /** Хвост мира после удара у главного момента фильма (дальше — ирис на герое). */
-const FEAT_POST = 1000;
+const FEAT_POST = 1700;
 const BLOOP_T: Timing = { base: 1.1, slow: 0.5, slowPre: 300, slowPost: 300, hold: 250, cutBefore: 0, wideMin: 0 };
 
 /** Камера разбора: целое увеличение (пиксели остаются чёткими), видна четверть арены. */
@@ -315,9 +315,9 @@ export class ClipPlayerScene {
     if (this.mode === 'hook') this.win = { from: Math.max(m.from, m.at - 450), to: Math.max(m.from, m.at - 120) };
     else if (this.mode === 'segment') {
       this.win = focused
-        ? { from: Math.max(m.from, m.at - SEG_PRE), to: Math.min(m.to, m.at + SEG_POST) }
+        ? { from: Math.max(m.from, m.at - SEG_PRE), to: Math.min(Math.max(m.to, inp.rec.playEnd), m.at + SEG_POST) }
         : { from: Math.max(m.from, m.to - SEG_PLAIN), to: m.to };
-    } else if (this.mode === 'feature' && focused) this.win = { from: m.from, to: Math.max(m.from, Math.min(m.to, m.at + FEAT_POST)) };
+    } else if (this.mode === 'feature' && focused) this.win = { from: m.from, to: Math.max(m.from, Math.min(Math.max(m.to, inp.rec.playEnd), m.at + FEAT_POST)) };
     else this.win = { from: m.from, to: m.to };
     const len = this.win.to - this.win.from;
     this.speed1 = Math.max(PART1_SPEED, len / (this.mode === 'feature' ? FEATURE_PUZZLE_MAX : PART1_MAX_MS));
@@ -1085,10 +1085,18 @@ export async function recordClip(
   scene.draw(0);
   rec.start(500);
   const t0 = performance.now();
+  let drawErr: unknown = null;
   await new Promise<void>((resolve) => {
     const loop = () => {
       const ms = performance.now() - t0;
-      scene.draw(Math.min(ms, scene.duration));
+      // сбой одного кадра не должен останавливать запись: раньше исключение рвало цикл,
+      // и экран монтажа навсегда застывал на 100%
+      try {
+        scene.draw(Math.min(ms, scene.duration));
+      } catch (e) {
+        drawErr ??= e;
+        console.error('кадр клипа', e);
+      }
       onFrame?.(Math.min(1, ms / scene.duration));
       if (ms >= scene.duration + 150) resolve();
       // setTimeout, а не rAF: так кадры идут и при слабом телефоне, и при скрытой вкладке (медленнее)
@@ -1096,8 +1104,16 @@ export async function recordClip(
     };
     loop();
   });
+  try {
+    rec.requestData();
+  } catch {
+    // запись уже остановилась сама
+  }
   rec.stop();
-  await stopped;
+  // в WebView (Telegram на iPhone) событие stop иногда не приходит: не ждать дольше 3 с —
+  // куски записи к этому моменту уже у нас (rec.start(500) отдаёт их каждые полсекунды)
+  await Promise.race([stopped, new Promise<void>((res) => setTimeout(res, 3000))]);
+  if (!chunks.length) throw drawErr ?? new Error('пустая запись');
   for (const tr of stream.getTracks()) tr.stop();
   scene.sound?.stop();
   const type = mime.split(';')[0];
