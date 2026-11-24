@@ -42,14 +42,13 @@ if (process.argv.includes('--selftest')) {
   const here = dirname(fileURLToPath(import.meta.url));
   const job = selftestJob();
   const t0 = Date.now();
-  const r = await renderFilm(job, { fonts: join(here, 'fonts'), tmp: tmpdir(), native: process.env.FILM_NATIVE || undefined });
+  const r = await renderFilm(job, { fonts: join(here, 'fonts'), tmp: tmpdir() });
   if (!r) {
     console.error('нет фильма');
     process.exit(1);
   }
   console.log(JSON.stringify({ ok: true, ms: Date.now() - t0, render: r.renderMs, sec: +(r.durationMs / 1000).toFixed(1), mb: +(statSync(r.video).size / 1e6).toFixed(1), thumbKb: Math.round(r.thumb.length / 1024), rssMb: Math.round(process.memoryUsage().rss / 1e6) }));
-  if (process.env.FILM_KEEP) console.log(r.video);
-  else rmSync(r.video, { force: true });
+  rmSync(r.video, { force: true });
   process.exit(0);
 }
 
