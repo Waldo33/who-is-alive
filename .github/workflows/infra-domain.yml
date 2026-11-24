@@ -30,8 +30,10 @@ jobs:
           # IPv6: у наших серверов его нет — любая запись AAAA уводит телефоны с IPv6 мимо игры (на заглушку)
           bad=""
           for h in "$DOMAIN" "www.$DOMAIN" "api.$DOMAIN"; do
-            v6=$(dig +short AAAA "$h" @8.8.8.8 | tr "\n" " ")
-            echo "AAAA $h: ${v6:-нет}"
+            # у самих NS Timeweb (свежо, без кэша) и у 8.8.8.8 (что видят люди; кэш до TTL)
+            v6=$(dig +short AAAA "$h" @ns1.timeweb.ru | tr "\n" " ")
+            v6g=$(dig +short AAAA "$h" @8.8.8.8 | tr "\n" " ")
+            echo "AAAA $h: у ns1.timeweb.ru ${v6:-нет} · у 8.8.8.8 ${v6g:-нет}"
             [ -n "$v6" ] && bad="$bad $h"
           done
           if [ -n "$bad" ]; then echo "::warning::лишние записи AAAA:$bad — удалить в панели DNS (у серверов нет IPv6)"; else echo "AAAA: лишних нет"; fi
