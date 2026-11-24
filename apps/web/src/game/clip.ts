@@ -465,7 +465,9 @@ export class ClipPlayerScene {
       this.sound?.resume();
     }
     // перед ударом — 120 мс тишины: удар после «провала» звучит громче всего клипа
-    if (reveal && this.sound && !this.hushed && this.hitClip !== Infinity && local >= this.hitClip - HUSH_MS) {
+    // удар звучит, когда мир шагнёт за m.at, — после стоп-кадра, а не в его начале (hitClip):
+    // тишина по hitClip обрывала музыку на полсекунды раньше удара
+    if (reveal && this.sound && !this.hushed && this.hitClip !== Infinity && local >= this.clipOf(this.inp.moment.at + TICK_MS) - HUSH_MS) {
       this.hushed = true;
       this.sound.hush(HUSH_MS / 1000);
     }
