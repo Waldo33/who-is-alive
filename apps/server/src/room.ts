@@ -53,6 +53,8 @@ export interface RoomOptions {
   onEmpty?: (room: Room) => void;
   /** «Фильм матча» (film.ts): нет — фильм монтирует телефон. */
   film?: FilmService;
+  /** Видео не выключено аварийно (video-switch.ts). */
+  videoOn?: () => boolean;
   /** Комната переехала с соседнего экземпляра сервера (выкладка без обрыва): состав и настройки — оттуда. */
   restore?: RoomSnapshot;
 }
@@ -273,7 +275,7 @@ export class Room {
       this.members.set(userId, m);
     }
     this.lastActive = now;
-    this.sendTo(userId, { t: 'welcome', selfId: userId, room: this.view(), ...(this.o.film ? { caps: ['clip'] } : {}) });
+    this.sendTo(userId, { t: 'welcome', selfId: userId, room: this.view(), ...(this.o.film && (this.o.videoOn?.() ?? true) ? { caps: ['clip'] } : {}) });
     this.broadcastRoom();
     return null;
   }

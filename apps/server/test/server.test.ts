@@ -588,3 +588,39 @@ describe('игровой сервер: клип выбывшего', () => {
     expect(await l.deathClip(1, 'ru', false)).toBeNull();
   }, 120_000);
 });
+
+describe('игровой сервер: аварийный выключатель видео', () => {
+  it('файл video-off — телефоны узнают сразу (flags и /v1/flags), клипа на сервере нет; убрали — вернулось', async () => {
+    const { mkdtempSync, rmSync, writeFileSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const { VideoSwitch } = await import('../src/video-switch');
+    const dir = mkdtempSync(join(tmpdir(), 'video-'));
+    const file = join(dir, 'video-off');
+    try {
+      const srv = new GameServer({ authSecret: SECRET, log: silentLogger, video: new VideoSwitch(file, 0) });
+      servers.push(srv);
+      const port = await srv.listen(0, '127.0.0.1');
+      const http = `http://127.0.0.1:${port}`;
+      const ws = `ws://127.0.0.1:${port}/i/blue/ws`;
+      expect(await (await fetch(`${http}/v1/flags`)).json()).toEqual({ video: true });
+      const u = await anon(http);
+      const { code } = await create(http, u.token);
+      const l = link(ws, u, code, 'U');
+      const seen: boolean[] = [];
+      l.onFlags((f) => seen.push(f.video));
+      await l.connect();
+      await until(() => seen.length > 0, 2000, 'flags после входа');
+      expect(l.video).toBe(true);
+      writeFileSync(file, 'x');
+      await until(() => l.video === false, 3000, 'видео выключено');
+      expect(await (await fetch(`${http}/v1/flags`)).json()).toEqual({ video: false });
+      expect(await l.deathClip(1, 'ru', false)).toBeNull();
+      rmSync(file);
+      await until(() => l.video === true, 3000, 'видео вернулось');
+      expect(seen).toEqual([true, false, true]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

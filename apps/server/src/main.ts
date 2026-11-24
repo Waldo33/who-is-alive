@@ -13,6 +13,7 @@ import { GameServer } from './server';
 import { MemoryStore, PgStore } from './store';
 import type { Store } from './store';
 import { loadGeo } from './geo';
+import { VideoSwitch } from './video-switch';
 
 /**
  * Запуск игрового сервера. Настройки — из окружения:
@@ -73,13 +74,17 @@ const clips = new ClipStore(env.CLIP_DIR || env.STATE_DIRECTORY || undefined);
 const ffmpeg = env.FFMPEG || 'ffmpeg';
 const fonts = env.FILM_FONTS || join(dirname(fileURLToPath(import.meta.url)), 'fonts');
 let film: FilmService | undefined;
+// аварийный выключатель видео: файл video-off в папке клипов (/var/lib/massovka-clips, общая у синего и
+// зелёного; кнопка video-switch.yml) — не монтировать ничего и спрятать кнопки у телефонов
+const video = new VideoSwitch(env.VIDEO_OFF_FILE || join(clips.dir, 'video-off'));
+if (!video.on) log('warn', 'video_off');
 if (env.FILM === 'off') log('info', 'film_off');
 else if (spawnSync(ffmpeg, ['-version'], { stdio: 'ignore' }).status !== 0) log('warn', 'film_no_ffmpeg');
 else if (!existsSync(join(fonts, 'press-start-2p-cyrillic-400-normal.woff'))) log('warn', 'film_no_fonts', { fonts });
 else {
   // записи матчей (для перемонтажа фильма в других вариантах) — в подпапке клипов, 2 суток; MATCH_RECORDINGS=off — не писать
   const recordings = env.MATCH_RECORDINGS === 'off' ? undefined : new MatchRecordings(join(clips.dir, 'matches'));
-  film = new FilmService({ store: clips, log, fonts, ffmpeg, recordings, site: (env.SITE_URL || 'https://benobody.app').replace(/^https?:\/\//, '').replace(/\/$/, '') });
+  film = new FilmService({ store: clips, log, fonts, ffmpeg, recordings, enabled: () => video.on, site: (env.SITE_URL || 'https://benobody.app').replace(/^https?:\/\//, '').replace(/\/$/, '') });
   log('info', 'film_ready');
 }
 
@@ -103,6 +108,7 @@ const server = new GameServer({
   log,
   clips,
   film,
+  video,
 });
 
 const port = await server.listen(Number(env.PORT) || 8080);

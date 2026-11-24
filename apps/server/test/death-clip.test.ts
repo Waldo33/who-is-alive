@@ -146,3 +146,22 @@ describe.skipIf(!hasFfmpeg)('клип выбывшего: комната цел�
     }
   }, 120_000);
 });
+
+describe('клип выбывшего: аварийный выключатель', () => {
+  it('видео выключено — ни клипа, ни фильма (сразу null, в очередь не встаёт)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'clip-off-'));
+    try {
+      let on = false;
+      const film = new FilmService({ store: new ClipStore(dir), site: 'benobody.app', fonts: dir, log: () => {}, enabled: () => on });
+      const { s, pid, eid } = untilKnockout(7);
+      const job = deathClipJob(s, pid, eid, { lang: 'ru', noGore: false })!;
+      expect(film.clip(job)).toBeNull();
+      expect(await film.make({ takes: [], players: [], match: {} as never, lang: 'ru' })).toBeNull();
+      expect(film.queued).toBe(0);
+      on = true;
+      expect(film.clipWait()).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

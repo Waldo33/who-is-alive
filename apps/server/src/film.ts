@@ -36,6 +36,8 @@ export interface FilmServiceOptions {
   timeoutMs?: number;
   /** Куда сохранять записи матчей (для перемонтажа); нет — не сохранять. */
   recordings?: MatchRecordings;
+  /** Аварийный выключатель видео (video-switch.ts): false — не монтировать ничего. */
+  enabled?: () => boolean;
 }
 
 /** Где лежит процесс монтажа: рядом со сборкой (dist/film-worker.mjs) или исходник под tsx (dev, тесты). */
@@ -93,6 +95,7 @@ export class FilmService {
    * иначе onQueued(eta, мс до готовности) и обещание с клипом (null — не вышло).
    */
   clip(req: Omit<ClipJob, 'site' | 'link'>, onQueued?: (etaMs: number) => void): Promise<FilmDone | null> | null {
+    if (this.o.enabled && !this.o.enabled()) return null;
     const wait = this.clipWait();
     if (wait > CLIP_MAX_WAIT_MS) {
       this.clipsRejected++;
@@ -119,6 +122,7 @@ export class FilmService {
       ?.save(job)
       .then((name) => this.o.log('info', 'match_recorded', { name }))
       .catch((e: unknown) => this.o.log('warn', 'match_record_failed', { err: String(e).slice(0, 300) }));
+    if (this.o.enabled && !this.o.enabled()) return Promise.resolve(null);
     if (this.queue.length >= (this.o.maxQueue ?? 4)) {
       this.o.log('warn', 'film_queue_full', { queued: this.queued });
       return Promise.resolve(null);

@@ -20,6 +20,7 @@ import { MemoryStore, parseEvents } from './store';
 import type { Store } from './store';
 import type { Peer, RoomSnapshot } from './room';
 import type { Geo } from './geo';
+import { VideoSwitch } from './video-switch';
 
 export interface GameServerOptions {
   /** Ключ подписи токенов (≥ 32 символов). */
@@ -52,6 +53,8 @@ export interface GameServerOptions {
   clips?: ClipStore;
   /** «Фильм матча» (film.ts); нет — фильм монтирует телефон. */
   film?: FilmService;
+  /** Аварийный выключатель видео (video-switch.ts); нет — видео всегда включено. */
+  video?: VideoSwitch;
   /** Страна по адресу для замера доступности (geo.ts); нет — неизвестна. */
   geo?: Geo;
   /**
@@ -129,6 +132,7 @@ export class GameServer {
   private readonly speed: number;
   private readonly maxRooms: number;
   private readonly conns = new Map<WebSocket, ConnState>();
+  private readonly video: VideoSwitch;
   private readonly ipConns = new Counter();
   private readonly roomRate = new RateWindow(ROOMS_PER_IP_MIN, 60_000);
   private readonly roomUserRate = new RateWindow(ROOMS_PER_USER_MIN, 60_000);
@@ -155,6 +159,7 @@ export class GameServer {
     this.log = o.log ?? jsonLogger();
     this.now = o.now ?? Date.now;
     this.speed = o.speed ?? 1;
+    this.video = o.video ?? new VideoSwitch(null);
     this.maxRooms = o.maxRooms ?? 2000;
     this.peer = o.peer;
     this.store = o.store ?? new MemoryStore();
@@ -199,6 +204,12 @@ export class GameServer {
 
   housekeeping(): void {
     const now = this.now();
+    // аварийный выключатель видео: файл появился или пропал — сказать всем телефонам
+    if (this.video.check(now)) {
+      this.log('warn', this.video.on ? 'video_on' : 'video_off');
+      const text = this.flagsText();
+      for (const [ws, st] of this.conns) if (st.userId) ws.send(text);
+    }
     for (const r of [...this.rooms.values()]) {
       r.housekeeping();
       if (r.onlineCount() === 0) {
@@ -226,6 +237,10 @@ export class GameServer {
     this.emptySince.delete(r);
     this.loadRooms.delete(r.code);
     this.noMove.delete(r.code);
+  }
+
+  private flagsText(): string {
+    return JSON.stringify({ t: 'flags', video: this.video.on } satisfies ServerMsg);
   }
 
   private heartbeat(): void {
@@ -267,6 +282,8 @@ export class GameServer {
       if (p === '/v1/rooms' && req.method === 'POST') return this.createRoom(req, res);
       if (p === '/v1/events' && req.method === 'POST') return this.events(req, res);
       if (p === '/v1/probe' && req.method === 'GET') return this.probe(req, res, url);
+      // переключатели для песочницы и главной (там нет WebSocket): выключено ли видео
+      if (p === '/v1/flags' && req.method === 'GET') return this.reply(res, 200, { video: this.video.on });
       if (p === '/v1/errors' && req.method === 'POST') return this.clientError(req, res);
       if (p.startsWith('/v1/clips')) return this.clipRoute(req, res, p);
       if (p.startsWith('/tg/')) {
@@ -320,6 +337,7 @@ export class GameServer {
       speed: this.speed,
       // нагрузочный прогон: фильм матча не монтируем (ffmpeg исказил бы замер и занял бы процессор)
       film: load ? undefined : this.o.film,
+      videoOn: () => this.video.on,
     });
     this.rooms.set(code, room);
     if (load) this.loadRooms.add(code);
@@ -387,6 +405,7 @@ export class GameServer {
         log: this.log,
         speed: this.speed,
         film: this.o.film,
+        videoOn: () => this.video.on,
         restore: snap,
       });
       this.rooms.set(snap.code, room);
@@ -749,6 +768,7 @@ export class GameServer {
       st.userId = userId;
       st.room = room;
       st.name = m.name;
+      peer.send(this.flagsText());
       return;
     }
     const room = st.room;

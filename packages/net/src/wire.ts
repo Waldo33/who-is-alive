@@ -125,7 +125,12 @@ export type ServerMsg =
    */
   | { t: 'clip'; n: number; state: 'making'; eta: number }
   | { t: 'clip'; n: number; state: 'ready'; id: string; ext: 'mp4'; thumb: boolean }
-  | { t: 'clip'; n: number; state: 'failed' };
+  | { t: 'clip'; n: number; state: 'failed' }
+  /**
+   * Переключатели сервера — сразу после welcome и при каждой смене. video: false — аварийно выключено
+   * всё видео (клипы и фильм): кнопки спрятать, на телефоне тоже не монтировать. Старые клиенты пропускают.
+   */
+  | { t: 'flags'; video: boolean };
 
 /** Состояние фильма матча у клиента. */
 export type WireFilm = Extract<ServerMsg, { t: 'film' }>;

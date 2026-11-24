@@ -20,6 +20,7 @@ import { mildOn } from '../ui/topbar';
 import { SWING_HIT, aim, armed, armsOf, bodyPose, drawAir, drawFloor, killsFromLog, makeKill, weaponSfx } from './gore';
 import type { ArmColors } from './gore';
 import type { Kill, Px } from './gore';
+import { syncVideoSwitch, videoOff } from './video-switch';
 import { clipSupported, clipViaTelegram, openClipOverlay, openFilmOverlay, preloadClipForTelegram, recordClipInBackground, shareClipInTelegram } from './clip-ui';
 import type { FilmFeed } from './clip-ui';
 import { FilmScene, filmInput } from './film';
@@ -325,6 +326,8 @@ export class GameScene extends Phaser.Scene {
 
   init(data: SceneInit): void {
     this.init0 = data;
+    // аварийный выключатель видео: спросить сервер (в комнате о смене скажет связь)
+    void syncVideoSwitch();
     this.lang = data.lang ?? 'ru';
     this.t = DICTS[this.lang];
     this.audio = data.audio;
@@ -1718,7 +1721,7 @@ export class GameScene extends Phaser.Scene {
     const job = server
       ? this.serverDeathClip(dc, server).then((f) => {
           this.track('clip_made', { kind: 'death', via: f ? 'server' : 'phone' });
-          return f ?? (this.deathClip === dc ? local() : null);
+          return f ?? (this.deathClip === dc && !videoOff() ? local() : null);
         })
       : local();
     void job.then((file) => {
@@ -2914,7 +2917,7 @@ export class GameScene extends Phaser.Scene {
     } else this.addRow(AY + 214, [{ id: 'share2', kind: 'secondary', icon: 'share', label: this.t.game.share, flex: true, release: true, onTap: () => this.share() }]);
     // клип — третьей, тихой кнопкой с кадром плёнки в нижней панели. Открывается касанием: отпускание
     // у нижнего края экрана браузер может забрать себе (Chrome на iPhone); отправка — кнопкой в окне клипа
-    if ((this.takes.length || this.init0.film?.current()) && !this.init0.spectator) {
+    if ((this.takes.length || this.init0.film?.current()) && !this.init0.spectator && !videoOff()) {
       this.addRow(PANEL_Y + 3, [{ id: 'clip', kind: 'secondary', icon: 'film', label: this.t.clip.film, flex: true, onTap: () => this.openFilm() }]);
       const b = this.buttons.find((x) => x.id === 'clip');
       if (b) Object.assign(b, { x: 3, w: 174 });
@@ -3211,7 +3214,8 @@ export class GameScene extends Phaser.Scene {
           self: this.sim.selfPid,
         })
       : null;
-    if (!inp) {
+    // видео выключено аварийно — и на телефоне не монтируем
+    if (!inp || videoOff()) {
       this.showToast(this.t.clip.failed, 2500);
       return;
     }
