@@ -40,8 +40,8 @@ for rc in plan.get('resource_changes', []):
                 diff.append(f'`{k}`: {json.dumps(before.get(k), ensure_ascii=False)} → {json.dumps(after.get(k), ensure_ascii=False)}')
         lines.append(f'- ✏️ **{addr}** — изменить' + (' (подхвачен)' if imported else '') + ': ' + (', '.join(diff) or 'вычисляемые поля'))
         continue
-    if imported:
-        lines.append(f'- ✅ {addr} — подхвачен как есть, без изменений')
+    if imported or actions == ['no-op']:
+        lines.append(f'- ✅ {addr} — без изменений')
 
 out = '### План Terraform\n\n' + ('\n'.join(lines) if lines else 'Изменений нет.') + '\n'
 print(out)

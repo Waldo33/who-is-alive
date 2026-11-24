@@ -29,6 +29,8 @@ concurrency:
 
 permissions:
   contents: read
+  # после применения — запустить game-deploy (setup.sh пересчитывает потолок комнат и память под машину)
+  actions: write
 
 jobs:
   terraform:
@@ -62,6 +64,9 @@ jobs:
       - name: init
         run: terraform init
 
+      - name: Подхватить живые серверы (состояние из Timeweb)
+        run: ./import.sh
+
       - name: План
         run: |
           terraform plan -out=plan.tfplan -no-color | grep -v -i 'root_pass\|vnc_pass'
@@ -75,3 +80,11 @@ jobs:
         run: |
           terraform apply -no-color plan.tfplan | grep -v -i 'root_pass\|vnc_pass'
           terraform output -json servers | python3 -c 'import json,sys; [print(k, v["name"], "тариф", v["preset"], v["cpu"], "vCPU", v["ram"], "МБ", v["ipv4"]) for k, v in json.load(sys.stdin).items()]'
+
+      - name: Перевыложить игру под новую машину
+        if: github.event_name == 'workflow_dispatch' && inputs.apply && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run game-deploy.yml --ref main -R "$GITHUB_REPOSITORY"
+          echo "game-deploy запущен — Actions › game-deploy" | tee -a "$GITHUB_STEP_SUMMARY"
