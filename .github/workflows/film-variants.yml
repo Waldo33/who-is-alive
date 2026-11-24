@@ -1,0 +1,60 @@
+# Перемонтаж реальных матчей: забирает последние записи матчей с игрового сервера в Европе
+# (/var/lib/massovka-clips/matches, apps/server/src/recordings.ts — хранятся 2 суток) и монтирует каждую
+# во всех вариантах финала (apps/server/scripts/film-variants.ts). Видео — в артефакте запуска.
+# Запуск: Actions → film-variants → Run workflow (или gh workflow run film-variants.yml -f count=3).
+name: film-variants
+
+on:
+  workflow_dispatch:
+    inputs:
+      count:
+        description: Сколько последних матчей смонтировать
+        default: '3'
+
+permissions:
+  contents: read
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      TWC_TOKEN: ${{ secrets.TWC_TOKEN }}
+      SSH_OPTS: -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=20 -o LogLevel=ERROR
+      FIND_ONLY: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m venv /tmp/py && /tmp/py/bin/pip install -q cryptography
+      - id: eu
+        env: { SERVER_NAME: massovka-eu }
+        run: /tmp/py/bin/python infra/game/provision.py
+      - name: Записи матчей с сервера
+        env:
+          IP: ${{ steps.eu.outputs.ip }}
+          COUNT: ${{ inputs.count }}
+        run: |
+          case "$COUNT" in ''|*[!0-9]*) echo "::error::count — число"; exit 1;; esac
+          mkdir -p rec
+          names=$(ssh $SSH_OPTS root@$IP "ls -1 /var/lib/massovka-clips/matches 2>/dev/null | grep -E '^[0-9]{8}-[0-9]{6}-[0-9a-f]{10}\.match\.json\.gz$' | sort -r | head -n $COUNT")
+          if [ -z "$names" ]; then echo "::warning::записей пока нет — сыграйте матч до конца"; exit 0; fi
+          for n in $names; do scp $SSH_OPTS "root@$IP:/var/lib/massovka-clips/matches/$n" rec/; done
+          ls -la rec
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg fonts-dejavu-core
+      - run: pnpm install --frozen-lockfile
+      - name: Монтаж во всех вариантах финала
+        run: |
+          if [ -z "$(ls rec 2>/dev/null)" ]; then echo "нечего монтировать"; exit 0; fi
+          cd apps/server && npx tsx scripts/film-variants.ts ../../out ../../rec
+      - uses: actions/upload-artifact@v4
+        with:
+          name: film-variants
+          path: |
+            out/*.mp4
+            rec/*.gz
+          if-no-files-found: warn
+          retention-days: 7
