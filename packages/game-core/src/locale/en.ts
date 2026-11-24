@@ -51,7 +51,7 @@ export const en: Dict = {
       intro: 'Be the last alive!',
       hint: 'Flowers heal sanity',
       ends: { last: 'Last one alive', dawn: 'Dawn', none: 'The fog took them all' },
-      crowd: { freeze: 'Hush! A rustle!', jump: 'Over the fire!', dance: 'Round dance!' },
+      crowd: { freeze: 'Hush! A rustle!', jump: 'Torch!', dance: 'Round dance!' },
       sanity: ['Clear head', 'Hear whispers?', 'The fog thickens', 'They are coming…'],
       sanityLost: 'Lost in the fog',
     },

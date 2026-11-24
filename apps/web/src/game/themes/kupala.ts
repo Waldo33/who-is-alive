@@ -4,7 +4,7 @@ import type { Song, SongApi, SongStep } from '../music';
 import { canvas, ellipse, grid, px } from '../pixels';
 import { BASE_MAP } from './base';
 import { face } from './people';
-import type { CharStyle, PropSet, ThemePack, View } from './types';
+import type { CharStyle, Look, Pose, PropSet, ThemePack, View } from './types';
 import { centerDist, critterSheet, hash, line, tile } from './util';
 
 /**
@@ -15,62 +15,178 @@ import { centerDist, critterSheet, hash, line, tile } from './util';
 
 // ───────────── толпа ─────────────
 
-/** Капюшон дождевика вокруг лица (как шлем космонавта, но мягче) и корзинка в руке. */
-function hood(m: string[][], view: View): void {
-  const set = (y: number, x: number, ch: string) => {
-    m[y][x] = ch;
-  };
-  // острый верх капюшона
-  set(0, 3, 'o'); set(0, 8, 'o');
-  for (let x = 4; x <= 7; x++) set(0, x, 'o');
-  for (let y = 1; y <= 3; y++) for (let x = 2; x <= 9; x++) if (m[y][x] !== 'o') set(y, x, y === 1 ? 'k' : 'h');
-  if (view !== 'U') {
-    // капюшон обнимает лицо: кайма по бокам
-    for (let y = 2; y <= 7; y++) {
-      set(y, 0, 'o'); set(y, 1, 'H'); set(y, 10, 'H'); set(y, 11, 'o');
-    }
-    set(8, 1, 'o'); set(8, 10, 'o');
-  } else {
-    for (let y = 1; y <= 8; y++) for (let x = 1; x <= 10; x++) if (m[y][x] !== 'o' && m[y][x] !== '.') set(y, x, y < 4 ? 'h' : 'H');
-  }
-  // корзинка в правой руке
-  if (view === 'D') {
-    set(11, 10, 'U'); set(11, 11, 'U');
-    set(12, 10, 'u'); set(12, 11, 'u');
-    set(13, 10, 'o'); set(13, 11, 'o');
-  } else if (view === 'S') {
-    set(11, 7, 'U'); set(11, 8, 'U');
-    set(12, 7, 'u'); set(12, 8, 'u');
-  }
+// m[строка][столбец]; голова — строки 0–8, тело 9–12, ноги 13–15; руки — столбцы 2 и 9 в строках 10–11.
+const set = (m: string[][], x: number, y: number, ch: string) => {
+  if (y >= 0 && y < m.length && x >= 0 && x < m[y].length) m[y][x] = ch;
+};
+const row = (m: string[][], y: number, s: string) => {
+  m[y] = s.split('');
+};
+
+/** Буквы поверх шаблона: огонь, лён, вышивка, мех, рога, травы. */
+const EXTRA: Record<string, string> = {
+  F: PAL.orange, Y: PAL.yellow, W: PAL.white, Q: PAL.red, G: PAL.forest, g: PAL.green,
+  T: PAL.tan, N: PAL.fawn, Z: PAL.sand, U: PAL.umber, P: PAL.plum, X: PAL.mist,
+};
+
+/** Длинный подол до пят: щель между ногами заполнена, по краю — вышивка `hem`. */
+function longSkirt(m: string[][], hem: string): void {
+  row(m, 13, '..ollllllo..');
+  row(m, 14, '..o' + 'lLlLlL'.split('').map((c, i) => (i % 2 ? hem : c)).join('') + 'o..');
+  row(m, 15, '...oo..oo...');
 }
 
-/**
- * Цвета дождевиков: не похожи на кожу (иначе капюшон читается как лысина) и видны на тёмном болоте;
- * жёлтый, зелёный, красный и голубой — обводка игроков, их не берём.
- */
-const COATS: [string, string][] = [
-  [PAL.mist, PAL.slate],
-  [PAL.orchid, PAL.grape],
-  [PAL.clay, PAL.rust],
-  [PAL.slate, PAL.steel],
-  [PAL.wine, PAL.plum],
+/** 0 — девушка в венке: белая рубаха до пят с красной вышивкой, венок из цветов, лента и коса за спиной. */
+function maiden(m: string[][], view: View): void {
+  if (view !== 'U') {
+    const wreath = ['W', 'G', 'Y', 'G', 'Q', 'G', 'W', 'G'];
+    for (let x = 2; x <= 9; x++) set(m, x, 1, wreath[x - 2]);
+    set(m, 1, 2, 'G'); set(m, 10, 2, 'G');
+  } else {
+    for (let x = 2; x <= 9; x++) set(m, x, 1, x % 2 ? 'Y' : 'G');
+    // коса и ленты по спине
+    for (let y = 7; y <= 12; y++) set(m, 5, y, 'h');
+    for (let y = 7; y <= 12; y++) set(m, 6, y, y % 2 ? 'H' : 'h');
+    set(m, 4, 11, 'Q'); set(m, 7, 12, 'Q');
+  }
+  if (view === 'D') {
+    // вышитый ворот и рукава
+    set(m, 4, 9, 'Q'); set(m, 7, 9, 'Q');
+    set(m, 1, 11, 'Q'); set(m, 10, 11, 'Q');
+  }
+  longSkirt(m, 'Q');
+}
+
+/** 1 — парень в косоворотке: красная рубаха с вышитым воротом набок, плетёный пояс с кистью, лапти. */
+function lad(m: string[][], view: View): void {
+  if (view === 'D') {
+    set(m, 6, 9, 'Y'); set(m, 7, 9, 'Y'); set(m, 7, 10, 'Y');
+  }
+  for (let x = 3; x <= 8; x++) set(m, x, 12, x % 2 ? 'Y' : 'Z');
+  if (view !== 'U') { set(m, 8, 13, 'Y'); }
+  for (const x of [3, 4, 7, 8]) if (m[15][x] === 'o') set(m, x, 15, 'T');
+}
+
+/** 2 — ряженый-козёл: шуба мехом наружу, маска с рогами, глаза-бусины, борода. */
+function goat(m: string[][], view: View): void {
+  row(m, 0, 'Zo..oooo..oZ');
+  row(m, 1, 'oZoohTTTooZo');
+  row(m, 2, '.oZTTTTTTZo.');
+  if (view === 'U') {
+    for (let y = 3; y <= 8; y++) for (let x = 2; x <= 9; x++) if (m[y][x] !== 'o' && m[y][x] !== '.') set(m, x, y, (x + y) % 3 ? 'T' : 'N');
+    return;
+  }
+  row(m, 3, '.oTNTTTTNTo.');
+  row(m, 4, '.oTTTTTTTTo.');
+  row(m, 5, view === 'S' ? '.oTTTToTYTo.' : '.oToYTToYTo.');
+  row(m, 6, '..oTTTTTTo..');
+  row(m, 7, '..oTNooNTo..');
+  row(m, 8, '...oWWWWo...');
+  for (let x = 4; x <= 7; x++) set(m, x, 9, 'W');
+  set(m, 5, 10, 'W'); set(m, 6, 10, 'W');
+  // мех клочьями
+  for (let y = 9; y <= 12; y++) for (let x = 2; x <= 9; x++) if ((x * 3 + y) % 5 === 0 && m[y][x] === 'b') set(m, x, y, 'N');
+}
+
+/** 3 — знахарка: тёмный платок, завязанный под подбородком, шаль в цветах, пучок трав в руке. */
+function herbalist(m: string[][], view: View): void {
+  if (view !== 'U') {
+    for (let y = 3; y <= 7; y++) { set(m, 0, y, 'o'); set(m, 1, y, 'h'); set(m, 10, y, 'h'); set(m, 11, y, 'o'); }
+    set(m, 5, 8, 'h'); set(m, 6, 8, 'h'); set(m, 4, 9, 'h'); set(m, 7, 9, 'h');
+  }
+  set(m, 3, 2, 'k'); set(m, 7, 1, 'k'); set(m, 5, 2, 'k');
+  set(m, 3, 10, 'Y'); set(m, 6, 11, 'Y'); set(m, 8, 10, 'Q');
+  if (view === 'D') {
+    // травы в правой руке
+    set(m, 10, 12, 'g'); set(m, 11, 11, 'g'); set(m, 10, 11, 'G'); set(m, 11, 10, 'W'); set(m, 10, 10, 'Y');
+  }
+  longSkirt(m, 'P');
+}
+
+/** 4 — дед в брыле: соломенная шляпа с широкими полями, белая борода, льняная рубаха, красный пояс. */
+function elder(m: string[][], view: View): void {
+  row(m, 0, '...oooooo...');
+  row(m, 1, '..ohhhhkho..');
+  row(m, 2, '.ohhhhhhkho.');
+  row(m, 3, 'oHHHHHHHHHHo');
+  if (view === 'D') {
+    for (let x = 3; x <= 8; x++) set(m, x, 7, 'W');
+    for (let x = 3; x <= 8; x++) set(m, x, 8, 'W');
+    set(m, 5, 7, 'm'); set(m, 6, 7, 'm');
+    for (let x = 4; x <= 7; x++) set(m, x, 9, 'W');
+    set(m, 5, 10, 'W'); set(m, 6, 10, 'W');
+  }
+  for (let x = 3; x <= 8; x++) set(m, x, 12, 'Q');
+}
+
+/** Облики толпы по номеру фигуры: у ботов и у живых одинаково (`variantOf`). */
+const FOLK: { map: Record<string, string>; patch: (m: string[][], view: View) => void }[] = [
+  { map: { h: PAL.tan, H: PAL.fawn, k: PAL.sand, r: PAL.tan, R: PAL.fawn, b: PAL.white, B: PAL.mist, v: PAL.white, a: PAL.white, l: PAL.white, L: PAL.mist }, patch: maiden },
+  { map: { h: PAL.umber, H: PAL.plum, k: PAL.brick, r: PAL.umber, R: PAL.plum, b: PAL.red, B: PAL.wine, v: PAL.red, a: PAL.red, l: PAL.dusk, L: PAL.night }, patch: lad },
+  { map: { h: PAL.tan, H: PAL.fawn, k: PAL.sand, r: PAL.tan, R: PAL.fawn, b: PAL.tan, B: PAL.fawn, v: PAL.tan, a: PAL.tan, l: PAL.umber, L: PAL.plum }, patch: goat },
+  { map: { h: PAL.plum, H: PAL.ink, k: PAL.wine, r: PAL.plum, R: PAL.ink, b: PAL.wine, B: PAL.plum, v: PAL.wine, a: PAL.wine, l: PAL.umber, L: PAL.plum }, patch: herbalist },
+  { map: { h: PAL.sand, H: PAL.tan, k: PAL.white, r: PAL.sand, R: PAL.tan, b: PAL.mist, B: PAL.slate, v: PAL.mist, a: PAL.mist, l: PAL.mist, L: PAL.slate }, patch: elder },
 ];
 
-function coat(i: number): CharStyle {
-  const [b, B] = COATS[i];
+function folk(i: number): CharStyle {
   const f = face(i);
+  const o = FOLK[i];
   return {
-    map: {
-      ...BASE_MAP,
-      s: f.s, S: f.S, m: f.m, c: f.c,
-      h: b, H: B, k: b, r: b, R: B,
-      a: b, b, B, v: B,
-      l: PAL.dusk, L: PAL.ink,
-      u: PAL.umber, U: PAL.tan,
-    },
-    patch: hood,
+    map: { ...BASE_MAP, s: f.s, S: f.S, m: f.m, c: f.c, ...o.map, ...EXTRA, o: PAL.ink, e: PAL.ink },
+    patch: o.patch,
   };
 }
+
+// ───────────── жесты ─────────────
+
+const downArmR = (m: string[][]) => { set(m, 9, 10, 'b'); set(m, 9, 11, 'B'); };
+const downArmL = (m: string[][]) => { set(m, 2, 10, 'b'); set(m, 2, 11, 'B'); };
+
+/** «Факел!» — 0–1 берёзовый факел над головой, пламя мечется; «Тсс!» — 2 присел и зажал уши; «Хоровод!» — 3–4. */
+const POSES: Pose[] = [
+  ...[0, 1].map((f): Pose => ({
+    view: 'D',
+    face: 'wide',
+    patch: (m) => {
+      downArmR(m);
+      for (let y = 6; y <= 9; y++) set(m, 10, y, 'a');
+      set(m, 10, 5, 's');
+      set(m, 10, 4, 'U'); set(m, 10, 3, 'Z');
+      if (f === 0) { set(m, 10, 2, 'F'); set(m, 11, 2, 'F'); set(m, 10, 1, 'Y'); set(m, 11, 1, 'F'); set(m, 10, 0, 'F'); set(m, 9, 2, 'F'); }
+      else { set(m, 10, 2, 'F'); set(m, 9, 2, 'F'); set(m, 10, 1, 'Y'); set(m, 9, 1, 'F'); set(m, 9, 0, 'F'); set(m, 11, 2, 'F'); }
+    },
+  })),
+  {
+    view: 'D',
+    face: 'blink',
+    patch: (m) => {
+      // присел: всё на две строки ниже, колени у груди, ладони на ушах
+      const body = m.slice(0, 13).map((r) => [...r]);
+      for (let y = 0; y < 2; y++) m[y] = Array(12).fill('.');
+      for (let y = 0; y < 13; y++) m[y + 2] = body[y];
+      row(m, 15, '..olloollo..');
+      set(m, 0, 7, 'o'); set(m, 0, 8, 's'); set(m, 0, 9, 'o');
+      set(m, 11, 7, 'o'); set(m, 11, 8, 's'); set(m, 11, 9, 'o');
+      set(m, 1, 10, 'a'); set(m, 10, 10, 'a');
+    },
+  },
+  ...(['liftL', 'liftR'] as const).map((legs): Pose => ({
+    view: 'D',
+    legs,
+    face: 'happy',
+    patch: (m) => {
+      downArmL(m); downArmR(m);
+      set(m, 1, 10, 'a'); set(m, 0, 10, 's');
+      set(m, 10, 10, 'a'); set(m, 11, 10, 's');
+    },
+  })),
+];
+
+const ACTS: Look['acts'] = {
+  jump: { poses: [0, 1], ms: 150 }, // «Факел!»
+  freeze: { poses: [2], ms: 1000 }, // «Тсс!»
+  dance: { poses: [3, 4], ms: 260, flip: true }, // «Хоровод!»
+};
 
 // ───────────── болото ─────────────
 
@@ -390,15 +506,17 @@ const song: Song = {
 };
 
 const ICONS = {
-  // «Через костёр!» — язык пламени
-  jump: ['...o....', '..oyo...', '..ofyo..', '.ofyfo..', '.offyfo.', 'offaffo.', 'ofaaafo.', '.oooooo.'],
+  // «Факел!» — берёзовый факел с пламенем
+  jump: ['...oo...', '..ofyo..', '.ofyyfo.', '.ofyyfo.', '..offo..', '..ouuo..', '..ouuo..', '..oooo..'],
 };
 
 const pack: ThemePack = {
   looks: [
     {
-      chars: coat(0),
-      variants: [1, 2, 3, 4].map(coat),
+      chars: folk(0),
+      variants: [1, 2, 3, 4].map(folk),
+      poses: POSES,
+      acts: ACTS,
       ground,
       prop: (k) => BOG[k]?.() ?? null,
       wall: () => tile(['oUoUoUoU', 'uUuUuUuU', 'uUuUuUuU', 'oooooooo', 'UoUoUoUo', 'UuUuUuUu', 'UuUuUuUu', 'oooooooo'], { o: PAL.ink, u: PAL.umber, U: PAL.brick }),
