@@ -62,10 +62,9 @@ jobs:
             name: massovka-infra
             # Cloud NL-30: 1 vCPU, 2 ГБ, 30 ГБ, Нидерланды, 1560 ₽ (решение владельца 23.11.2026)
             presets: '6807'
-          - role: game
-            site: msk
-            name: massovka-game
-            presets: '6759,6749,4797,4795,6867,6869'
+          # Москва (massovka-game) с 24.11.2026 только пересылает запоздавших в Европу (RELAY) — игру
+          # туда не выкладываем: новый экземпляр в Москве перехватывал бы /i/<цвет>/ws мимо пересылки.
+          # Вернуть Москву — эта запись: role game, site msk, name massovka-game, presets 6759,…
     env:
       TWC_TOKEN: ${{ secrets.TWC_TOKEN }}
       SERVER_NAME: ${{ matrix.name }}
