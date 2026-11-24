@@ -14,3 +14,8 @@
   hosts: game
   roles:
     - ffmpeg
+
+- name: Сервер бота и наблюдения
+  hosts: infra
+  roles:
+    - watch
