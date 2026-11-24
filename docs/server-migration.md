@@ -423,7 +423,7 @@ infra/
 
 | Сервер | Где | Что |
 |---|---|---|
-| `massovka-eu` | Timeweb, Нидерланды, Cloud NL-30 (1 vCPU / 2 ГБ, 1560 ₽), `72.56.22.216` | игра `api.benobody.app`, сайт `benobody.app`, Postgres, Caddy |
+| `massovka-eu` | Timeweb, Нидерланды, Cloud NL-40 (2 vCPU / 2 ГБ, 2600 ₽; до 25.11 — NL-30), `72.56.22.216` | игра `api.benobody.app`, сайт `benobody.app`, Postgres, Caddy |
 | `massovka-infra` | Timeweb, Нидерланды, `72.56.73.184` | бот, сторож, VictoriaMetrics/Logs, Grafana, копии базы Европы |
 | `massovka-game` | Timeweb, Москва, `129.101.104.99` | неделю пересылает запоздавших в Европу, потом выключить |
 
