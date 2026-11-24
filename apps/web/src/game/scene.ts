@@ -210,9 +210,18 @@ export class GameScene extends Phaser.Scene {
   /** Рассудок (тема с рассудком): тьма по краям своего экрана, свеча на панели, стадия и «сердце». */
   private madVeil!: Phaser.GameObjects.Image;
   private candleG!: Phaser.GameObjects.Graphics;
-  private candleText!: Phaser.GameObjects.BitmapText;
+  private sanPrev = 100;
+  private sanTrend = 0;
+  private sanTrendAt = 0;
   private sanityStageShown = -1;
   private lastSanity = 100;
+  /** Свои кикиморы (видит только тот, за кем пришли): спрайт и сглаженная позиция. */
+  private kikiViews = new Map<number, { spr: Phaser.GameObjects.Image; x: number; y: number; seen: number }>();
+  private kikiG!: Phaser.GameObjects.Graphics;
+  /** «Краем глаза»: в «Мороке» и «Кошмаре» тень мелькает у края своего экрана и пропадает. */
+  private glimpse!: Phaser.GameObjects.Image;
+  private glimpseAt = 0;
+  private glimpseOff = 0;
   private heartAt = 0;
   private pigeons: Pigeon[] = [];
   private ui!: Phaser.GameObjects.Graphics;
@@ -335,6 +344,7 @@ export class GameScene extends Phaser.Scene {
     this.audio = data.audio;
     this.views = [];
     this.starSprites.clear();
+    this.kikiViews.clear();
     this.hedges = [];
     this.props = [];
     this.pigeons = [];
@@ -452,7 +462,10 @@ export class GameScene extends Phaser.Scene {
     this.nightFull = this.add.rectangle(0, AY, 180, 260, hexToInt(PAL.night), 1).setOrigin(0, 0).setDepth(941).setVisible(false);
     this.madVeil = this.add.image(0, AY, 'madveil').setOrigin(0, 0).setDepth(945).setVisible(false);
     this.candleG = this.add.graphics().setDepth(1100);
-    this.candleText = this.txt(22, PANEL_Y + 13, '', 'sand').setDepth(1101).setVisible(false);
+    // кикиморы — поверх тьмы краёв: выходят из неё
+    this.addSheet('kikimora', makeKikimora(), KIKI_W, KIKI_H);
+    this.kikiG = this.add.graphics().setDepth(946);
+    this.glimpse = this.add.image(0, 0, 'kikimora', 0).setOrigin(0.5, 1).setDepth(946).setTintFill(hexToInt(PAL.ink)).setVisible(false);
     // подсказки сверху поля: шаги пробного дубля и «впервые видишь» в настоящей игре
     this.coachG = this.add.graphics().setDepth(1600);
     // затемнение поля вокруг того, что выделяет обучение (на основной камере — под кнопками и подсказкой)
@@ -917,6 +930,20 @@ export class GameScene extends Phaser.Scene {
       }
       return;
     }
+    // тап по своей кикиморе — отбиваться (удары не тратятся; бьёшь по пустоте — со стороны это видно)
+    const kk = me.kiki.find((k) => !k.warn && Math.abs(k.x - x) <= 7 && y >= k.y - KIKI_H + 2 && y <= k.y + 3);
+    if (kk) {
+      if (Math.hypot(kk.x - mine.x, kk.y - mine.y) <= this.cfg.attackRange + 4 && w.time >= me.stunUntil) {
+        const d = Math.hypot(kk.x - mine.x, kk.y - mine.y) || 1;
+        this.lunge = { dx: ((kk.x - mine.x) / d) * 3, dy: ((kk.y - mine.y) / d) * 2, start: performance.now() };
+        this.swingFx.push({ eid: kk.id, x: kk.x, y: kk.y, t: 0 });
+        haptic('medium');
+        sim.intent({ k: 'attack', eid: kk.id });
+        return;
+      }
+      sim.intent({ k: 'move', x: Math.round(kk.x), y: Math.round(kk.y) });
+      return;
+    }
     // тап по звезде — идти за ней (даже если она прямо над своим персонажем или рядом с кем-то)
     for (const st of w.stars.values()) {
       if (Math.hypot(st.x - x, st.y - 3 - y) <= 6) {
@@ -1141,6 +1168,8 @@ export class GameScene extends Phaser.Scene {
         // присказка темы — только когда нет условия съёмки: его уже прочитали на отсчёте
         const intro = roundMod(this.sim.mod) === 'none' ? this.themeText()?.intro : undefined;
         if (intro) this.time.delayedCall(900, () => this.sim.phase === 'play' && this.showToast(intro, 2400));
+        const hint = roundMod(this.sim.mod) === 'none' ? this.themeText()?.hint : undefined;
+        if (hint) this.time.delayedCall(3500, () => this.sim.phase === 'play' && this.showToast(hint, 2400));
         // новичок без «Пробного дубля»: как ходить — сразу, как искать живого — когда осмотрелся
         if (this.newbie && !this.init0.spectator) {
           this.time.delayedCall(1200, () => this.sim.phase === 'play' && !this.sim.world.isFrozen() && this.tip('move'));
@@ -1819,7 +1848,6 @@ export class GameScene extends Phaser.Scene {
     this.candleG.clear();
     if (!on || !me) {
       this.madVeil.setVisible(false);
-      this.candleText.setVisible(false);
       if (this.sim.phase !== 'play') this.sanityStageShown = -1;
       return;
     }
@@ -1827,23 +1855,33 @@ export class GameScene extends Phaser.Scene {
     this.lastSanity = v;
     const stage = sanityStage(this.cfg, v);
     const now = performance.now();
-    // свеча в фонаре: x 6–16, низ у PANEL_Y + 31
+    // мозг на панели: тает сверху вниз и меняет цвет по стадиям, в «Кошмаре» дрожит; рядом — стрелка, куда идёт
+    if (now >= this.sanTrendAt) {
+      this.sanTrend = v - this.sanPrev;
+      this.sanPrev = v;
+      this.sanTrendAt = now + 1000;
+    }
     const g = this.candleG;
-    const base = PANEL_Y + 31;
-    const hgt = 2 + Math.round((v / 100) * 18);
-    g.fillStyle(hexToInt(PAL.ink)).fillRect(5, base - 26, 13, 28);
-    g.fillStyle(hexToInt(PAL.dusk)).fillRect(6, base - 25, 11, 26);
-    g.fillStyle(hexToInt(PAL.ink)).fillRect(9, base - hgt - 1, 5, hgt + 1);
-    g.fillStyle(hexToInt(stage >= 3 ? PAL.slate : PAL.sand)).fillRect(10, base - hgt, 3, hgt);
-    g.fillStyle(hexToInt(PAL.white)).fillRect(10, base - hgt, 1, hgt);
-    const shake = stage >= 2 ? (Math.floor(now / 80) % 3) - 1 : 0;
-    const fx = 11 + (stage >= 3 ? shake : 0);
-    const fy = base - hgt - 2;
-    const col = stage >= 3 ? PAL.cyan : stage >= 2 ? PAL.orange : PAL.amber;
-    const tall = stage >= 3 ? 2 : 3 + (Math.floor(now / 140) % 2);
-    g.fillStyle(hexToInt(col)).fillRect(fx, fy - tall + 1, 1, tall);
-    if (stage < 3) g.fillStyle(hexToInt(PAL.yellow)).fillRect(fx, fy, 1, 1);
-    this.candleText.setVisible(true).setText(String(v)).setFont(stage >= 3 ? 'px-coral' : stage >= 2 ? 'px-amber' : 'px-sand');
+    const shake = stage >= 3 ? (Math.floor(now / 90) % 3) - 1 : 0;
+    const bx = 4 + shake;
+    const by = PANEL_Y + 8;
+    const level = Math.round(BRAIN_H - (BRAIN_H * v) / 100);
+    const full = [PAL.peach, PAL.peach, PAL.orchid, PAL.steel][stage];
+    const fold = [PAL.coral, PAL.coral, PAL.grape, PAL.slate][stage];
+    for (const [x, y, k] of BRAIN) {
+      const c = k === 2 ? (stage >= 3 ? PAL.coral : PAL.mist) : y >= level ? (k === 1 ? fold : full) : k === 1 ? PAL.steel : PAL.dusk;
+      g.fillStyle(hexToInt(c)).fillRect(bx + x, by + y, 1, 1);
+    }
+    // стрелка: растёт (костёр, цветок) — вверх, падает быстро — вниз
+    const ax = 27;
+    const ay = by + 6;
+    if (this.sanTrend > 0) {
+      g.fillStyle(hexToInt(PAL.green));
+      g.fillRect(ax + 1, ay, 1, 1).fillRect(ax, ay + 1, 3, 1).fillRect(ax + 1, ay + 2, 1, 2);
+    } else if (this.sanTrend <= -2) {
+      g.fillStyle(hexToInt(PAL.coral));
+      g.fillRect(ax + 1, ay, 1, 2).fillRect(ax, ay + 2, 3, 1).fillRect(ax + 1, ay + 3, 1, 1);
+    }
     // тьма по краям: сильнее с каждой стадией, в «Кошмаре» пульсирует сердцем
     const beat = stage >= 3 ? 0.12 * Math.max(0, Math.sin(now / 130)) : 0;
     const a = [0, 0.35, 0.65, 0.9][stage] + beat;
@@ -1858,6 +1896,74 @@ export class GameScene extends Phaser.Scene {
     if (stage >= 2 && now >= this.heartAt) {
       haptic(stage >= 3 ? 'heavy' : 'light');
       this.heartAt = now + (stage >= 3 ? 650 : 1200);
+    }
+  }
+
+  /**
+   * Свои кикиморы. Пока `warn` — только рябь на воде там, где вылезет; потом — высокая полупрозрачная
+   * фигура, идёт к тебе. Другим их не видно (приходят личным сообщением): со стороны ты просто шарахаешься
+   * и машешь по пустоте.
+   */
+  private renderKiki(delta: number): void {
+    const me = this.me();
+    const g = this.kikiG;
+    g.clear();
+    const on = hasSanity(this.sim.theme) && this.sim.phase === 'play' && !!me?.alive && !this.init0.spectator;
+    const list = on && me ? me.kiki : [];
+    const now = performance.now();
+    const seen = new Set<number>();
+    for (const k of list) {
+      seen.add(k.id);
+      if (k.warn) {
+        // рябь: два расходящихся кольца
+        for (let i = 0; i < 2; i++) {
+          const ph = ((now / 700 + i / 2) % 1);
+          const r = 2 + ph * 7;
+          g.fillStyle(hexToInt(i ? PAL.mist : PAL.cyan), 0.9 * (1 - ph));
+          for (let a = 0; a < 16; a++) {
+            const ang = (a / 16) * Math.PI * 2;
+            g.fillRect(Math.round(k.x + Math.cos(ang) * r), Math.round(AY + k.y + Math.sin(ang) * r * 0.45), 1, 1);
+          }
+        }
+        continue;
+      }
+      let v = this.kikiViews.get(k.id);
+      if (!v) {
+        v = { spr: this.add.image(k.x, AY + k.y, 'kikimora', 0).setOrigin(0.5, 1).setDepth(946), x: k.x, y: k.y, seen: now };
+        this.kikiViews.set(k.id, v);
+      }
+      // плавно к присланной позиции (по сети она приходит пачками)
+      const f = Math.min(1, delta / 120);
+      v.x += (k.x - v.x) * f;
+      v.y += (k.y - v.y) * f;
+      const born = Math.min(1, (now - v.seen) / 600);
+      const flick = 0.72 + 0.12 * Math.sin(now / 60 + k.id);
+      const sway = Math.round(Math.sin(now / 260 + k.id));
+      v.spr
+        .setPosition(Math.round(v.x) + sway, Math.round(AY + v.y))
+        .setFrame(Math.floor(now / 220) % 2)
+        .setAlpha(born * flick)
+        .setVisible(true);
+    }
+    // краем глаза: тень у края экрана на долю секунды (только у себя, только картинкой)
+    const stage = on && me ? sanityStage(this.cfg, me.sanity) : 0;
+    if (stage >= 2 && now >= this.glimpseAt) {
+      const left = Math.random() < 0.5;
+      this.glimpse
+        .setPosition(left ? 4 + Math.random() * 6 : 170 - Math.random() * 6, AY + 60 + Math.random() * 180)
+        .setFlipX(!left)
+        .setAlpha(stage >= 3 ? 0.75 : 0.5)
+        .setVisible(true);
+      this.glimpseAt = now + (stage >= 3 ? 2500 : 5000) + Math.random() * 3000;
+      this.glimpseOff = now + 160;
+    } else if (this.glimpse.visible && (now > this.glimpseOff || stage < 2)) this.glimpse.setVisible(false);
+    for (const [id, v] of this.kikiViews) {
+      if (!seen.has(id) || !on) {
+        // изгнана или растворилась — тает клочьями тумана
+        if (v.spr.visible) this.swingFx.push({ eid: id, x: v.x, y: v.y, t: 0 });
+        v.spr.destroy();
+        this.kikiViews.delete(id);
+      }
     }
   }
 
@@ -2052,6 +2158,8 @@ export class GameScene extends Phaser.Scene {
       const w = this.sim.world;
       const level = this.sim.timeLeft() <= 10_000 ? 2 : w.zone && w.time >= w.zone.startAt ? 1 : 0;
       this.audio.setIntensity(level);
+      // ночь у всех одна (по времени дубля) — песня темнеет; свой рассудок в музыку не попадает, его услышали бы соседи
+      this.audio.setDread(hasSanity(this.sim.theme) ? nightLevel(this.cfg, this.playSec()) : 0);
     }
 
     this.applyTheme();
@@ -2082,6 +2190,7 @@ export class GameScene extends Phaser.Scene {
     this.renderPigeons(delta);
     this.renderFx(delta);
     this.renderHud();
+    this.renderKiki(delta);
     this.drawUi();
     this.updateOverlay(delta);
     this.syncUiCamera();
@@ -2823,8 +2932,11 @@ export class GameScene extends Phaser.Scene {
     this.ovPanel(8, AY + 8, 164, 244);
     // три звезды, но собравшего вычислили — его звёзды сгорели (MatchSim.finishRound)
     const winner = s.starWinner ? s.reveal.find((r) => r.pid === s.starWinner) : undefined;
-    const burned = !!winner && s.accusations.some((a) => a.correct && a.eid === winner.eid);
-    const reason = burned ? this.t.game.starsBurned : this.t.game.endReason[s.endReason];
+    const night = hasSanity(sim.theme) ? this.themeText()?.ends : undefined;
+    const burned = !night && !!winner && s.accusations.some((a) => a.correct && a.eid === winner.eid);
+    // с рассудком: остался один / рассвет / туман забрал всех
+    const left = s.reveal.filter((r) => r.alive).length;
+    const reason = night ? (left === 1 ? night.last : left ? night.dawn : night.none) : burned ? this.t.game.starsBurned : this.t.game.endReason[s.endReason];
     this.ovText(90, AY + 14, tp(this.lang, this.t.game.resultsTitle, s.round), 'yellow');
     this.ovText(90, AY + 25, reason, 'mist');
     const order = [...sim.players].sort((a, b) => sim.scores[b.pid] - sim.scores[a.pid]);
@@ -3335,6 +3447,77 @@ function makeNightVeil(): HTMLCanvasElement {
 }
 
 /** Тьма по краям своего экрана при потере рассудка: широкая кромка шахматкой, к центру реже. */
+/** Иконка рассудка: мозг 20×15. [x, y, 0 — мякоть, 1 — извилина, 2 — контур]. */
+const BRAIN_H = 15;
+const BRAIN: [number, number, number][] = (() => {
+  const inside = (x: number, y: number) => y >= 0 && y < 13 && ((x - 9.5) / 9.6) ** 2 + ((y - 6.5) / 6.6) ** 2 <= 1;
+  const out: [number, number, number][] = [];
+  for (let y = 0; y < BRAIN_H; y++) {
+    for (let x = 0; x < 20; x++) {
+      // ствол снизу справа от середины
+      if (y >= 13 && (x === 11 || x === 12)) {
+        out.push([x, y, x === 12 || y === 14 ? 2 : 0]);
+        continue;
+      }
+      if (!inside(x, y)) continue;
+      const edge = !inside(x - 1, y) || !inside(x + 1, y) || !inside(x, y - 1) || !inside(x, y + 1);
+      const fold =
+        (x === 10 && y < 7) ||
+        Math.abs(y - (4 + Math.sin(x * 0.9) * 1.3)) < 0.5 ||
+        Math.abs(y - (8.5 + Math.sin(x * 0.8 + 2) * 1.3)) < 0.5;
+      out.push([x, y, edge ? 2 : fold ? 1 : 0]);
+    }
+  }
+  return out;
+})();
+
+const KIKI_W = 13;
+const KIKI_H = 24;
+
+/** Кикимора: космы до пояса, глаза светятся, длинные руки с когтями, подол рвётся в туман. Два кадра. */
+function makeKikimora(): HTMLCanvasElement {
+  const rows = [
+    '....DHHHD....',
+    '...DHHhHHD...',
+    '..DHHhHHhHD..',
+    '..DHhHHHhHD..',
+    '..DHHEHEHHD..',
+    '..DHHeHeHHD..',
+    '..DHHHHHHHD..',
+    '.DHHhHHHhHHD.',
+    '.DHHHSSSHHHD.',
+    'DHHHBBBBBHHHD',
+    'DH.HBBBBBH.HD',
+    'S..HBBBBBH..S',
+    'S..DBBBBBD..S',
+    'S...BBBBB...S',
+    'S...BBhBB...S',
+    'S...BBBBB...S',
+    'C...BBBBB...C',
+    'C...BBBBB...C',
+    '....BBBBB....',
+    '....BbBbB....',
+    '....bBbBb....',
+    '....B.b.B....',
+    '....b...b....',
+    '.............',
+  ];
+  const col: Record<string, string> = { D: PAL.deep, H: PAL.pine, h: PAL.forest, E: PAL.cyan, e: PAL.white, S: PAL.mist, B: PAL.dusk, b: PAL.night, C: PAL.white };
+  const { c, g } = canvas(KIKI_W * 2, KIKI_H);
+  for (let f = 0; f < 2; f++) {
+    rows.forEach((r, y) => {
+      for (let x = 0; x < KIKI_W; x++) {
+        let ch = r[x];
+        // второй кадр: руки тянутся выше, подол колышется
+        if (f === 1 && y >= 11 && y <= 17 && (x === 0 || x === 12)) ch = rows[y + 1]?.[x] ?? '.';
+        if (f === 1 && y >= 19) ch = r[x] === 'B' ? 'b' : r[x] === 'b' ? 'B' : ch;
+        if (ch && ch !== '.') ppx(g, f * KIKI_W + x, y, col[ch]);
+      }
+    });
+  }
+  return c;
+}
+
 function makeMadVeil(): HTMLCanvasElement {
   const { c, g } = canvas(180, 260);
   for (let y = 0; y < 260; y++) {

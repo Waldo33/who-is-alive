@@ -104,11 +104,11 @@ export const DEFAULT_CONFIG = {
   starsToWin: 3,
   starPickupRadius: 6,
 
-  // Рассудок («Купальская ночь», sanity.ts). Одиночка без цветов к концу дубля — на нуле; в толпе ~35.
+  // Рассудок («Купальская ночь», sanity.ts). Одиночка без цветов — на нуле к ~60-й с; в толпе ~к концу дубля.
   // Симуляция (pnpm sim -- --cfg '{"fixedTheme":7}'): сгинули в тумане ~11% игроков, минимум в среднем ~50.
   sanityStart: 100,
   sanityDrainAtSec: [20, 45] as number[], // границы сумерек, ночи и глухой ночи
-  sanityDrainRate: [0.7, 1.2, 1.9] as number[], // ед./с в каждой части
+  sanityDrainRate: [0.9, 1.6, 2.8] as number[], // ед./с в каждой части: к концу дубля в живых почти никого — побеждает последний
   sanityNightSec: 60, // за сколько секунд сумерки становятся ночью (облик)
   sanityStages: [70, 45, 25] as [number, number, number], // «Шёпот», «Морок», «Кошмар»
   sanityCrowdRadius: 20, // толпа рядом успокаивает
@@ -124,6 +124,19 @@ export const DEFAULT_CONFIG = {
   sanityBotHit: 15,
   sanityNearCut: 5,
   sanityNearRadius: 24,
+  // Кикиморы («Кошмар», рассудок ниже sanityStages[2]): видит только свой игрок
+  kikiMoreAt: [15, 6] as [number, number], // ниже — вторая и третья
+  kikiWarnMs: 1500, // рябь на воде до появления
+  kikiGapMs: 3000, // не чаще одной новой
+  kikiSpeed: [12, 16] as [number, number], // пикс./с у порога и на нуле (человечек — 18)
+  kikiTouch: 6,
+  kikiSpawnMinDist: 60,
+  kikiHp: 2,
+  kikiBanish: 15, // отбил — рассудок вернулся
+  kikiDreadRadius: 30,
+  kikiDreadMul: 1.5,
+  // «Перепуг»: бот вздрагивает и убегает от пустоты — ложный след для охотников (эпизодов в минуту на бота к глухой ночи)
+  botPanicPerMin: 0.12,
 
   // сужение
   zoneStartBeforeEndSec: 20,

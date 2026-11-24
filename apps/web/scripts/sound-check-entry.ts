@@ -3,7 +3,7 @@
  * в OfflineAudioContext через ту же цепочку, что в игре (шины, выравниватель), затем
  * считается громкость полностью и после полосы динамика телефона 350 Гц – 7 кГц.
  */
-import { THEME_COUNT } from '@kto/game-core';
+import { THEME_COUNT, THEME_RULES } from '@kto/game-core';
 import { Audio } from '../src/game/audio';
 import type { Sfx } from '../src/game/audio';
 import type { MusicMode } from '../src/game/music';
@@ -154,12 +154,13 @@ void (async () => {
       out['kids:' + s] = measure(x);
     }
     for (let th = 0; th < THEME_COUNT; th++) await loadTheme(th);
-    const music = (key: string, len: number, mode: MusicMode, theme: number, opts: { twist?: boolean; intensity?: number; from?: number } = {}) =>
+    const music = (key: string, len: number, mode: MusicMode, theme: number, opts: { twist?: boolean; intensity?: number; from?: number; dread?: number } = {}) =>
       render(len, {
         setup: (a) => {
           a.setMusic(mode, theme, true);
           if (opts.twist) a.setTwist(true);
           if (opts.intensity) a.setIntensity(opts.intensity);
+          if (opts.dread) a.setDread(opts.dread);
         },
       }).then((x) => {
         out[key] = measure(x, Math.round((opts.from ?? 0) * SR), x.length - SR / 4);
@@ -171,6 +172,8 @@ void (async () => {
       await music(`music:${th}:calm`, 20, 'play', th, { from: 4 });
       await music(`music:${th}:tense`, 16, 'play', th, { intensity: 2, from: 4 });
       await music(`music:${th}:twist`, 16, 'play', th, { twist: true, from: 4 });
+      // тема с рассудком: глухая ночь — песня ломается, не должна стать громче
+      if (THEME_RULES[th].sanity) await music(`music:${th}:night`, 20, 'play', th, { dread: 1, from: 4 });
     }
     // «свет вырубили» в Корпоративе: после щелчка света — провал тишины (0,4–0,95 с)
     const party = 6;

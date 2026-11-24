@@ -37,6 +37,9 @@ export class HostSession implements ClientSession {
   private lastPhase = '';
   private lastRound = -1;
   private lastMe = new Map<string, string>();
+  private lastKm = new Map<string, string>();
+  private lastKmN = new Map<string, number>();
+  private lastMeAt = new Map<string, number>();
   private lastSentWt = -1;
   private unsub: (() => void) | null = null;
   private readonly cfgOverrides: Partial<GameConfig>;
@@ -150,6 +153,7 @@ export class HostSession implements ClientSession {
       clapsLeft: p.clapsLeft,
       clapAt: p.clapAt,
       ...(hasSanity(this.sim.theme) ? { sanity: Math.ceil(p.sanity) } : {}),
+      ...(p.kiki.length ? { km: p.kiki.map((k) => [k.id, Math.round(k.x), Math.round(k.y), this.sim.world.time < k.at ? 1 : 0] as [number, number, number, number]) } : {}),
     };
   }
 
@@ -253,9 +257,17 @@ export class HostSession implements ClientSession {
       if (p.pid === this.selfPid) continue;
       const me = this.meFor(p.pid);
       if (!me) continue;
-      const key = JSON.stringify(me);
-      if (this.lastMe.get(p.pid) !== key) {
+      // кикиморы двигаются каждый шаг — их позиции шлём не чаще раза в cmdBatchMs (клиент дорисует ход сам)
+      const { km, ...rest } = me;
+      const key = JSON.stringify(rest);
+      const kmKey = JSON.stringify(km ?? null);
+      const moved = kmKey !== this.lastKm.get(p.pid) && now - (this.lastMeAt.get(p.pid) ?? -Infinity) >= s.cfg.cmdBatchMs;
+      const appeared = (km?.length ?? 0) !== (this.lastKmN.get(p.pid) ?? 0);
+      if (this.lastMe.get(p.pid) !== key || moved || appeared) {
         this.lastMe.set(p.pid, key);
+        this.lastKm.set(p.pid, kmKey);
+        this.lastKmN.set(p.pid, km?.length ?? 0);
+        this.lastMeAt.set(p.pid, now);
         this.sendTo(p.pid, { t: 'me', me });
       }
     }

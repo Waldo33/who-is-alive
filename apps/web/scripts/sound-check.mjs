@@ -43,10 +43,11 @@ const TARGETS = {
   'sfx:pigeon': [-90, -46, 'P3 фон'],
   'sfx:tick': [-90, -46, 'P3 фон'],
 };
-for (let th = 0; th < 7; th++) {
+for (let th = 0; th < 8; th++) {
   TARGETS[`music:${th}:calm`] = [-45, -39, 'музыка в дубле'];
   TARGETS[`music:${th}:tense`] = [-44, -37, 'музыка, пик напряжения'];
   TARGETS[`music:${th}:twist`] = [-44, -36, 'изнанка ≤ −36'];
+  TARGETS[`music:${th}:night`] = [-50, -38, 'глухая ночь: тише, но слышно'];
 }
 TARGETS['music:accuse'] = [-42, -38, 'обвинение'];
 for (const k of ['hitPlayer', 'cut', 'knockedOut', 'hitBot']) TARGETS['kids:' + k] = [-36, -29, 'детский: P1'];

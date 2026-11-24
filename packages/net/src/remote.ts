@@ -569,6 +569,7 @@ export class RemoteSession implements ClientSession {
       clapsLeft: m.clapsLeft ?? 0,
       clapAt: m.clapAt ?? 0,
       sanity: m.sanity ?? this.cfg.sanityStart,
+      kiki: (m.km ?? []).map(([id, x, y, w]) => ({ id, x, y, warn: w === 1 })),
     };
   }
 
@@ -638,7 +639,8 @@ export class RemoteSession implements ClientSession {
         this.emotePred = { kind, until: this.clock() + 3000 };
         this.lastPredClock = this.clock();
         out = { k: 'emote', kind };
-      } else if (it.k === 'attack') {
+      } else if (it.k === 'attack' && it.eid >= 0) {
+        // удар по своей кикиморе (id < 0) ударов дубля не тратит
         const left = me!.attacksLeft - this.pendingAtk.length;
         if (left > 0) this.pendingAtk.push({ base: me!.attacksLeft, until: this.clock() + OPTIMISTIC_MS });
       } else if (it.k === 'crowd') {

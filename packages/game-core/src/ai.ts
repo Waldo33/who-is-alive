@@ -33,6 +33,7 @@ export class AiPlayer implements AiAgent {
   private freezeChecked = -1;
   private attackAt = 0;
   private accuseAt = 0;
+  private kikiAt = 0;
   private persona: AiPersona;
   private bound = false;
 
@@ -121,6 +122,9 @@ export class AiPlayer implements AiAgent {
     if (e.act && t < e.actEnd) return;
     if (t < me.stunUntil) return;
 
+    // свои кикиморы: рядом — отбиваться, поодаль — бежать от них
+    if (this.kikimora(sim, me, e.x, e.y, t)) return;
+
     // охота
     if (me.attacksLeft > 0) {
       const sus = this.topSuspect(sim, sim.cfg.attackRange - 1);
@@ -175,6 +179,38 @@ export class AiPlayer implements AiAgent {
     const ang = this.rng.range(0, Math.PI * 2);
     const r = this.rng.range(r0, r1);
     this.go(sim, e.x + Math.cos(ang) * r, e.y + Math.sin(ang) * r);
+  }
+
+  /** Реакция на своих кикимор (тема с рассудком). true — ход занят. */
+  private kikimora(sim: MatchSim, me: NonNullable<ReturnType<MatchSim['playerRound']>>, x: number, y: number, t: number): boolean {
+    let near: { id: number; x: number; y: number } | null = null;
+    let nd = Infinity;
+    for (const k of me.kiki) {
+      if (t < k.at) continue;
+      const d = Math.hypot(k.x - x, k.y - y);
+      if (d < nd) {
+        nd = d;
+        near = k;
+      }
+    }
+    if (!near) {
+      this.kikiAt = 0;
+      return false;
+    }
+    if (nd <= sim.cfg.attackRange + 2) {
+      if (!this.kikiAt) this.kikiAt = t + this.rng.range(150, 600);
+      if (t >= this.kikiAt) {
+        sim.intent(this.pid, { k: 'attack', eid: near.id });
+        this.kikiAt = 0;
+      }
+      return true;
+    }
+    if (nd < 45 && !this.walking) {
+      const a = Math.atan2(y - near.y, x - near.x) + this.rng.range(-0.6, 0.6);
+      this.go(sim, x + Math.cos(a) * 40, y + Math.sin(a) * 40);
+      return true;
+    }
+    return false;
   }
 
   private go(sim: MatchSim, x: number, y: number): void {

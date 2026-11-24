@@ -9,7 +9,7 @@ import type { ActKind, CrowdKind, Dir, EmoteKind, EntitySpawn, WorldEvent } from
 
 import { NavGrid } from './nav';
 import { Rng } from './rng';
-import { fireLevel, sanityDrain } from './sanity';
+import { fireLevel, nightLevel, sanityDrain } from './sanity';
 import { ROTATION_THEMES, THEME_COUNT, hasSanity, killerExposed, themeRules, twistEmote } from './themes';
 import { ROUND_MODS, roundMod } from './mods';
 import { World } from './world';
@@ -78,6 +78,21 @@ export interface PlayerRound {
   sanity: number;
   /** Самый низкий рассудок за дубль (награды). */
   sanityMin: number;
+  /** Свои кикиморы (рассудок ниже порога «Кошмар»): видит только сам игрок, id отрицательные. */
+  kiki: Kiki[];
+  /** Раньше этого времени мира новая кикимора не появится. */
+  kikiNextAt: number;
+}
+
+/** Кикимора — кошмар одного игрока: появляется из воды (`at` — когда вылезет), идёт к нему, касание — вырезан. */
+export interface Kiki {
+  id: number;
+  x: number;
+  y: number;
+  /** С какого времени мира ходит (до — рябь на воде). */
+  at: number;
+  /** Сколько ударов ещё выдержит. */
+  hp: number;
 }
 
 export interface PointsLine {
@@ -333,6 +348,8 @@ export class MatchSim {
       clapAt: 0,
       sanity: this.cfg.sanityStart,
       sanityMin: this.cfg.sanityStart,
+      kiki: [],
+      kikiNextAt: 0,
     }));
     this.bots = new BotBrain(this.world, this.cfg, new Rng(rng.fork()), (ev) => this.emit(ev), themeRules(this.theme).twist);
     const pset = new Set(playerEids);
@@ -629,8 +646,14 @@ export class MatchSim {
           takenNow.add(st.id); // чтобы второй игрок не взял ту же звезду в этом же тике
           p.stars++;
           this.addSanity(p, cfg.sanityFlower);
+          // цветок отгоняет ближайшую кикимору обратно в воду
+          if (p.kiki.length) {
+            const near = p.kiki.reduce((a, b) => (Math.hypot(a.x - e.x, a.y - e.y) <= Math.hypot(b.x - e.x, b.y - e.y) ? a : b));
+            p.kiki = p.kiki.filter((k) => k !== near);
+          }
           this.queueStar(t + this.starRespawnMs());
-          if (p.stars >= cfg.starsToWin && !this.starWinner) {
+          // с рассудком цветы только лечат: побеждает последний выживший (finishRound)
+          if (!hasSanity(this.theme) && p.stars >= cfg.starsToWin && !this.starWinner) {
             this.starWinner = p.pid;
             this.endReason = 'stars';
           }
@@ -709,6 +732,7 @@ export class MatchSim {
     const fire = fireLevel(cfg, sec);
     const fx = this.arena.width / 2;
     const fy = 132;
+    this.bots.panicPerMin = cfg.botPanicPerMin * nightLevel(cfg, sec);
     for (const p of this.pr) {
       if (!p.alive || p.autopilot) continue;
       const e = this.world.get(p.eid)!;
@@ -721,15 +745,105 @@ export class MatchSim {
           if (o.alive && o.eid !== p.eid && Math.hypot(o.x - e.x, o.y - e.y) <= cfg.sanityCrowdRadius) near++;
         }
         if (near >= cfg.sanityCrowdMin) rate *= cfg.sanityCrowdMul;
+        // рядом с кикиморой рассудок тает быстрее — долго бегать не выйдет, надо отбиваться
+        if (p.kiki.some((k) => t >= k.at && Math.hypot(k.x - e.x, k.y - e.y) <= cfg.kikiDreadRadius)) rate *= cfg.kikiDreadMul;
       }
       this.addSanity(p, (rate * TICK_MS) / 1000);
+      if (this.kikiTick(p, t)) continue;
       if (p.sanity > 0 || cfg.kidsMode) continue;
-      p.alive = false;
-      p.diedAt = t;
-      this.emit({ t: 'hit', target: p.eid, result: 'player', x: e.x, y: e.y, at: t });
-      this.emit({ t: 'remove', eid: p.eid, cause: 'player', at: t });
+      this.madCut(p, t);
     }
   }
+
+  /** Вырезан рассудком или кикиморой: удар без нападавшего, как у режиссёра в «Жёстком дубле». */
+  private madCut(p: PlayerRound, t: number): void {
+    const e = this.world.get(p.eid)!;
+    p.alive = false;
+    p.diedAt = t;
+    p.kiki = [];
+    this.emit({ t: 'hit', target: p.eid, result: 'player', x: e.x, y: e.y, at: t });
+    this.emit({ t: 'remove', eid: p.eid, cause: 'player', at: t });
+  }
+
+  /**
+   * Кикиморы игрока: ниже порога «Кошмар» вылезают из воды у края поля (с рябью за kikiWarnMs), чем ниже
+   * рассудок — тем их больше и тем они быстрее, но медленнее человечка: убежать можно, только бегом.
+   * Касание — вырезан (в детском режиме — оглушён, кикимора уходит). Рассудок выше порога — все тают.
+   * Знает о них только сам игрок (личное сообщение). true — игрок вырезан.
+   */
+  private kikiTick(p: PlayerRound, t: number): boolean {
+    const cfg = this.cfg;
+    const limit = cfg.sanityStages[2];
+    if (p.sanity >= limit) {
+      p.kiki = [];
+      return false;
+    }
+    const e = this.world.get(p.eid)!;
+    const want = p.sanity < cfg.kikiMoreAt[1] ? 3 : p.sanity < cfg.kikiMoreAt[0] ? 2 : 1;
+    if (p.kiki.length < want && t >= p.kikiNextAt) {
+      const w = this.arena.walk;
+      for (let k = 0; k < 20; k++) {
+        const side = this.rng.int(0, 3);
+        const x = side === 0 ? w.x + 2 : side === 1 ? w.x + w.w - 2 : this.rng.range(w.x + 4, w.x + w.w - 4);
+        const y = side === 2 ? w.y + 2 : side === 3 ? w.y + w.h - 2 : this.rng.range(w.y + 4, w.y + w.h - 4);
+        if (Math.hypot(x - e.x, y - e.y) < cfg.kikiSpawnMinDist && k < 19) continue;
+        p.kiki.push({ id: this.kikiSeq--, x: Math.round(x), y: Math.round(y), at: t + cfg.kikiWarnMs, hp: cfg.kikiHp });
+        break;
+      }
+      p.kikiNextAt = t + cfg.kikiGapMs;
+    }
+    const depth = 1 - p.sanity / limit; // 0 у порога, 1 на нуле
+    const speed = cfg.kikiSpeed[0] + (cfg.kikiSpeed[1] - cfg.kikiSpeed[0]) * depth;
+    for (const k of p.kiki) {
+      if (t < k.at) continue;
+      const dx = e.x - k.x;
+      const dy = e.y - k.y;
+      const d = Math.hypot(dx, dy);
+      const step = (speed * TICK_MS) / 1000;
+      if (d > step) {
+        k.x += (dx / d) * step;
+        k.y += (dy / d) * step;
+      }
+      if (Math.hypot(e.x - k.x, e.y - k.y) > cfg.kikiTouch) continue;
+      if (cfg.kidsMode) {
+        p.kiki = p.kiki.filter((o) => o !== k);
+        p.stunUntil = t + cfg.missStunSec * 1000;
+        this.emit({ t: 'act', eid: p.eid, kind: 'stun', dur: cfg.missStunSec * 1000, at: t });
+        return false;
+      }
+      this.madCut(p, t);
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Удар по своей кикиморе: ударов дубля не тратит, два удара — отбита (+рассудок). Для остальных игроков
+   * это взмах по пустому месту (эмоция «удар»), а значит — улика.
+   */
+  private hitKiki(p: PlayerRound, id: number, ax: number, ay: number): void {
+    const cfg = this.cfg;
+    const t = this.world.time;
+    const k = p.kiki.find((o) => o.id === id);
+    if (!k) return;
+    if (Math.hypot(k.x - ax, k.y - ay) > cfg.attackRange + 4) {
+      this.notices.push({ t: 'denied', pid: p.pid, reason: 'out_of_range' });
+      return;
+    }
+    const dx = k.x - ax;
+    const dy = k.y - ay;
+    const d = Math.hypot(dx, dy) || 1;
+    this.emit({ t: 'act', eid: p.eid, kind: 'jab', dur: emoteDur('jab'), at: t });
+    // отшатнулась
+    k.x -= (dx / d) * 8;
+    k.y -= (dy / d) * 8;
+    k.at = Math.max(k.at, t + 400);
+    if (--k.hp > 0) return;
+    p.kiki = p.kiki.filter((o) => o !== k);
+    this.addSanity(p, cfg.kikiBanish);
+  }
+
+  private kikiSeq = -1;
 
   /** Очередь появления звёзд держим по времени: ранняя замена взятой звезды не ждёт позднюю. */
   private queueStar(at: number): void {
@@ -772,6 +886,9 @@ export class MatchSim {
     const pts: Record<string, PointsLine> = {};
     for (const p of this.pr) pts[p.pid] = { kill: p.kills * cfg.points.kill, survive: 0, stars: 0, accuse: 0, total: 0 };
     const aliveEids = new Set(this.pr.filter((p) => p.alive).map((p) => p.eid));
+    // с рассудком: дубль выигрывает последний выживший — один живой; все сгинули — кто продержался дольше;
+    // плёнка кончилась при нескольких живых — у кого голова яснее
+    if (hasSanity(this.theme) && this.pr.length >= 2) this.starWinner = this.lastSurvivor();
     const accusations: RoundSummary['accusations'] = [];
     const accusedCount = new Map<number, number>();
     for (const p of this.pr) {
@@ -787,7 +904,7 @@ export class MatchSim {
       // выжил, но тебя вычислили — очко за выживание пропадает (обвинитель своё +1 уже получил)
       if (p.alive && !accusedCount.get(p.eid)) this.addScore(p.pid, cfg.points.survive, 'survive', pts);
       // три звезды, но тебя вычислили — звёзды сгорели: иначе бег по звёздам в открытую выгоднее всего
-      if (this.starWinner === p.pid && !accusedCount.get(p.eid)) this.addScore(p.pid, cfg.points.stars, 'stars', pts);
+      if (this.starWinner === p.pid && (hasSanity(this.theme) || !accusedCount.get(p.eid))) this.addScore(p.pid, cfg.points.stars, 'stars', pts);
     }
     for (const p of this.pr) pts[p.pid].total = pts[p.pid].kill + pts[p.pid].survive + pts[p.pid].stars + pts[p.pid].accuse;
 
@@ -830,6 +947,19 @@ export class MatchSim {
       kills: [...this.roundKills],
     };
     this.setPhase('reveal', revealMs(cfg));
+  }
+
+  private lastSurvivor(): string | null {
+    const alive = this.pr.filter((p) => p.alive);
+    if (alive.length === 1) return alive[0].pid;
+    if (alive.length > 1) {
+      const top = alive.reduce((a, b) => (b.sanity > a.sanity ? b : a));
+      return alive.filter((p) => p.sanity === top.sanity).length === 1 ? top.pid : null;
+    }
+    const dead = this.pr.filter((p) => p.diedAt !== null);
+    if (!dead.length) return null;
+    const last = dead.reduce((a, b) => (b.diedAt! > a.diedAt! ? b : a));
+    return dead.filter((p) => p.diedAt === last.diedAt).length === 1 ? last.pid : null;
   }
 
   private addScore(pid: string, delta: number, reason: keyof Omit<PointsLine, 'total'>, pts?: Record<string, PointsLine>): void {
@@ -1059,6 +1189,10 @@ export class MatchSim {
   private attack(p: PlayerRound, target: number, ax: number, ay: number, view?: number): void {
     const cfg = this.cfg;
     const t = this.world.time;
+    if (target < 0) {
+      this.hitKiki(p, target, ax, ay);
+      return;
+    }
     if (p.attacksLeft <= 0) {
       this.notices.push({ t: 'denied', pid: p.pid, reason: 'no_attacks' });
       return;

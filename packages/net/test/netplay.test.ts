@@ -208,7 +208,19 @@ describe('сетевая игра', () => {
       botFingers(rig, rng);
     }
     expect(rig.host.sim.theme).toBe(kupala);
-    for (const { msg } of rig.roomLog) expect(JSON.stringify(msg)).not.toContain('sanity');
+    // кикиморы — тоже только лично: подтолкнём одного гостя в «Кошмар»
+    const mad = rig.host.sim.playerRound('g1')!;
+    for (let i = 0; i < 20 * 3; i++) {
+      if (mad.alive) mad.sanity = Math.min(mad.sanity, 20);
+      rig.step();
+    }
+    for (const { msg } of rig.roomLog) {
+      expect(JSON.stringify(msg)).not.toContain('sanity');
+      expect(JSON.stringify(msg)).not.toContain('"km"');
+    }
+    const kmTo = rig.privLog.filter(({ msg }) => (msg as { me?: { km?: unknown } }).me?.km).map(({ to }) => to);
+    expect(kmTo.length).toBeGreaterThan(0);
+    expect(new Set(kmTo)).toEqual(new Set(['g1']));
     let got = 0;
     for (const { to, msg } of rig.privLog) {
       const m = msg as { t: string; me?: { eid: number; sanity?: number } };

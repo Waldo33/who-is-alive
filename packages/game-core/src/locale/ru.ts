@@ -18,6 +18,10 @@ export interface ThemeText {
   /** Тема с рассудком: подпись при переходе в стадию 0–3 (sanity.ts › sanityStage) и «вырезан на нуле». */
   sanity?: [string, string, string, string];
   sanityLost?: string;
+  /** Тема с рассудком: чем кончился дубль — остался один, рассвет (живых несколько), сгинули все. */
+  ends?: { last: string; dawn: string; none: string };
+  /** Вторая подсказка после `intro` (в начале дубля). */
+  hint?: string;
 }
 
 /** Формы множественного числа по Intl.PluralRules: one / few / many / other. */
@@ -78,7 +82,9 @@ export const ru = {
       twistCrowd: { freeze: 'Загадай желание!', jump: 'Салют!', dance: 'Огоньки!' },
     },
     kupala: {
-      intro: 'Купальская ночь',
+      intro: 'Выживи последним!',
+      hint: 'Цветы лечат рассудок',
+      ends: { last: 'Последний живой', dawn: 'Рассвет', none: 'Туман забрал всех' },
       crowd: { freeze: 'Тсс! Шорох!', jump: 'Через костёр!', dance: 'Хоровод!' },
       sanity: ['Голова ясная', 'Слышишь шёпот?', 'Туман сгущается', 'Они идут…'],
       sanityLost: 'Сгинул в тумане',
