@@ -90,8 +90,10 @@ export function drawResultCard(inp: CardInput): HTMLCanvasElement {
     g.fillRect(x + 1, y + 1, LW - 18, 31);
     g.fillStyle = PAL.orchid;
     g.fillRect(x + 1, y + 1, LW - 18, 1);
-    // крупная иконка ×2 в тёмном окошке слева, текст справа — спокойнее иконки
+    // крупная иконка ×2 в тёмном окошке с янтарной рамкой слева, текст справа — спокойнее иконки
     g.fillStyle = PAL.ink;
+    g.fillRect(x + 2, y + 2, 28, 28);
+    g.fillStyle = PAL.amber;
     g.fillRect(x + 3, y + 3, 26, 26);
     g.fillStyle = PAL.night;
     g.fillRect(x + 4, y + 4, 24, 24);

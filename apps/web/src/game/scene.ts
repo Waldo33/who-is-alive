@@ -2799,7 +2799,7 @@ export class GameScene extends Phaser.Scene {
 
   /**
    * Плашка награды во всю ширину ряда кнопок (x = 9…171): главное — крупная иконка ×2 в тёмном окошке
-   * слева, текст справа — спокойный: название песочным, имя белым, пояснение приглушённым (по 16 знаков).
+   * в янтарной рамке слева, текст справа — спокойный: название песочным, имя белым, пояснение приглушённым (по 16 знаков).
    */
   private awardCard(y: number, id: AwardId, pids: string[], value: number): void {
     const x = 9;
@@ -2811,8 +2811,9 @@ export class GameScene extends Phaser.Scene {
     g.fillStyle(hexToInt(PAL.ink)).fillRect(x, y, W, 40);
     g.fillStyle(hexToInt(PAL.grape)).fillRect(x + 1, y + 1, W - 2, 38);
     g.fillStyle(hexToInt(PAL.orchid)).fillRect(x + 1, y + 1, W - 2, 1);
-    // окошко иконки: тёмное, с рамкой ink — иконка не сливается с фиолетовым
-    g.fillStyle(hexToInt(PAL.ink)).fillRect(x + 3, y + 7, 26, 26);
+    // окошко иконки как медаль: тёмное, в янтарной рамке — иконка не сливается с фиолетовым
+    g.fillStyle(hexToInt(PAL.ink)).fillRect(x + 2, y + 6, 28, 28);
+    g.fillStyle(hexToInt(PAL.amber)).fillRect(x + 3, y + 7, 26, 26);
     g.fillStyle(hexToInt(PAL.night)).fillRect(x + 4, y + 8, 24, 24);
     this.ov(g, 2010);
     const frame = Math.max(0, AWARD_ICON_IDS.indexOf(id));
