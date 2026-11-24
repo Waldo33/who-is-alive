@@ -39,13 +39,42 @@ export function playLenSec(cfg: GameConfig, theme: number): number {
   return hasSanity(theme) ? cfg.nightMaxSec : cfg.roundSec;
 }
 
+/** Один приход Лешего: на какой секунде «часов дубля» шаги ближе всего; real — выйдет ли он на поляну. */
+export interface LeshyVisit {
+  sec: number;
+  real: boolean;
+}
+
+/** Целочисленный хеш 0–1 (одинаковый в любом движке JS — без Math.sin). */
+function ih(a: number, b: number): number {
+  let x = Math.imul(a ^ 0x9e3779b9, 0x85ebca6b) ^ Math.imul(b + 0x632be5ab, 0xc2b2ae35);
+  x = Math.imul(x ^ (x >>> 15), 0x2c1b3c6d);
+  x = Math.imul(x ^ (x >>> 12), 0x297a2d39);
+  return ((x ^ (x >>> 15)) >>> 0) / 4294967296;
+}
+
 /**
- * Леший проходит мимо: на какой секунде «часов дубля» (playLenSec − осталось, без пауз стоп-кадров) он над
- * лугом — тогда ядро даёт команду «Тсс!». За `leshyLeadSec` до этого у всех слышны его шаги. Зависит
- * только от номера дубля, поэтому клиент знает это сам — без новых сообщений по сети.
+ * Приходы Лешего за ночь (секунды «часов дубля»: playLenSec − осталось, без пауз стоп-кадров). Каждый раз за
+ * `leshyLeadSec` до `sec` у всех слышны шаги, перед `sec` — тишина; real — он выходит, ядро даёт его «Тсс!»,
+ * иначе шаги уходят (ложная тревога: не знаешь, выйдет ли). Две ложные подряд не бывает, к концу ночи
+ * приходы чаще. Зависит только от номера дубля — клиент знает это сам, без новых сообщений по сети.
  */
+export function leshyVisits(round: number): LeshyVisit[] {
+  const out: LeshyVisit[] = [];
+  let sec = 24 + Math.floor(ih(round, 1) * 8);
+  for (let i = 0; i < 8 && sec < 175; i++) {
+    const r = ih(round, 10 + i);
+    // первый — чаще ложный, дальше — чаще настоящий; две ложные подряд не бывает
+    const real = i === 0 ? r < 0.35 : out[i - 1].real ? r < 0.55 : true;
+    out.push({ sec, real });
+    sec += Math.max(26, 34 - i * 2) + Math.floor(ih(round, 30 + i) * 8);
+  }
+  return out;
+}
+
+/** Первый настоящий приход Лешего (секунда «часов дубля»). */
 export function leshySec(round: number): number {
-  return 34 + ((round * 5) % 4) * 4;
+  return leshyVisits(round).find((v) => v.real)!.sec;
 }
 
 /** Горит ли костёр (и сколько от него осталось, 0–1): к глухой ночи прогорает. */

@@ -203,7 +203,8 @@ describe('сетевая игра', () => {
     const kupala = THEME_RULES.findIndex((r) => r.id === 'kupala');
     const rig = makeRig([50, 120], 0, 7, { fixedTheme: kupala });
     const rng = new Rng(7);
-    for (let i = 0; i < 20 * 40; i++) {
+    // до прихода Лешего: при нём кикиморы прячутся
+    for (let i = 0; i < 20 * 9; i++) {
       rig.step();
       botFingers(rig, rng);
     }

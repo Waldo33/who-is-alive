@@ -17,7 +17,7 @@ import {
   sanityStage,
   nightLevel,
   playLenSec,
-  leshySec,
+  leshyVisits,
   fireLevel,
   LAG_GRACE_MS,
 } from '@kto/game-core';
@@ -231,9 +231,11 @@ export class GameScene extends Phaser.Scene {
   private giant!: Phaser.GameObjects.Image;
   private giantFor = -1;
   private dreadAt = 0;
+  /** Когда грохнул шаг Лешего: ночь на миг темнеет. */
+  private stepDarkAt = 0;
   private giantT0 = 0;
-  /** Леший этого дубля: шаги до «Тсс!» (sanity.ts › leshySec), выдох над лугом, шаги прочь. */
-  private leshy = { round: -1, stage: 'wait' as 'wait' | 'near' | 'over' | 'leave' | 'done', nextAt: 0, steps: 0, warn: -1 };
+  /** Приходы Лешего за ночь (sanity.ts › leshyVisits): «Ау», шаги, тишина; настоящий — выходит и забирает, ложный — уходит. */
+  private leshy = { round: -1, idx: 0, sec: 0, stage: 'wait' as 'wait' | 'near' | 'over' | 'leave' | 'done', nextAt: 0, steps: 0, warn: -1 };
   /** Галлюцинация на «Мороке»: у фигуры (индекс) на миг вместо лица — тьма и белые глаза. */
   private halluc: { idx: number; until: number } | null = null;
   private hallucAt = 0;
@@ -1885,6 +1887,8 @@ export class GameScene extends Phaser.Scene {
     rt.clear();
     rt.draw('nightveil', 0, 0, Math.max(0, Math.min(1, n + flick)));
     if (fire < 1) rt.fill(hexToInt(PAL.night), n * (1 - fire) * 0.85);
+    const dark = 1 - (performance.now() - this.stepDarkAt) / 260;
+    if (dark > 0) rt.fill(hexToInt(PAL.ink), 0.28 * dark);
     // факелы: вокруг носителя ночь отступает (у всех одинаково — факел достают и боты)
     const w = this.sim.world;
     const now = performance.now();
@@ -1916,9 +1920,9 @@ export class GameScene extends Phaser.Scene {
   }
 
   /**
-   * Леший (как великан в хорроре: громкость шага — это расстояние). За `leshyLeadSec` до своей секунды
-   * его шаги слышны у всех, всё ближе, песня замолкает; потом команда «Тсс!» — в стоп-кадре он над лугом:
-   * тень, выдох, самый тяжёлый шаг. Потом три шага прочь. Звук общий: время дубля у всех одно.
+   * Леший (как великан в хорроре: громкость шага — это расстояние). Несколько раз за ночь: «Ау» из леса,
+   * песня замолкает, шаги всё ближе, перед его секундой — тишина. Настоящий приход — его «Тсс!»: выходит на
+   * поляну и забирает тех, кто не замер; ложный — шаги уходят. Звук общий: время дубля у всех одно.
    */
   private renderLeshy(): void {
     const L = this.leshy;
@@ -1928,13 +1932,28 @@ export class GameScene extends Phaser.Scene {
       if (sim.phase !== 'play') L.round = -1;
       return;
     }
-    if (L.round !== sim.round) Object.assign(L, { round: sim.round, stage: 'wait', nextAt: 0, steps: 0, warn: -1 });
+    if (L.round !== sim.round) Object.assign(L, { round: sim.round, idx: 0, stage: 'wait', nextAt: 0, steps: 0, warn: -1 });
+    const v = leshyVisits(sim.round)[L.idx];
+    if (!v) {
+      if (L.stage !== 'done') this.audio.setHush(false);
+      L.stage = 'done';
+      return;
+    }
+    L.sec = v.sec;
     const now = performance.now();
     const clock = this.playSec();
-    const lesh = leshySec(sim.round);
     const lead = this.cfg.leshyLeadSec;
     const c = sim.world.crowd;
-    if (L.stage === 'wait' && clock >= lesh - lead - 3 && clock < lesh + 4) {
+    const next = () => {
+      L.idx++;
+      L.stage = 'wait';
+      this.audio.setHush(false);
+    };
+    if (L.stage === 'wait' && clock >= v.sec - lead - 3) {
+      if (clock > v.sec + 6) {
+        next(); // пропустили (вкладка спала) — ждём следующего
+        return;
+      }
       // сначала из леса зовут «Ау-у…», музыка смолкает; шаги — следом
       L.stage = 'near';
       this.audio.setHush(true);
@@ -1942,7 +1961,7 @@ export class GameScene extends Phaser.Scene {
       L.nextAt = now + 3000;
     }
     if (L.stage === 'near') {
-      if (c && c.kind === 'freeze' && !c.vote && sim.world.time >= c.showAt && sim.world.time < c.resumeAt) {
+      if (v.real && c && c.kind === 'freeze' && !c.vote && sim.world.time >= c.showAt && sim.world.time < c.resumeAt) {
         L.stage = 'over';
         L.warn = c.warnAt;
         this.audio.play('leshyStinger');
@@ -1951,15 +1970,25 @@ export class GameScene extends Phaser.Scene {
         this.cameras.main.shake(400, 0.012);
         haptic('heavy');
       } else if (now >= L.nextAt) {
-        if (clock < lesh - lead) return;
-        const k = Math.max(0, Math.min(9, Math.round(((clock - (lesh - lead)) / lead) * 9)));
+        if (clock < v.sec - lead) return;
+        // за полторы секунды до его секунды шаги смолкают: он уже здесь — самая страшная тишина.
+        // Ложный приход: тишина… и шаги уходят. Не знаешь заранее, выйдет ли.
+        if (clock >= v.sec - 1.6) {
+          L.nextAt = now + 200;
+          if ((!v.real && clock >= v.sec + 2.4) || clock > v.sec + 8) {
+            L.stage = 'leave';
+            L.steps = 0;
+            L.nextAt = now;
+          }
+          return;
+        }
+        const k = Math.max(0, Math.min(9, Math.round(((clock - (v.sec - lead)) / lead) * 9)));
         this.audio.play('leshyStep', k);
         if (k >= 5) this.cameras.main.shake(120, 0.002 + k * 0.0006);
+        // шаг — толчок в руку и на миг темнеет (у всех разом: время дубля общее)
+        if (k >= 3) haptic(k >= 7 ? 'heavy' : 'light');
+        this.stepDarkAt = now;
         L.nextAt = now + 1150 - k * 40;
-        if (clock > lesh + 6) {
-          L.stage = 'done';
-          this.audio.setHush(false);
-        }
       }
     } else if (L.stage === 'over' && c && sim.world.time >= c.windowEnd + LAG_GRACE_MS + 900) {
       L.stage = 'leave';
@@ -1969,10 +1998,7 @@ export class GameScene extends Phaser.Scene {
       this.audio.play('leshyStep', 6 - L.steps * 2);
       L.steps++;
       L.nextAt = now + 1200;
-      if (L.steps >= 3) {
-        L.stage = 'done';
-        this.audio.setHush(false);
-      }
+      if (L.steps >= 3) next();
     }
   }
 
@@ -1980,7 +2006,7 @@ export class GameScene extends Phaser.Scene {
   private forestEyes(k: number): void {
     const now = performance.now();
     if (Math.floor(now / 140) % 17 === 0) return;
-    const ex = 30 + ((this.sim.round * 53) % 120) + Math.round(Math.sin(now / 1700) * 6);
+    const ex = 30 + ((this.sim.round * 53 + this.leshy.idx * 47) % 120) + Math.round(Math.sin(now / 1700) * 6);
     const ey = AY + 4 + Math.round(k * 10);
     const g = this.torchG;
     g.fillStyle(hexToInt(PAL.amber)).fillRect(ex - 3, ey, 2, 1).fillRect(ex + 2, ey, 2, 1);
@@ -2028,7 +2054,7 @@ export class GameScene extends Phaser.Scene {
     // глаза в лесу, пока он идёт: всё ниже и ярче
     if (L.stage === 'near' && this.sim.phase === 'play') {
       const lead = this.cfg.leshyLeadSec;
-      this.forestEyes(Math.max(0, Math.min(1, (this.playSec() - (leshySec(this.sim.round) - lead)) / lead)));
+      this.forestEyes(Math.max(0, Math.min(1, (this.playSec() - (L.sec - lead)) / lead)));
     }
     const end = c ? c.windowEnd + LAG_GRACE_MS + 900 : 0;
     const on = hasSanity(this.sim.theme) && this.sim.phase === 'play' && !!c && c.warnAt === L.warn && w.time >= c.showAt && w.time < end;

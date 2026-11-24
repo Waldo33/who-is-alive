@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MatchSim, ROTATION_THEMES, THEME_RULES, leshySec, makeConfig, sanityStage } from '../src';
+import { MatchSim, ROTATION_THEMES, THEME_RULES, leshySec, leshyVisits, makeConfig, sanityStage } from '../src';
 import type { WorldEvent } from '../src';
 
 const players = ['a', 'b'].map((pid, i) => ({ pid, name: pid, color: i }));
@@ -175,8 +175,8 @@ describe('рассудок («Купальская ночь»)', () => {
     const cfg = makeConfig({ fixedTheme: KUPALA, endWhenLastAlive: false });
     const sim = new MatchSim(cfg, players, 21);
     toPlay(sim);
-    for (let i = 0; i < 20 * 50; i++) {
-      // глухая ночь, костёр прогорел; на «Тсс!» Лешего замираем
+    for (let i = 0; i < 20 * 120 && 180 - sim.timeLeft() / 1000 < leshySec(sim.round) + 10; i++) {
+      // глухая ночь, Леший уже прошёл, костёр прогорел; на «Тсс!» Лешего замираем
       const c = sim.world.crowd;
       if (c && !c.vote && sim.world.time >= c.showAt + 100 && sim.pr[0].crowdAnswered !== c.warnAt) sim.intent('a', { k: 'crowd', kind: c.kind });
       sim.tick();
@@ -215,13 +215,12 @@ describe('рассудок («Купальская ночь»)', () => {
       const sim = new MatchSim(makeConfig({ fixedTheme: KUPALA, endWhenLastAlive: false, kidsMode }), players, 13);
       toPlay(sim);
       const [a, b] = sim.pr;
-      const t0 = sim.world.time;
       let leshyAt = -1;
-      for (let i = 0; i < 20 * 70 && leshyAt < 0; i++) {
+      for (let i = 0; i < 20 * 120 && leshyAt < 0; i++) {
         a.sanity = b.sanity = 100;
         const c = sim.world.crowd;
         if (c && !c.vote && sim.world.time >= c.showAt + 100 && b.crowdAnswered !== c.warnAt) sim.intent('b', { k: 'crowd', kind: c.kind });
-        if (c && c.kind === 'freeze' && c.showAt - t0 >= (leshySec(sim.round) - 1) * 1000) leshyAt = c.warnAt;
+        if ((sim as unknown as { leshyWarn: number }).leshyWarn >= 0) leshyAt = (sim as unknown as { leshyWarn: number }).leshyWarn;
         if (leshyAt < 0) expect(a.alive).toBe(true);
         sim.tick();
       }
@@ -234,5 +233,43 @@ describe('рассудок («Купальская ночь»)', () => {
       expect(b.alive).toBe(true);
       expect(a.alive).toBe(kidsMode);
     }
+  });
+  it('пока идёт Леший, кикимор нет', () => {
+    const sim = new MatchSim(makeConfig({ fixedTheme: KUPALA, endWhenLastAlive: false }), players, 17);
+    toPlay(sim);
+    const p = sim.pr[0];
+    let hidden = false;
+    let back = false;
+    for (let i = 0; i < 20 * 120 && p.alive && !back; i++) {
+      p.sanity = 20;
+      for (const k of p.kiki) k.at = sim.world.time + 1000; // стоят в воде, не подходят
+      const c = sim.world.crowd;
+      if (c && !c.vote && sim.world.time >= c.showAt + 100 && p.crowdAnswered !== c.warnAt) sim.intent('a', { k: 'crowd', kind: c.kind });
+      sim.tick();
+      const left = sim.timeLeft() / 1000;
+      const clockSec = 180 - left;
+      if (clockSec > leshySec(sim.round) - 6 && clockSec < leshySec(sim.round) - 2) {
+        expect(p.kiki.length).toBe(0);
+        hidden = true;
+      }
+      if (clockSec > leshySec(sim.round) + 12 && p.kiki.length > 0) back = true;
+    }
+    expect(hidden).toBe(true);
+    expect(back).toBe(true); // Леший ушёл — вернулись
+  });
+  it('приходы Лешего: несколько за ночь, ложных двух подряд нет, первый настоящий не раньше 24-й секунды', () => {
+    let falses = 0;
+    for (let r = 1; r <= 40; r++) {
+      const v = leshyVisits(r);
+      expect(v).toEqual(leshyVisits(r));
+      expect(v.length).toBeGreaterThanOrEqual(3);
+      expect(v[0].sec).toBeGreaterThanOrEqual(24);
+      for (let i = 1; i < v.length; i++) {
+        expect(v[i].sec - v[i - 1].sec).toBeGreaterThanOrEqual(26);
+        expect(!v[i].real && !v[i - 1].real).toBe(false);
+      }
+      falses += v.filter((x) => !x.real).length;
+    }
+    expect(falses).toBeGreaterThan(20);
   });
 });

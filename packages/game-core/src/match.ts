@@ -9,7 +9,7 @@ import type { ActKind, CrowdKind, Dir, EmoteKind, EntitySpawn, WorldEvent } from
 
 import { NavGrid } from './nav';
 import { Rng } from './rng';
-import { fireLevel, leshySec, nightLevel, playLenSec, sanityDrain } from './sanity';
+import { fireLevel, leshyVisits, nightLevel, playLenSec, sanityDrain } from './sanity';
 import { ROTATION_THEMES, THEME_COUNT, hasSanity, killerExposed, themeRules, twistEmote } from './themes';
 import { ROUND_MODS, roundMod } from './mods';
 import { World } from './world';
@@ -199,7 +199,8 @@ export class MatchSim {
   private moodOn = false;
   private crowdCount = 0;
   /** Леший в этом дубле уже прошёл (тема с рассудком). */
-  private leshyFired = false;
+  /** Какой приход Лешего следующий (sanity.ts › leshyVisits). */
+  private leshyIdx = 0;
   /** warnAt команды Лешего: кто на ней шевельнулся — того он забирает (в детском режиме — нет). */
   private leshyWarn = -1;
   private hardChecked = -1;
@@ -396,7 +397,7 @@ export class MatchSim {
     this.playStart = this.world.time;
     this.plannedPlayEnd = this.playStart + playLenSec(this.cfg, this.theme) * 1000;
     this.crowdCount = 0;
-    this.leshyFired = false;
+    this.leshyIdx = 0;
     this.leshyWarn = -1;
     this.hardChecked = -1;
     this.scheduleCrowd(this.playStart);
@@ -582,6 +583,25 @@ export class MatchSim {
     }
   }
 
+  /**
+   * Леший рядом: от «Ау» перед его шагами (scene.ts › renderLeshy, за leshyLeadSec + 3 с) до его ухода
+   * после стоп-кадра. Время — из номера дубля и часов дубля, у всех одинаковое.
+   */
+  private leshyHides(t: number): boolean {
+    if (!hasSanity(this.theme) || this.phase !== 'play') return false;
+    const cfg = this.cfg;
+    if (this.leshyWarn >= 0 && t < this.leshyWarn + cfg.leshyPauseMs + cfg.crowdLateMs + LAG_GRACE_MS + 3000) return true;
+    const v = leshyVisits(this.round)[this.leshyIdx];
+    if (!v) return false;
+    const clock = this.playClock(t);
+    return clock >= (v.sec - cfg.leshyLeadSec - 3) * 1000;
+  }
+
+  /** «Часы дубля», мс: сколько прошло от начала игры без пауз стоп-кадров (у клиента — scene.ts › playSec). */
+  private playClock(t: number): number {
+    return playLenSec(this.cfg, this.theme) * 1000 - (this.plannedPlayEnd - t);
+  }
+
   /** Сколько фигур рядом станцевали «Хоровод» в окне команды (по событиям `act`, у всех одинаково). */
   private danceNear(eid: number, from: number, to: number): number {
     const me = this.world.get(eid);
@@ -614,15 +634,20 @@ export class MatchSim {
       this.moodOn = true;
       this.bots.setMood(this.nextVote, t, this.nextCrowdAt);
     }
-    // Леший: в свою секунду — «Тсс!»; перед ней обычных команд нет, чтобы он пришёл вовремя (sanity.ts › leshySec)
-    const clock = playLenSec(cfg, this.theme) * 1000 - (this.plannedPlayEnd - t);
-    const lesh = hasSanity(this.theme) && !this.leshyFired ? leshySec(this.round) * 1000 : Infinity;
-    if (clock >= lesh && this.crowdCanStart(t)) {
-      this.leshyFired = true;
-      this.fireCrowd('freeze', false, false, cfg.leshyPauseMs);
-      this.leshyWarn = t; // warnAt команды = время её запуска
+    // Леший: в секунду настоящего прихода — его «Тсс!»; ложный приход просто проходит. Вокруг прихода
+    // обычных команд нет, чтобы он пришёл вовремя (sanity.ts › leshyVisits)
+    const clock = this.playClock(t);
+    const visit = hasSanity(this.theme) ? leshyVisits(this.round)[this.leshyIdx] : undefined;
+    if (visit && clock >= visit.sec * 1000) {
+      if (!visit.real) {
+        if (clock >= (visit.sec + 4) * 1000) this.leshyIdx++;
+      } else if (this.crowdCanStart(t)) {
+        this.leshyIdx++;
+        this.fireCrowd('freeze', false, false, cfg.leshyPauseMs);
+        this.leshyWarn = t; // warnAt команды = время её запуска
+      }
     }
-    const leshyNear = clock >= lesh - (cfg.leshyLeadSec + 6) * 1000;
+    const leshyNear = !!visit && clock >= (visit.sec - cfg.leshyLeadSec - 6) * 1000;
     if (!leshyNear && t >= this.nextCrowdAt && this.crowdCanStart(t)) {
       if (this.nextVote) this.fireCrowd(this.nextVote, true, this.nextGhost);
       else this.fireCrowd(this.forcedKind ?? this.rng.pick<CrowdKind>(['freeze', 'jump', 'dance']), false);
@@ -818,6 +843,12 @@ export class MatchSim {
   private kikiTick(p: PlayerRound, t: number): boolean {
     const cfg = this.cfg;
     const limit = cfg.sanityStages[2];
+    // пока идёт Леший — хозяин леса — кикиморы прячутся в воду: двух чудищ разом не бывает
+    if (this.leshyHides(t)) {
+      p.kiki = [];
+      p.kikiNextAt = Math.max(p.kikiNextAt, t + cfg.kikiWarnMs);
+      return false;
+    }
     if (p.sanity >= limit) {
       p.kiki = [];
       return false;
