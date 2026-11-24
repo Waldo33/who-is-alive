@@ -282,6 +282,10 @@ export const en: Dict = {
       closed: 'The room closed: no one played for a while',
       auth: 'Couldn’t sign in. Try reloading the page',
       network: 'No connection. Check your internet',
+      /** главная: сервер у потолка комнат или лимита (503/429) — кнопка «Играть» выше ведёт к ботам */
+      busy: 'The set is packed. Come back in a minute — or tap Play to go with bots',
+      /** экран комнаты: сервер занят — там своя кнопка «Играть с ботами» */
+      server_busy: 'The set is packed: too many players. Come back in a minute or play with bots',
       unknown: 'Something went wrong. Try again',
     },
   },
