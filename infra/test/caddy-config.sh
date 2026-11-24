@@ -31,7 +31,9 @@ for mode in legacy colors web eu relay; do
   [ "$mode" = eu ] && echo 'RELAY_FRONT=1' >> "$t/etc/hosts.env"
   [ "$mode" = relay ] && echo 'RELAY=127.0.0.1:18090' >> "$t/etc/hosts.env"
   bash "$here/infra/game/caddy.sh"
-  [ "$mode" = eu ] && grep -q '127.0.0.1:8090' "$t/caddy/Caddyfile"
+  [ "$mode" = eu ] && grep -q '^http://:8090 {' "$t/caddy/Caddyfile"
+  # внутренние входы обязаны принимать любой Host (иначе через туннель — пустые ответы)
+  if [ "$mode" != legacy ] && grep -q '^http://127.0.0.1:80[89]0' "$t/caddy/Caddyfile"; then echo "$mode: внутренний вход привязан к имени 127.0.0.1"; exit 1; fi
   [ "$mode" = relay ] && grep -q 'reverse_proxy 127.0.0.1:18090' "$t/caddy/Caddyfile"
   grep -q 'reverse_proxy' "$t/caddy/Caddyfile"
   [ -x "$CADDY_BIN" ] && echo "$mode: конфиг прошёл caddy validate" || echo "$mode: конфиг собран"
@@ -66,7 +68,9 @@ http://127.0.0.1:18980 {
 		$hdr_moscow
 	}
 }
-http://127.0.0.1:18990 {
+# как вход пересылки в caddy.sh: адрес без имени — любой Host (запросы идут с Host api.benobody.app)
+http://:18990 {
+	bind 127.0.0.1
 	reverse_proxy 127.0.0.1:18999 {
 		$hdr_eu
 	}
@@ -75,7 +79,7 @@ LIVE
   "$CADDY_BIN" run --config "$t/live.caddy" --adapter caddyfile >"$t/live.log" 2>&1 &
   caddy_pid=$!
   for _ in $(seq 1 50); do curl -fs -o /dev/null http://127.0.0.1:18980/ 2>/dev/null && break; sleep 0.2; done
-  direct=$(curl -fsS -H 'X-Massovka-Client: 203.0.113.7' http://127.0.0.1:18990/)
+  direct=$(curl -fsS -H 'Host: api.benobody.app' -H 'X-Massovka-Client: 203.0.113.7' http://127.0.0.1:18990/)
   spoof=$(curl -fsS -H 'X-Massovka-Client: 6.6.6.6' -H 'X-Forwarded-For: 7.7.7.7' http://127.0.0.1:18980/)
   kill "$caddy_pid" "$echo_pid" 2>/dev/null || true
   echo "вход пересылки Европы: X-Massovka-Client 203.0.113.7 → X-Forwarded-For «$direct»"
