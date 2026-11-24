@@ -15,6 +15,7 @@ import hashlib
 import hmac
 import json
 import os
+import socket
 import sys
 import time
 import urllib.error
@@ -138,6 +139,17 @@ def wait(sid):
     sys.exit(1)
 
 
+def port_open(ip, port, seconds):
+    end = time.time() + seconds
+    while time.time() < end:
+        try:
+            with socket.create_connection((ip, port), timeout=5):
+                return True
+        except OSError:
+            time.sleep(5)
+    return False
+
+
 def main():
     pub = ssh_key()
     # открытый ключ — не секрет: им шифруют данные для переноса на сервер (infra/game/import.py)
@@ -197,6 +209,17 @@ def main():
             print('::error::ни один тариф не поднялся:', PRESETS)
             sys.exit(1)
     sid = s['id']
+    # Cloud NL-15 создаётся без IPv4: заказанный потом адрес система видит только после перезагрузки
+    # (24.11: адрес есть, SSH 15 минут молчит). Порт 22 не отвечает — перезагрузить один раз
+    if os.environ.get('RECREATE_BROKEN') == '1' and not port_open(ip, 22, 90):
+        print('SSH не отвечает — перезагружаю сервер (новый IPv4 появится в системе)')
+        r = api('POST', f'/servers/{sid}/reboot', {}, soft=True)
+        if '_error' in r:
+            r = api('POST', f'/servers/{sid}/action', {'action': 'reboot'}, soft=True)
+        print('перезагрузка: ' + ('ok' if '_error' not in r else f'HTTP {r["_error"]} {r["_msg"][:200]}'))
+        time.sleep(20)
+        ip, s = wait(sid)
+        print('SSH после перезагрузки: ' + ('есть' if ip and port_open(ip, 22, 300) else 'нет'))
     host = ip.replace('.', '-') + '.sslip.io'
     print(f'готов: ip={ip}, host={host}, локация={s.get("location")}')
     with open(os.environ.get('GITHUB_OUTPUT', '/dev/null'), 'a') as f:
