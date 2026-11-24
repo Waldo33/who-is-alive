@@ -568,6 +568,7 @@ export class RemoteSession implements ClientSession {
       accused: this.phase === 'play' && this.accusePred !== null ? (this.accusePred < 0 ? null : this.accusePred) : m.accused,
       clapsLeft: m.clapsLeft ?? 0,
       clapAt: m.clapAt ?? 0,
+      sanity: m.sanity ?? this.cfg.sanityStart,
     };
   }
 

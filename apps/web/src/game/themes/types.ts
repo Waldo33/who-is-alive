@@ -104,4 +104,10 @@ export interface ThemePack {
   dressUp?: { to: number; look: Pick<Look, 'chars' | 'variants' | 'poses'>; poses: number[]; ms: number };
   /** «25-й кадр»: в обычном облике иногда мелькает персонаж из изнанки (~140 мс), изредка — весь кадр изнанки (80 мс). */
   subliminal?: boolean;
+  /** Своя «звезда» на поле (цветок): лента 4 кадра 10×10, как `sprites.ts › makeStar`. */
+  star?: () => HTMLCanvasElement;
+  /** Её значок в шапке: 2 кадра 10×10 — собранная и пустая ячейка. */
+  hudStar?: () => HTMLCanvasElement;
+  /** Сумерки плавно уходят в ночь за дубль (game-core › sanity.ts › nightLevel): вуаль темнеет, у костра светлее. */
+  night?: boolean;
 }

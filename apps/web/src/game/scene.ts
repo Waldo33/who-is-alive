@@ -12,6 +12,10 @@ import {
   DICTS,
   THEME_RULES,
   roundMod,
+  hasSanity,
+  sanityStage,
+  nightLevel,
+  fireLevel,
 } from '@kto/game-core';
 import type { AwardId, ClientSession, CrowdKind, Dict, Entity, GameConfig, Lang, Moment, Notice, RoundSummary, ThemeText, World, WorldEvent } from '@kto/game-core';
 import { resultCardFile } from './card';
@@ -38,6 +42,7 @@ import {
 import { isThemeLoaded, loadTheme, lookCount, preloadThemes, themeLook, themePack, variantOf } from './themes';
 import type { Look } from './themes';
 import { haptic, setClosingConfirmation } from '../lib/telegram';
+import { canvas, px as ppx } from './pixels';
 
 /** Постоянные кнопки «автопилот» и «эмоция» в нижней панели (выключены — не пользовались). */
 const HUD_EXTRAS = false;
@@ -199,6 +204,16 @@ export class GameScene extends Phaser.Scene {
   private duskWorld: World | null = null;
   /** Мигалка «звёзд розыска»: время начала. */
   private siren = 0;
+  /** Ночь темы с `night` («Купальская ночь»): вуаль с просветом у костра и сплошная — когда костёр прогорел. */
+  private nightVeil!: Phaser.GameObjects.Image;
+  private nightFull!: Phaser.GameObjects.Rectangle;
+  /** Рассудок (тема с рассудком): тьма по краям своего экрана, свеча на панели, стадия и «сердце». */
+  private madVeil!: Phaser.GameObjects.Image;
+  private candleG!: Phaser.GameObjects.Graphics;
+  private candleText!: Phaser.GameObjects.BitmapText;
+  private sanityStageShown = -1;
+  private lastSanity = 100;
+  private heartAt = 0;
   private pigeons: Pigeon[] = [];
   private ui!: Phaser.GameObjects.Graphics;
   private fxG!: Phaser.GameObjects.Graphics;
@@ -430,6 +445,14 @@ export class GameScene extends Phaser.Scene {
     this.duskVeil = this.add.rectangle(0, AY, 180, 260, 0, 0).setOrigin(0, 0).setDepth(998).setVisible(false);
     this.pulseVeil = this.add.rectangle(0, AY, 180, 260, 0, 0).setOrigin(0, 0).setDepth(997).setVisible(false);
     this.sirenVeil = this.add.rectangle(0, AY, 180, 260, 0, 0).setOrigin(0, 0).setDepth(999).setVisible(false);
+    // ночь «Купальской ночи»: под интерфейсом и прожектором, над фигурами; у своего рассудка — края темнеют
+    if (!this.textures.exists('nightveil')) this.textures.addCanvas('nightveil', makeNightVeil());
+    if (!this.textures.exists('madveil')) this.textures.addCanvas('madveil', makeMadVeil());
+    this.nightVeil = this.add.image(0, AY, 'nightveil').setOrigin(0, 0).setDepth(940).setVisible(false);
+    this.nightFull = this.add.rectangle(0, AY, 180, 260, hexToInt(PAL.night), 1).setOrigin(0, 0).setDepth(941).setVisible(false);
+    this.madVeil = this.add.image(0, AY, 'madveil').setOrigin(0, 0).setDepth(945).setVisible(false);
+    this.candleG = this.add.graphics().setDepth(1100);
+    this.candleText = this.txt(22, PANEL_Y + 13, '', 'sand').setDepth(1101).setVisible(false);
     // подсказки сверху поля: шаги пробного дубля и «впервые видишь» в настоящей игре
     this.coachG = this.add.graphics().setDepth(1600);
     // затемнение поля вокруг того, что выделяет обучение (на основной камере — под кнопками и подсказкой)
@@ -957,7 +980,9 @@ export class GameScene extends Phaser.Scene {
           // «Жёсткий дубль»: вырезал режиссёр — сразу после окна команды, без удара
           const c = this.sim.world.crowd;
           const byDirector = (roundMod(this.sim.mod) === 'hard' || this.cfg.strictCrowd) && !!c && !c.vote && ev.at > c.windowEnd && ev.at < c.windowEnd + 2000;
-          const sub = byDirector ? this.t.game.cutByCrowd : undefined;
+          // «Купальская ночь»: рассудок кончился — сгинул в тумане (удар без нападавшего, как у режиссёра)
+          const byMadness = !byDirector && hasSanity(this.sim.theme) && ev.attacker === undefined && this.lastSanity <= 2;
+          const sub = byDirector ? this.t.game.cutByCrowd : byMadness ? this.themeText()?.sanityLost : undefined;
           this.outBy = byDirector ? 'director' : 'player';
           // оружием — баннер в момент удара, с кровью на экране и сотрясением (weaponImpact)
           const lk = this.kills.find((k) => k.k.eid === ev.target && !k.hit);
@@ -1736,7 +1761,108 @@ export class GameScene extends Phaser.Scene {
    * Вуали поверх поля: закат/рассвет (золото → лиловый → облик меняется → лиловый тает;
    * рассвет — наоборот), пульсация облика в такт (ночной клуб), мигалка «звёзд розыска».
    */
+  /** Текстура «звезды» на поле: своя у темы (цветок «Купальской ночи») или общая. */
+  private starKey(): string {
+    const th = this.sim.theme;
+    const pack = themePack(th);
+    if (!pack.star || !isThemeLoaded(th)) return 'star';
+    const key = 'star_t' + th;
+    this.addSheet(key, pack.star(), 10, 10);
+    return key;
+  }
+
+  private hudStarKey(): string | null {
+    const th = this.sim.theme;
+    const pack = themePack(th);
+    if (!pack.hudStar || !isThemeLoaded(th)) return null;
+    const key = 'hudstar_t' + th;
+    this.addSheet(key, pack.hudStar(), 10, 10);
+    return key;
+  }
+
+  /** Сколько секунд идёт игра дубля (0 — отсчёт и между дублями). */
+  private playSec(): number {
+    if (this.sim.phase !== 'play') return 0;
+    return Math.max(0, this.cfg.roundSec - this.sim.timeLeft() / 1000);
+  }
+
+  /**
+   * Ночь темы с `night`: вуаль плавно темнеет от сумерек к ночи, у костра — просвет, пока он горит
+   * (game-core › sanity.ts › nightLevel/fireLevel — те же числа, что у рассудка). В повторе разоблачения
+   * ночи нет: там важно разглядеть, кто что делал.
+   */
+  private renderNight(): void {
+    const ph = this.sim.phase;
+    const on = themePack(this.sim.theme).night && isThemeLoaded(this.sim.theme) && (ph === 'play' || ph === 'countdown');
+    if (!on) {
+      this.nightVeil.setVisible(false);
+      this.nightFull.setVisible(false);
+      return;
+    }
+    const sec = this.playSec();
+    const n = 0.18 + 0.5 * nightLevel(this.cfg, sec);
+    const fire = fireLevel(this.cfg, sec);
+    // костёр мерцает: просвет чуть дышит
+    const flick = fire > 0 ? 0.04 * Math.sin(performance.now() / 90) : 0;
+    this.nightVeil.setVisible(true).setAlpha(Math.max(0, n + flick));
+    this.nightFull.setVisible(fire < 1).setAlpha(n * (1 - fire) * 0.85);
+  }
+
+  /**
+   * Свой рассудок: свеча на панели (чем ниже — тем короче и тусклее, в «Кошмаре» пламя дрожит и синеет),
+   * тьма по краям своего экрана, подпись стадии и «сердце» вибрацией. Только у себя и без звука: звук из
+   * своего телефона выдал бы соседям по комнате, что ты живой и сходишь с ума.
+   */
+  private renderSanity(): void {
+    const me = this.me();
+    const on = hasSanity(this.sim.theme) && !this.init0.spectator && !this.tut && this.sim.phase === 'play' && !!me?.alive;
+    this.candleG.clear();
+    if (!on || !me) {
+      this.madVeil.setVisible(false);
+      this.candleText.setVisible(false);
+      if (this.sim.phase !== 'play') this.sanityStageShown = -1;
+      return;
+    }
+    const v = me.sanity;
+    this.lastSanity = v;
+    const stage = sanityStage(this.cfg, v);
+    const now = performance.now();
+    // свеча в фонаре: x 6–16, низ у PANEL_Y + 31
+    const g = this.candleG;
+    const base = PANEL_Y + 31;
+    const hgt = 2 + Math.round((v / 100) * 18);
+    g.fillStyle(hexToInt(PAL.ink)).fillRect(5, base - 26, 13, 28);
+    g.fillStyle(hexToInt(PAL.dusk)).fillRect(6, base - 25, 11, 26);
+    g.fillStyle(hexToInt(PAL.ink)).fillRect(9, base - hgt - 1, 5, hgt + 1);
+    g.fillStyle(hexToInt(stage >= 3 ? PAL.slate : PAL.sand)).fillRect(10, base - hgt, 3, hgt);
+    g.fillStyle(hexToInt(PAL.white)).fillRect(10, base - hgt, 1, hgt);
+    const shake = stage >= 2 ? (Math.floor(now / 80) % 3) - 1 : 0;
+    const fx = 11 + (stage >= 3 ? shake : 0);
+    const fy = base - hgt - 2;
+    const col = stage >= 3 ? PAL.cyan : stage >= 2 ? PAL.orange : PAL.amber;
+    const tall = stage >= 3 ? 2 : 3 + (Math.floor(now / 140) % 2);
+    g.fillStyle(hexToInt(col)).fillRect(fx, fy - tall + 1, 1, tall);
+    if (stage < 3) g.fillStyle(hexToInt(PAL.yellow)).fillRect(fx, fy, 1, 1);
+    this.candleText.setVisible(true).setText(String(v)).setFont(stage >= 3 ? 'px-coral' : stage >= 2 ? 'px-amber' : 'px-sand');
+    // тьма по краям: сильнее с каждой стадией, в «Кошмаре» пульсирует сердцем
+    const beat = stage >= 3 ? 0.12 * Math.max(0, Math.sin(now / 130)) : 0;
+    const a = [0, 0.35, 0.65, 0.9][stage] + beat;
+    this.madVeil.setVisible(a > 0).setAlpha(Math.min(1, a));
+    // смена стадии — подпись; сердце — вибрацией, чаще с каждой стадией
+    if (stage !== this.sanityStageShown) {
+      const lines = this.themeText()?.sanity;
+      if (this.sanityStageShown >= 0 && lines) this.showToast(lines[stage], 1600);
+      if (stage > this.sanityStageShown && this.sanityStageShown >= 0) haptic('warning');
+      this.sanityStageShown = stage;
+    }
+    if (stage >= 2 && now >= this.heartAt) {
+      haptic(stage >= 3 ? 'heavy' : 'light');
+      this.heartAt = now + (stage >= 3 ? 650 : 1200);
+    }
+  }
+
   private renderVeils(): void {
+    this.renderNight();
     const now = performance.now();
     const d = this.dusk;
     if (d) {
@@ -2143,11 +2269,13 @@ export class GameScene extends Phaser.Scene {
       seen.add(s.id);
       let spr = this.starSprites.get(s.id);
       if (!spr) {
-        spr = this.add.image(s.x, AY + s.y, 'star', 0).setOrigin(0.5, 0.8);
+        spr = this.add.image(s.x, AY + s.y, this.starKey(), 0).setOrigin(0.5, 0.8);
         this.starSprites.set(s.id, spr);
       }
       const bob = Math.floor((performance.now() + s.id * 300) / 300) % 2;
-      spr.setPosition(s.x, AY + s.y - bob).setFrame(Math.floor(performance.now() / 140) % 4).setDepth(AY + s.y - 1).setVisible(true);
+      // ночью цветы светятся: поверх вуали ночи, их видно издалека
+      const glow = themePack(this.sim.theme).night ? 942 : AY + s.y - 1;
+      spr.setPosition(s.x, AY + s.y - bob).setFrame(Math.floor(performance.now() / 140) % 4).setDepth(glow).setVisible(true);
     }
     for (const [id, spr] of this.starSprites) {
       if (!seen.has(id)) {
@@ -2560,7 +2688,9 @@ export class GameScene extends Phaser.Scene {
     // «Дубль N» вместо таймера — между дублями; разделитель после времени тогда не нужен
     const me = this.me();
     this.hudIcons.forEach((ic, i) => ic.setFrame(me && i < me.attacksLeft ? 0 : 1));
-    this.hudStars.forEach((ic, i) => ic.setFrame(me && i < me.stars ? 2 : 3));
+    const hk = this.hudStarKey();
+    this.hudStars.forEach((ic, i) => (hk ? ic.setTexture(hk, me && i < me.stars ? 0 : 1) : ic.setTexture('hud', me && i < me.stars ? 2 : 3)));
+    this.renderSanity();
     const spec = this.init0.spectator;
     if (spec && this.specL2) {
       const s = spec.watching() ? fmt(this.t.game.spectatorDelay, { n: spec.delaySec }) : this.t.game.spectatorWait;
@@ -3185,3 +3315,33 @@ interface LiveKill {
   mine?: { sub?: string };
 }
 
+
+/**
+ * Вуаль ночи 180×260: тёмно-синяя целиком, у костра (90, 132) — просвет с шахматной кромкой, чтобы свет
+ * костра читался кругом, а не пятном. Прозрачность задаёт сцена (renderNight).
+ */
+function makeNightVeil(): HTMLCanvasElement {
+  const { c, g } = canvas(180, 260);
+  for (let y = 0; y < 260; y++) {
+    for (let x = 0; x < 180; x++) {
+      const d = Math.hypot((x - 90) / 1.1, y - 132);
+      if (d < 30) continue;
+      if (d < 40 && (x + y) % 2 === 0) continue;
+      if (d < 48 && x % 2 === 0 && y % 2 === 0) continue;
+      ppx(g, x, y, PAL.night);
+    }
+  }
+  return c;
+}
+
+/** Тьма по краям своего экрана при потере рассудка: широкая кромка шахматкой, к центру реже. */
+function makeMadVeil(): HTMLCanvasElement {
+  const { c, g } = canvas(180, 260);
+  for (let y = 0; y < 260; y++) {
+    for (let x = 0; x < 180; x++) {
+      const d = Math.min(x, y, 179 - x, 259 - y);
+      if (d < 10 || (d < 22 && (x + y) % 2 === 0) || (d < 36 && x % 2 === 0 && y % 2 === 0)) ppx(g, x, y, PAL.ink);
+    }
+  }
+  return c;
+}

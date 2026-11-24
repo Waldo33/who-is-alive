@@ -21,6 +21,8 @@ export interface MeView {
   /** «Хлопушка» вырезанного: сколько осталось и с какого времени мира можно. */
   clapsLeft: number;
   clapAt: number;
+  /** Рассудок (тема с рассудком, sanity.ts), целое 0–100; знает только сам игрок. */
+  sanity: number;
 }
 
 /**
@@ -140,6 +142,7 @@ export class LocalSession implements ClientSession {
       accused: p.accused,
       clapsLeft: p.clapsLeft,
       clapAt: p.clapAt,
+      sanity: Math.ceil(p.sanity),
     };
   }
 

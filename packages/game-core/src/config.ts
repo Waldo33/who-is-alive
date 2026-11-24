@@ -104,6 +104,27 @@ export const DEFAULT_CONFIG = {
   starsToWin: 3,
   starPickupRadius: 6,
 
+  // Рассудок («Купальская ночь», sanity.ts). Одиночка без цветов к концу дубля — на нуле; в толпе ~35.
+  // Симуляция (pnpm sim -- --cfg '{"fixedTheme":7}'): сгинули в тумане ~11% игроков, минимум в среднем ~50.
+  sanityStart: 100,
+  sanityDrainAtSec: [20, 45] as number[], // границы сумерек, ночи и глухой ночи
+  sanityDrainRate: [0.7, 1.2, 1.9] as number[], // ед./с в каждой части
+  sanityNightSec: 60, // за сколько секунд сумерки становятся ночью (облик)
+  sanityStages: [70, 45, 25] as [number, number, number], // «Шёпот», «Морок», «Кошмар»
+  sanityCrowdRadius: 20, // толпа рядом успокаивает
+  sanityCrowdMin: 4, // сколько человечков рядом (кроме себя) — уже толпа
+  sanityCrowdMul: 0.7,
+  sanityFireRadius: 30, // у костра рассудок не падает, а растёт
+  sanityFireGain: 0.6,
+  sanityFireOutSec: 50, // к этой секунде костёр прогорает
+  sanityFlower: 15,
+  sanityFlowerSlow: 0.1, // каждый цветок в венке — падение на 10% медленнее
+  sanityGesture: 5,
+  sanitySlip: 8,
+  sanityBotHit: 15,
+  sanityNearCut: 5,
+  sanityNearRadius: 24,
+
   // сужение
   zoneStartBeforeEndSec: 20,
   zoneShrinkSec: 15,

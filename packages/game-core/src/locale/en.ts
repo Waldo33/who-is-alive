@@ -24,7 +24,7 @@ export const en: Dict = {
     noun: ['Pixel', 'Toaster', 'Pigeon', 'Raccoon', 'Penguin', 'Gizmo', 'Noodle', 'Sprite', 'Bagel', 'Cactus'],
   },
   colors: ['Red', 'Blue', 'Yellow', 'Green'],
-  themes: ['Caps', 'Chefs', 'Penguins', 'Astronauts', 'Clerks', 'Tourists', 'Office Party'],
+  themes: ['Caps', 'Chefs', 'Penguins', 'Astronauts', 'Clerks', 'Tourists', 'Office Party', 'Foragers'],
   themeText: {
     office: {
       intro: 'Rule 1: blend in',
@@ -46,6 +46,12 @@ export const en: Dict = {
       twistOff: 'Lights back on',
       crowd: { freeze: 'Cheers!', jump: 'Gift!', dance: 'Conga!' },
       twistCrowd: { freeze: 'Make a wish!', jump: 'Fireworks!', dance: 'Sparklers!' },
+    },
+    kupala: {
+      intro: 'Midsummer Night',
+      crowd: { freeze: 'Hush! A rustle!', jump: 'Over the fire!', dance: 'Round dance!' },
+      sanity: ['Clear head', 'Hear whispers?', 'The fog thickens', 'They are coming…'],
+      sanityLost: 'Lost in the fog',
     },
   } as Partial<Record<ThemeId, ThemeText>>,
   start: {

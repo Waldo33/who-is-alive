@@ -10,7 +10,7 @@ import {
   pickRoundAwards,
   plazaArena,
   planPath,
-  THEME_COUNT,
+  ROTATION_THEMES,
   THEME_RULES,
   seasonLeadTheme,
   themeRules,
@@ -319,7 +319,7 @@ describe('MatchSim', () => {
     for (let seed = 1; seed <= 12; seed++) {
       const sim = new MatchSim(makeConfig(), players, seed);
       firsts.add(sim.theme);
-      expect([...sim.themeOrder].sort()).toEqual(Array.from({ length: THEME_COUNT }, (_, i) => i));
+      expect([...sim.themeOrder].sort()).toEqual([...ROTATION_THEMES]);
     }
     expect(firsts.size).toBeGreaterThan(1);
   });
@@ -471,7 +471,7 @@ describe('новогодний сезон', () => {
     for (let seed = 1; seed <= 30; seed++) {
       const sim = new MatchSim(makeConfig({ leadTheme: party }), players, seed);
       expect(sim.themeOrder[0]).toBe(party);
-      expect([...sim.themeOrder].sort((a, b) => a - b)).toEqual(Array.from({ length: THEME_COUNT }, (_, i) => i));
+      expect([...sim.themeOrder].sort((a, b) => a - b)).toEqual([...ROTATION_THEMES]);
     }
   });
 

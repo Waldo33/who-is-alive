@@ -15,6 +15,9 @@ export interface ThemeText {
   /** Свои названия команд «Море волнуется» (в изнанке — twistCrowd), как их показывает облик темы. */
   crowd?: Partial<Record<'freeze' | 'jump' | 'dance', string>>;
   twistCrowd?: Partial<Record<'freeze' | 'jump' | 'dance', string>>;
+  /** Тема с рассудком: подпись при переходе в стадию 0–3 (sanity.ts › sanityStage) и «вырезан на нуле». */
+  sanity?: [string, string, string, string];
+  sanityLost?: string;
 }
 
 /** Формы множественного числа по Intl.PluralRules: one / few / many / other. */
@@ -50,7 +53,7 @@ export const ru = {
     noun: ['Пиксель', 'Кот-8бит', 'Голубь', 'Батон', 'Пингвин', 'Тостер', 'Енот', 'Джойстик', 'Пельмень', 'Спрайт'],
   },
   colors: ['Красный', 'Синий', 'Жёлтый', 'Зелёный'],
-  themes: ['Кепки', 'Повара', 'Пингвины', 'Космонавты', 'Клерки', 'Туристы', 'Корпоратив'],
+  themes: ['Кепки', 'Повара', 'Пингвины', 'Космонавты', 'Клерки', 'Туристы', 'Корпоратив', 'Грибники'],
   /** Свои текстовки тем (по id из themes.ts) — необязательно. */
   themeText: {
     office: {
@@ -73,6 +76,12 @@ export const ru = {
       twistOff: 'Свет дали!',
       crowd: { freeze: 'Тост!', jump: 'Подарок!', dance: 'Хоровод!' },
       twistCrowd: { freeze: 'Загадай желание!', jump: 'Салют!', dance: 'Огоньки!' },
+    },
+    kupala: {
+      intro: 'Купальская ночь',
+      crowd: { freeze: 'Тсс! Шорох!', jump: 'Через костёр!', dance: 'Хоровод!' },
+      sanity: ['Голова ясная', 'Слышишь шёпот?', 'Туман сгущается', 'Они идут…'],
+      sanityLost: 'Сгинул в тумане',
     },
   } as Partial<Record<ThemeId, ThemeText>>,
   start: {

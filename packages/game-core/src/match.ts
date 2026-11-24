@@ -9,7 +9,8 @@ import type { ActKind, CrowdKind, Dir, EmoteKind, EntitySpawn, WorldEvent } from
 
 import { NavGrid } from './nav';
 import { Rng } from './rng';
-import { THEME_COUNT, killerExposed, themeRules, twistEmote } from './themes';
+import { fireLevel, sanityDrain } from './sanity';
+import { ROTATION_THEMES, THEME_COUNT, hasSanity, killerExposed, themeRules, twistEmote } from './themes';
 import { ROUND_MODS, roundMod } from './mods';
 import { World } from './world';
 
@@ -73,6 +74,10 @@ export interface PlayerRound {
   /** «Хлопушка» вырезанного: сколько осталось и когда можно снова (время мира). */
   clapsLeft: number;
   clapAt: number;
+  /** Рассудок (sanity.ts), 0–100; в теме без рассудка не меняется. */
+  sanity: number;
+  /** Самый низкий рассудок за дубль (награды). */
+  sanityMin: number;
 }
 
 export interface PointsLine {
@@ -279,7 +284,7 @@ export class MatchSim {
 
   private startRound(): void {
     this.round++;
-    this.theme = this.themeOrder[(this.round - 1) % THEME_COUNT];
+    this.theme = this.themeOrder[(this.round - 1) % this.themeOrder.length];
     this.pickMod();
     this.summary = null;
     const rng = this.rng;
@@ -326,6 +331,8 @@ export class MatchSim {
       crowdLate: false,
       clapsLeft: this.cfg.ghostClaps,
       clapAt: 0,
+      sanity: this.cfg.sanityStart,
+      sanityMin: this.cfg.sanityStart,
     }));
     this.bots = new BotBrain(this.world, this.cfg, new Rng(rng.fork()), (ev) => this.emit(ev), themeRules(this.theme).twist);
     const pset = new Set(playerEids);
@@ -515,7 +522,12 @@ export class MatchSim {
     const hard = !c.vote && (roundMod(this.mod) === 'hard' || cfg.strictCrowd);
     const slips: number[] = [];
     for (const p of this.pr) {
-      if (!p.alive || (p.crowdAnswered === c.warnAt && p.crowdPick === c.kind && !p.crowdLate)) continue;
+      if (!p.alive) continue;
+      if (p.crowdAnswered === c.warnAt && p.crowdPick === c.kind && !p.crowdLate) {
+        this.addSanity(p, cfg.sanityGesture); // толпа успокаивает (только в теме с рассудком)
+        continue;
+      }
+      this.addSanity(p, -cfg.sanitySlip);
       const e = this.world.get(p.eid)!;
       // опоздавший всё же повторил жест — его только подсвечивают, вырезают не повторивших
       if (hard && !(p.crowdAnswered === c.warnAt && p.crowdPick === c.kind)) {
@@ -616,6 +628,7 @@ export class MatchSim {
           this.emit({ t: 'star_taken', id: st.id, eid: p.eid, at: t });
           takenNow.add(st.id); // чтобы второй игрок не взял ту же звезду в этом же тике
           p.stars++;
+          this.addSanity(p, cfg.sanityFlower);
           this.queueStar(t + this.starRespawnMs());
           if (p.stars >= cfg.starsToWin && !this.starWinner) {
             this.starWinner = p.pid;
@@ -664,6 +677,8 @@ export class MatchSim {
       }
     }
 
+    this.sanityTick(t);
+
     this.world.step();
     this.recordPositions();
 
@@ -674,6 +689,47 @@ export class MatchSim {
   }
 
   private starTouched = new Set<number>();
+
+  /** Рассудок меняется только в теме с рассудком (themes.ts › sanity) и только у живых. */
+  private addSanity(p: PlayerRound, d: number): void {
+    if (!hasSanity(this.theme) || !p.alive || this.phase !== 'play') return;
+    p.sanity = Math.max(0, Math.min(100, p.sanity + d));
+    p.sanityMin = Math.min(p.sanityMin, p.sanity);
+  }
+
+  /**
+   * Рассудок тает сам: быстрее к ночи, вдвое медленнее в толпе, у горящего костра растёт, каждый цветок
+   * в венке замедляет падение. В стоп-кадре время стоит. На нуле — вырезан, как в «Жёстком дубле»: удар
+   * без нападавшего (в детском режиме не вырезает). Автопилот (игрок отвалился) рассудок не теряет.
+   */
+  private sanityTick(t: number): void {
+    if (!hasSanity(this.theme) || this.world.isFrozen(t)) return;
+    const cfg = this.cfg;
+    const sec = (t - this.playStart) / 1000;
+    const fire = fireLevel(cfg, sec);
+    const fx = this.arena.width / 2;
+    const fy = 132;
+    for (const p of this.pr) {
+      if (!p.alive || p.autopilot) continue;
+      const e = this.world.get(p.eid)!;
+      let rate: number;
+      if (fire > 0 && Math.hypot(e.x - fx, e.y - fy) <= cfg.sanityFireRadius) rate = cfg.sanityFireGain * fire;
+      else {
+        rate = -sanityDrain(cfg, sec) * Math.max(0.4, 1 - cfg.sanityFlowerSlow * p.stars);
+        let near = 0;
+        for (const o of this.world.entities) {
+          if (o.alive && o.eid !== p.eid && Math.hypot(o.x - e.x, o.y - e.y) <= cfg.sanityCrowdRadius) near++;
+        }
+        if (near >= cfg.sanityCrowdMin) rate *= cfg.sanityCrowdMul;
+      }
+      this.addSanity(p, (rate * TICK_MS) / 1000);
+      if (p.sanity > 0 || cfg.kidsMode) continue;
+      p.alive = false;
+      p.diedAt = t;
+      this.emit({ t: 'hit', target: p.eid, result: 'player', x: e.x, y: e.y, at: t });
+      this.emit({ t: 'remove', eid: p.eid, cause: 'player', at: t });
+    }
+  }
 
   /** Очередь появления звёзд держим по времени: ранняя замена взятой звезды не ждёт позднюю. */
   private queueStar(at: number): void {
@@ -827,12 +883,13 @@ export class MatchSim {
       this.themeOrder = Array.from({ length: THEME_COUNT }, () => fixed);
       return;
     }
-    const order = this.rng.shuffle(Array.from({ length: THEME_COUNT }, (_, i) => i));
+    // скрытые темы (themes.ts › hidden) в очередь не попадают — порядок остальных при этом прежний
+    const order = this.rng.shuffle([...ROTATION_THEMES]);
     // реванш не начинается с той же темы, которой закончился прошлый матч
     if (this.round > 0 && order[0] === last) order.push(order.shift()!);
     // сезонная тема (под Новый год — «Корпоратив») открывает матч; кончился ею прошлый — идёт второй
     const lead = this.cfg.leadTheme;
-    if (lead >= 0 && lead < THEME_COUNT) {
+    if (lead >= 0 && lead < THEME_COUNT && order.includes(lead)) {
       order.splice(order.indexOf(lead), 1);
       order.splice(this.round > 0 && last === lead ? 1 : 0, 0, lead);
     }
@@ -1036,12 +1093,19 @@ export class MatchSim {
       this.emit({ t: 'hit', target, result: 'player', x: hx, y: hy, ...(attacker !== undefined ? { attacker } : {}), at: t });
     } else {
       p.botHits++;
+      this.addSanity(p, -cfg.sanityBotHit);
       p.stunUntil = t + cfg.missStunSec * 1000;
       this.bots.remove(target);
       this.emit({ t: 'hit', target, result: 'bot', x: hx, y: hy, attacker: p.eid, at: t });
     }
     this.emit({ t: 'remove', eid: target, cause: victim ? 'player' : 'bot', at: t });
     this.notices.push({ t: 'attack', pid: p.pid, target, result: victim ? 'player' : 'bot', at: t });
+    // рядом кого-то вырезали — не по себе всем, кто стоял близко (и нападавшему тоже)
+    for (const o of this.pr) {
+      if (!o.alive) continue;
+      const oe = this.world.get(o.eid)!;
+      if (Math.hypot(oe.x - hx, oe.y - hy) <= cfg.sanityNearRadius) this.addSanity(o, -cfg.sanityNearCut);
+    }
     // испуг соседей маскирует нападающего
     for (const o of this.world.alive()) {
       if (o.eid === target) continue;

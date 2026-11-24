@@ -1,4 +1,4 @@
-import { AiPlayer, LocalSession, MatchSim, TICK_MS, makeConfig } from '@kto/game-core';
+import { AiPlayer, LocalSession, MatchSim, TICK_MS, hasSanity, makeConfig } from '@kto/game-core';
 import type { ClientSession, GameConfig, Intent, Notice, PlayerInfo, WorldEvent } from '@kto/game-core';
 import { GuestMsg, SNAP_SCALE } from './protocol';
 import type { MeMsg, PrivateMsg, RoomMsg } from './protocol';
@@ -149,6 +149,7 @@ export class HostSession implements ClientSession {
       kills: this.sim.matchKills[pid] ?? 0,
       clapsLeft: p.clapsLeft,
       clapAt: p.clapAt,
+      ...(hasSanity(this.sim.theme) ? { sanity: Math.ceil(p.sanity) } : {}),
     };
   }
 
