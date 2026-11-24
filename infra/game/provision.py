@@ -99,6 +99,45 @@ def ipv4(server):
     return None
 
 
+def describe(s):
+    """Поля сервера без секретов: статус, тариф, локация, ОС, сети."""
+    keep = {k: s.get(k) for k in ('id', 'status', 'preset_id', 'location', 'availability_zone', 'os', 'is_ddos_guard', 'created_at')}
+    keep['networks'] = [{'type': n.get('type'), 'ips': [i.get('type') for i in n.get('ips', [])]} for n in s.get('networks', [])]
+    return json.dumps(keep, ensure_ascii=False)
+
+
+def drop(s):
+    print(f'::warning::сервер {s["id"]} сломан при создании: {describe(s)} — удаляю')
+    r = api('DELETE', f'/servers/{s["id"]}', soft=True)
+    print('удалён' if '_error' not in r else f'удалить не вышло: HTTP {r["_error"]} {r["_msg"][:200]} — удалить в панели')
+    time.sleep(10)
+
+
+def wait(sid):
+    """Ждать статуса on и публичного IPv4 (до 15 минут). Статус error — сразу (None, сервер)."""
+    ip = None
+    asked_ip = False
+    last = None
+    for _ in range(90):
+        s = api('GET', f'/servers/{sid}')['server']
+        ip = ipv4(s)
+        if s.get('status') != last:
+            last = s.get('status')
+            print(f'статус: {last}')
+        if s.get('status') == 'on' and ip:
+            return ip, s
+        if s.get('status') == 'error':
+            return None, s
+        # некоторые тарифы (MSK Ultra) создаются без публичного IPv4 — заказать его
+        if s.get('status') == 'on' and not ip and not asked_ip:
+            asked_ip = True
+            r = api('POST', f'/servers/{sid}/ips', {'type': 'ipv4'}, soft=True)
+            print('IPv4: заказан' if '_error' not in r else f'IPv4: отказ ({r["_msg"][:200]})')
+        time.sleep(10)
+    print(f'::error::сервер не готов за 15 минут: {describe(s)}')
+    sys.exit(1)
+
+
 def main():
     pub = ssh_key()
     # открытый ключ — не секрет: им шифруют данные для переноса на сервер (infra/game/import.py)
@@ -118,12 +157,22 @@ def main():
         return
     if len(servers) > 1:
         print(f'::warning::серверов с именем {NAME}: {len(servers)} (id: {[x["id"] for x in servers]}) — беру первый, лишние удалить в панели')
+    # сломанный при создании (статус error и ни разу не получил адрес, 24.11 у Cloud NL-15) — удалить и
+    # создать заново: в нём ничего нет. Только по разрешению (RECREATE_BROKEN=1) и только без IPv4:
+    # рабочий сервер с базой так не удалится, даже если Timeweb на минуту покажет «error»
+    if servers and servers[0].get('status') == 'error' and not ipv4(servers[0]) and os.environ.get('RECREATE_BROKEN') == '1':
+        drop(servers[0])
+        servers = []
     if servers:
         s = servers[0]
         print(f'сервер есть: id={s["id"]}, статус={s.get("status")}')
+        ip, s = wait(s['id'])
+        if not ip:
+            print(f'::error::сервер не в порядке: {describe(s)}')
+            sys.exit(1)
     else:
         os_id = find_os()
-        s = None
+        ip = None
         for preset in PRESETS:
             body = {
                 'name': NAME,
@@ -139,27 +188,15 @@ def main():
                 continue
             s = r['server']
             print(f'сервер создан: id={s["id"]}, тариф {preset}')
-            break
-        if s is None:
-            print('::error::ни один тариф не свободен:', PRESETS)
+            ip, s = wait(s['id'])
+            if ip:
+                break
+            # только что созданный не поднялся (статус error) — удалить и попробовать следующий тариф
+            drop(s)
+        if not ip:
+            print('::error::ни один тариф не поднялся:', PRESETS)
             sys.exit(1)
     sid = s['id']
-    ip = None
-    asked_ip = False
-    for _ in range(90):
-        s = api('GET', f'/servers/{sid}')['server']
-        ip = ipv4(s)
-        if s.get('status') == 'on' and ip:
-            break
-        # некоторые тарифы (MSK Ultra) создаются без публичного IPv4 — заказать его
-        if s.get('status') == 'on' and not ip and not asked_ip:
-            asked_ip = True
-            r = api('POST', f'/servers/{sid}/ips', {'type': 'ipv4'}, soft=True)
-            print('IPv4: заказан' if '_error' not in r else f'IPv4: отказ ({r["_msg"][:200]})')
-        time.sleep(10)
-    if not ip or s.get('status') != 'on':
-        print(f'::error::сервер не готов: статус={s.get("status")}, ip={ip}')
-        sys.exit(1)
     host = ip.replace('.', '-') + '.sslip.io'
     print(f'готов: ip={ip}, host={host}, локация={s.get("location")}')
     with open(os.environ.get('GITHUB_OUTPUT', '/dev/null'), 'a') as f:
