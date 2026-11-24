@@ -19,7 +19,7 @@
   block:
     - name: jq и dig (сторож проверяет, что у домена нет лишних записей AAAA)
       ansible.builtin.apt:
-        name: [jq, dnsutils]
+        name: [jq, bind9-dnsutils]  # dig; dnsutils — лишь переходный пакет к нему
         state: present
 
     - name: Папка программ
