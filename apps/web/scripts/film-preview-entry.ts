@@ -4,7 +4,7 @@ import { FilmScene, filmInput } from '../src/game/film';
 import type { FilmTake } from '../src/game/film';
 import { loadAllThemes } from '../src/game/themes';
 
-const G = globalThis as unknown as { __seed: number; __kind?: string; __theme?: number; __frames?: number; __from?: number; __out: unknown };
+const G = globalThis as unknown as { __seed: number; __kind?: string; __theme?: number; __frames?: number; __from?: number; __finale?: string; __out: unknown };
 void (async () => {
   await loadAllThemes();
   const cfg = makeConfig(G.__theme !== undefined && G.__theme >= 0 ? { fixedTheme: G.__theme } : {});
@@ -27,6 +27,8 @@ void (async () => {
   }
   // FILM_KIND=ghost — посмотреть финал другого сюжета на этом матче
   if (G.__kind && inp.story) inp.story.kind = G.__kind as typeof inp.story.kind;
+  // FILM_FINALE=board|race|podium — другой показ очков в финале
+  if (G.__finale) inp.finale = G.__finale as typeof inp.finale;
   const film = new FilmScene(inp);
   const out: { name: string; url: string }[] = [];
   const n = G.__frames ?? 24;

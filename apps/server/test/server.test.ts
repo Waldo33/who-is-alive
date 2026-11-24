@@ -54,6 +54,12 @@ async function until(cond: () => boolean, ms = 5000, what = 'условие'): P
   }
 }
 
+/** Все, кроме режиссёра, жмут «Готов»; ждём, пока режиссёр это увидит (без этого сервер не стартует). */
+async function readyUp(director: ServerLink, others: ServerLink[]): Promise<void> {
+  for (const l of others) l.setReady(true);
+  await until(() => (director.room?.members.filter((m) => m.ready).length ?? 0) >= others.length, 3000, 'все «Готов»');
+}
+
 describe('игровой сервер: вход и HTTP', () => {
   it('анонимный токен, создание комнаты, превью; чужой токен — отказ', async () => {
     const { http } = await boot();
@@ -296,6 +302,10 @@ describe('игровой сервер: лобби', () => {
     lb.onError((e) => berrs.push(e));
     lb.start();
     await until(() => berrs.includes('not_director'), 3000, 'не режиссёр');
+    // B ещё не нажал «Готов» — рано
+    la.start();
+    await until(() => errs.includes('not_ready'), 3000, 'не все готовы');
+    await readyUp(la, [lb]);
     la.start();
     await until(() => la.room?.status === 'playing', 3000, 'матч начался');
     const lc = link(ws, c, code, 'C');
@@ -342,6 +352,7 @@ describe('игровой сервер: матч', () => {
         if (ch === 'private') privLog.push({ to: users[i].userId, m: m as { t: string } });
       }),
     );
+    await readyUp(ls[0], ls.slice(1));
     ls[0].start();
     await until(() => sessions.every(Boolean), 3000, 'сессии созданы');
     const gs = sessions as RemoteSession[];
@@ -442,6 +453,7 @@ describe('игровой сервер: матч', () => {
     la.onMessage((ch, m) => {
       if (ch === 'room' && (m as RoomMsg).t === 'match_start') starts.push(m as RoomMsg);
     });
+    await readyUp(la, [lb]);
     la.start();
     await until(() => starts.length === 1, 3000, 'старт');
     const room = srv.rooms.get(code)!;
@@ -465,6 +477,7 @@ describe('игровой сервер: матч', () => {
     const lb = link(ws, b, code, 'B');
     await la.connect();
     await lb.connect();
+    await readyUp(la, [lb]);
     la.start();
     const room = srv.rooms.get(code)!;
     await until(() => room.runner?.host.phase === 'play', 5000, 'дубль');

@@ -64,6 +64,9 @@ const until = async (cond: () => boolean, ms: number, what: string) => {
   }
 };
 await until(() => links[0].room!.members.filter((m) => m.online).length === 4, 5000, 'четверо на связи');
+// режиссёр стартует только когда остальные нажали «Готов»
+for (const l of links.slice(1)) l.setReady(true);
+await until(() => links[0].room!.members.filter((m) => m.ready).length === 3, 5000, 'трое «Готов»');
 links[0].start();
 await until(() => sessions.every(Boolean), 5000, 'старт матча');
 const gs = sessions as RemoteSession[];
