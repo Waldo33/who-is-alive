@@ -603,7 +603,7 @@ export class ClipPlayerScene {
     const list: D[] = [];
     for (const p of this.inp.arena.props) {
       const pr = loc.props.get(p.kind)!;
-      const f = p.kind === 'fountain' ? Math.floor(now / 180) % pr.frames : p.kind === 'lamp' ? Math.floor(now / 900) % pr.frames : 0;
+      const f = p.kind === 'fountain' ? Math.floor(now / 180) % Math.min(4, pr.frames) : p.kind === 'lamp' ? Math.floor(now / 900) % pr.frames : 0;
       list.push({ y: p.y, draw: () => frame(g, pr.c, pr.fw, pr.fh, f, p.x - pr.fw / 2, p.y - pr.fh) });
     }
     const pos = new Map<number, { x: number; y: number }>();

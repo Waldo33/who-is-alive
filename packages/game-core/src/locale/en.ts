@@ -54,6 +54,7 @@ export const en: Dict = {
       crowd: { freeze: 'Hush! A rustle!', jump: 'Torch!', dance: 'Round dance!' },
       sanity: ['Clear head', 'Hear whispers?', 'The fog thickens', 'They are coming…'],
       sanityLost: 'Lost in the fog',
+      leshyTook: 'The Leshy took you',
     },
   } as Partial<Record<ThemeId, ThemeText>>,
   start: {

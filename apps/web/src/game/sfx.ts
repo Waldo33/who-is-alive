@@ -5,14 +5,14 @@
 export type Sfx =
   | 'step' | 'hitPlayer' | 'hitBot' | 'poof' | 'starTake' | 'starSpawn' | 'crowd' | 'tick'
   | 'click' | 'ready' | 'accuseRight' | 'accuseWrong' | 'fanfare' | 'sad' | 'hedge' | 'pigeon' | 'drum' | 'denied' | 'count' | 'swing' | 'flicker' | 'dusk' | 'siren' | 'whack' | 'clang' | 'stab' | 'knockedOut'
-  | 'hitOther' | 'cut' | 'clap' | 'logo' | 'wrap' | 'unmask' | 'rewind' | 'leshyStep' | 'leshyBreath';
+  | 'hitOther' | 'cut' | 'clap' | 'logo' | 'wrap' | 'unmask' | 'rewind' | 'leshyStep' | 'leshyBreath' | 'leshyStinger' | 'leshyTake' | 'leshyCall' | 'snap';
 
 /**
  * Приоритет эффекта (звуковой гайд, план звука): P1 — меняет решение игрока, обязан пробиться
  * через музыку (на динамике телефона −30…−33 дБ, музыку глушит на 9 дБ на 0,6 с); P2 — событие
  * на поле (−35…−39 дБ, глушит на 4 дБ); остальное — фон. Уровни проверяет `pnpm --filter web sound-check`.
  */
-export const P1: ReadonlySet<Sfx> = new Set<Sfx>(['hitPlayer', 'hitBot', 'starTake', 'crowd', 'ready', 'knockedOut', 'cut', 'drum', 'accuseRight', 'accuseWrong', 'unmask', 'wrap', 'logo']);
+export const P1: ReadonlySet<Sfx> = new Set<Sfx>(['hitPlayer', 'hitBot', 'starTake', 'crowd', 'ready', 'knockedOut', 'cut', 'drum', 'accuseRight', 'accuseWrong', 'unmask', 'wrap', 'logo', 'leshyStinger', 'leshyTake']);
 export const P2: ReadonlySet<Sfx> = new Set<Sfx>(['hitOther', 'whack', 'clang', 'stab', 'starSpawn', 'flicker', 'dusk', 'leshyBreath']);
 
 /**
@@ -147,6 +147,40 @@ export class Synth {
         this.swell(1.6, 0.14, 1900, 0.1, 0.4);
         this.tone('sawtooth', 112, 84, 1.6, 0.12);
         this.tone('square', 224, 168, 1.4, 0.05);
+        break;
+      // Леший вышел на поляну: визг расстроенных струн (малые секунды наверху), скрежет и удар — как в
+      // хорроре, когда монстр попадает в кадр. Сигнал: не шевелиться.
+      case 'leshyStinger':
+        this.tone('square', 190, 52, 0.5, 0.35);
+        this.noise(0.05, 0.6, 3400);
+        for (const [f, d] of [[1396, 0], [1480, 0.02], [1568, 0.04], [2093, 0.06]] as const) this.formant(f, f * 0.94, 1.3, 0.065, 0, d, [f * 1.0, f * 2.01], 6);
+        this.swell(1.2, 0.24, 2900, 0, 0.08);
+        this.swell(1.4, 0.14, 1200, 0.05, 0.1);
+        break;
+      // Леший забрал того, кто шевельнулся: треск ломаемых сучьев и обрывающийся крик
+      case 'leshyTake':
+        for (let i = 0; i < 4; i++) {
+          this.noise(0.05, 0.9 - i * 0.15, 2600 - i * 300, i * 0.07);
+          this.noise(0.1, 0.6, 1100, i * 0.07 + 0.01);
+        }
+        this.formant(920, 300, 0.7, 0.22, 0.05, 0.12, [900, 1300, 2600], 9);
+        this.tone('square', 160, 40, 0.5, 0.4, 0.05);
+        break;
+      // «Ау-у…» из леса: Леший зовёт голосом заблудившегося и сам себе вторит эхом
+      case 'leshyCall':
+        for (let e = 0; e < 3; e++) {
+          const v = [0.2, 0.09, 0.04][e];
+          const w = e * 0.55;
+          this.formant(330, 300, 0.45, v, 0.12, w, [820, 1180, 2500], 5);
+          this.formant(300, 228, 1.0, v, 0.3, w + 0.38, [380, 760, 2300], 5);
+        }
+        break;
+      // сухой треск ветки где-то в темноте
+      case 'snap':
+        this.noise(0.03, 0.55, 3200);
+        this.noise(0.07, 0.4, 1500, 0.004);
+        this.noise(0.02, 0.3, 2600, 0.09);
+        this.noise(0.05, 0.22, 1200, 0.095);
         break;
       // ночь Майами: бита — треск дерева, труба — звон металла, нож — свист и тычок;
       // бас — опора, слышно на телефоне то, что сверху
@@ -348,6 +382,43 @@ export class Synth {
     o.connect(g).connect(out ?? this.out);
     o.start(t);
     o.stop(t + dur + 0.02);
+  }
+
+  /**
+   * Голос: пила с дрожью через полосы-форманты (гласная — по частотам `fmt`), медленная атака и спад.
+   * f0→f1 — высота, att — доля длины на нарастание, vib — дрожь, Гц.
+   */
+  private formant(f0: number, f1: number, dur: number, vol: number, att: number, when: number, fmt: number[], vib: number): void {
+    const ctx = this.ctx;
+    const t = ctx.currentTime + this.base + when;
+    const o = ctx.createOscillator();
+    o.type = 'sawtooth';
+    o.frequency.setValueAtTime(f0 * this.det, t);
+    o.frequency.linearRampToValueAtTime(f1 * this.det, t + dur);
+    const lfo = ctx.createOscillator();
+    lfo.frequency.value = vib;
+    const lg = ctx.createGain();
+    lg.gain.value = f0 * 0.012;
+    lfo.connect(lg).connect(o.frequency);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(vol * this.lvl, t + Math.max(0.01, dur * att));
+    g.gain.setValueAtTime(vol * this.lvl, t + dur * 0.7);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    fmt.forEach((fr, i) => {
+      const f = ctx.createBiquadFilter();
+      f.type = 'bandpass';
+      f.frequency.value = fr;
+      f.Q.value = 6;
+      const fg = ctx.createGain();
+      fg.gain.value = [1.4, 1, 0.5][i] ?? 0.4;
+      o.connect(f).connect(fg).connect(g);
+    });
+    g.connect(this.out);
+    o.start(t);
+    lfo.start(t);
+    o.stop(t + dur + 0.02);
+    lfo.stop(t + dur + 0.02);
   }
 
   /** Шум с медленной атакой (дыхание, ветер): нарастает за `rise` доли длины, потом гаснет. */

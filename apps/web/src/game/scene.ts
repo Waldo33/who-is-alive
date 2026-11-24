@@ -1,4 +1,5 @@
 import * as Phaser from 'phaser';
+import { LESHY_H, LESHY_W, leshyFrames, type LeshyKey } from './leshy-art';
 import { PAL, PLAYER_COLORS, hexToInt } from '@kto/assets';
 import {
   LocalSession,
@@ -18,6 +19,7 @@ import {
   playLenSec,
   leshySec,
   fireLevel,
+  LAG_GRACE_MS,
 } from '@kto/game-core';
 import type { AwardId, ClientSession, CrowdKind, Dict, Entity, GameConfig, Lang, Moment, Notice, RoundSummary, ThemeText, World, WorldEvent } from '@kto/game-core';
 import { resultCardFile } from './card';
@@ -228,6 +230,7 @@ export class GameScene extends Phaser.Scene {
   /** «Тсс!»: огромная тень ползёт по лугу в стоп-кадре. */
   private giant!: Phaser.GameObjects.Image;
   private giantFor = -1;
+  private dreadAt = 0;
   private giantT0 = 0;
   /** Леший этого дубля: шаги до «Тсс!» (sanity.ts › leshySec), выдох над лугом, шаги прочь. */
   private leshy = { round: -1, stage: 'wait' as 'wait' | 'near' | 'over' | 'leave' | 'done', nextAt: 0, steps: 0, warn: -1 };
@@ -480,6 +483,7 @@ export class GameScene extends Phaser.Scene {
     this.candleG = this.add.graphics().setDepth(1100);
     // кикиморы — поверх тьмы краёв: выходят из неё
     this.addSheet('kikimora', makeKikimora(), KIKI_W, KIKI_H);
+    this.addSheet('leshy', makeLeshy(), LESHY_W, LESHY_H);
     this.kikiG = this.add.graphics().setDepth(946);
     this.glimpse = this.add.image(0, 0, 'kikimora', 0).setOrigin(0.5, 1).setDepth(946).setTintFill(hexToInt(PAL.ink)).setVisible(false);
     // подсказки сверху поля: шаги пробного дубля и «впервые видишь» в настоящей игре
@@ -514,8 +518,15 @@ export class GameScene extends Phaser.Scene {
     if (phase === 'countdown' || phase === 'play') {
       this.audio.setMusic('play', this.sim.theme, restart && phase === 'countdown');
       if (phase === 'play' && this.sim.world.isFrozen()) this.audio.cutMusic();
-    } else if (phase === 'accuse') this.audio.setMusic('accuse');
+    } else if (this.dreadAfter()) this.audio.setMusic('play', this.sim.theme);
+    else if (phase === 'accuse') this.audio.setMusic('accuse');
     else this.audio.setMusic('off');
+  }
+
+  /** «Купальская ночь»: страх не отпускает и после дубля — до «Далее» ночь, шкатулка и глаза в лесу. */
+  private dreadAfter(): boolean {
+    const ph = this.sim.phase;
+    return hasSanity(this.sim.theme) && (ph === 'accuse' || ph === 'reveal' || ph === 'results');
   }
 
   private setupFreezeFrame(): void {
@@ -1014,6 +1025,10 @@ export class GameScene extends Phaser.Scene {
         if (this.weaponKills() && ev.attacker !== undefined) this.weaponHit(ev.target, ev.x, ev.y, ev.attacker);
         else {
           // вырезали меня — «вырезан»; мой удар по живому — награда; чужой — событие на поле
+          if (this.byLeshy(ev)) {
+            this.audio.play('leshyTake');
+            this.cameras.main.shake(500, 0.016);
+          }
           if (ev.target === myEid) this.audio.play('cut');
           else if (ev.result === 'player') this.audio.play(this.myHit(ev.target) ? 'hitPlayer' : 'hitOther');
           else this.audio.play('hitBot');
@@ -1027,10 +1042,11 @@ export class GameScene extends Phaser.Scene {
         if (ev.target === myEid) {
           // «Жёсткий дубль»: вырезал режиссёр — сразу после окна команды, без удара
           const c = this.sim.world.crowd;
-          const byDirector = (roundMod(this.sim.mod) === 'hard' || this.cfg.strictCrowd) && !!c && !c.vote && ev.at > c.windowEnd && ev.at < c.windowEnd + 2000;
+          const byDirector = !this.byLeshy(ev) && (roundMod(this.sim.mod) === 'hard' || this.cfg.strictCrowd) && !!c && !c.vote && ev.at > c.windowEnd && ev.at < c.windowEnd + 2000;
           // «Купальская ночь»: рассудок кончился — сгинул в тумане (удар без нападавшего, как у режиссёра)
-          const byMadness = !byDirector && hasSanity(this.sim.theme) && ev.attacker === undefined && this.lastSanity <= 2;
-          const sub = byDirector ? this.t.game.cutByCrowd : byMadness ? this.themeText()?.sanityLost : undefined;
+          const leshy = this.byLeshy(ev);
+          const byMadness = !byDirector && !leshy && hasSanity(this.sim.theme) && ev.attacker === undefined && this.lastSanity <= 2;
+          const sub = leshy ? this.themeText()?.leshyTook : byDirector ? this.t.game.cutByCrowd : byMadness ? this.themeText()?.sanityLost : undefined;
           this.outBy = byDirector ? 'director' : 'player';
           // оружием — баннер в момент удара, с кровью на экране и сотрясением (weaponImpact)
           const lk = this.kills.find((k) => k.k.eid === ev.target && !k.hit);
@@ -1843,11 +1859,21 @@ export class GameScene extends Phaser.Scene {
    */
   private renderNight(): void {
     const ph = this.sim.phase;
-    const on = themePack(this.sim.theme).night && isThemeLoaded(this.sim.theme) && (ph === 'play' || ph === 'countdown');
+    const after = this.dreadAfter();
+    const on = themePack(this.sim.theme).night && isThemeLoaded(this.sim.theme) && (ph === 'play' || ph === 'countdown' || after);
     this.torchG.clear();
     this.renderLeshy();
     if (!on) {
       this.nightVeil.setVisible(false);
+      return;
+    }
+    if (after) {
+      // после дубля ночь не уходит: в повторе — светлее (надо разглядеть, кто что делал), в итогах — темно,
+      // а из-за деревьев смотрят глаза
+      const rt = this.nightVeil.setVisible(true);
+      rt.clear();
+      rt.draw('nightveil', 0, 0, ph === 'reveal' ? 0.3 : 0.55);
+      this.forestEyes(1);
       return;
     }
     const sec = this.playSec();
@@ -1908,19 +1934,24 @@ export class GameScene extends Phaser.Scene {
     const lesh = leshySec(sim.round);
     const lead = this.cfg.leshyLeadSec;
     const c = sim.world.crowd;
-    if (L.stage === 'wait' && clock >= lesh - lead && clock < lesh + 4) {
+    if (L.stage === 'wait' && clock >= lesh - lead - 3 && clock < lesh + 4) {
+      // сначала из леса зовут «Ау-у…», музыка смолкает; шаги — следом
       L.stage = 'near';
       this.audio.setHush(true);
+      this.audio.play('leshyCall');
+      L.nextAt = now + 3000;
     }
     if (L.stage === 'near') {
       if (c && c.kind === 'freeze' && !c.vote && sim.world.time >= c.showAt && sim.world.time < c.resumeAt) {
         L.stage = 'over';
         L.warn = c.warnAt;
-        this.audio.play('leshyStep', 10);
-        this.audio.play('leshyBreath');
+        this.audio.play('leshyStinger');
+        this.time.delayedCall(700, () => this.audio.play('leshyStep', 10));
+        this.time.delayedCall(1500, () => this.audio.play('leshyBreath'));
         this.cameras.main.shake(400, 0.012);
         haptic('heavy');
       } else if (now >= L.nextAt) {
+        if (clock < lesh - lead) return;
         const k = Math.max(0, Math.min(9, Math.round(((clock - (lesh - lead)) / lead) * 9)));
         this.audio.play('leshyStep', k);
         if (k >= 5) this.cameras.main.shake(120, 0.002 + k * 0.0006);
@@ -1930,7 +1961,7 @@ export class GameScene extends Phaser.Scene {
           this.audio.setHush(false);
         }
       }
-    } else if (L.stage === 'over' && c && sim.world.time >= c.resumeAt + 600) {
+    } else if (L.stage === 'over' && c && sim.world.time >= c.windowEnd + LAG_GRACE_MS + 900) {
       L.stage = 'leave';
       L.steps = 0;
       L.nextAt = now;
@@ -1945,29 +1976,96 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  /** Леший над лугом: в стоп-кадре его «Тсс!» по лугу ползёт огромная тень — у всех одна и та же. */
+  /** Глаза Лешего за деревьями (k 0–1 — насколько он близко: ниже и ярче), иногда моргают. */
+  private forestEyes(k: number): void {
+    const now = performance.now();
+    if (Math.floor(now / 140) % 17 === 0) return;
+    const ex = 30 + ((this.sim.round * 53) % 120) + Math.round(Math.sin(now / 1700) * 6);
+    const ey = AY + 4 + Math.round(k * 10);
+    const g = this.torchG;
+    g.fillStyle(hexToInt(PAL.amber)).fillRect(ex - 3, ey, 2, 1).fillRect(ex + 2, ey, 2, 1);
+    if (k > 0.5) g.fillStyle(hexToInt(PAL.yellow)).fillRect(ex - 2, ey, 1, 1).fillRect(ex + 2, ey, 1, 1);
+  }
+
+  /**
+   * Звуки ночного леса «Купальской ночи»: треск ветки, далёкое «Ау-у…». Редко и в случайный миг, у каждого
+   * телефона свой — с рассудком игрока не связаны, ничего о нём не выдают. Пока идёт Леший — тихо.
+   */
+  private renderDread(): void {
+    const ph = this.sim.phase;
+    const on = hasSanity(this.sim.theme) && isThemeLoaded(this.sim.theme) && (ph === 'play' || this.dreadAfter());
+    const now = performance.now();
+    if (!on) {
+      this.dreadAt = 0;
+      return;
+    }
+    if (!this.dreadAt) this.dreadAt = now + 5000 + Math.random() * 6000;
+    if (now < this.dreadAt) return;
+    this.dreadAt = now + 7000 + Math.random() * 9000;
+    const L = this.leshy.stage;
+    if (ph === 'play' && (L === 'near' || L === 'over' || L === 'leave')) return;
+    const night = ph === 'play' ? nightLevel(this.cfg, this.playSec()) : 1;
+    if (Math.random() < 0.3 * night) this.audio.play('leshyCall');
+    else this.audio.play('snap');
+  }
+
+  /** Удар без нападавшего сразу после стоп-кадра Лешего — это он забрал того, кто шевельнулся. */
+  private byLeshy(ev: WorldEvent): boolean {
+    if (ev.t !== 'hit' || ev.attacker !== undefined || !hasSanity(this.sim.theme)) return false;
+    const c = this.sim.world.crowd;
+    return !!c && c.warnAt === this.leshy.warn && ev.at > c.windowEnd && ev.at < c.windowEnd + 2000;
+  }
+
+  /**
+   * Леший на поляне: в его долгом стоп-кадре «Тсс!» он выходит из леса сбоку, встаёт посреди поляны,
+   * озирается (голова влево, вправо) и уходит. До этого, пока слышны шаги, из-за деревьев смотрят его
+   * глаза — всё ниже и ближе. Видят все одно и то же: время общее.
+   */
   private renderGiant(): void {
     const w = this.sim.world;
     const c = w.crowd;
-    const on = hasSanity(this.sim.theme) && this.sim.phase === 'play' && !!c && c.warnAt === this.leshy.warn && w.time >= c.showAt && w.time < c.resumeAt + 400;
+    const L = this.leshy;
+    // глаза в лесу, пока он идёт: всё ниже и ярче
+    if (L.stage === 'near' && this.sim.phase === 'play') {
+      const lead = this.cfg.leshyLeadSec;
+      this.forestEyes(Math.max(0, Math.min(1, (this.playSec() - (leshySec(this.sim.round) - lead)) / lead)));
+    }
+    const end = c ? c.windowEnd + LAG_GRACE_MS + 900 : 0;
+    const on = hasSanity(this.sim.theme) && this.sim.phase === 'play' && !!c && c.warnAt === L.warn && w.time >= c.showAt && w.time < end;
     if (!on || !c) {
       this.giant?.setVisible(false);
       return;
     }
-    if (!this.giant) this.giant = this.add.image(0, 0, 'kikimora', 0).setOrigin(0.5, 1).setScale(4).setDepth(944).setTintFill(hexToInt(PAL.ink));
+    if (!this.giant) this.giant = this.add.image(0, 0, 'leshy', 0).setOrigin(0.5, 1).setScale(2).setDepth(944);
     if (this.giantFor !== c.warnAt) {
       this.giantFor = c.warnAt;
       this.giantT0 = performance.now();
     }
-    const dur = Math.max(800, c.resumeAt - c.showAt + 400);
-    const k = Math.min(1, (performance.now() - this.giantT0) / dur);
-    const dir = c.warnAt % 2 ? 1 : -1;
-    const x = 90 + dir * (-150 + 300 * k);
+    const now = performance.now();
+    const dur = Math.max(1200, end - c.showAt);
+    const k = Math.min(1, (now - this.giantT0) / dur);
+    const dir = c.warnAt % 2 ? 1 : -1; // откуда выходит: 1 — слева направо
+    const mid = 90 + dir * 8;
+    let x: number;
+    let frame: number;
+    // выходит (четверть), стоит и озирается — пока не решит, кого забрать, — и уходит быстро
+    if (k < 0.25) {
+      x = mid - dir * (150 * (1 - k / 0.25));
+      frame = Math.floor(now / 240) % 4;
+    } else if (k < 0.88) {
+      x = mid;
+      frame = k < 0.4 ? 4 : k < 0.55 ? 5 : k < 0.7 ? 4 : 5;
+    } else {
+      x = mid + dir * 150 * ((k - 0.88) / 0.12);
+      frame = Math.floor(now / 160) % 4;
+    }
+    const alpha = Math.min(1, k / 0.08, (1 - k) / 0.08);
     this.giant
       .setVisible(true)
-      .setPosition(Math.round(x), AY + 200)
-      .setFrame(Math.floor(performance.now() / 260) % 4)
-      .setAlpha(0.45 * Math.sin(Math.PI * k));
+      .setFlipX(dir < 0)
+      .setPosition(Math.round(x), AY + 196)
+      .setFrame(frame)
+      .setAlpha(Math.max(0, alpha));
   }
 
   /**
@@ -2315,7 +2413,8 @@ export class GameScene extends Phaser.Scene {
       this.audio.setIntensity(level);
       // ночь у всех одна (по времени дубля) — песня темнеет; свой рассудок в музыку не попадает, его услышали бы соседи
       this.audio.setDread(hasSanity(this.sim.theme) ? nightLevel(this.cfg, this.playSec()) : 0);
-    }
+    } else if (this.dreadAfter()) this.audio.setDread(1);
+    this.renderDread();
 
     this.applyTheme();
     this.tickSubliminal();
@@ -2607,10 +2706,26 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  /**
+   * Кострище «Купальской ночи» гаснет постепенно (кадры по 4 на силу огня, kupala.ts › hearth): во всю силу,
+   * слабее, еле теплится, угли и дым. Последнюю минуту перед прогоранием пламя мигает между силами.
+   */
+  private fireBase(): number {
+    const ph = this.sim.phase;
+    if (!hasSanity(this.sim.theme) || (ph !== 'play' && ph !== 'countdown')) return 0;
+    const out = this.cfg.sanityFireOutSec;
+    const sec = this.playSec();
+    let lvl = sec < out * 0.36 ? 3 : sec < out * 0.68 ? 2 : sec < out ? 1 : 0;
+    // на стыке сил огонь то вспыхивает, то никнет
+    const edge = [out * 0.36, out * 0.68, out].find((e) => sec > e - 3 && sec < e);
+    if (edge !== undefined && Math.floor(performance.now() / 230) % 3 === 0) lvl--;
+    return (3 - Math.max(0, lvl)) * 4;
+  }
+
   private renderProps(): void {
     const t = performance.now();
     for (const p of this.props) {
-      if (p.kind === 'fountain') p.spr.setFrame(Math.floor(t / 180) % 4);
+      if (p.kind === 'fountain') p.spr.setFrame(this.fireBase() + (Math.floor(t / 180) % 4));
       if (p.kind === 'lamp') p.spr.setFrame(Math.floor(t / 900) % 2);
     }
   }
@@ -3813,6 +3928,22 @@ function makeKikimora(): HTMLCanvasElement {
   KIKI_FRAMES.forEach((rows, f) =>
     rows.forEach((r, y) => {
       for (let x = 0; x < r.length; x++) if (r[x] !== '.') ppx(g, f * KIKI_W + x, y, col[r[x]]);
+    }),
+  );
+  return c;
+}
+
+/** Леший — кадры из leshy-art.ts (буквы → цвета PAL). */
+function makeLeshy(): HTMLCanvasElement {
+  const col: Record<LeshyKey, string> = {
+    o: PAL.ink, n: PAL.night, u: PAL.umber, p: PAL.plum, b: PAL.brick, d: PAL.deep, P: PAL.pine, f: PAL.forest,
+    k: PAL.dusk, s: PAL.slate, m: PAL.mist, y: PAL.yellow, w: PAL.white, a: PAL.amber,
+  };
+  const frames = leshyFrames();
+  const { c, g } = canvas(LESHY_W * frames.length, LESHY_H);
+  frames.forEach((rows, f) =>
+    rows.forEach((r, y) => {
+      for (let x = 0; x < r.length; x++) if (r[x] !== '.') ppx(g, f * LESHY_W + x, y, col[r[x] as LeshyKey]);
     }),
   );
   return c;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MatchSim, ROTATION_THEMES, THEME_RULES, makeConfig, sanityStage } from '../src';
+import { MatchSim, ROTATION_THEMES, THEME_RULES, leshySec, makeConfig, sanityStage } from '../src';
 import type { WorldEvent } from '../src';
 
 const players = ['a', 'b'].map((pid, i) => ({ pid, name: pid, color: i }));
@@ -175,7 +175,12 @@ describe('рассудок («Купальская ночь»)', () => {
     const cfg = makeConfig({ fixedTheme: KUPALA, endWhenLastAlive: false });
     const sim = new MatchSim(cfg, players, 21);
     toPlay(sim);
-    for (let i = 0; i < 20 * 50; i++) sim.tick(); // глухая ночь, костёр прогорел
+    for (let i = 0; i < 20 * 50; i++) {
+      // глухая ночь, костёр прогорел; на «Тсс!» Лешего замираем
+      const c = sim.world.crowd;
+      if (c && !c.vote && sim.world.time >= c.showAt + 100 && sim.pr[0].crowdAnswered !== c.warnAt) sim.intent('a', { k: 'crowd', kind: c.kind });
+      sim.tick();
+    }
     const p = sim.pr[0];
     p.sanity = 20;
     sim.tick();
@@ -199,10 +204,35 @@ describe('рассудок («Купальская ночь»)', () => {
     let lit = false;
     for (let i = 0; i < 20 * 70 && !lit; i++) {
       const c = sim2.world.crowd;
-      if (c && !c.vote && c.kind === 'jump' && sim2.world.time >= c.showAt + 100 && sim2.pr[0].crowdAnswered !== c.warnAt) sim2.intent('a', { k: 'crowd', kind: 'jump' });
+      if (c && !c.vote && sim2.world.time >= c.showAt + 100 && sim2.pr[0].crowdAnswered !== c.warnAt) sim2.intent('a', { k: 'crowd', kind: c.kind });
       sim2.tick();
       lit = sim2.pr[0].torchUntil > sim2.world.time;
     }
     expect(lit).toBe(true);
+  });
+  it('Леший: кто не замер на его «Тсс!» — забран; обычный «Тсс!» не убивает; дети — живы', () => {
+    for (const kidsMode of [false, true]) {
+      const sim = new MatchSim(makeConfig({ fixedTheme: KUPALA, endWhenLastAlive: false, kidsMode }), players, 13);
+      toPlay(sim);
+      const [a, b] = sim.pr;
+      const t0 = sim.world.time;
+      let leshyAt = -1;
+      for (let i = 0; i < 20 * 70 && leshyAt < 0; i++) {
+        a.sanity = b.sanity = 100;
+        const c = sim.world.crowd;
+        if (c && !c.vote && sim.world.time >= c.showAt + 100 && b.crowdAnswered !== c.warnAt) sim.intent('b', { k: 'crowd', kind: c.kind });
+        if (c && c.kind === 'freeze' && c.showAt - t0 >= (leshySec(sim.round) - 1) * 1000) leshyAt = c.warnAt;
+        if (leshyAt < 0) expect(a.alive).toBe(true);
+        sim.tick();
+      }
+      expect(leshyAt).toBeGreaterThan(0);
+      for (let i = 0; i < 20 * 6; i++) {
+        const c = sim.world.crowd;
+        if (c && !c.vote && sim.world.time >= c.showAt + 100 && b.crowdAnswered !== c.warnAt) sim.intent('b', { k: 'crowd', kind: c.kind });
+        sim.tick();
+      }
+      expect(b.alive).toBe(true);
+      expect(a.alive).toBe(kidsMode);
+    }
   });
 });

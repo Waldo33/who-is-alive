@@ -260,50 +260,11 @@ function ground(arena: ArenaDef): HTMLCanvasElement {
 }
 
 const BOG: PropSet = {
-  // купальский костёр: перекрещённые поленья, пламя кадрами, искры вверх
+  // купальское кострище: круг камней, шалаш из поленьев, пламя — 4 силы огня × 4 кадра
+  // (кадры 0–3 — во всю силу, 12–15 — угли и дым; какую силу показать — scene.ts › renderProps)
   fountain: () => {
-    const fw = 34;
-    const fh = 34;
-    const { c, g } = canvas(fw * 4, fh);
-    for (let f = 0; f < 4; f++) {
-      const ox = f * fw;
-      // камни вокруг
-      for (const [x, y] of [[4, 29], [9, 31], [15, 32], [21, 32], [27, 30], [30, 27], [3, 26]]) {
-        ellipse(g, ox + x, y, 2, 1, PAL.ink);
-        px(g, ox + x - 1, y - 1, PAL.slate, 2, 1);
-      }
-      // поленья крест-накрест
-      line(g, ox + 7, 30, ox + 26, 22, PAL.ink);
-      line(g, ox + 7, 29, ox + 26, 21, PAL.umber);
-      line(g, ox + 27, 30, ox + 8, 22, PAL.ink);
-      line(g, ox + 27, 29, ox + 8, 21, PAL.brick);
-      // угли
-      for (let x = 11; x < 24; x++) if (hash(x, f) < 0.6) px(g, ox + x, 26 + Math.floor(hash(f, x) * 2), hash(x * 3, f) < 0.5 ? PAL.orange : PAL.wine);
-      // пламя: три языка, качаются по кадрам
-      const tongues: [number, number, number][] = [[12, 9, 4], [17, 14, 5], [22, 10, 4]];
-      tongues.forEach(([cx, ht, wd], i) => {
-        const sway = [0, 1, 0, -1][(f + i) % 4];
-        const hh = ht + [0, 2, 1, -1][(f + i * 2) % 4];
-        for (let y = 0; y < hh; y++) {
-          const k = y / hh;
-          const half = Math.max(0, Math.round(wd * (1 - k) * (k < 0.25 ? k * 4 : 1)));
-          const x = cx + Math.round(sway * k * 2);
-          const yy = 25 - y;
-          px(g, ox + x - half - 1, yy, PAL.wine, half * 2 + 3, 1);
-          px(g, ox + x - half, yy, PAL.orange, half * 2 + 1, 1);
-          if (half >= 2) px(g, ox + x - half + 1, yy, PAL.amber, half * 2 - 1, 1);
-          if (half >= 3 && k < 0.5) px(g, ox + x - 1, yy, PAL.yellow, 3, 1);
-        }
-      });
-      // искры
-      for (let k = 0; k < 5; k++) {
-        const t = ((k * 7 + f * 3) % 12) / 12;
-        const x = ox + 10 + Math.floor(hash(k, 9) * 14) + Math.round(Math.sin(t * 6 + k) * 2);
-        const y = Math.round(14 - t * 13);
-        px(g, x, y, t < 0.5 ? PAL.yellow : PAL.orange);
-      }
-    }
-    return [c, fw, fh, 4];
+    const [c, fw, fh] = hearth();
+    return [c, fw, fh, 16];
   },
   // кривая берёза
   tree: () => {
@@ -544,3 +505,110 @@ const pack: ThemePack = {
 };
 
 export default pack;
+
+export const HEARTH_W = 42;
+export const HEARTH_H = 46;
+
+/** Кострище: камни сзади → поленья → пламя → камни спереди. Сила 3 — во всю, 0 — угли и дым. */
+function hearth(): [HTMLCanvasElement, number, number] {
+  const fw = HEARTH_W;
+  const fh = HEARTH_H;
+  const { c, g } = canvas(fw * 16, fh);
+  const cx = 21;
+  const cy = fh - 8; // центр круга камней
+  const stones: [number, number, number][] = [];
+  for (let i = 0; i < 15; i++) {
+    const a = (i / 15) * Math.PI * 2 + 0.2;
+    stones.push([Math.round(cx + Math.cos(a) * 16), Math.round(cy + Math.sin(a) * 6), 2 + Math.round(hash(i, 4))]);
+  }
+  for (let lvl = 3; lvl >= 0; lvl--) {
+    for (let f = 0; f < 4; f++) {
+      const ox = ((3 - lvl) * 4 + f) * fw;
+      const P = (x: number, y: number, col: string, w = 1, h = 1) => px(g, ox + x, y, col, w, h);
+      const stone = ([x, y, r]: [number, number, number], i: number) => {
+        ellipse(g, ox + x, y, r + 1, r, PAL.ink);
+        ellipse(g, ox + x, y - 1, r, r - 1, PAL.steel);
+        P(x - r + 1, y - r + 1, PAL.slate, r, 1);
+        // внутренняя сторона камня горит отсветом
+        if (lvl >= 2 && y > cy) P(x - 1, y - r + 1, i % 2 ? PAL.clay : PAL.brick, 2, 1);
+        if (lvl >= 1 && y < cy) P(x - 1, y + r - 2, PAL.umber, 2, 1);
+      };
+      // зола и пепел внутри круга
+      ellipse(g, ox + cx, cy, 14, 5, PAL.plum);
+      for (let k = 0; k < 30; k++) {
+        const x = cx - 12 + Math.floor(hash(k, 21) * 24);
+        const y = cy - 3 + Math.floor(hash(21, k) * 6);
+        if (Math.hypot((x - cx) / 13, (y - cy) / 4.5) < 1) P(x, y, hash(k, 22) < 0.5 ? PAL.night : PAL.steel);
+      }
+      stones.forEach((st, i) => st[1] < cy && stone(st, i));
+      // поленья шалашом: четыре, сходятся над серединой
+      const tip = cy - 13;
+      const logs: [number, number, number, number][] = [[cx - 11, cy + 1, cx - 1, tip], [cx + 11, cy + 1, cx + 1, tip], [cx - 6, cy - 3, cx, tip + 1], [cx + 7, cy - 2, cx + 1, tip + 2]];
+      logs.forEach(([x0, y0, x1, y1], i) => {
+        line(g, ox + x0, y0, ox + x1, y1, PAL.ink);
+        line(g, ox + x0 + 1, y0, ox + x1 + 1, y1, lvl === 0 ? PAL.plum : PAL.umber);
+        line(g, ox + x0 + 2, y0, ox + x1 + 2, y1, PAL.ink);
+        // торцы и трещины тлеют
+        if (lvl <= 1) for (let k = 0; k < 3; k++) {
+          const t = 0.2 + k * 0.25 + hash(i, k) * 0.1;
+          const on = hash(i * 4 + k, f) < 0.7;
+          if (on) P(Math.round(x0 + (x1 - x0) * t) + 1, Math.round(y0 + (y1 - y0) * t), k % 2 ? PAL.orange : PAL.wine);
+        }
+        P(x0 + 1, y0, lvl >= 1 ? PAL.brick : PAL.wine);
+      });
+      // угли под шалашом
+      for (let k = 0; k < 14; k++) {
+        const x = cx - 6 + Math.floor(hash(k, 31) * 13);
+        const y = cy - 2 + Math.floor(hash(31, k) * 4);
+        const glow = hash(k * 7, f + lvl * 5);
+        P(x, y, glow < 0.3 ? PAL.yellow : glow < 0.65 ? PAL.orange : PAL.wine);
+      }
+      // пламя
+      if (lvl > 0) {
+        const scale = [0, 0.38, 0.68, 1][lvl];
+        const tongues: [number, number, number][] = [[cx - 5, 15, 4], [cx, 27, 6], [cx + 5, 18, 4], [cx - 2, 21, 4], [cx + 3, 23, 4]];
+        tongues.forEach(([tx, ht0, wd0], i) => {
+          if (lvl === 1 && i > 2) return;
+          const sway = [0, 1, 0, -1][(f + i) % 4];
+          const ht = Math.max(3, Math.round((ht0 + [0, 3, 1, -2][(f + i * 3) % 4]) * scale));
+          const wd = Math.max(1, Math.round(wd0 * (0.6 + 0.4 * scale)));
+          const base = cy - 1;
+          for (let y = 0; y < ht; y++) {
+            const k = y / ht;
+            const half = Math.max(0, Math.round(wd * Math.sin(Math.PI * (0.18 + 0.82 * (1 - k))) * (1 - k * 0.35)));
+            const x = tx + Math.round(sway * k * k * 3 + Math.sin(k * 5 + f + i) * k);
+            const yy = base - y;
+            P(x - half - 1, yy, PAL.wine, half * 2 + 3, 1);
+            P(x - half, yy, PAL.orange, half * 2 + 1, 1);
+            if (half >= 1 && k < 0.8) P(x - half + 1, yy, PAL.amber, Math.max(1, half * 2 - 1), 1);
+            if (half >= 2 && k < 0.55) P(x - 1, yy, PAL.yellow, 3, 1);
+            if (lvl === 3 && half >= 3 && k < 0.3) P(x, yy, PAL.white, 1, 1);
+          }
+          // отрывающийся язычок над пламенем
+          if ((f + i) % 2 === 0 && lvl >= 2) P(tx + sway * 2, base - ht - 2, PAL.orange);
+        });
+      }
+      // искры летят вверх
+      const sparks = [0, 1, 4, 8][lvl];
+      for (let k = 0; k < sparks; k++) {
+        const t = ((k * 5 + f * 3) % 12) / 12;
+        const x = cx - 7 + Math.floor(hash(k, 9) * 15) + Math.round(Math.sin(t * 6 + k) * 2);
+        const y = Math.round(cy - 14 - t * (fh - 20));
+        if (y >= 0) P(x, y, t < 0.5 ? PAL.yellow : PAL.orange);
+      }
+      // угли: дым тонкими завитками
+      if (lvl <= 1) {
+        for (let k = 0; k < 3; k++) {
+          for (let j = 0; j < 9; j++) {
+            const y = cy - 6 - j * 3 - ((f * 2 + k * 5) % 3);
+            const x = cx - 3 + k * 3 + Math.round(Math.sin(j * 0.8 + k * 2 + f * 0.6) * 2);
+            if (y < 0 || hash(j + k * 9, f) < 0.25) continue;
+            P(x, y, j < 3 ? PAL.slate : j < 6 ? PAL.steel : PAL.dusk);
+          }
+        }
+      }
+      stones.forEach((st, i) => st[1] >= cy && stone(st, i));
+    }
+  }
+  return [c, fw, fh];
+}

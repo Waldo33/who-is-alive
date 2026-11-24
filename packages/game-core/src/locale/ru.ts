@@ -18,6 +18,8 @@ export interface ThemeText {
   /** Тема с рассудком: подпись при переходе в стадию 0–3 (sanity.ts › sanityStage) и «вырезан на нуле». */
   sanity?: [string, string, string, string];
   sanityLost?: string;
+  /** Вырезан Лешим: шевельнулся в его стоп-кадр. */
+  leshyTook?: string;
   /** Тема с рассудком: чем кончился дубль — остался один, рассвет (живых несколько), сгинули все. */
   ends?: { last: string; dawn: string; none: string };
   /** Вторая подсказка после `intro` (в начале дубля). */
@@ -88,6 +90,7 @@ export const ru = {
       crowd: { freeze: 'Тсс! Шорох!', jump: 'Факел!', dance: 'Хоровод!' },
       sanity: ['Голова ясная', 'Слышишь шёпот?', 'Туман сгущается', 'Они идут…'],
       sanityLost: 'Сгинул в тумане',
+      leshyTook: 'Тебя забрал Леший',
     },
   } as Partial<Record<ThemeId, ThemeText>>,
   start: {

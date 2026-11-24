@@ -200,6 +200,8 @@ export class MatchSim {
   private crowdCount = 0;
   /** Леший в этом дубле уже прошёл (тема с рассудком). */
   private leshyFired = false;
+  /** warnAt команды Лешего: кто на ней шевельнулся — того он забирает (в детском режиме — нет). */
+  private leshyWarn = -1;
   private hardChecked = -1;
   crowdShowTimes: number[] = [];
   zoneStarted = false;
@@ -395,6 +397,7 @@ export class MatchSim {
     this.plannedPlayEnd = this.playStart + playLenSec(this.cfg, this.theme) * 1000;
     this.crowdCount = 0;
     this.leshyFired = false;
+    this.leshyWarn = -1;
     this.hardChecked = -1;
     this.scheduleCrowd(this.playStart);
     // звёзды выходят по одной: сначала starsAtStart, остальные — с шагом появления
@@ -492,10 +495,10 @@ export class MatchSim {
     return t >= this.lastTwistAt + quiet && !this.zoneStarted && t < this.plannedPlayEnd - this.cfg.zoneStartBeforeEndSec * 1000 - 3000;
   }
 
-  private fireCrowd(kind: CrowdKind, vote: boolean, ghost = false): void {
+  private fireCrowd(kind: CrowdKind, vote: boolean, ghost = false, pauseMs?: number): void {
     const t = this.world.time;
     const cfg = this.cfg;
-    const pause = crowdPauseMs(cfg);
+    const pause = pauseMs ?? crowdPauseMs(cfg);
     const resumeAt = t + pause;
     this.emit({ t: 'crowd', kind, at: t, showAt: t, resumeAt, windowEnd: resumeAt + cfg.crowdLateMs, ...(vote ? { vote: true } : {}), ...(ghost ? { ghost: true } : {}) });
     this.nextGhost = false;
@@ -542,7 +545,9 @@ export class MatchSim {
     if (!c || (c.vote && !c.ghost) || this.hardChecked === c.warnAt || t <= c.windowEnd + LAG_GRACE_MS) return;
     this.hardChecked = c.warnAt;
     const cfg = this.cfg;
-    const hard = !c.vote && (roundMod(this.mod) === 'hard' || cfg.strictCrowd);
+    // Леший: не замер вовремя — забран, как в «Жёстком дубле» (дети — только подсвечены)
+    const leshy = c.warnAt === this.leshyWarn && !cfg.kidsMode;
+    const hard = !c.vote && (roundMod(this.mod) === 'hard' || cfg.strictCrowd || leshy);
     const slips: number[] = [];
     for (const p of this.pr) {
       if (!p.alive) continue;
@@ -614,7 +619,8 @@ export class MatchSim {
     const lesh = hasSanity(this.theme) && !this.leshyFired ? leshySec(this.round) * 1000 : Infinity;
     if (clock >= lesh && this.crowdCanStart(t)) {
       this.leshyFired = true;
-      this.fireCrowd('freeze', false);
+      this.fireCrowd('freeze', false, false, cfg.leshyPauseMs);
+      this.leshyWarn = t; // warnAt команды = время её запуска
     }
     const leshyNear = clock >= lesh - (cfg.leshyLeadSec + 6) * 1000;
     if (!leshyNear && t >= this.nextCrowdAt && this.crowdCanStart(t)) {
