@@ -213,6 +213,10 @@ if ! grep -q '^AUTH_SIGNING_KEY=' /etc/massovka/secrets.env 2>/dev/null; then
   # umask — только для этого файла, иначе конфиги ниже станут нечитаемыми для служб
   ( umask 077; echo "AUTH_SIGNING_KEY=$(openssl rand -hex 32)" >> /etc/massovka/secrets.env )
 fi
+# ключ нагрузочного прогона (load-test.yml читает его по SSH): снимает лимиты по адресу только с тестовых клиентов
+if ! grep -q '^LOAD_KEY=' /etc/massovka/secrets.env 2>/dev/null; then
+  ( umask 077; echo "LOAD_KEY=$(openssl rand -hex 24)" >> /etc/massovka/secrets.env )
+fi
 chmod 600 /etc/massovka/secrets.env
 
 envsum_before=$(cat /etc/massovka/*.env 2>/dev/null | sha256sum)

@@ -19,6 +19,7 @@ import { loadGeo } from './geo';
  *   PUBLIC_WS_BASE (wss://api.<домен>), ALLOWED_ORIGINS (через запятую), TRUST_PROXY=1, LOG_LEVEL,
  *   MAX_ROOMS — потолок комнат под память машины (~1,5 МБ на комнату, считает setup.sh; иначе 2000),
  *   REGION (msk | nl), GEOIP_DB — база стран для замера доступности, EVENTS_UPSTREAM — куда пересылать аналитику.
+ *   LOAD_KEY — ключ нагрузочного прогона (load-test.yml), секрет рождается на сервере,
  *   PEER_HTTP + PEER_WS_URL — соседний экземпляр (синий ↔ зелёный): к нему переезжают комнаты при выкладке
  *   (POST /internal/drain изнутри машины), после drain процесс завершается сам.
  */
@@ -91,6 +92,7 @@ const server = new GameServer({
   geo: loadGeo(env.GEOIP_DB || undefined, (msg, f) => log('info', msg, f)),
   region: env.REGION || undefined,
   eventsUpstream: env.EVENTS_UPSTREAM || undefined,
+  loadKey: env.LOAD_KEY || undefined,
   peer: env.PEER_HTTP && env.PEER_WS_URL ? { http: env.PEER_HTTP, wsUrl: env.PEER_WS_URL } : undefined,
   // выкладка: все комнаты переехали к соседу или доиграли — выходим (systemd не перезапускает код 0)
   onDrained: () => void stop('drained'),

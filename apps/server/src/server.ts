@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
-import { createHash, randomBytes, randomInt } from 'node:crypto';
+import { createHash, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { CLIP_MIME, ClipStore } from './clips';
@@ -48,6 +48,11 @@ export interface GameServerOptions {
   film?: FilmService;
   /** Страна по адресу для замера доступности (geo.ts); нет — неизвестна. */
   geo?: Geo;
+  /**
+   * Ключ нагрузочного прогона (scripts/load.ts, load-test.yml): запросы с заголовком x-kto-load
+   * не упираются в лимиты по адресу (один раннер = тысячи игроков), а их комнаты не монтируют фильм.
+   */
+  loadKey?: string;
   /** Где стоит сервер (msk, nl…): в ответе /v1/probe. */
   region?: string;
   /**
@@ -149,7 +154,7 @@ export class GameServer {
       if (!/^\/i\/[a-z0-9-]{1,16}\/ws$/.test(path) && path !== '/ws') return socket.destroy();
       if (!this.originOk(req.headers.origin)) return socket.destroy();
       const ip = this.ip(req);
-      if (this.ipConns.get(ip) >= CONNS_PER_IP) {
+      if (this.ipConns.get(ip) >= CONNS_PER_IP && !this.isLoad(req)) {
         this.stats.rejected.inc('ip_conns');
         return socket.destroy();
       }
@@ -241,7 +246,7 @@ export class GameServer {
       if (p === '/readyz') return this.reply(res, this.draining ? 503 : 200, { ok: !this.draining, instance: this.instance });
       if (p === '/metrics' && req.method === 'GET') return await this.metrics(req, res);
       if (p === '/v1/auth/anon' && req.method === 'POST') {
-        if (!this.authRate.take(this.ip(req), this.now())) return this.reply(res, 429, { error: 'rate_limited' });
+        if (!this.isLoad(req) && !this.authRate.take(this.ip(req), this.now())) return this.reply(res, 429, { error: 'rate_limited' });
         return this.reply(res, 200, await this.auth.issue());
       }
       if (p.startsWith('/internal/')) return await this.internalRoute(req, res, p);
@@ -284,7 +289,8 @@ export class GameServer {
     const userId = await this.bearer(req);
     if (!userId) return this.reply(res, 401, { error: 'bad_token' });
     if (this.draining || this.rooms.size >= this.maxRooms) return this.reply(res, 503, { error: 'server_busy' });
-    if (!this.roomUserRate.take(userId, this.now()) || !this.roomRate.take(this.ip(req), this.now())) return this.reply(res, 429, { error: 'rate_limited' });
+    const load = this.isLoad(req);
+    if (!load && (!this.roomUserRate.take(userId, this.now()) || !this.roomRate.take(this.ip(req), this.now()))) return this.reply(res, 429, { error: 'rate_limited' });
     const body = (await readJson(req)) as { name?: unknown; settings?: unknown; lang?: unknown } | null;
     const settings = RoomSettingsSchema.safeParse(body?.settings);
     const code = this.newCode();
@@ -298,10 +304,11 @@ export class GameServer {
       now: this.now,
       log: this.log,
       speed: this.speed,
-      film: this.o.film,
+      // нагрузочный прогон: фильм матча не монтируем (ffmpeg исказил бы замер и занял бы процессор)
+      film: load ? undefined : this.o.film,
     });
     this.rooms.set(code, room);
-    this.log('info', 'room_created', { room: code, user: hashId(userId) });
+    this.log('info', 'room_created', { room: code, user: hashId(userId), ...(load ? { load: true } : {}) });
     return this.reply(res, 200, { code, wsUrl: this.wsUrl(req) });
   }
 
@@ -490,6 +497,14 @@ export class GameServer {
     if (!kb) return this.reply(res, 200, { ok: true, region: this.o.region ?? null, instance: this.instance });
     res.writeHead(200, { 'content-type': 'application/octet-stream', 'cache-control': 'no-store' });
     res.end(randomBytes(kb * 1024));
+  }
+
+  /** Нагрузочный прогон с верным ключом (заголовок x-kto-load). */
+  private isLoad(req: IncomingMessage): boolean {
+    const k = this.o.loadKey;
+    const h = req.headers['x-kto-load'];
+    if (!k || typeof h !== 'string' || h.length !== k.length) return false;
+    return timingSafeEqual(Buffer.from(h), Buffer.from(k));
   }
 
   /** Запрос изнутри машины (сосед-экземпляр, сосед по туннелю), не снаружи: внешним Caddy ставит адрес клиента. */

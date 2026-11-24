@@ -10,7 +10,8 @@
     "build:film": "esbuild src/film-worker.ts --bundle --platform=node --target=node22 --format=esm --sourcemap --outfile=dist/film-worker.mjs --external:@napi-rs/canvas --external:node-web-audio-api --banner:js=\"import { createRequire } from 'module'; const require = createRequire(import.meta.url);\" && mkdir -p dist/fonts && cp ../web/assets/og/press-start-2p-*.woff dist/fonts/",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "smoke": "tsx scripts/smoke.ts"
+    "smoke": "tsx scripts/smoke.ts",
+    "load": "tsx scripts/load.ts"
   },
   "dependencies": {
     "@kto/game-core": "workspace:*",
