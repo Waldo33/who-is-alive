@@ -1,0 +1,65 @@
+# Postgres: аналитика игры, рейтинг бота. Маленькая машина — скромные буферы, только localhost
+- name: Postgres
+  ansible.builtin.apt:
+    name: postgresql
+    update_cache: true
+    cache_valid_time: 86400
+
+- name: Версия Postgres
+  ansible.builtin.shell: ls /etc/postgresql | sort -V | tail -1
+  register: pgver
+  changed_when: false
+  check_mode: false
+
+- name: Настройка под маленькую машину
+  ansible.builtin.copy:
+    src: 90-massovka.conf
+    dest: "/etc/postgresql/{{ pgver.stdout }}/main/conf.d/90-massovka.conf"
+    mode: '0644'
+  notify: postgres
+
+- name: Postgres запущен
+  ansible.builtin.systemd_service:
+    name: postgresql
+    state: started
+    enabled: true
+
+# база и роль massovka создаются один раз: пароль рождается на сервере и живёт только в secrets.env
+- name: Есть ли уже DATABASE_URL
+  ansible.builtin.shell: grep -q '^DATABASE_URL=' /etc/massovka/secrets.env
+  register: dburl
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: База massovka и её пароль
+  when: dburl.rc != 0
+  no_log: true
+  ansible.builtin.shell: |
+    set -e
+    pw=$(openssl rand -hex 24)
+    sudo -u postgres psql -qtAc "do \$\$ begin if not exists (select from pg_roles where rolname = 'massovka') then create role massovka login password '$pw'; else alter role massovka password '$pw'; end if; end \$\$;"
+    sudo -u postgres psql -qtAc "select 1 from pg_database where datname = 'massovka'" | grep -q 1 || sudo -u postgres createdb -O massovka massovka
+    ( umask 077; echo "DATABASE_URL=postgres://massovka:$pw@127.0.0.1:5432/massovka" >> /etc/massovka/secrets.env )
+
+- name: Папка копий базы
+  ansible.builtin.file:
+    path: /var/backups/massovka
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: '0700'
+
+- name: Копия базы раз в сутки (14 дней) — службы
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "/etc/systemd/system/{{ item }}"
+    mode: '0644'
+  loop: [massovka-backup.service, massovka-backup.timer]
+  notify: daemon-reload
+
+- name: Копия базы — таймер включён
+  ansible.builtin.systemd_service:
+    name: massovka-backup.timer
+    state: started
+    enabled: true
