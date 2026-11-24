@@ -1,0 +1,215 @@
+# Переезд игры из Москвы в Европу (docs/infra-plan.md › этап 3). Запуск — правкой MODE в этом файле
+# (или вручную). Каждый шаг можно повторить: уже сделанное пропускается.
+#   check    — только проверить, что всё готово к переключению;
+#   switch   — база Москвы → Европа, Москва пересылает игру в Европу (туннель massovka-relay), лобби
+#              Москвы переезжают туда, идущие матчи доигрывают в Москве; проверка матчем через Москву;
+#   dns      — записи A benobody.app, www и api → Европа (TTL 60 с); Москва ещё неделю пересылает
+#              запоздавших;
+#   direct   — всё сразу (решение владельца 24.11: без плавного переезда): дождаться сайта в Европе,
+#              switch, затем dns;
+#   rollback — Москва снова сама принимает игроков (DNS вернуть: dns с FROM/TO наоборот — в панели).
+name: infra-move
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'check | switch | dns | direct | rollback'
+        default: check
+  push:
+    branches: [main]
+    paths: ['.github/workflows/infra-move.yml', 'infra/game/dns-switch.py']
+
+concurrency:
+  group: game-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  MODE: ${{ inputs.mode || 'direct' }}
+  SW: ${{ contains(fromJSON('["switch","direct"]'), inputs.mode || 'direct') }}
+  DN: ${{ contains(fromJSON('["dns","direct"]'), inputs.mode || 'direct') }}
+
+jobs:
+  move:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TWC_TOKEN: ${{ secrets.TWC_TOKEN }}
+      SSH_OPTS: -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=20 -o ServerAliveInterval=15 -o LogLevel=ERROR
+      FIND_ONLY: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m venv /tmp/py && /tmp/py/bin/pip install -q cryptography
+      - id: msk
+        env: { SERVER_NAME: massovka-game }
+        run: /tmp/py/bin/python infra/game/provision.py
+      - id: eu
+        env: { SERVER_NAME: massovka-eu }
+        run: /tmp/py/bin/python infra/game/provision.py
+      - name: Что сейчас
+        env:
+          MSK: ${{ steps.msk.outputs.ip }}
+          EU: ${{ steps.eu.outputs.ip }}
+          EUH: ${{ steps.eu.outputs.host }}
+        run: |
+          echo "режим: $MODE · Москва $MSK · Европа $EU ($EUH)"
+          [ -n "$MSK" ] && [ -n "$EU" ] || { echo "::error::нет одного из серверов"; exit 1; }
+          echo "DNS: benobody.app → $(dig +short A benobody.app @8.8.8.8 | tail -1), api → $(dig +short A api.benobody.app @8.8.8.8 | tail -1) (TTL $(dig +noall +answer A api.benobody.app @ns1.timeweb.ru | awk '{print $2}' | head -1) с у NS Timeweb)"
+          printf 'Европа снаружи: '; curl -fsS -m 10 "https://$EUH/v1/probe" || echo "нет ответа"; echo
+          printf 'api.benobody.app с сертификатом в Европе: '; curl -sS -m 10 --resolve "api.benobody.app:443:$EU" -o /dev/null -w '%{http_code}\n' https://api.benobody.app/healthz || echo "нет"
+          ssh $SSH_OPTS root@$MSK 'bash -s' <<'SH'
+          echo "── Москва"
+          grep '^RELAY=' /etc/massovka/hosts.env || echo "RELAY не задан (Москва принимает игроков сама)"
+          systemctl is-active massovka-game@blue massovka-game@green massovka-web@blue massovka-web@green 2>&1 | paste -sd' '
+          for p in 8081 8082; do printf ":$p "; curl -s -m 3 "http://127.0.0.1:$p/metrics" | grep -E '^game_(rooms|players_online|draining)\b' | paste -sd' ' || echo "—"; done
+          printf 'туннель из Европы (вход пересылки :18090): '; curl -s -m 5 -o /dev/null -w '%{http_code}\n' http://127.0.0.1:18090/healthz || echo "нет"
+          printf 'туннель из Европы (внутренний вход :18091): '; curl -s -m 5 http://127.0.0.1:18091/v1/probe || echo "нет"; echo
+          SH
+          ssh $SSH_OPTS root@$EU 'bash -s' <<'SH'
+          echo "── Европа"
+          systemctl is-active massovka-relay massovka-game@blue massovka-game@green caddy postgresql 2>&1 | paste -sd' '
+          cat /etc/massovka/active-color
+          printf 'событий в базе: '; sudo -u postgres psql -tAc 'select count(*) from analytics_events' massovka
+          SH
+
+      - name: Готовность
+        if: env.SW == 'true' || env.MODE == 'check'
+        env:
+          MSK: ${{ steps.msk.outputs.ip }}
+          EU: ${{ steps.eu.outputs.ip }}
+          EUH: ${{ steps.eu.outputs.host }}
+        run: |
+          ok=1
+          # сайт в Европе выкладывает web-deploy (может идти параллельно) — ждём до 25 минут
+          for _ in $(seq 1 50); do
+            [ "$(curl -s -m 10 --resolve "benobody.app:443:$EU" -o /dev/null -w '%{http_code}' https://benobody.app/sandbox)" = 200 ] && break
+            [ "$MODE" = check ] && break
+            sleep 30
+          done
+          test "$(curl -s -m 10 --resolve "benobody.app:443:$EU" -o /dev/null -w '%{http_code}' https://benobody.app/)" = 200 || { echo "::error::сайт в Европе не отвечает"; ok=0; }
+          curl -fsS -m 10 "https://$EUH/healthz" >/dev/null || { echo "::error::Европа не отвечает снаружи"; ok=0; }
+          test "$(curl -s -m 10 --resolve "api.benobody.app:443:$EU" -o /dev/null -w '%{http_code}' https://api.benobody.app/healthz)" = 200 || { echo "::error::Европа не отдаёт api.benobody.app с сертификатом"; ok=0; }
+          if ssh $SSH_OPTS root@$MSK 'curl -fsS -m 5 http://127.0.0.1:18090/healthz >/dev/null && curl -fsS -m 5 http://127.0.0.1:18091/healthz >/dev/null'; then echo "туннель пересылки Европа → Москва: есть"
+          elif [ "$MODE" = direct ]; then echo "::warning::туннель пересылки не поднят — Москва не будет пересылать запоздавших (переключаем без неё)"
+          else echo "::error::туннель пересылки Европа → Москва не поднят"; ok=0; fi
+          [ $ok = 1 ] && echo "готово к переключению"
+          [ $ok = 1 ]
+
+      - name: Переключение — база и пересылка
+        if: env.SW == 'true'
+        env:
+          MSK: ${{ steps.msk.outputs.ip }}
+          EU: ${{ steps.eu.outputs.ip }}
+        run: |
+          if ssh $SSH_OPTS root@$MSK 'grep -q "^RELAY=." /etc/massovka/hosts.env'; then
+            echo "Москва уже пересылает — база уже перенесена, пропуск"
+          else
+            echo "── база: Москва → Европа"
+            n_msk=$(ssh $SSH_OPTS root@$MSK "sudo -u postgres psql -tAc 'select count(*) from analytics_events' massovka")
+            ssh $SSH_OPTS root@$MSK 'sudo -u postgres pg_dump -Fc massovka' > /tmp/msk.dump
+            ls -la /tmp/msk.dump
+            # --clean: таблицы Европы (там только проверочные матчи) заменяются московскими; владелец — massovka
+            ssh $SSH_OPTS root@$EU 'cat > /tmp/msk.dump && chmod 644 /tmp/msk.dump && sudo -u postgres pg_restore --clean --if-exists --no-owner --role=massovka -d massovka /tmp/msk.dump; rc=$?; rm -f /tmp/msk.dump; echo "pg_restore: код $rc"' < /tmp/msk.dump
+            rm -f /tmp/msk.dump
+            n_eu=$(ssh $SSH_OPTS root@$EU "sudo -u postgres psql -tAc 'select count(*) from analytics_events' massovka")
+            echo "событий: Москва $n_msk, Европа $n_eu"
+            [ "${n_eu:-0}" -ge "${n_msk:-1}" ] || { echo "::error::в Европе меньше событий, чем в Москве — не переключаю"; exit 1; }
+            # права роли «только чтение» (Grafana, копии) — на восстановленные таблицы
+            ssh $SSH_OPTS root@$EU "sudo -u postgres psql -q massovka -c 'grant select on all tables in schema public to grafana_ro; grant select on all sequences in schema public to grafana_ro;'" || true
+            echo "── Москва: пересылка в Европу"
+            ssh $SSH_OPTS root@$MSK 'bash -s' <<'SH'
+          set -e
+          curl -fsS -m 5 http://127.0.0.1:18090/healthz >/dev/null || { echo "туннеля нет — Москва остаётся как есть"; exit 0; }
+          sed -i '/^RELAY=/d' /etc/massovka/hosts.env
+          echo 'RELAY=127.0.0.1:18090' >> /etc/massovka/hosts.env
+          /opt/massovka/bin/caddy.sh
+          echo "Caddy Москвы: новые запросы — в Европу"
+          SH
+          fi
+          echo "── Москва: drain с соседом в Европе (лобби переезжают, матчи доигрываются)"
+          ssh $SSH_OPTS root@$MSK 'bash -s' <<'SH'
+          grep -q '^RELAY=.' /etc/massovka/hosts.env || { echo "Москва не пересылает — drain пропускаю"; exit 0; }
+          body='{"peer":{"http":"http://127.0.0.1:18091","wsUrl":"wss://api.benobody.app/ws"}}'
+          for p in 8081 8082; do
+            if curl -fsS -m 3 "http://127.0.0.1:$p/healthz" >/dev/null 2>&1; then
+              printf ":$p → "; curl -fsS -m 10 -X POST -H 'content-type: application/json' -d "$body" "http://127.0.0.1:$p/internal/drain"; echo
+            fi
+          done
+          # после drain экземпляры выходят сами; при перезагрузке машины не поднимать
+          systemctl disable massovka-game@blue massovka-game@green >/dev/null 2>&1 || true
+          sleep 5
+          journalctl -u 'massovka-game@*' --since '-2 min' --no-pager -o cat | grep -E 'peer_set|drain_start|room_moved|room_move|drain_done|stopping' | cut -c1-200 | tail -20
+          SH
+
+      - name: Проверка — через Москву игра уже в Европе
+        if: env.SW == 'true'
+        continue-on-error: ${{ env.MODE == 'direct' }}
+        env:
+          MSK: ${{ steps.msk.outputs.ip }}
+        run: |
+          r=$(curl -fsS -m 15 --resolve "api.benobody.app:443:$MSK" https://api.benobody.app/v1/probe)
+          echo "api.benobody.app через Москву: $r"
+          echo "$r" | grep -q '"eu"' || { echo "::error::через Москву отвечает не Европа"; exit 1; }
+
+      - uses: pnpm/action-setup@v4
+        if: env.SW == 'true' || env.DN == 'true'
+      - uses: actions/setup-node@v4
+        if: env.SW == 'true' || env.DN == 'true'
+        with:
+          node-version: 22
+          cache: pnpm
+      - if: env.SW == 'true' || env.DN == 'true'
+        run: pnpm install --frozen-lockfile
+
+      - name: Матч через Москву (пересылка в Европу)
+        if: env.MODE == 'switch'
+        env:
+          MSK: ${{ steps.msk.outputs.ip }}
+        run: |
+          # раннер GitHub видит api.benobody.app там, куда смотрит DNS (пока Москва) — это и проверяем
+          echo "api.benobody.app → $(dig +short A api.benobody.app @8.8.8.8 | tail -1)"
+          pnpm --filter @kto/server smoke https://api.benobody.app
+
+      - name: DNS → Европа
+        if: env.DN == 'true'
+        env:
+          FROM_IP: ${{ steps.msk.outputs.ip }}
+          TO_IP: ${{ steps.eu.outputs.ip }}
+        run: |
+          python3 infra/game/dns-switch.py benobody.app
+          for _ in $(seq 1 20); do
+            a=$(dig +short A api.benobody.app @ns1.timeweb.ru | tail -1); b=$(dig +short A benobody.app @ns1.timeweb.ru | tail -1)
+            echo "$(date +%T) NS Timeweb: api → $a, benobody.app → $b"
+            [ "$a" = "$TO_IP" ] && [ "$b" = "$TO_IP" ] && break
+            sleep 30
+          done
+          echo "8.8.8.8: api → $(dig +short A api.benobody.app @8.8.8.8 | tail -1), benobody.app → $(dig +short A benobody.app @8.8.8.8 | tail -1), www → $(dig +short A www.benobody.app @8.8.8.8 | tail -1)"
+
+      - name: Матч напрямую в Европе по api.benobody.app
+        if: env.DN == 'true'
+        env:
+          EU: ${{ steps.eu.outputs.ip }}
+        run: |
+          for _ in $(seq 1 20); do [ "$(dig +short A api.benobody.app @8.8.8.8 | tail -1)" = "$EU" ] && break; sleep 30; done
+          echo "api.benobody.app → $(dig +short A api.benobody.app @8.8.8.8 | tail -1)"
+          pnpm --filter @kto/server smoke https://api.benobody.app
+          for p in / /sandbox; do printf "benobody.app$p → "; curl -s -o /dev/null -w '%{http_code}\n' "https://benobody.app$p"; done
+
+      - name: Откат — Москва снова принимает сама
+        if: env.MODE == 'rollback'
+        env:
+          MSK: ${{ steps.msk.outputs.ip }}
+        run: |
+          ssh $SSH_OPTS root@$MSK 'bash -s' <<'SH'
+          set -e
+          c=$(cat /etc/massovka/active-color)
+          systemctl enable --now "massovka-game@$c"
+          for _ in $(seq 1 30); do curl -fsS "http://127.0.0.1:$([ "$c" = green ] && echo 8082 || echo 8081)/readyz" >/dev/null 2>&1 && break; sleep 1; done
+          sed -i '/^RELAY=/d' /etc/massovka/hosts.env
+          echo 'RELAY=' >> /etc/massovka/hosts.env
+          /opt/massovka/bin/caddy.sh
+          echo "Москва принимает игроков сама ($c); комнаты, уже переехавшие в Европу, остаются там"
+          SH
