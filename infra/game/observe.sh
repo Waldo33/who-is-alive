@@ -226,7 +226,11 @@ EOF
   fi
   cat > /etc/massovka-grafana/datasources/massovka.yml <<EOF
 apiVersion: 1
-deleteDatasources: []
+# «База Москвы» переименована в «База игры» (переезд в Европу, 24.11): тот же uid под новым именем
+# Grafana не принимает («data source with the same uid already exists») и не запускается — старое имя удалить
+deleteDatasources:
+  - name: База Москвы
+    orgId: 1
 datasources:
   - name: Метрики
     uid: vm
