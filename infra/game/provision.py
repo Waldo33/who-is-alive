@@ -175,6 +175,13 @@ def main():
     if servers and servers[0].get('status') == 'error' and not ipv4(servers[0]) and os.environ.get('RECREATE_BROKEN') == '1':
         drop(servers[0])
         servers = []
+    # тариф сменили (Cloud NL-15 без своего IPv4 так и не открыл SSH, 24.11; решение владельца — NL-30),
+    # а сервер старого тарифа ни разу не открыл SSH — в нём ничего нет: удалить и создать на новом
+    if servers and os.environ.get('RECREATE_BROKEN') == '1' and servers[0].get('preset_id') not in PRESETS:
+        ip0 = ipv4(servers[0])
+        if not ip0 or not port_open(ip0, 22, 30):
+            drop(servers[0])
+            servers = []
     if servers:
         s = servers[0]
         print(f'сервер есть: id={s["id"]}, статус={s.get("status")}')
