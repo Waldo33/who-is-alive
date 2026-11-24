@@ -931,7 +931,7 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     // тап по своей кикиморе — отбиваться (удары не тратятся; бьёшь по пустоте — со стороны это видно)
-    const kk = me.kiki.find((k) => !k.warn && Math.abs(k.x - x) <= 7 && y >= k.y - KIKI_H + 2 && y <= k.y + 3);
+    const kk = me.kiki.find((k) => !k.warn && Math.abs(k.x - x) <= 9 && y >= k.y - KIKI_H + 4 && y <= k.y + 3);
     if (kk) {
       if (Math.hypot(kk.x - mine.x, kk.y - mine.y) <= this.cfg.attackRange + 4 && w.time >= me.stunUntil) {
         const d = Math.hypot(kk.x - mine.x, kk.y - mine.y) || 1;
@@ -1864,16 +1864,20 @@ export class GameScene extends Phaser.Scene {
     const g = this.candleG;
     const shake = stage >= 3 ? (Math.floor(now / 90) % 3) - 1 : 0;
     const bx = 4 + shake;
-    const by = PANEL_Y + 8;
-    const level = Math.round(BRAIN_H - (BRAIN_H * v) / 100);
-    const full = [PAL.peach, PAL.peach, PAL.orchid, PAL.steel][stage];
-    const fold = [PAL.coral, PAL.coral, PAL.grape, PAL.slate][stage];
-    for (const [x, y, k] of BRAIN) {
-      const c = k === 2 ? (stage >= 3 ? PAL.coral : PAL.mist) : y >= level ? (k === 1 ? fold : full) : k === 1 ? PAL.steel : PAL.dusk;
-      g.fillStyle(hexToInt(c)).fillRect(bx + x, by + y, 1, 1);
-    }
+    const by = PANEL_Y + 7;
+    // уровень: от верха полушарий (строка 1) до низа (строка 11); выше уровня — серое, «опустевшее»
+    const level = 1 + Math.round(11 * (1 - v / 100));
+    const full = BRAIN_FULL[Math.min(2, stage)];
+    BRAIN_ROWS.forEach((row, y) => {
+      for (let x = 0; x < row.length; x++) {
+        const ch = row[x];
+        if (ch === '.') continue;
+        const c = ch === 'o' ? PAL.ink : y >= level ? full[ch] : BRAIN_EMPTY[ch];
+        g.fillStyle(hexToInt(c)).fillRect(bx + x, by + y, 1, 1);
+      }
+    });
     // стрелка: растёт (костёр, цветок) — вверх, падает быстро — вниз
-    const ax = 27;
+    const ax = 25;
     const ay = by + 6;
     if (this.sanTrend > 0) {
       g.fillStyle(hexToInt(PAL.green));
@@ -1937,11 +1941,10 @@ export class GameScene extends Phaser.Scene {
       v.x += (k.x - v.x) * f;
       v.y += (k.y - v.y) * f;
       const born = Math.min(1, (now - v.seen) / 600);
-      const flick = 0.72 + 0.12 * Math.sin(now / 60 + k.id);
-      const sway = Math.round(Math.sin(now / 260 + k.id));
+      const flick = 0.94 + 0.06 * Math.sin(now / 60 + k.id);
       v.spr
-        .setPosition(Math.round(v.x) + sway, Math.round(AY + v.y))
-        .setFrame(Math.floor(now / 220) % 2)
+        .setPosition(Math.round(v.x), Math.round(AY + v.y))
+        .setFrame(Math.floor(now / 200) % 4)
         .setAlpha(born * flick)
         .setVisible(true);
     }
@@ -3447,74 +3450,218 @@ function makeNightVeil(): HTMLCanvasElement {
 }
 
 /** Тьма по краям своего экрана при потере рассудка: широкая кромка шахматкой, к центру реже. */
-/** Иконка рассудка: мозг 20×15. [x, y, 0 — мякоть, 1 — извилина, 2 — контур]. */
-const BRAIN_H = 15;
-const BRAIN: [number, number, number][] = (() => {
-  const inside = (x: number, y: number) => y >= 0 && y < 13 && ((x - 9.5) / 9.6) ** 2 + ((y - 6.5) / 6.6) ** 2 <= 1;
-  const out: [number, number, number][] = [];
-  for (let y = 0; y < BRAIN_H; y++) {
-    for (let x = 0; x < 20; x++) {
-      // ствол снизу справа от середины
-      if (y >= 13 && (x === 11 || x === 12)) {
-        out.push([x, y, x === 12 || y === 14 ? 2 : 0]);
-        continue;
-      }
-      if (!inside(x, y)) continue;
-      const edge = !inside(x - 1, y) || !inside(x + 1, y) || !inside(x, y - 1) || !inside(x, y + 1);
-      const fold =
-        (x === 10 && y < 7) ||
-        Math.abs(y - (4 + Math.sin(x * 0.9) * 1.3)) < 0.5 ||
-        Math.abs(y - (8.5 + Math.sin(x * 0.8 + 2) * 1.3)) < 0.5;
-      out.push([x, y, edge ? 2 : fold ? 1 : 0]);
-    }
-  }
-  return out;
-})();
+/** Иконка рассудка: мозг сбоку. o — контур, L — блик, M — мякоть, D — тень, F — борозда. */
+const BRAIN_ROWS = [
+  '.....oooooo.......',
+  '...ooLLLLLLoo.....',
+  '..oLLMMFMMLLLoo...',
+  '.oLMMMFMMMFFLMMo..',
+  '.oLMFFMMLMFMMMMDo.',
+  'oLMMLMFMMFMLMFFMDo',
+  'oLMMMMFMMFMMLFMMDo',
+  'oMFFMMLFFMMMMFMMDo',
+  'oMLMFMMLMMFFMMMDDo',
+  '.oMMLFFFMMMLFMDDo.',
+  '.oDMMMMMMoooDDDDo.',
+  '..oDDDDDo.oDFFDo..',
+  '...ooooo..oDDDo...',
+  '...........oDo....',
+  '...........oo.....',
+];
+type BrainPx = 'L' | 'M' | 'D' | 'F';
+/** Цвета мозга по стадиям: ясно/шёпот — розовый, морок — воспалённый, кошмар — тёмный. */
+const BRAIN_FULL: Record<BrainPx | string, string>[] = [
+  { L: PAL.peach, M: PAL.coral, D: PAL.orchid, F: PAL.grape },
+  { L: PAL.coral, M: PAL.orchid, D: PAL.grape, F: PAL.plum },
+  { L: PAL.orchid, M: PAL.grape, D: PAL.plum, F: PAL.ink },
+];
+const BRAIN_EMPTY: Record<BrainPx | string, string> = { L: PAL.slate, M: PAL.steel, D: PAL.dusk, F: PAL.night };
 
-const KIKI_W = 13;
-const KIKI_H = 24;
+const KIKI_W = 24;
+const KIKI_H = 39;
 
-/** Кикимора: космы до пояса, глаза светятся, длинные руки с когтями, подол рвётся в туман. Два кадра. */
+/**
+ * Кикимора, 4 кадра шага: длинное бледное лицо в проборе мокрых волос с ряской, чёрные глазницы с белыми
+ * точками, отвисшая челюсть, костлявые плечи, руки до земли с когтями, рваное платье, птичьи ступни.
+ * В кадрах 1 и 3 одна рука тянется к тебе, рот раскрыт шире, с волос капает.
+ */
+const KIKI_FRAMES = [
+  [
+    '........oooooooo........',
+    '.......oHHhhHHhgo.......',
+    '......ohHHhhHHhgHo......',
+    '.....ohhHHhhHHhgHHo.....',
+    '....oHhhHHhSSHHgHHho....',
+    '...oHHhhHHhKKSHgHHhho...',
+    '....oHhgHShKKKhhHHho....',
+    '....oHhgHShKKKHhHHho....',
+    '....oHhgHmmKKmHhHHho....',
+    '....oHhhHemKKhmhHHho....',
+    '....oHGhHSKKKHShHHho....',
+    '....oHhhHosKKHohHHho....',
+    '....oKhhHostmhohHHhKo...',
+    '...oSHShHommtHohHHSoSo..',
+    '...oSohSSommmHohSSooSo..',
+    '...oSoHHhSmmmmRShhooSo..',
+    '..oSooHHhRrtmrRHhGo.oSo.',
+    '..oSooHHhRrSSrRHhho.oSo.',
+    '..oSooHHhhRRrRHHhho.oSo.',
+    '.oSo.oHHhhRRrRHHhho..oSo',
+    '.oSo.oHHhhRRrRHHhho..oSo',
+    '.oKo.oHHhhRrRRHHhho..oKo',
+    '.oSo.oHHhhRrRRHHhho..oSo',
+    '.oSo.oHGhhRrRRHHhho..oSo',
+    '.oSo.oHHhhrRRrHHhho..oSo',
+    '.oSo.oHHhhrRRrHHhho..oSo',
+    '..oSooHHhhrRRrHRoho.oSo.',
+    '..oSooHHhrRRrRRroho.oSo.',
+    '..oSo.dHhrRRrRRroho.oSo.',
+    '..oSo.oHRrRRrRRroho.oSo.',
+    '..oso.oHrRRrRRrRod..oso.',
+    '..oso..odRRoRRoRo...oso.',
+    '.ossso.orRsrRorRo..ossso',
+    '.ossso.oRorRorRo...ossso',
+    '.ossso..ooso.oso...ossso',
+    'ocosoco..oso.oso..ocosoc',
+    '.oocoo..oosooosoo..oocoo',
+    '...o...ocssscsssco...o..',
+    '........ooooooooo.......',
+  ],
+  [
+    '........oooooooo........',
+    '.......oHHhhHHhgo.......',
+    '......ohHHhhHHhgHo......',
+    '.....ohhHHhhHHhgHHo.....',
+    '....oHhhHHhSSHHgHHho....',
+    '...oHHhhHHhKKSHgHHhho...',
+    '....oHhgHShKKKhhHHho....',
+    '....oHhgHShKKKHhHHho....',
+    '....oHhgHmmKKmHhHHho....',
+    '....oHhhHmeKKhehHHho....',
+    '....oHGhHSKKKHShHHho....',
+    '....oHhhHosKKHohHHho....',
+    '....oKhhHostmhohHHhKo...',
+    '...oSHShHommtHohHHSoSo..',
+    '...oSohSSommmHohSSooSo..',
+    '..oSooHHhSmmmmRShhooSo..',
+    '.oSo.oHHhRmmmmRHhGo.oSo.',
+    '.oSo.oHHhRrtmrRHhho.oSo.',
+    '.oSo.oHHhhRRrRHHhho.oSo.',
+    'oKo...oHHhhRrRRHHhho.oSo',
+    'oSo...oHHhhRrRRHHhho.oSo',
+    'oSo...oHHhhrRRrHHhho.oKo',
+    'oSo...oHHhhrRRrHHhho.oSo',
+    'oSo...oGHhhrRRrHHhho.oSo',
+    'oSo...oHHhhRRrRHHhho.oSo',
+    'oSo...oHHhhRRrRHHhho.oSo',
+    'oso...oHHhhRRrRHoohooSo.',
+    'ssso..oHHhrRRrRRrohooSo.',
+    'ssso...oHhrRRrRRrohooSo.',
+    'ssso...dHRrRRrRRrohooSo.',
+    'ososo..oHrRRrRRrRohooso.',
+    'osooco..orRorRorRod.oso.',
+    'oco.o....dsRroRro..ossso',
+    '.o.......oRroRrsRo.ossso',
+    '.........oso.ooso..ossso',
+    '.........oso.oosooocosoc',
+    '........oosoocssscooocoo',
+    '.......ocssscooooo...o..',
+    '........ooooo...........',
+  ],
+  [
+    '........oooooooo........',
+    '.......oHHhhHHhgo.......',
+    '......ohHHhhHHhgHo......',
+    '.....ohhHHhhHHhgHHo.....',
+    '....oHhhHHhSSHHgHHho....',
+    '...oHHhhHHhKKSHgHHhho...',
+    '....oHhgHShKKKhhHHho....',
+    '....oHhgHShKKKHhHHho....',
+    '....oHhgHmmKKmHhHHho....',
+    '....oHhhHemKKhmhHHho....',
+    '....oHGhHSKKKHShHHho....',
+    '....oHhhHosKKHohHHho....',
+    '....oKhhHostmhohHHhKo...',
+    '...oSHShHommtHohHHSoSo..',
+    '...oSohSSommmHohSSooSo..',
+    '...oSoHHhSmmmmRShhooSo..',
+    '..oSooHHhRrtmrRHhGo.oSo.',
+    '..oSooHHhRrSSrRHhho.oSo.',
+    '..oSooHHhhRRrRHHhho.oSo.',
+    '.oSo.oHHhhRRrRHHhho..oSo',
+    '.oSo.oHHhhRRrRHHhho..oSo',
+    '.oKo.oHHhhRrRRHHhho..oKo',
+    '.oSo.oHHhhRrRRHHhho..oSo',
+    '.oSo.oHGhhRrRRHHhho..oSo',
+    '.oSo.oHHhhrRRrHHhho..oSo',
+    '.oSo.oHHhhrRRrHHhho..oSo',
+    '..oSooHHhhrRRrHRoho.oSo.',
+    '..oSooHHhrRRrRRroho.oSo.',
+    '..oSo.dHhrRRrRRroho.oSo.',
+    '..oSo.oHRrRRrRRroho.oSo.',
+    '..oso.oHrRRrRRrRod..oso.',
+    '..oso..odoRroRro....oso.',
+    '.ossso..oRRoRRsRo..ossso',
+    '.ossso.oRRsRRoRRo..ossso',
+    '.ossso..oosoooso...ossso',
+    'ocosoco..oso.oso..ocosoc',
+    '.oocoo..oosooosoo..oocoo',
+    '...o...ocssscsssco...o..',
+    '........ooooooooo.......',
+  ],
+  [
+    '........oooooooo........',
+    '.......oHHhhHHhgo.......',
+    '......ohHHhhHHhgHo......',
+    '.....ohhHHhhHHhgHHo.....',
+    '....oHhhHHhSSHHgHHho....',
+    '...oHHhhHHhKKSHgHHhho...',
+    '....oHhgHShKKKhhHHho....',
+    '....oHhgHShKKKHhHHho....',
+    '....oHhgHmmKKmHhHHho....',
+    '....oHhhHmeKKhehHHho....',
+    '....oHGhHSKKKHShHHho....',
+    '....oHhhHosKKHohHHho....',
+    '....oKhhHostmhohHHhKo...',
+    '...oSHShHommtHohHHSoSo..',
+    '...oSohSSommmHohSSooSo..',
+    '...oSoHHhSmmmmRShho.oSo.',
+    '..oSooHHhRmmmmRHhGo..oSo',
+    '..oSooHHhRrtmrRHhho..oSo',
+    '..oSooHHhhRRrRHHhho..oSo',
+    '.oSooHHhhrRRrHHhho....oK',
+    '.oSooHHhhrRRrHHhho....oS',
+    '.oKooHHhhRRrRHHhho....oS',
+    '.oSooHHhhRRrRHHhho....oS',
+    '.oSooHHGhRRrRHHhho....oS',
+    '.oSooHHhhRrRRHHhho....oS',
+    '.oSooHHhhRrRRHHhho....oS',
+    '..oSoHHhhRrRRHRRho....os',
+    '..oSoHHhrRRrRRroho...oss',
+    '..oSooHhrRRrRRroho...oss',
+    '..oSodHRrRRrRRroho...oss',
+    '..osooHrRRrRRrRoho..osos',
+    '..oso.ooRRoRRoRod..ocoos',
+    '.ossso.dRsrRorRo....o.oc',
+    '.osssooRorRorRso.......o',
+    '.ossso.ooso.ooso........',
+    'ocosocooosoo.oso........',
+    '.oocooocssscoosoo.......',
+    '...o...ooooocsssco......',
+    '............ooooo.......',
+  ],
+];
 function makeKikimora(): HTMLCanvasElement {
-  const rows = [
-    '....DHHHD....',
-    '...DHHhHHD...',
-    '..DHHhHHhHD..',
-    '..DHhHHHhHD..',
-    '..DHHEHEHHD..',
-    '..DHHeHeHHD..',
-    '..DHHHHHHHD..',
-    '.DHHhHHHhHHD.',
-    '.DHHHSSSHHHD.',
-    'DHHHBBBBBHHHD',
-    'DH.HBBBBBH.HD',
-    'S..HBBBBBH..S',
-    'S..DBBBBBD..S',
-    'S...BBBBB...S',
-    'S...BBhBB...S',
-    'S...BBBBB...S',
-    'C...BBBBB...C',
-    'C...BBBBB...C',
-    '....BBBBB....',
-    '....BbBbB....',
-    '....bBbBb....',
-    '....B.b.B....',
-    '....b...b....',
-    '.............',
-  ];
-  const col: Record<string, string> = { D: PAL.deep, H: PAL.pine, h: PAL.forest, E: PAL.cyan, e: PAL.white, S: PAL.mist, B: PAL.dusk, b: PAL.night, C: PAL.white };
-  const { c, g } = canvas(KIKI_W * 2, KIKI_H);
-  for (let f = 0; f < 2; f++) {
+  const col: Record<string, string> = {
+    o: PAL.ink, H: PAL.night, h: PAL.dusk, g: PAL.deep, G: PAL.forest, S: PAL.slate, s: PAL.steel, K: PAL.mist,
+    e: PAL.white, m: PAL.ink, t: PAL.mist, R: PAL.plum, r: PAL.umber, c: PAL.sand, d: PAL.cyan,
+  };
+  const { c, g } = canvas(KIKI_W * KIKI_FRAMES.length, KIKI_H);
+  KIKI_FRAMES.forEach((rows, f) =>
     rows.forEach((r, y) => {
-      for (let x = 0; x < KIKI_W; x++) {
-        let ch = r[x];
-        // второй кадр: руки тянутся выше, подол колышется
-        if (f === 1 && y >= 11 && y <= 17 && (x === 0 || x === 12)) ch = rows[y + 1]?.[x] ?? '.';
-        if (f === 1 && y >= 19) ch = r[x] === 'B' ? 'b' : r[x] === 'b' ? 'B' : ch;
-        if (ch && ch !== '.') ppx(g, f * KIKI_W + x, y, col[ch]);
-      }
-    });
-  }
+      for (let x = 0; x < r.length; x++) if (r[x] !== '.') ppx(g, f * KIKI_W + x, y, col[r[x]]);
+    }),
+  );
   return c;
 }
 
