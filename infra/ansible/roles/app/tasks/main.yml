@@ -1,0 +1,80 @@
+# Настройка игрового сервера (то же, что «секреты», game.env, «службы» и hosts.env в infra/game/setup.sh;
+# файлы — байт в байт). Роль только раскладывает настройку и ничего не перезапускает: выкладку версии
+# синим/зелёным (и перезапуск при смене настройки) по-прежнему делает setup.sh.
+- name: Размер машины
+  ansible.builtin.slurp:
+    src: /proc/meminfo
+  register: meminfo
+
+- name: Потолок комнат под память и процессор (как в setup.sh)
+  ansible.builtin.set_fact:
+    mem_mb: "{{ ((meminfo.content | b64decode | regex_search('MemTotal:\\s+(\\d+)', '\\1') | first | int) / 1024) | int }}"
+    cpus: "{{ ansible_processor_nproc }}"
+
+- name: Потолок комнат
+  ansible.builtin.set_fact:
+    # ~3 МБ на комнату после 600 МБ сайту, базе, Caddy и фильму; не больше 40 комнат на ядро; 30…2000
+    app_max_rooms: "{{ [[[((mem_mb | int - 600) // 3), (cpus | int * 40)] | min, 30] | max, 2000] | min }}"
+
+- name: База стран для замера доступности
+  ansible.builtin.stat:
+    path: /opt/massovka/geoip/country.mmdb
+  register: geoip
+
+- name: game.env
+  ansible.builtin.template:
+    src: game.env.j2
+    dest: /etc/massovka/game.env
+    mode: '0600'
+
+- name: game-blue.env и game-green.env (свой порт и сосед для переезда комнат)
+  ansible.builtin.template:
+    src: game-color.env.j2
+    dest: "/etc/massovka/game-{{ item }}.env"
+    mode: '0600'
+  loop: [blue, green]
+
+- name: Ключ бота — только серверу бота
+  ansible.builtin.file:
+    path: /etc/massovka/bot.env
+    state: absent
+  when: "'game' in group_names"
+
+- name: Службы игрового сервера и Caddy
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "/etc/systemd/system/{{ item }}"
+    mode: '0644'
+  loop: [massovka-game@.service, caddy.service]
+
+- name: Память игрового сервера — папка
+  ansible.builtin.file:
+    path: /etc/systemd/system/massovka-game@.service.d
+    state: directory
+    mode: '0755'
+
+- name: Память игрового сервера — по размеру машины
+  ansible.builtin.template:
+    src: memory.conf.j2
+    dest: /etc/systemd/system/massovka-game@.service.d/memory.conf
+    mode: '0644'
+
+- name: Прежний RELAY (Москва пересылает игру в Европу; выкладка его не сбрасывает)
+  ansible.builtin.slurp:
+    src: /etc/massovka/hosts.env
+  register: hosts_env
+  failed_when: false
+
+- name: hosts.env (адреса для caddy.sh)
+  ansible.builtin.template:
+    src: hosts.env.j2
+    dest: /etc/massovka/hosts.env
+    mode: '0644'
+  vars:
+    app_relay: "{{ (hosts_env.content | default('') | b64decode | regex_search('(?m)^RELAY=(.*)$', '\\1') or ['']) | first }}"
+
+- name: caddy.sh
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../game/caddy.sh"
+    dest: /opt/massovka/bin/caddy.sh
+    mode: '0755'

@@ -10,3 +10,16 @@ tunnels: "{{ tunnels_all | selectattr('when') | list }}"
 # (сам ключ роль читает с сервера в Нидерландах — /etc/massovka/tunnel_ed25519.pub)
 tunnel_keys: "{{ [infra_tunnel_prefix ~ ' ' ~ infra_tunnel_pub] if infra_tunnel_pub | default('') != '' else [] }}"
 infra_tunnel_prefix: 'restrict,port-forwarding,permitlisten="127.0.0.1:9090",permitlisten="127.0.0.1:9428",permitopen="127.0.0.1:5432",permitopen="127.0.0.1:8080",permitopen="127.0.0.1:9100"'
+
+# адреса игрового сервера (как vars для setup.sh в game-deploy, Европа)
+app_host: api.benobody.app
+app_alt_host: "{{ ansible_host | replace('.', '-') }}.sslip.io"
+app_ws_hosts: "api.benobody.app,{{ app_alt_host }}"
+app_region: eu
+app_site_host: benobody.app
+app_site_url: https://benobody.app
+app_site_redirect: https://who-is-alive.vercel.app
+app_relay_front: '1'
+# переезд комнат при выкладке — на тот адрес, что сейчас работает снаружи (до DNS — sslip.io); считает inventory.py
+app_peer_host: "{{ peer_host | default('api.benobody.app') }}"
+app_bot_upstream: "{{ 'http://127.0.0.1:9090' if infra_tunnel_pub | default('') != '' else '' }}"
