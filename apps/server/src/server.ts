@@ -28,6 +28,12 @@ export interface GameServerOptions {
   instance?: string;
   /** Публичная основа адреса WebSocket, например wss://api.benobody.app. Нет — из заголовка Host. */
   publicWsBase?: string;
+  /**
+   * Свои входы (хосты без схемы): запрос пришёл через один из них — адрес WebSocket тот же
+   * (wss://<хост>). Сервер в Европе доступен и как api.benobody.app, и по запасному адресу <IP>.sslip.io:
+   * игрок остаётся на том входе, через который пришёл.
+   */
+  publicWsHosts?: string[];
   /** Разрешённые сайты (CORS и Origin у WebSocket). '*' — любые (разработка). */
   allowedOrigins?: string[] | '*';
   /** За прокси (Caddy): адрес клиента — из X-Forwarded-For. */
@@ -134,6 +140,8 @@ export class GameServer {
   private readonly emptySince = new Map<Room, number>();
   /** Коды комнат нагрузочного прогона (создатель пришёл с LOAD_KEY). */
   private readonly loadRooms = new Set<string>();
+  /** Комнаты, которые нельзя перевезти (код у соседа занят другой комнатой). */
+  private readonly noMove = new Set<string>();
   private loop: ReturnType<typeof setInterval> | null = null;
   private slow: ReturnType<typeof setInterval> | null = null;
   private hb: ReturnType<typeof setInterval> | null = null;
@@ -217,6 +225,7 @@ export class GameServer {
     this.rooms.delete(r.code);
     this.emptySince.delete(r);
     this.loadRooms.delete(r.code);
+    this.noMove.delete(r.code);
   }
 
   private heartbeat(): void {
@@ -365,7 +374,9 @@ export class GameServer {
       const snap = (await readJson(req, 65_536)) as RoomSnapshot | null;
       if (!snap || snap.v !== 1 || typeof snap.code !== 'string' || !Array.isArray(snap.members)) return this.reply(res, 400, { error: 'bad_snapshot' });
       const have = this.rooms.get(snap.code);
-      if (have && !have.closed) return this.reply(res, 409, { error: 'exists' });
+      // 409 — эта же комната уже здесь (повтор после сбоя); тот же код у другой комнаты (другой сервер) — 422,
+      // и переезжать нельзя: игроки попали бы в чужую комнату
+      if (have && !have.closed) return have.directorId === snap.directorId ? this.reply(res, 409, { error: 'exists' }) : this.reply(res, 422, { error: 'code_taken' });
       const room = new Room({
         code: snap.code,
         directorId: snap.directorId,
@@ -386,6 +397,13 @@ export class GameServer {
       return this.reply(res, 204);
     }
     if (p === '/internal/drain' && req.method === 'POST') {
+      // переезд на другой сервер (Москва → Европа): сосед — из тела запроса, а не соседний цвет
+      const body = (await readJson(req, 4096)) as { peer?: { http?: unknown; wsUrl?: unknown } } | null;
+      const np = body?.peer;
+      if (np && typeof np.http === 'string' && typeof np.wsUrl === 'string' && /^https?:\/\//.test(np.http) && /^wss?:\/\//.test(np.wsUrl)) {
+        this.setPeer({ http: np.http.replace(/\/$/, ''), wsUrl: np.wsUrl });
+        this.log('info', 'peer_set', { http: np.http, wsUrl: np.wsUrl });
+      }
       this.drain();
       return this.reply(res, 200, { draining: true, rooms: this.rooms.size });
     }
@@ -426,7 +444,7 @@ export class GameServer {
         this.dropRoom(r, 'drain_empty');
         continue;
       }
-      if (this.peer && r.canMove() && !this.moving.has(r.code)) void this.moveRoom(r);
+      if (this.peer && r.canMove() && !this.moving.has(r.code) && !this.noMove.has(r.code)) void this.moveRoom(r);
     }
     if (now >= this.drainUntil) {
       for (const r of [...this.rooms.values()]) this.dropRoom(r, 'drain_deadline');
@@ -457,6 +475,12 @@ export class GameServer {
         signal: AbortSignal.timeout(5000),
       });
       // 409 — у соседа уже есть такая (повтор после сбоя): всё равно переезжаем к нему
+      if (res.status === 422) {
+        // код занят чужой комнатой у соседа — эта доживёт здесь до срока drain
+        this.log('warn', 'room_move_conflict', { room: r.code });
+        this.noMove.add(r.code);
+        return;
+      }
       if (res.status !== 204 && res.status !== 409) throw new Error(`HTTP ${res.status}`);
       if (r.closed || r.status !== 'lobby') return;
       r.moveTo(peer.wsUrl);
@@ -581,7 +605,9 @@ export class GameServer {
   }
 
   private wsUrl(req: IncomingMessage): string {
-    const base = this.o.publicWsBase ?? `ws://${req.headers.host ?? 'localhost'}`;
+    const host = (req.headers.host ?? '').toLowerCase();
+    const own = host && this.o.publicWsHosts?.includes(host) ? `wss://${host}` : undefined;
+    const base = own ?? this.o.publicWsBase ?? `ws://${req.headers.host ?? 'localhost'}`;
     return `${base}/i/${this.instance}/ws`;
   }
 

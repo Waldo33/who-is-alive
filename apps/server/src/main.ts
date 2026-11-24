@@ -16,7 +16,7 @@ import { loadGeo } from './geo';
 /**
  * Запуск игрового сервера. Настройки — из окружения:
  *   PORT (8080), AUTH_SIGNING_KEY (обязателен в проде), INSTANCE (blue | green),
- *   PUBLIC_WS_BASE (wss://api.<домен>), ALLOWED_ORIGINS (через запятую), TRUST_PROXY=1, LOG_LEVEL,
+ *   PUBLIC_WS_BASE (wss://api.<домен>), PUBLIC_WS_HOSTS — свои входы через запятую (адрес WebSocket по Host запроса), ALLOWED_ORIGINS (через запятую), TRUST_PROXY=1, LOG_LEVEL,
  *   MAX_ROOMS — потолок комнат под память машины (~1,5 МБ на комнату, считает setup.sh; иначе 2000),
  *   REGION (msk | nl), GEOIP_DB — база стран для замера доступности, EVENTS_UPSTREAM — куда пересылать аналитику.
  *   LOAD_KEY — ключ нагрузочного прогона (load-test.yml), секрет рождается на сервере,
@@ -86,6 +86,7 @@ const server = new GameServer({
   authSecret: secret,
   instance: env.INSTANCE || 'blue',
   publicWsBase: env.PUBLIC_WS_BASE || undefined,
+  publicWsHosts: env.PUBLIC_WS_HOSTS ? env.PUBLIC_WS_HOSTS.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean) : undefined,
   allowedOrigins: env.ALLOWED_ORIGINS ? env.ALLOWED_ORIGINS.split(',').map((s) => s.trim()).filter(Boolean) : '*',
   trustProxy: env.TRUST_PROXY === '1',
   maxRooms: Number(env.MAX_ROOMS) > 0 ? Number(env.MAX_ROOMS) : undefined,

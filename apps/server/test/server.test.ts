@@ -489,3 +489,28 @@ describe('игровой сервер: матч', () => {
     expect(lc.reconnects).toBe(0);
   }, 90_000);
 });
+
+describe('игровой сервер: адрес WebSocket по входу', () => {
+  it('свой вход из списка — wss://<тот же хост>, чужой — основной адрес', async () => {
+    const srv = new GameServer({ authSecret: SECRET, log: silentLogger, publicWsBase: 'wss://api.example', publicWsHosts: ['api.example', '1-2-3-4.sslip.io'] });
+    servers.push(srv);
+    const port = await srv.listen(0, '127.0.0.1');
+    const { request } = await import('node:http');
+    const post = (host: string, path: string, body: string, auth?: string) =>
+      new Promise<{ status: number; json: Record<string, unknown> }>((ok, bad) => {
+        const rq = request({ host: '127.0.0.1', port, path, method: 'POST', headers: { host, 'content-type': 'application/json', ...(auth ? { authorization: `Bearer ${auth}` } : {}) } }, (res) => {
+          let d = '';
+          res.on('data', (c) => (d += c));
+          res.on('end', () => ok({ status: res.statusCode ?? 0, json: d ? (JSON.parse(d) as Record<string, unknown>) : {} }));
+        });
+        rq.on('error', bad);
+        rq.end(body);
+      });
+    const { json: u } = await post('1-2-3-4.sslip.io', '/v1/auth/anon', '');
+    const viaAlt = await post('1-2-3-4.sslip.io', '/v1/rooms', '{}', u.token as string);
+    expect(viaAlt.json.wsUrl).toBe('wss://1-2-3-4.sslip.io/i/blue/ws');
+    const viaOther = await post('evil.example', '/v1/rooms', '{}', u.token as string);
+    expect(viaOther.json.wsUrl).toBe('wss://api.example/i/blue/ws');
+  });
+});
+
