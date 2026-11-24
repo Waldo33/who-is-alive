@@ -8,6 +8,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ClipStore } from './clips';
 import { FilmService } from './film';
+import { MatchRecordings } from './recordings';
 import { GameServer } from './server';
 import { MemoryStore, PgStore } from './store';
 import type { Store } from './store';
@@ -76,7 +77,9 @@ if (env.FILM === 'off') log('info', 'film_off');
 else if (spawnSync(ffmpeg, ['-version'], { stdio: 'ignore' }).status !== 0) log('warn', 'film_no_ffmpeg');
 else if (!existsSync(join(fonts, 'press-start-2p-cyrillic-400-normal.woff'))) log('warn', 'film_no_fonts', { fonts });
 else {
-  film = new FilmService({ store: clips, log, fonts, ffmpeg, site: (env.SITE_URL || 'https://benobody.app').replace(/^https?:\/\//, '').replace(/\/$/, '') });
+  // записи матчей (для перемонтажа фильма в других вариантах) — в подпапке клипов, 2 суток; MATCH_RECORDINGS=off — не писать
+  const recordings = env.MATCH_RECORDINGS === 'off' ? undefined : new MatchRecordings(join(clips.dir, 'matches'));
+  film = new FilmService({ store: clips, log, fonts, ffmpeg, recordings, site: (env.SITE_URL || 'https://benobody.app').replace(/^https?:\/\//, '').replace(/\/$/, '') });
   log('info', 'film_ready');
 }
 

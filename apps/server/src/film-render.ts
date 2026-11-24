@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { DICTS, NavGrid } from '@kto/game-core';
 import type { MatchSummary } from '@kto/game-core';
 import { FilmScene, filmInput } from '../../web/src/game/film';
-import type { FilmPlayer, FilmTake } from '../../web/src/game/film';
+import type { FilmPlayer, FilmTake, FinaleStyle } from '../../web/src/game/film';
 import { clipMix, makeNoise } from '../../web/src/game/clip-audio';
 import { setCanvasFactory } from '../../web/src/game/pixels';
 import { loadAllThemes } from '../../web/src/game/themes';
@@ -24,6 +24,8 @@ export interface FilmJob {
   lang: 'ru' | 'en';
   site: string;
   link: string;
+  /** Показ очков в финале (по умолчанию — пьедестал); для перемонтажа записей в вариантах. */
+  finale?: FinaleStyle;
 }
 
 export interface FilmRenderOpts {
@@ -157,6 +159,7 @@ export async function renderFilm(job: FilmJob, o: FilmRenderOpts): Promise<FilmR
     // фильм уходит в ленты соцсетей: удар — «поф», без крови (детский режим)
     noGore: true,
     scale: SCALE,
+    finale: job.finale,
   });
   if (!inp) return null;
   const film = new FilmScene(inp);
