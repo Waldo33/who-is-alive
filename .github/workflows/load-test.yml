@@ -1,6 +1,6 @@
 # Нагрузочный прогон игрового сервера (docs/infra-plan.md › этап 4, apps/server/scripts/load.ts).
 #   local — сервер поднимается на раннере: сколько процессора и памяти на комнату (сравнивать версии);
-#   prod  — N комнат × 4 игрока против https://api.benobody.app, рядом снимаем метрики Москвы по SSH.
+#   prod  — N комнат × 4 игрока против https://api.benobody.app, рядом снимаем метрики игрового сервера (Европа, massovka-eu) по SSH.
 #           ТОЛЬКО НОЧЬЮ: тестовые комнаты занимают места под потолком MAX_ROOMS (сейчас ~40: одно ядро).
 # Запуск: Actions → load-test → Run workflow (или gh workflow run load-test.yml -f target=prod -f rooms=100).
 # Push этого файла гоняет только local — проверка самого прогона.
@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       target:
-        description: 'local — на раннере; prod — против Москвы (ночью!)'
+        description: 'local — на раннере; prod — против игрового сервера в Европе (ночью!)'
         type: choice
         options: [local, prod]
         default: local
@@ -55,7 +55,7 @@ jobs:
         if: env.TARGET == 'prod'
         id: srv
         env:
-          SERVER_NAME: massovka-game
+          SERVER_NAME: massovka-eu
           FIND_ONLY: '1'
         run: |
           python3 -m venv /tmp/py && /tmp/py/bin/pip install -q cryptography
