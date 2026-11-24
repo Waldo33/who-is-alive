@@ -15,6 +15,8 @@ import type { FilmPlayer, FilmTake, FinaleStyle } from '../../web/src/game/film'
 import { clipMix, makeNoise } from '../../web/src/game/clip-audio';
 import { setCanvasFactory } from '../../web/src/game/pixels';
 import { loadAllThemes } from '../../web/src/game/themes';
+import { makeEngine } from './film-native';
+import type { NCanvas, Recorder } from './film-native';
 
 /** Что нужно для фильма (передаётся в процесс монтажа целиком). */
 export interface FilmJob {
@@ -36,6 +38,11 @@ export interface FilmRenderOpts {
   ffmpeg?: string;
   /** Пресет x264 (по умолчанию ultrafast). */
   preset?: string;
+  /**
+   * Нативный модуль монтажа (apps/server/native, `massovka-film.node`): кадры рисует и кодирует Rust.
+   * Не задан — старый путь через Skia (@napi-rs/canvas). Выбирается один раз на процесс.
+   */
+  native?: string;
 }
 
 export interface FilmRendered {
@@ -69,8 +76,22 @@ const FONT = '"Press Start 2P", "Press Start 2P Latin"';
 type NapiCanvas = { encode(f: 'jpeg', q: number): Promise<Buffer>; getContext(k: '2d'): CanvasRenderingContext2D };
 
 let ready: Promise<typeof import('@napi-rs/canvas')> | null = null;
+let native: Promise<Recorder> | null = null;
 
-/** Холсты и шрифт — один раз на процесс. */
+const FONT_FILES = ['press-start-2p-cyrillic-400-normal.woff', 'press-start-2p-latin-400-normal.woff'];
+
+/** Холсты Rust и шрифт — один раз на процесс. */
+function setupNative(fonts: string, path: string): Promise<Recorder> {
+  native ??= (async () => {
+    const rec = makeEngine(path, FONT_FILES.map((f) => join(fonts, f)));
+    setCanvasFactory(() => rec.canvas() as unknown as HTMLCanvasElement);
+    await loadAllThemes();
+    return rec;
+  })();
+  return native;
+}
+
+/** Холсты Skia и шрифт — один раз на процесс. */
 function setup(fonts: string): Promise<typeof import('@napi-rs/canvas')> {
   ready ??= (async () => {
     const napi = await import('@napi-rs/canvas');
@@ -146,7 +167,8 @@ function run(ffmpeg: string, args: string[], input?: (stdin: NodeJS.WritableStre
 /** Смонтировать фильм. null — в матче нечего показать. */
 export async function renderFilm(job: FilmJob, o: FilmRenderOpts): Promise<FilmRendered | null> {
   const t0 = performance.now();
-  await setup(o.fonts);
+  const rec = o.native ? await setupNative(o.fonts, o.native) : null;
+  if (!rec) await setup(o.fonts);
   const { OfflineAudioContext } = await import('node-web-audio-api');
   // сетка навигации — класс; через границу процесса пришли только поля: собрать заново
   for (const tk of job.takes) tk.rec.nav = new NavGrid(tk.arena, (tk.rec.nav as unknown as { cell: number }).cell);
@@ -176,14 +198,51 @@ export async function renderFilm(job: FilmJob, o: FilmRenderOpts): Promise<FilmR
   const out = join(o.tmp, `film-${id}.mp4`);
   let thumb: Buffer | null = null;
   let rendered: unknown = null;
+  const vcodec = ['-c:v', 'libx264', '-preset', o.preset ?? 'ultrafast',
+    // ultrafast вдвое быстрее veryfast, на пиксельной картинке разницы не видно; crf 26 держит файл ~6 МБ
+    '-crf', '26', '-threads', '1', '-an', silent];
+  /** Отрисовать все кадры по часам звука: на границе кадра офлайн-контекст встаёт, кадр рисуется. */
+  const drive = async (frame: (k: number) => Promise<void> | void): Promise<void> => {
+    // звук рендерится вместе с кадрами: на границе кадра офлайн-контекст встаёт, кадр рисуется
+    // (и планирует свои звуки), рендер едет дальше. Если запланировать весь фильм заранее,
+    // node-web-audio-api обходит все будущие ноты на каждом шаге — время растёт квадратично
+    let failed: unknown = null;
+    for (let k = 1; k < frames; k++) {
+      void octx.suspend(k / FPS).then(async () => {
+        try {
+          if (!failed) await frame(k);
+        } catch (e) {
+          failed = e;
+        }
+        void octx.resume();
+      });
+    }
+    await frame(0);
+    rendered = await octx.startRendering();
+    if (failed) throw failed;
+  };
   try {
+    if (rec) {
+      // Rust: команды кадра исполняются, кадр переводится в YUV ×2 и уходит в x264 из своего потока
+      const eng = rec.engine;
+      eng.encodeStart(ffmpeg, W, H, FPS, vcodec);
+      try {
+        await drive((k) => {
+          now = k / FPS;
+          const c = film.frame(Math.min((k * 1000) / FPS, film.duration)) as unknown as NCanvas;
+          rec.flush();
+          if (k === 0) thumb = eng.jpeg(c.id, 85);
+          eng.encodeFrame(c.id);
+        });
+      } finally {
+        eng.encodeFinish();
+      }
+    } else
     // кадры → ffmpeg; заодно планируется звук (по часам кадра)
     await run(
       ffmpeg,
       ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'rawvideo', '-pix_fmt', 'rgba', '-s', `${W}x${H}`, '-r', String(FPS), '-i', 'pipe:0',
-        '-vf', 'scale=1080:1920:flags=neighbor,format=yuv420p', '-c:v', 'libx264', '-preset', o.preset ?? 'ultrafast',
-        // ultrafast вдвое быстрее veryfast, на пиксельной картинке разницы не видно; crf 26 держит файл ~6 МБ
-        '-crf', '26', '-threads', '1', '-an', silent],
+        '-vf', 'scale=1080:1920:flags=neighbor,format=yuv420p', ...vcodec],
       async (stdin) => {
         const frame = async (k: number): Promise<void> => {
           now = k / FPS;
@@ -192,23 +251,7 @@ export async function renderFilm(job: FilmJob, o: FilmRenderOpts): Promise<FilmR
           const px = c.getContext('2d').getImageData(0, 0, W, H).data;
           if (!stdin.write(Buffer.from(px.buffer, px.byteOffset, px.byteLength))) await once(stdin, 'drain');
         };
-        // звук рендерится вместе с кадрами: на границе кадра офлайн-контекст встаёт, кадр рисуется
-        // (и планирует свои звуки), рендер едет дальше. Если запланировать весь фильм заранее,
-        // node-web-audio-api обходит все будущие ноты на каждом шаге — время растёт квадратично
-        let failed: unknown = null;
-        for (let k = 1; k < frames; k++) {
-          void octx.suspend(k / FPS).then(async () => {
-            try {
-              if (!failed) await frame(k);
-            } catch (e) {
-              failed = e;
-            }
-            void octx.resume();
-          });
-        }
-        await frame(0);
-        rendered = await octx.startRendering();
-        if (failed) throw failed;
+        await drive(frame);
       },
     );
     await writeFile(audio, wav(rendered as unknown as Parameters<typeof wav>[0]));

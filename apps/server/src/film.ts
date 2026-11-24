@@ -46,6 +46,16 @@ function workerPath(): { path: string; execArgv: string[] } {
   return { path: join(dir, 'film-worker.mjs'), execArgv: [] };
 }
 
+/**
+ * Нативный модуль монтажа (apps/server/native, собирает game-deploy) — рядом с процессом монтажа.
+ * FILM_RENDERER=skia — принудительно прежний путь.
+ */
+export function nativePath(): string | undefined {
+  if (process.env.FILM_RENDERER === 'skia') return undefined;
+  const p = join(dirname(workerPath().path), 'massovka-film.node');
+  return existsSync(p) ? p : undefined;
+}
+
 export class FilmService {
   private queue: { job: FilmJob; done: (r: FilmDone | null) => void }[] = [];
   private busy = false;
@@ -86,13 +96,24 @@ export class FilmService {
     let res: FilmDone | null = null;
     try {
       const preset = 'ultrafast';
-      const r = await this.render(task.job, preset);
+      // монтаж на Rust (massovka-film.node рядом с процессом монтажа); не вышел — прежний путь через Skia
+      const native = nativePath();
+      let renderer = native ? 'rust' : 'skia';
+      let r: FilmRendered | null;
+      try {
+        r = await this.render(task.job, preset, native);
+      } catch (e) {
+        if (!native) throw e;
+        this.o.log('warn', 'film_native_failed', { err: String(e).slice(0, 600) });
+        renderer = 'skia';
+        r = await this.render(task.job, preset, undefined);
+      }
       if (r) {
         const saved = await this.o.store.adopt(r.video, 'mp4', r.thumb);
         res = { ...saved, ext: 'mp4', ms: Date.now() - t0 };
         this.made++;
         this.lastMs = res.ms;
-        this.o.log('info', 'film_made', { ms: res.ms, render: r.renderMs, dur: r.durationMs, preset, queued: this.queue.length });
+        this.o.log('info', 'film_made', { ms: res.ms, render: r.renderMs, dur: r.durationMs, preset, renderer, queued: this.queue.length });
       }
     } catch (e) {
       this.failed++;
@@ -103,7 +124,7 @@ export class FilmService {
     void this.next();
   }
 
-  private render(job: FilmJob, preset: string): Promise<FilmRendered | null> {
+  private render(job: FilmJob, preset: string, native: string | undefined): Promise<FilmRendered | null> {
     const w = workerPath();
     if (!existsSync(w.path)) return Promise.reject(new Error(`нет ${w.path}`));
     return new Promise((resolve, reject) => {
@@ -126,7 +147,7 @@ export class FilmService {
         clearTimeout(timer);
         reject(new Error(`монтаж завершился: ${code}`));
       });
-      child.send({ job, opts: { fonts: this.o.fonts, tmp: this.o.store.dir, ffmpeg: this.o.ffmpeg, preset } });
+      child.send({ job, opts: { fonts: this.o.fonts, tmp: this.o.store.dir, ffmpeg: this.o.ffmpeg, preset, native } });
     });
   }
 }

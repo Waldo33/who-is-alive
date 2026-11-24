@@ -6,7 +6,7 @@
  * `node film-worker.mjs --selftest` — самопроверка на сервере (её гоняет game-deploy после выкладки):
  * матч с ИИ до конца, фильм, время монтажа и размер файла.
  */
-import { rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -38,17 +38,24 @@ function selftestJob(): FilmJob {
   return { takes, players, match: s.match!, lang: 'ru', site: 'benobody.app', link: 'https://benobody.app/?src=film' };
 }
 
+/** Самопроверка монтирует тем же путём, что сервер: Rust, если модуль рядом (FILM_RENDERER=skia — Skia). */
+function selftestNative(here: string): string | undefined {
+  const p = join(here, 'massovka-film.node');
+  return process.env.FILM_RENDERER !== 'skia' && existsSync(p) ? p : undefined;
+}
+
 if (process.argv.includes('--selftest')) {
   const here = dirname(fileURLToPath(import.meta.url));
   const job = selftestJob();
   const t0 = Date.now();
-  const r = await renderFilm(job, { fonts: join(here, 'fonts'), tmp: tmpdir() });
+  const r = await renderFilm(job, { fonts: join(here, 'fonts'), tmp: tmpdir(), native: selftestNative(here) });
   if (!r) {
     console.error('нет фильма');
     process.exit(1);
   }
-  console.log(JSON.stringify({ ok: true, ms: Date.now() - t0, render: r.renderMs, sec: +(r.durationMs / 1000).toFixed(1), mb: +(statSync(r.video).size / 1e6).toFixed(1), thumbKb: Math.round(r.thumb.length / 1024), rssMb: Math.round(process.memoryUsage().rss / 1e6) }));
-  rmSync(r.video, { force: true });
+  console.log(JSON.stringify({ ok: true, renderer: selftestNative(here) ? 'rust' : 'skia', ms: Date.now() - t0, render: r.renderMs, sec: +(r.durationMs / 1000).toFixed(1), mb: +(statSync(r.video).size / 1e6).toFixed(1), thumbKb: Math.round(r.thumb.length / 1024), rssMb: Math.round(process.memoryUsage().rss / 1e6) }));
+  if (process.env.FILM_KEEP) console.log(r.video);
+  else rmSync(r.video, { force: true });
   process.exit(0);
 }
 

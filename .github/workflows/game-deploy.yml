@@ -89,6 +89,23 @@ jobs:
       - name: Сборка
         run: pnpm --filter @kto/server build
 
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            apps/server/native/target
+          key: cargo-${{ hashFiles('apps/server/native/Cargo.lock') }}
+
+      - name: Монтаж фильма на Rust
+        # apps/server/native → dist/massovka-film.node: кадры и кодирование фильма (film-native.ts);
+        # нет модуля или он упал — сервер монтирует прежним путём через Skia (film.ts › nativePath)
+        working-directory: apps/server
+        run: |
+          pnpm test:native
+          pnpm build:native
+          npx vitest run test/film-native.test.ts
+
       - name: Нативные модули фильма матча
         # @napi-rs/canvas (кадры) и node-web-audio-api (звук) — готовые сборки под linux-x64;
         # процесс монтажа (film-worker.mjs) берёт их из node_modules рядом с собой
@@ -99,7 +116,7 @@ jobs:
           npm install --no-save --no-package-lock --omit=dev "@napi-rs/canvas@$(v @napi-rs/canvas)" "node-web-audio-api@$(v node-web-audio-api)"
           rm package.json
           node --input-type=module -e "await import('@napi-rs/canvas'); await import('node-web-audio-api'); console.log('нативные модули грузятся')"
-          tar -czf ../film.tar.gz node_modules fonts film-worker.mjs film-worker.mjs.map
+          tar -czf ../film.tar.gz node_modules fonts film-worker.mjs film-worker.mjs.map massovka-film.node
           ls -la ../film.tar.gz
 
       - name: Дождаться зелёного CI
