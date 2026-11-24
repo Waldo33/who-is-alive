@@ -18,6 +18,27 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm sim -- --rounds 200
+  native:
+    # монтаж «Фильма матча» на Rust (apps/server/native): тесты холста и YUV, сверка кадров со Skia
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            apps/server/native/target
+          key: cargo-${{ hashFiles('apps/server/native/Cargo.lock') }}
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @kto/server test:native
+      - run: pnpm --filter @kto/server build:native
+      - run: cd apps/server && npx vitest run test/film-native.test.ts
   infra:
     # скрипты серверов: синтаксис bash и конфиг Caddy для всех схем (старая, синий/зелёный) — caddy validate
     runs-on: ubuntu-latest
