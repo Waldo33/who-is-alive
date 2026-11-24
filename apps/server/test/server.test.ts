@@ -527,3 +527,64 @@ describe('игровой сервер: адрес WebSocket по входу', ()
   });
 });
 
+
+describe('игровой сервер: клип выбывшего', () => {
+  it('по WebSocket: caps clip, выбитый получает готовый клип по ссылке; без монтажа — null сразу', async () => {
+    const { spawnSync } = await import('node:child_process');
+    if (spawnSync('ffmpeg', ['-version'], { stdio: 'ignore' }).status !== 0) return;
+    const { mkdtempSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const { ClipStore } = await import('../src/clips');
+    const { FilmService } = await import('../src/film');
+    const dir = mkdtempSync(join(tmpdir(), 'clip-ws-'));
+    try {
+      const store = new ClipStore(dir);
+      const film = new FilmService({ store, site: 'benobody.app', fonts: join(__dirname, '../../web/assets/og'), log: () => {} });
+      const srv = new GameServer({ authSecret: SECRET, log: silentLogger, film, clips: store });
+      servers.push(srv);
+      const port = await srv.listen(0, '127.0.0.1');
+      const http = `http://127.0.0.1:${port}`;
+      const ws = `ws://127.0.0.1:${port}/i/blue/ws`;
+      const [a, b] = await Promise.all([anon(http), anon(http)]);
+      const { code } = await create(http, a.token, { name: 'A', settings: { roundSec: 60, maxRounds: 3, kidsMode: false, aiFill: false } });
+      const [la, lb] = [link(ws, a, code, 'A'), link(ws, b, code, 'B')];
+      await la.connect();
+      await lb.connect();
+      expect(lb.caps).toEqual(['clip']);
+      await readyUp(la, [lb]);
+      la.start();
+      const room = srv.rooms.get(code)!;
+      await until(() => room.runner?.host.phase === 'play', 15_000, 'дубль начался');
+      const h = room.runner!.host;
+      const eb = h.sim.playerRound(b.userId)!.eid;
+      const A = h.world.get(h.sim.playerRound(a.userId)!.eid)!;
+      const B = h.world.get(eb)!;
+      await new Promise((r) => setTimeout(r, 1500));
+      A.x = B.x + 4;
+      A.y = B.y;
+      h.sim.intent(a.userId, { k: 'attack', eid: eb });
+      await until(() => !h.sim.playerRound(b.userId)!.alive, 2000, 'b выбит');
+      await new Promise((r) => setTimeout(r, 1700));
+      let eta = 0;
+      const c = await lb.deathClip(h.round, 'ru', false, (ms) => (eta = ms));
+      expect(eta).toBeGreaterThan(0);
+      expect(c).not.toBeNull();
+      const r = await fetch(`${http}/v1/clips/${c!.id}.${c!.ext}`);
+      expect(r.status).toBe(200);
+      expect((await r.arrayBuffer()).byteLength).toBeGreaterThan(100_000);
+      // живой просит — отказ (сервер сам решает, чей клип)
+      expect(await la.deathClip(h.round, 'ru', false)).toBeNull();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+    // сервер без монтажа: caps нет — телефон пишет сам, не спрашивая
+    const { http, ws } = await boot();
+    const u = await anon(http);
+    const { code } = await create(http, u.token);
+    const l = link(ws, u, code, 'U');
+    await l.connect();
+    expect(l.caps).toEqual([]);
+    expect(await l.deathClip(1, 'ru', false)).toBeNull();
+  }, 120_000);
+});

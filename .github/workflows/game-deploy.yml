@@ -455,6 +455,11 @@ jobs:
           echo "$out" | tail -8
           if [ "$ok" = 1 ]; then echo "фильм: $(echo "$out" | tail -1)" >> "$GITHUB_STEP_SUMMARY"
           else echo "::warning::фильм матча на сервере не смонтировался — игроки монтируют на телефоне"; fi
+          # клип выбывшего: тот же монтаж, короче (телефон пишет его 13–16 с в реальном времени)
+          out=$(ssh $SSH_OPTS root@$IP 'cd /opt/massovka/color/$(cat /etc/massovka/active-color) && runuser -u game -- nice -n 15 /opt/node/bin/node film-worker.mjs --selftest-clip' 2>&1) && ok=1 || ok=0
+          echo "$out" | tail -4
+          if [ "$ok" = 1 ]; then echo "клип выбывшего: $(echo "$out" | tail -1)" >> "$GITHUB_STEP_SUMMARY"
+          else echo "::warning::клип выбывшего на сервере не смонтировался — игроки пишут его на телефоне"; fi
 
       - name: Логи сервера (последние)
         if: always() && steps.srv.outputs.ip != ''

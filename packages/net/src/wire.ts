@@ -49,6 +49,11 @@ export const ClientMsg = z.discriminatedUnion('t', [
   z.object({ t: z.literal('g'), m: z.unknown() }),
   /** Часы сервера (оркестр из телефонов): c — время клиента, вернётся в ответе. */
   z.object({ t: z.literal('clock'), c: z.number() }),
+  /**
+   * Клип выбывшего смонтировать на сервере (шлём, только если в welcome есть caps 'clip').
+   * n — номер запроса (вернётся в ответе), round — дубль; кого подсветить, сервер решает сам.
+   */
+  z.object({ t: z.literal('clip'), n: z.number().int(), round: z.number().int(), lang: z.enum(['ru', 'en']), mild: z.boolean() }),
 ]);
 export type ClientMsg = z.infer<typeof ClientMsg>;
 
@@ -88,7 +93,8 @@ export type WireError =
 /** Сервер → клиент. */
 export type ServerMsg =
   /** spectator — пришёл посреди матча: смотрит общий канал, место займёт после матча (`join`). */
-  | { t: 'welcome'; selfId: string; room: WireRoom; spectator?: boolean }
+  /** caps — что умеет этот сервер сверх базового протокола ('clip' — монтирует клип выбывшего). */
+  | { t: 'welcome'; selfId: string; room: WireRoom; spectator?: boolean; caps?: string[] }
   | { t: 'room'; room: WireRoom }
   | { t: 'error'; code: WireError; fatal?: boolean }
   | { t: 'kicked' }
@@ -112,10 +118,19 @@ export type ServerMsg =
   | { t: 'film'; state: 'none' }
   | { t: 'film'; state: 'making' }
   | { t: 'film'; state: 'ready'; id: string; ext: 'mp4'; thumb: boolean }
-  | { t: 'film'; state: 'failed' };
+  | { t: 'film'; state: 'failed' }
+  /**
+   * Клип выбывшего (ответ на `clip` с тем же n): making — в очереди, eta — мс до готовности;
+   * ready — файл в /v1/clips/<id>.<ext>; failed — не вышло или очередь длинная: телефон монтирует сам.
+   */
+  | { t: 'clip'; n: number; state: 'making'; eta: number }
+  | { t: 'clip'; n: number; state: 'ready'; id: string; ext: 'mp4'; thumb: boolean }
+  | { t: 'clip'; n: number; state: 'failed' };
 
 /** Состояние фильма матча у клиента. */
 export type WireFilm = Extract<ServerMsg, { t: 'film' }>;
+/** Ответ сервера про клип выбывшего. */
+export type WireClip = Extract<ServerMsg, { t: 'clip' }>;
 
 /** Буквы кода комнаты (как в Supabase: без похожих I, L, O). */
 export const ROOM_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ';

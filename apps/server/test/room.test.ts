@@ -171,3 +171,33 @@ describe('фильм матча в комнате', () => {
     }
   });
 });
+
+describe('клип выбывшего на сервере (комната)', () => {
+  it('сервер с монтажом объявляет caps clip; живому и вне матча — отказ, телефон пишет сам', () => {
+    let now = 1_000_000;
+    const asked: unknown[] = [];
+    const film = { clip: (j: unknown) => (asked.push(j), null) } as unknown as NonNullable<ConstructorParameters<typeof Room>[0]['film']>;
+    const room = new Room({ code: 'ABCD', directorId: 'a', directorName: 'A', settings: { roundSec: 60, maxRounds: 3, kidsMode: false, aiFill: false }, lang: 'ru', now: () => now, log: silentLogger, film });
+    const [pa, pb] = [fakePeer(), fakePeer()];
+    room.join('a', 'A', pa);
+    room.join('b', 'B', pb);
+    const w = pa.got.find((m) => m.t === 'welcome');
+    expect(w?.t === 'welcome' && w.caps).toEqual(['clip']);
+    room.clip('a', { n: 1, round: 1, lang: 'ru', mild: false });
+    expect(pa.got.at(-1)).toEqual({ t: 'clip', n: 1, state: 'failed' });
+    room.setReady('b', true);
+    expect(room.start('a')).toBeNull();
+    now += 10_000;
+    room.runner!.pump();
+    room.clip('a', { n: 2, round: room.runner!.host.round, lang: 'ru', mild: false });
+    expect(pa.got.at(-1)).toEqual({ t: 'clip', n: 2, state: 'failed' });
+    // никого не выбили — до монтажа дело не дошло
+    expect(asked.length).toBe(0);
+    // без монтажа на сервере caps нет: старый путь
+    const plain = makeRoom().room;
+    const pc = fakePeer();
+    plain.join('c', 'C', pc);
+    const w2 = pc.got.find((m) => m.t === 'welcome');
+    expect(w2?.t === 'welcome' && w2.caps).toBeUndefined();
+  });
+});

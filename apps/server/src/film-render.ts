@@ -9,7 +9,10 @@ import { once } from 'node:events';
 import { writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DICTS, NavGrid } from '@kto/game-core';
-import type { MatchSummary } from '@kto/game-core';
+import type { ArenaDef, MatchSummary, Moment, RoundRecording } from '@kto/game-core';
+import { ClipPlayerScene } from '../../web/src/game/clip';
+import type { ClipPlayer } from '../../web/src/game/clip';
+import type { ClipSoundCore } from '../../web/src/game/clip-audio';
 import { FilmScene, filmInput } from '../../web/src/game/film';
 import type { FilmPlayer, FilmTake, FinaleStyle } from '../../web/src/game/film';
 import { clipMix, makeNoise } from '../../web/src/game/clip-audio';
@@ -28,6 +31,24 @@ export interface FilmJob {
   link: string;
   /** Показ очков в финале (по умолчанию — пьедестал); для перемонтажа записей в вариантах. */
   finale?: FinaleStyle;
+}
+
+/**
+ * Клип выбывшего (как его монтирует телефон, apps/web/src/game/scene.ts › renderDeathClip).
+ * known — дубль уже разоблачён: в кадре все живые с именами и тот, кто выбил; иначе подсвечен
+ * только сам выбывший («Найдёшь меня?»).
+ */
+export interface ClipJob {
+  rec: RoundRecording;
+  moment: Moment;
+  arena: ArenaDef;
+  players: ClipPlayer[];
+  hero: number;
+  known: boolean;
+  noGore: boolean;
+  lang: 'ru' | 'en';
+  site: string;
+  link: string;
 }
 
 export interface FilmRenderOpts {
@@ -169,7 +190,6 @@ export async function renderFilm(job: FilmJob, o: FilmRenderOpts): Promise<FilmR
   const t0 = performance.now();
   const rec = o.native ? await setupNative(o.fonts, o.native) : null;
   if (!rec) await setup(o.fonts);
-  const { OfflineAudioContext } = await import('node-web-audio-api');
   // сетка навигации — класс; через границу процесса пришли только поля: собрать заново
   for (const tk of job.takes) tk.rec.nav = new NavGrid(tk.arena, (tk.rec.nav as unknown as { cell: number }).cell);
   const inp = filmInput(job.takes, job.players, job.match, {
@@ -185,11 +205,59 @@ export async function renderFilm(job: FilmJob, o: FilmRenderOpts): Promise<FilmR
   });
   if (!inp) return null;
   const film = new FilmScene(inp);
+  return encodeScene({ duration: film.duration, frame: (ms) => film.frame(ms), setSound: (s) => (film.sound = s) }, o, rec, t0);
+}
+
+/** Клип выбывшего: те же кадры, звук и кодирование, что у фильма. */
+export async function renderClip(job: ClipJob, o: FilmRenderOpts): Promise<FilmRendered | null> {
+  const t0 = performance.now();
+  const rec = o.native ? await setupNative(o.fonts, o.native) : null;
+  if (!rec) await setup(o.fonts);
+  job.rec.nav = new NavGrid(job.arena, (job.rec.nav as unknown as { cell: number }).cell);
+  const c = DICTS[job.lang].clip;
+  const scene = new ClipPlayerScene({
+    rec: job.rec,
+    moment: job.moment,
+    arena: job.arena,
+    players: job.players,
+    t: DICTS[job.lang],
+    font: FONT,
+    site: job.site,
+    link: job.link,
+    captions: job.known ? { find: c.whoGotMe, reveal: c.reveal, kind: c.gotMe } : { find: c.findMe, reveal: c.thatWasMe, kind: c.whoGotMe },
+    noGore: job.noGore,
+    hero: job.hero,
+    scale: SCALE,
+  });
+  return encodeScene(
+    {
+      duration: scene.duration,
+      frame: (ms) => {
+        scene.draw(ms);
+        return scene.c;
+      },
+      setSound: (s) => (scene.sound = s),
+    },
+    o,
+    rec,
+    t0,
+  );
+}
+
+/** Что умеет сцена для кодирования: длительность, кадр по времени и звук. */
+interface Encodable {
+  readonly duration: number;
+  frame(ms: number): HTMLCanvasElement;
+  setSound(s: ClipSoundCore): void;
+}
+
+async function encodeScene(film: Encodable, o: FilmRenderOpts, rec: Recorder | null, t0: number): Promise<FilmRendered> {
+  const { OfflineAudioContext } = await import('node-web-audio-api');
   const frames = Math.ceil((film.duration / 1000) * FPS);
   const octx = new OfflineAudioContext(2, Math.ceil(((frames + 2) / FPS) * RATE), RATE);
   let now = 0;
   const ctx = clocked(octx as unknown as BaseAudioContext, () => now);
-  film.sound = clipMix(ctx, octx.destination as unknown as AudioNode, makeNoise(ctx), { manual: true });
+  film.setSound(clipMix(ctx, octx.destination as unknown as AudioNode, makeNoise(ctx), { manual: true }));
 
   const ffmpeg = o.ffmpeg ?? 'ffmpeg';
   const id = `${process.pid}-${Date.now()}`;

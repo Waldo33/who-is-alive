@@ -25,6 +25,7 @@ import { inTelegram, telegramReady, telegramShare, telegramShareCard, tgLink } f
 import { download, shareContent, withLang } from '@/lib/share';
 import { Room, SPECTATE_DELAY_MS } from '@/net/room';
 import { GAME_API } from '@/lib/env';
+import { serverClipFile } from '@/lib/clips';
 import type { RemoteSession } from '@kto/net';
 import type { Audio as GameAudio, RoundMusic } from '@/game/audio';
 import type { RunningGame } from '@/game/boot';
@@ -264,6 +265,13 @@ function GameView({
         // «Ещё дубль» у режиссёра: вошли новые игроки (досмотрели как зрители) — новый матч с ними
         onRematch: () => room.rematchWithNewcomers(),
         onSave: (file: File) => download(file),
+        // клип выбывшего монтирует игровой сервер (Rust); не умеет или занят — пишет телефон
+        deathClip: spectator
+          ? undefined
+          : async (round, mild, onEta) => {
+              const c = await room.link?.deathClip(round, lang, mild, onEta);
+              return c ? serverClipFile(c, 'kto-tut-zhivoy.mp4') : null;
+            },
         onSettings: () => settingsRef.current(),
         // «Фильм матча» монтирует игровой сервер: состояние приходит по той же связи (ServerLink.film)
         film: spectator

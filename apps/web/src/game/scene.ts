@@ -90,6 +90,11 @@ export interface SceneInit {
   spectator?: { delaySec: number; watching: () => boolean };
   /** Режиссёр жмёт «Ещё дубль»: true — комната сама начала новый матч (пришли новые игроки). */
   onRematch?: () => boolean;
+  /**
+   * Клип выбывшего монтирует игровой сервер (комната): файл или null — тогда клип пишет телефон.
+   * onEta — сколько мс ждать (для прогресса на кнопке).
+   */
+  deathClip?: (round: number, mild: boolean, onEta: (ms: number) => void) => Promise<File | null>;
 }
 
 interface EntityView {
@@ -1688,7 +1693,7 @@ export class GameScene extends Phaser.Scene {
       : [{ eid: dc.eid, name: me.name, color: me.color }];
     const rec = recordRound(w, { round: this.sim.round, theme: this.sim.theme, players: known ? s!.reveal : [], playEnd: to, kills: s?.kills });
     const moment: Moment = { from, to, score: 0, kind: 'knockout', at: dc.at, victim: dc.eid, attacker: dc.killer, selfRole: 'victim' };
-    void recordClipInBackground(
+    const local = () => recordClipInBackground(
       {
         rec,
         moment,
@@ -1707,7 +1712,16 @@ export class GameScene extends Phaser.Scene {
         dc.progress = p;
         this.updateDeathClipLabel();
       },
-    ).then((file) => {
+    );
+    // сначала — сервер (Rust, ~3–6 с вместо записи в реальном времени); не вышло — пишет телефон, как раньше
+    const server = this.init0.deathClip;
+    const job = server
+      ? this.serverDeathClip(dc, server).then((f) => {
+          this.track('clip_made', { kind: 'death', via: f ? 'server' : 'phone' });
+          return f ?? (this.deathClip === dc ? local() : null);
+        })
+      : local();
+    void job.then((file) => {
       if (this.deathClip !== dc) return;
       if (!file) {
         this.deathClip = null;
@@ -1722,6 +1736,32 @@ export class GameScene extends Phaser.Scene {
       this.updateDeathClipLabel();
       this.audio.play('starTake');
     });
+  }
+
+  /** Клип выбывшего с сервера: прогресс на кнопке — по обещанному сервером времени. */
+  private async serverDeathClip(dc: DeathClip, ask: NonNullable<SceneInit['deathClip']>): Promise<File | null> {
+    let t0 = 0;
+    let eta = 0;
+    const timer = this.time.addEvent({
+      delay: 200,
+      loop: true,
+      callback: () => {
+        if (!eta || this.deathClip !== dc) return;
+        dc.progress = Math.min(0.95, (performance.now() - t0) / eta);
+        this.updateDeathClipLabel();
+      },
+    });
+    try {
+      return await ask(dc.round, mildOn(), (ms) => {
+        t0 = performance.now();
+        // плюс скачивание готового файла
+        eta = ms + 1500;
+      });
+    } catch {
+      return null;
+    } finally {
+      timer.remove();
+    }
   }
 
   /** Иконка команды толпы: своя у облика темы или общая (рука, прыжок, танец). */
