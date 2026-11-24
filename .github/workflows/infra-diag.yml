@@ -51,6 +51,9 @@ jobs:
           curl -sS -m15 -u "admin:$(cat /etc/massovka-grafana/admin.pw)" 'http://127.0.0.1:3001/api/search?type=dash-db' | python3 -c 'import json,sys;[print("панель:", d["title"]) for d in json.load(sys.stdin)]'
           printf "событий в базе Москвы за сутки: "; PGPASSWORD=$(. /etc/massovka-grafana/pgro.env; echo $PGRO_PASSWORD) psql -h 127.0.0.1 -p 15432 -U grafana_ro -d massovka -Atc "select count(*)||' ('||count(distinct device_id)||' устройств)' from analytics_events where created_at > now()-interval '1 day'"
           curl -sS -m10 -o /dev/null -w "grafana снаружи: %{http_code}\n" https://72-56-73-184.sslip.io/grafana/login
+          curl -sS -m10 -o /dev/null -w "grafana /grafana/: %{http_code} → %{redirect_url}\n" https://72-56-73-184.sslip.io/grafana/
+          systemctl is-active caddy grafana; journalctl -u caddy -n 15 --no-pager -o cat | cut -c1-250
+          grep -n "grafana\|^[a-z0-9:/.-]* {" /etc/caddy/Caddyfile | head -20
           systemctl list-timers --no-pager | grep -E "backup" || true
           ls -la /var/backups/massovka-msk 2>/dev/null | tail -3
           for u in node_exporter victoria-metrics victoria-logs grafana systemd-journal-upload; do echo "· $u"; journalctl -u $u -n 4 --no-pager -o cat | tr '\\t' ' ' | cut -c1-220; done
