@@ -38,7 +38,7 @@ env:
 jobs:
   move:
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    timeout-minutes: 120
     env:
       TWC_TOKEN: ${{ secrets.TWC_TOKEN }}
       SSH_OPTS: -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=20 -o ServerAliveInterval=15 -o LogLevel=ERROR
@@ -49,12 +49,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          for _ in $(seq 1 60); do
+          for _ in $(seq 1 120); do
             n=$(gh run list -R "$GITHUB_REPOSITORY" -w game-deploy.yml -L 10 --json status -q '[.[] | select(.status != "completed")] | length')
             [ "$n" = 0 ] && { echo "выкладок нет"; exit 0; }
             echo "$(date +%T) идёт выкладка сервера ($n) — жду"; sleep 30
           done
-          echo "::error::выкладка идёт больше 30 минут"; exit 1
+          echo "::error::выкладка идёт больше часа"; exit 1
       - run: python3 -m venv /tmp/py && /tmp/py/bin/pip install -q cryptography
       - id: msk
         env: { SERVER_NAME: massovka-game }
