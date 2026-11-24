@@ -379,7 +379,10 @@ export class GameServer {
         restore: snap,
       });
       this.rooms.set(snap.code, room);
-      this.log('info', 'room_imported', { room: snap.code, members: snap.members.length });
+      if (snap.load === true) this.loadRooms.add(snap.code);
+      // пустая комната продолжает отсчёт до закрытия, а не держит место ещё 10 минут
+      if (typeof snap.emptyMs === 'number' && snap.emptyMs >= 0) this.emptySince.set(room, this.now() - Math.min(snap.emptyMs, EMPTY_CLOSE_MS));
+      this.log('info', 'room_imported', { room: snap.code, members: snap.members.length, ...(snap.load ? { load: true } : {}) });
       return this.reply(res, 204);
     }
     if (p === '/internal/drain' && req.method === 'POST') {
@@ -441,7 +444,12 @@ export class GameServer {
     if (!peer) return;
     this.moving.add(r.code);
     try {
-      const snap = r.snapshot();
+      const empty = this.emptySince.get(r);
+      const snap: RoomSnapshot = {
+        ...r.snapshot(),
+        ...(this.loadRooms.has(r.code) ? { load: true } : {}),
+        ...(empty !== undefined ? { emptyMs: this.now() - empty } : {}),
+      };
       const res = await fetch(`${peer.http}/internal/import`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -454,6 +462,7 @@ export class GameServer {
       r.moveTo(peer.wsUrl);
       this.rooms.delete(r.code);
       this.emptySince.delete(r);
+      this.loadRooms.delete(r.code);
     } catch (e) {
       // сосед не ответил — попробуем на следующем шаге drain (раз в секунду)
       this.log('warn', 'room_move_failed', { room: r.code, err: String(e) });

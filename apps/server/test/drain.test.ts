@@ -168,4 +168,47 @@ describe('выкладка без обрыва: drain и переезд комн
     expect(b.srv.rooms.size).toBe(0);
     await until(() => why === 'closed', 2000, 'закрыто');
   });
+  it('пустые комнаты при переезде не держат место заново: тестовая закрывается через 15 с, обычная досчитывает свои 10 минут', async () => {
+    let t = 1_000_000;
+    const KEY = 'k'.repeat(24);
+    const mk = (instance: string) => {
+      const s = new GameServer({ authSecret: SECRET, log: silentLogger, instance, loadKey: KEY, now: () => t });
+      servers.push(s);
+      return s;
+    };
+    const blue = mk('blue');
+    const green = mk('green');
+    const bh = `http://127.0.0.1:${await blue.listen(0, '127.0.0.1')}`;
+    const gh = `http://127.0.0.1:${await green.listen(0, '127.0.0.1')}`;
+    blue.setPeer({ http: gh, wsUrl: `${gh.replace('http', 'ws')}/i/green/ws` });
+    green.setPeer({ http: bh, wsUrl: `${bh.replace('http', 'ws')}/i/blue/ws` });
+    const room = async (load: boolean) => {
+      const u = await anon(bh);
+      const r = await fetch(`${bh}/v1/rooms`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${u.token}`, ...(load ? { 'x-kto-load': KEY } : {}) },
+        body: '{}',
+      });
+      return ((await r.json()) as { code: string }).code;
+    };
+    const test = await room(true);
+    const real = await room(false);
+    blue.housekeeping(); // обе пустые с этого момента
+    t += 5 * 60_000 - 16_000; // обычная пустует почти 5 минут, первая тестовая уже закрыта; вторую создаём только что
+    const test2 = await room(true);
+    blue.housekeeping();
+    expect(blue.rooms.has(test)).toBe(false);
+    expect(blue.rooms.has(test2)).toBe(true);
+    await fetch(`${bh}/internal/drain`, { method: 'POST' });
+    blue.housekeeping();
+    await until(() => green.rooms.has(test2) && green.rooms.has(real), 3000, 'переезд');
+    green.housekeeping();
+    t += 17_000;
+    green.housekeeping();
+    expect(green.rooms.has(test2)).toBe(false);
+    expect(green.rooms.has(real)).toBe(true);
+    t += 5 * 60_000; // обычная: всего чуть больше 10 минут пустоты — закрыта, а не держится ещё 10 после переезда
+    green.housekeeping();
+    expect(green.rooms.has(real)).toBe(false);
+  });
 });

@@ -71,6 +71,10 @@ export interface RoomSnapshot {
   members: { userId: string; name: string; color: number; joinedAt: number; ready: boolean; offlineSince: number }[];
   /** Зрители (пришли посреди прошлого матча): после переезда снова зрители, место займут сами. */
   spectators: string[];
+  /** Комната нагрузочного прогона: у соседа тоже закроется через 15 с пустоты (необязательное — старые версии не шлют). */
+  load?: boolean;
+  /** Сколько комната уже пустая (мс): сосед продолжает отсчёт, а не начинает 10 минут заново. */
+  emptyMs?: number;
 }
 
 /**
