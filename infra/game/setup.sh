@@ -131,7 +131,8 @@ tunnel() { # имя юнита, куда (user@host), описание, проб
   local name=$1 to=$2 desc=$3 before
   shift 3
   [ -f /etc/massovka/tunnel_ed25519 ] || ssh-keygen -q -t ed25519 -N '' -C massovka-tunnel -f /etc/massovka/tunnel_ed25519
-  before=$(cat "/etc/systemd/system/$name.service" 2>/dev/null | sha256sum)
+  # нового юнита ещё нет: cat падает, а с pipefail и set -e это обрывало выкладку
+  before=$( { cat "/etc/systemd/system/$name.service" 2>/dev/null || true; } | sha256sum)
   cat > "/etc/systemd/system/$name.service" <<UNIT
 [Unit]
 Description=Массовка: туннель $desc
@@ -249,7 +250,7 @@ if ! grep -q '^LOAD_KEY=' /etc/massovka/secrets.env 2>/dev/null; then
 fi
 chmod 600 /etc/massovka/secrets.env
 
-envsum_before=$(cat /etc/massovka/*.env 2>/dev/null | sha256sum)
+envsum_before=$( { cat /etc/massovka/*.env 2>/dev/null || true; } | sha256sum)
 game_port() { [ "$1" = green ] && echo 8082 || echo 8081; }
 # база стран для замера доступности (geo.ts): привозит game-deploy, если версия поменялась
 if [ -s "$D/geoip.mmdb" ]; then
