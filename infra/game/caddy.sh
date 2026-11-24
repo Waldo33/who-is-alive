@@ -9,6 +9,12 @@
 # экземпляру: там доигрывается матч; когда экземпляр завершился, его адрес отдаётся соседу, а тот
 # говорит «переезжай» или уже держит комнату. Изнутри машины игра — на 127.0.0.1:8080 (бот, метрики,
 # сторож, туннель), тоже с активным впереди. Нет active-color — старая схема: один экземпляр на :8080.
+#
+# Переезд в Европу (docs/infra-plan.md › этап 3):
+#   RELAY_FRONT=1 (Европа) — вход пересылки http://127.0.0.1:8090 для Москвы (туннель massovka-relay):
+#     адрес игрока берётся из заголовка X-Massovka-Client, который ставит Москва; /metrics и /internal — 404;
+#   RELAY=127.0.0.1:18090 (Москва) — игра пересылается в Европу: новые запросы — туда, а соединения
+#     к своему экземпляру (/i/<цвет>/ws — идущие матчи) — к нему, пока он жив.
 set -euo pipefail
 # пути можно подменить для проверки конфига без сервера (CI: infra/test/caddy-config.sh)
 ETC=${MASSOVKA_ETC:-/etc/massovka}
@@ -78,7 +84,29 @@ fi)
 	handle /internal/* {
 		respond 404
 	}
-$(if [ -n "$active" ]; then cat <<COLORS
+$(if [ -n "$active" ] && [ -n "${RELAY:-}" ]; then cat <<RELAYED
+	# игра переехала в Европу: идущие здесь матчи доигрывают на своём экземпляре, всё остальное —
+	# по туннелю в Европу (адрес игрока — в X-Massovka-Client, его читает вход пересылки там)
+	handle /i/blue/* {
+		reverse_proxy $BLUE $GREEN $RELAY {
+$(proxy_opts)
+			header_up X-Massovka-Client {remote_host}
+		}
+	}
+	handle /i/green/* {
+		reverse_proxy $GREEN $BLUE $RELAY {
+$(proxy_opts)
+			header_up X-Massovka-Client {remote_host}
+		}
+	}
+	handle {
+		reverse_proxy $RELAY {
+			stream_close_delay 2h
+			header_up X-Massovka-Client {remote_host}
+		}
+	}
+RELAYED
+elif [ -n "$active" ]; then cat <<COLORS
 	# соединение игрока — к своему экземпляру (там идёт его матч), экземпляра нет — к соседу
 	handle /i/blue/* {
 		reverse_proxy $BLUE $GREEN {
@@ -116,6 +144,39 @@ $(proxy_opts)
 	}
 }
 FRONT
+fi)
+$(if [ -n "$active" ] && [ -n "${RELAY_FRONT:-}" ]; then cat <<RFRONT
+
+# вход пересылки из Москвы (туннель massovka-relay, только 127.0.0.1): те же маршруты, что снаружи,
+# адрес игрока — из X-Massovka-Client (его ставит Caddy Москвы), а не 127.0.0.1 туннеля
+http://127.0.0.1:8090 {
+	bind 127.0.0.1
+	handle /metrics {
+		respond 404
+	}
+	handle /internal/* {
+		respond 404
+	}
+	handle /i/blue/* {
+		reverse_proxy $BLUE $GREEN {
+$(proxy_opts)
+			header_up X-Forwarded-For {http.request.header.X-Massovka-Client}
+		}
+	}
+	handle /i/green/* {
+		reverse_proxy $GREEN $BLUE {
+$(proxy_opts)
+			header_up X-Forwarded-For {http.request.header.X-Massovka-Client}
+		}
+	}
+	handle {
+		reverse_proxy $A $B {
+$(proxy_opts)
+			header_up X-Forwarded-For {http.request.header.X-Massovka-Client}
+		}
+	}
+}
+RFRONT
 fi)
 CADDY
 if [ -n "${SITE_HOST:-}" ]; then

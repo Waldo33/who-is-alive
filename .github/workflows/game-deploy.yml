@@ -1,7 +1,9 @@
 # Серверы в Timeweb Cloud: создать (если нет), настроить, выкатить новую версию сервера.
-#   game  — Москва: игра (api.benobody.app), сайт (benobody.app, выкладывает web-deploy), Postgres с аналитикой.
-#   infra — Нидерланды: Telegram-бот (из России api.telegram.org закрыт), позже — мониторинг, логи, копии базы.
-# Код сервера один (apps/server), роль задают переменные окружения. Сначала infra — Москва проксирует к нему /tg/*.
+#   game/msk — Москва: игра (api.benobody.app), сайт (benobody.app, выкладывает web-deploy), Postgres с аналитикой.
+#   game/eu  — Европа (Нидерланды, massovka-eu): та же игра, сайт и база — сюда переезжаем (docs/infra-plan.md › этап 3).
+#   infra    — Нидерланды: Telegram-бот (из России api.telegram.org закрыт), мониторинг, логи, копии базы.
+# Код сервера один (apps/server), роль задают переменные окружения. Порядок: Европа (создаётся первой),
+# infra (туннели к игровым серверам), Москва (пускает туннели Нидерландов и Европы).
 # Всё идемпотентно. Логи Actions: секреты не печатаем (ключ SSH выводится из TWC_TOKEN внутри provision.py).
 name: game-deploy
 
@@ -45,11 +47,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - role: game
+            site: eu
+            name: massovka-eu
+            # Cloud NL-15: 1 vCPU, 1 ГБ, 15 ГБ, Нидерланды, 950 ₽ — размер как у Москвы, увеличим позже
+            # (решение владельца 24.11.2026); в одном дата-центре с massovka-infra
+            presets: '6803'
           - role: infra
             name: massovka-infra
             # Cloud NL-30: 1 vCPU, 2 ГБ, 30 ГБ, Нидерланды, 1560 ₽ (решение владельца 23.11.2026)
             presets: '6807'
           - role: game
+            site: msk
             name: massovka-game
             presets: '6759,6749,4797,4795,6867,6869'
     env:
@@ -108,11 +117,19 @@ jobs:
           FIND_ONLY: '1'
         run: /tmp/py/bin/python infra/game/provision.py
 
-      - name: Адрес Москвы (для туннеля из Нидерландов)
+      - name: Адрес Москвы (для туннелей из Нидерландов и Европы)
         id: moscow
-        if: matrix.role == 'infra'
+        if: matrix.role == 'infra' || matrix.site == 'eu'
         env:
           SERVER_NAME: massovka-game
+          FIND_ONLY: '1'
+        run: /tmp/py/bin/python infra/game/provision.py
+
+      - name: Адрес сервера в Европе (туннель из Нидерландов, ключ пересылки для Москвы)
+        id: eu
+        if: matrix.role == 'infra' || matrix.site == 'msk'
+        env:
+          SERVER_NAME: massovka-eu
           FIND_ONLY: '1'
         run: /tmp/py/bin/python infra/game/provision.py
 
@@ -141,6 +158,32 @@ jobs:
             sleep 10
           done
           echo "::error::SSH не ответил"; exit 1
+
+      - name: Европа — сертификаты и ключ токенов из Москвы
+        # Один раз, до первой настройки: Caddy в Европе сразу отдаёт benobody.app и api.benobody.app с
+        # сертификатами Москвы (DNS ещё смотрит на Москву — выпустить свои он не может, а после
+        # переключения DNS не должно быть ни минуты без HTTPS). Ключ подписи токенов — тот же, что в
+        # Москве: игроки после переезда не теряют вход. Всё идёт трубой раннера по SSH, в лог не попадает.
+        if: matrix.site == 'eu'
+        env:
+          IP: ${{ steps.srv.outputs.ip }}
+          MSK: ${{ steps.moscow.outputs.ip }}
+        run: |
+          [ -n "$MSK" ] || { echo "Москвы нет — пропуск"; exit 0; }
+          if ssh $SSH_OPTS root@$IP 'grep -q "^AUTH_SIGNING_KEY=" /etc/massovka/secrets.env 2>/dev/null'; then
+            echo "ключ токенов уже есть"
+          else
+            ssh $SSH_OPTS root@$MSK 'grep "^AUTH_SIGNING_KEY=" /etc/massovka/secrets.env' \
+              | ssh $SSH_OPTS root@$IP 'install -d -m 700 /etc/massovka && umask 077 && cat >> /etc/massovka/secrets.env && grep -c "^AUTH_SIGNING_KEY=" /etc/massovka/secrets.env'
+            echo "ключ токенов перенесён из Москвы"
+          fi
+          have=$(ssh $SSH_OPTS root@$IP 'find /var/lib/caddy -maxdepth 5 -type d -name api.benobody.app 2>/dev/null | head -1' || true)
+          if [ -n "$have" ]; then echo "сертификаты уже есть"; exit 0; fi
+          dirs=$(ssh $SSH_OPTS root@$MSK 'cd /var/lib/caddy && find . -maxdepth 5 -type d \( -name api.benobody.app -o -name benobody.app -o -name www.benobody.app \) -path "*certificates*"' | tr '\n' ' ')
+          echo "сертификаты в Москве: $dirs"
+          [ -n "$dirs" ] || { echo "::warning::в Москве нет сертификатов — Европа выпустит свои после переключения DNS"; exit 0; }
+          ssh $SSH_OPTS root@$MSK "cd /var/lib/caddy && tar -cz $dirs" \
+            | ssh $SSH_OPTS root@$IP 'id caddy >/dev/null 2>&1 || useradd --system --home /var/lib/caddy --shell /usr/sbin/nologin caddy; install -d -o caddy -g caddy /var/lib/caddy && tar -xz -C /var/lib/caddy && chown -R caddy:caddy /var/lib/caddy && find /var/lib/caddy -name "*.crt" | sed "s|.*/||"'
 
       - name: Что уже стоит на сервере
         id: have
@@ -271,6 +314,8 @@ jobs:
           SSLIP: ${{ steps.srv.outputs.host }}
           BOT_IP: ${{ steps.infra.outputs.ip }}
           MOSCOW_IP: ${{ steps.moscow.outputs.ip }}
+          EU_IP: ${{ steps.eu.outputs.ip }}
+          SITE: ${{ matrix.site }}
           TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           ALERTS_TOKEN: ${{ secrets.ALERTS_BOT_TOKEN }}
           GRAFANA_PASSWORD: ${{ secrets.GRAFANA_PASSWORD }}
@@ -292,12 +337,21 @@ jobs:
           if [ "$ROLE" = game ] && [ -n "$BOT_IP" ]; then
             ssh $SSH_OPTS root@$BOT_IP 'cat /etc/massovka/tunnel_ed25519.pub 2>/dev/null' > deploy/tunnel.pub || true
           fi
+          # открытый ключ туннеля пересылки из Европы — Москве (вход только на порты 18090/18091)
+          if [ "$SITE" = msk ] && [ -n "$EU_IP" ]; then
+            ssh $SSH_OPTS root@$EU_IP 'cat /etc/massovka/tunnel_ed25519.pub 2>/dev/null' > deploy/relay.pub || true
+          fi
           scp $SSH_OPTS -q -r deploy/* root@$IP:/tmp/deploy/
-          if [ "$ROLE" = game ]; then
+          if [ "$SITE" = eu ]; then
+            # Европа: основной адрес — api.benobody.app (сертификат из Москвы), запасной — свой sslip.io;
+            # переезд комнат при выкладке — на тот адрес, что сейчас работает снаружи (до DNS — sslip.io)
+            up=""; [ -s deploy/tunnel.pub ] && up="http://127.0.0.1:9090"
+            vars="HOST=api.benobody.app ALT_HOST=$SSLIP PEER_HOST=$HOST WS_HOSTS=api.benobody.app,$SSLIP REGION=eu SITE_HOST=benobody.app SITE_REDIRECT=https://who-is-alive.vercel.app BOT_UPSTREAM=$up RELAY_FRONT=1 RELAY_TO=$MOSCOW_IP"
+          elif [ "$ROLE" = game ]; then
             up=""; [ -s deploy/tunnel.pub ] && up="http://127.0.0.1:9090"
             vars="HOST=$HOST ALT_HOST=$SSLIP SITE_HOST=benobody.app SITE_REDIRECT=https://who-is-alive.vercel.app BOT_UPSTREAM=$up"
           else
-            vars="HOST=$HOST BOT_SITE=https://benobody.app TUNNEL_TO=$MOSCOW_IP"
+            vars="HOST=$HOST BOT_SITE=https://benobody.app TUNNEL_TO=$MOSCOW_IP TUNNEL_EU_TO=$EU_IP"
           fi
           ssh $SSH_OPTS root@$IP "ROLE=$ROLE $vars SHA=${GITHUB_SHA::12} bash /tmp/deploy/setup.sh"
 
@@ -329,22 +383,28 @@ jobs:
           curl -fsS "https://$HOST/tg/setup"; echo
           curl -fsS "https://$HOST/tg/status"; echo
 
-      - name: Москва → бот (/tg/* проксируется на сервер бота)
+      - name: Игровой сервер → бот (/tg/* проксируется на сервер бота)
         if: matrix.role == 'game' && steps.infra.outputs.host != ''
+        # Европа в первый раз: туннель из Нидерландов появится, когда следом выкатится infra
+        continue-on-error: ${{ matrix.site == 'eu' }}
         env:
           HOST: ${{ steps.addr.outputs.host }}
         run: |
           for i in $(seq 1 20); do
-            if res=$(curl -fsS "https://$HOST/tg/info"); then echo "через Москву: $res"; exit 0; fi
+            if res=$(curl -fsS "https://$HOST/tg/info"); then echo "через $HOST: $res"; exit 0; fi
             sleep 5
           done
-          echo "::error::https://$HOST/tg/info через Москву не отвечает"; exit 1
+          echo "::error::https://$HOST/tg/info не отвечает (туннель из Нидерландов?)"; exit 1
 
       - name: Сайт benobody.app
         if: matrix.role == 'game'
+        env:
+          IP: ${{ steps.srv.outputs.ip }}
         run: |
-          for h in benobody.app www.benobody.app; do
-            printf '%s → ' "$h"; curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' "https://$h/" || true
+          # именно этого сервера (DNS может смотреть на другой): --resolve
+          for h in benobody.app www.benobody.app api.benobody.app; do
+            path=/; [ "$h" = api.benobody.app ] && path=/healthz
+            printf '%s → ' "$h"; curl -s --resolve "$h:443:$IP" -o /dev/null -w '%{http_code} %{redirect_url}\n' "https://$h$path" || echo "нет HTTPS" 
           done
 
       - name: Матч через выкладку (итог)
