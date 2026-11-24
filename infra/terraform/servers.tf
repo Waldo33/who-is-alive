@@ -5,8 +5,10 @@ locals {
   servers = {
     # Европа: игра (api.benobody.app), сайт (benobody.app), Postgres, Caddy
     eu = {
-      name   = "massovka-eu"
-      preset = 6807 # Cloud NL-30: 1 vCPU, 2 ГБ, 30 ГБ, 1560 ₽/мес
+      name = "massovka-eu"
+      # Cloud NL-40: 2 vCPU, 2 ГБ, 40 ГБ, 2600 ₽/мес (было NL-30 — 6807, 1 vCPU, 1560 ₽).
+      # Второе ядро — «Фильму матча» и запас под рекламу (решение владельца 25.11.2026)
+      preset = 6809
       ipv4   = true # в Нидерландах сервер создаётся без своего IPv4 — заказываем
     }
     # Нидерланды: Telegram-бот, сторож, Grafana, копии базы
