@@ -8,6 +8,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ClipStore } from './clips';
 import { FilmService } from './film';
+import { MatchRecordings } from './recordings';
 import { GameServer } from './server';
 import { MemoryStore, PgStore } from './store';
 import type { Store } from './store';
@@ -16,9 +17,10 @@ import { loadGeo } from './geo';
 /**
  * Запуск игрового сервера. Настройки — из окружения:
  *   PORT (8080), AUTH_SIGNING_KEY (обязателен в проде), INSTANCE (blue | green),
- *   PUBLIC_WS_BASE (wss://api.<домен>), ALLOWED_ORIGINS (через запятую), TRUST_PROXY=1, LOG_LEVEL,
+ *   PUBLIC_WS_BASE (wss://api.<домен>), PUBLIC_WS_HOSTS — свои входы через запятую (адрес WebSocket по Host запроса), ALLOWED_ORIGINS (через запятую), TRUST_PROXY=1, LOG_LEVEL,
  *   MAX_ROOMS — потолок комнат под память машины (~1,5 МБ на комнату, считает setup.sh; иначе 2000),
  *   REGION (msk | nl), GEOIP_DB — база стран для замера доступности, EVENTS_UPSTREAM — куда пересылать аналитику.
+ *   LOAD_KEY — ключ нагрузочного прогона (load-test.yml), секрет рождается на сервере,
  *   PEER_HTTP + PEER_WS_URL — соседний экземпляр (синий ↔ зелёный): к нему переезжают комнаты при выкладке
  *   (POST /internal/drain изнутри машины), после drain процесс завершается сам.
  */
@@ -75,7 +77,9 @@ if (env.FILM === 'off') log('info', 'film_off');
 else if (spawnSync(ffmpeg, ['-version'], { stdio: 'ignore' }).status !== 0) log('warn', 'film_no_ffmpeg');
 else if (!existsSync(join(fonts, 'press-start-2p-cyrillic-400-normal.woff'))) log('warn', 'film_no_fonts', { fonts });
 else {
-  film = new FilmService({ store: clips, log, fonts, ffmpeg, site: (env.SITE_URL || 'https://benobody.app').replace(/^https?:\/\//, '').replace(/\/$/, '') });
+  // записи матчей (для перемонтажа фильма в других вариантах) — в подпапке клипов, 2 суток; MATCH_RECORDINGS=off — не писать
+  const recordings = env.MATCH_RECORDINGS === 'off' ? undefined : new MatchRecordings(join(clips.dir, 'matches'));
+  film = new FilmService({ store: clips, log, fonts, ffmpeg, recordings, site: (env.SITE_URL || 'https://benobody.app').replace(/^https?:\/\//, '').replace(/\/$/, '') });
   log('info', 'film_ready');
 }
 
@@ -85,12 +89,14 @@ const server = new GameServer({
   authSecret: secret,
   instance: env.INSTANCE || 'blue',
   publicWsBase: env.PUBLIC_WS_BASE || undefined,
+  publicWsHosts: env.PUBLIC_WS_HOSTS ? env.PUBLIC_WS_HOSTS.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean) : undefined,
   allowedOrigins: env.ALLOWED_ORIGINS ? env.ALLOWED_ORIGINS.split(',').map((s) => s.trim()).filter(Boolean) : '*',
   trustProxy: env.TRUST_PROXY === '1',
   maxRooms: Number(env.MAX_ROOMS) > 0 ? Number(env.MAX_ROOMS) : undefined,
   geo: loadGeo(env.GEOIP_DB || undefined, (msg, f) => log('info', msg, f)),
   region: env.REGION || undefined,
   eventsUpstream: env.EVENTS_UPSTREAM || undefined,
+  loadKey: env.LOAD_KEY || undefined,
   peer: env.PEER_HTTP && env.PEER_WS_URL ? { http: env.PEER_HTTP, wsUrl: env.PEER_WS_URL } : undefined,
   // выкладка: все комнаты переехали к соседу или доиграли — выходим (systemd не перезапускает код 0)
   onDrained: () => void stop('drained'),

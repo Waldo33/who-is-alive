@@ -1,0 +1,95 @@
+# Нагрузочный прогон игрового сервера (docs/infra-plan.md › этап 4, apps/server/scripts/load.ts).
+#   local — сервер поднимается на раннере: сколько процессора и памяти на комнату (сравнивать версии);
+#   prod  — N комнат × 4 игрока против https://api.benobody.app, рядом снимаем метрики игрового сервера (Европа, massovka-eu) по SSH.
+#           ТОЛЬКО НОЧЬЮ: тестовые комнаты занимают места под потолком MAX_ROOMS (сейчас ~40: одно ядро).
+# Запуск: Actions → load-test → Run workflow (или gh workflow run load-test.yml -f target=prod -f rooms=100).
+# Push этого файла гоняет только local — проверка самого прогона.
+name: load-test
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'local — на раннере; prod — против игрового сервера в Европе (ночью!)'
+        type: choice
+        options: [local, prod]
+        default: local
+      rooms:
+        description: 'Комнат (по 4 игрока)'
+        default: '100'
+      seconds:
+        description: 'Сколько секунд держать нагрузку'
+        default: '120'
+  push:
+    branches: [main]
+    paths: ['.github/workflows/load-test.yml', 'apps/server/scripts/load.ts']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: load-test
+  cancel-in-progress: false
+
+jobs:
+  load:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TARGET: ${{ inputs.target || 'local' }}
+      ROOMS: ${{ inputs.rooms || '100' }}
+      SECONDS_: ${{ inputs.seconds || '60' }}
+      TWC_TOKEN: ${{ secrets.TWC_TOKEN }}
+      SSH_OPTS: -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=20 -o ServerAliveInterval=15 -o LogLevel=ERROR
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @kto/server build
+
+      - name: Москва — адрес и ключ прогона
+        if: env.TARGET == 'prod'
+        id: srv
+        env:
+          SERVER_NAME: massovka-eu
+          FIND_ONLY: '1'
+        run: |
+          python3 -m venv /tmp/py && /tmp/py/bin/pip install -q cryptography
+          /tmp/py/bin/python infra/game/provision.py
+          ip=$(grep '^ip=' "$GITHUB_OUTPUT" | tail -1 | cut -d= -f2)
+          k=$(ssh $SSH_OPTS root@$ip "grep '^LOAD_KEY=' /etc/massovka/secrets.env | cut -d= -f2")
+          [ -n "$k" ] || { echo "::error::на сервере нет LOAD_KEY (появится после следующей выкладки игры)"; exit 1; }
+          echo "::add-mask::$k"
+          echo "LOAD_KEY=$k" >> "$GITHUB_ENV"
+          echo "IP=$ip" >> "$GITHUB_ENV"
+
+      - name: Метрики Москвы во время прогона (фоном)
+        if: env.TARGET == 'prod'
+        run: |
+          ( for _ in $(seq 1 $(( (SECONDS_ + 120) / 10 ))); do
+              ssh $SSH_OPTS root@$IP 'c=$(cat /etc/massovka/active-color); printf "%s комнат=%s игроков=%s шаг_p99=%s мс | процессор: %s | память игры %s МБ, свободно %s МБ\n" "$(date +%T)" \
+                "$(curl -s 127.0.0.1:8080/metrics | awk "/^game_rooms\\{/ {print \$2}")" \
+                "$(curl -s 127.0.0.1:8080/metrics | awk "/^game_players_online/ {print \$2}")" \
+                "$(curl -s 127.0.0.1:8080/metrics | awk "/^game_step_ms_p99/ {print \$2}")" \
+                "$(top -bn2 -d1 | awk "/^%Cpu/ {v=100-\$8} END {print v\"%\"}")" \
+                "$(( $(systemctl show massovka-game@$c -p MemoryCurrent --value) / 1048576 ))" \
+                "$(free -m | awk "/^Mem/ {print \$7}")"' 2>/dev/null || true
+              sleep 10
+            done ) > /tmp/metrics.log 2>&1 &
+
+      - name: Прогон
+        run: |
+          cd apps/server
+          if [ "$TARGET" = prod ]; then
+            pnpm load -- https://api.benobody.app --rooms "$ROOMS" --seconds "$SECONDS_" --ramp 5
+          else
+            pnpm load -- --local --rooms "$ROOMS" --seconds "$SECONDS_" --ramp 10
+          fi
+
+      - name: Метрики Москвы
+        if: always() && env.TARGET == 'prod'
+        run: sleep 15; cat /tmp/metrics.log || true

@@ -119,23 +119,29 @@ EOF
 systemctl daemon-reload
 systemctl enable --now massovka-backup.timer >/dev/null 2>&1
 
-# ───────────── туннель Нидерланды → Москва ─────────────
+# ───────────── туннели ─────────────
 # Из Москвы соединения за границу режутся (api.telegram.org, наш сервер в Нидерландах), а обратно — нет.
-# Поэтому сервер в Нидерландах (infra) сам держит SSH-туннель в Москву: в Москве на 127.0.0.1:9090
-# появляется его игровой сервер с ботом, и Caddy в Москве пересылает туда /tg/*.
-if [ "${ROLE:-game}" = infra ] && [ -n "${TUNNEL_TO:-}" ]; then
-  say "туннель в Москву ($TUNNEL_TO)"
+# Поэтому туннели SSH всегда поднимает сервер в Нидерландах, а игровой сервер пускает их пользователем tunnel.
+#   infra → игровой сервер (Москва — massovka-tunnel, Европа — massovka-tunnel-eu): бот для /tg/* (-R 9090),
+#     логи сюда (-R 9428); база, метрики игры и машины отсюда (-L). У Европы свои порты (2xxxx), чтобы
+#     на время переезда наблюдать оба сервера.
+#   massovka-eu → Москва (massovka-relay): Москва пересылает игру в Европу (-R 18090 — вход пересылки,
+#     -R 18091 — внутренний вход игры Европы для переезда комнат). docs/infra-plan.md › этап 3.
+tunnel() { # имя юнита, куда (user@host), описание, пробросы…
+  local name=$1 to=$2 desc=$3 before
+  shift 3
   [ -f /etc/massovka/tunnel_ed25519 ] || ssh-keygen -q -t ed25519 -N '' -C massovka-tunnel -f /etc/massovka/tunnel_ed25519
-  unit_before=$(cat /etc/systemd/system/massovka-tunnel.service 2>/dev/null | sha256sum)
-  cat > /etc/systemd/system/massovka-tunnel.service <<EOF
+  # нового юнита ещё нет: cat падает, а с pipefail и set -e это обрывало выкладку
+  before=$( { cat "/etc/systemd/system/$name.service" 2>/dev/null || true; } | sha256sum)
+  cat > "/etc/systemd/system/$name.service" <<UNIT
 [Unit]
-Description=Массовка: туннель в Москву (бот; логи Москвы сюда; база, метрики Москвы отсюда)
+Description=Массовка: туннель $desc
 After=network-online.target
 Wants=network-online.target
 StartLimitIntervalSec=0
 
 [Service]
-ExecStart=/usr/bin/ssh -N -i /etc/massovka/tunnel_ed25519 -o ExitOnForwardFailure=yes -o ConnectTimeout=5 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/etc/massovka/tunnel_known_hosts -R 127.0.0.1:9090:127.0.0.1:8080 -R 127.0.0.1:9428:127.0.0.1:9428 -L 127.0.0.1:15432:127.0.0.1:5432 -L 127.0.0.1:18080:127.0.0.1:8080 -L 127.0.0.1:19100:127.0.0.1:9100 tunnel@$TUNNEL_TO
+ExecStart=/usr/bin/ssh -N -i /etc/massovka/tunnel_ed25519 -o ExitOnForwardFailure=yes -o ConnectTimeout=5 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/etc/massovka/tunnel_known_hosts $* $to
 # новые соединения в Москву из-за фильтров проходят через раз (20–40%), уже открытое держится:
 # пробуем часто и коротко, а без нужды не переподключаемся
 Restart=always
@@ -143,17 +149,42 @@ RestartSec=2
 
 [Install]
 WantedBy=multi-user.target
-EOF
+UNIT
   systemctl daemon-reload
-  systemctl enable massovka-tunnel >/dev/null 2>&1
-  if [ "$unit_before" != "$(sha256sum < /etc/systemd/system/massovka-tunnel.service)" ] || ! systemctl is-active -q massovka-tunnel; then systemctl restart massovka-tunnel; fi
+  systemctl enable "$name" >/dev/null 2>&1
+  if [ "$before" != "$(sha256sum < "/etc/systemd/system/$name.service")" ] || ! systemctl is-active -q "$name"; then systemctl restart "$name"; fi
+}
+if [ "${ROLE:-game}" = infra ] && [ -n "${TUNNEL_TO:-}" ]; then
+  say "туннель в Москву ($TUNNEL_TO)"
+  tunnel massovka-tunnel "tunnel@$TUNNEL_TO" "в Москву (бот; логи Москвы сюда; база, метрики Москвы отсюда)" \
+    -R 127.0.0.1:9090:127.0.0.1:8080 -R 127.0.0.1:9428:127.0.0.1:9428 -L 127.0.0.1:15432:127.0.0.1:5432 -L 127.0.0.1:18080:127.0.0.1:8080 -L 127.0.0.1:19100:127.0.0.1:9100
 fi
-if [ "${ROLE:-game}" = game ] && [ -s "$D/tunnel.pub" ]; then
-  say "вход для туннеля из Нидерландов (только проброс 127.0.0.1:9090)"
+if [ "${ROLE:-game}" = infra ] && [ -n "${TUNNEL_EU_TO:-}" ]; then
+  say "туннель в Европу ($TUNNEL_EU_TO)"
+  # запасной адрес Европы — сторожу (проверка, пока DNS смотрит на Москву)
+  echo "${TUNNEL_EU_TO//./-}.sslip.io" > /etc/massovka/eu-host
+  tunnel massovka-tunnel-eu "tunnel@$TUNNEL_EU_TO" "в Европу (бот; логи сюда; база, метрики отсюда)" \
+    -R 127.0.0.1:9090:127.0.0.1:8080 -R 127.0.0.1:9428:127.0.0.1:9428 -L 127.0.0.1:25432:127.0.0.1:5432 -L 127.0.0.1:28080:127.0.0.1:8080 -L 127.0.0.1:29100:127.0.0.1:9100
+fi
+if [ "${ROLE:-game}" = game ] && [ -n "${RELAY_TO:-}" ]; then
+  say "туннель в Москву для пересылки игры ($RELAY_TO)"
+  tunnel massovka-relay "tunnel@$RELAY_TO" "в Москву (Москва пересылает игру сюда, в Европу)" \
+    -R 127.0.0.1:18090:127.0.0.1:8090 -R 127.0.0.1:18091:127.0.0.1:8080
+fi
+if [ "${ROLE:-game}" = game ] && { [ -s "$D/tunnel.pub" ] || [ -s "$D/relay.pub" ]; }; then
+  say "вход для туннелей из Нидерландов (только проброс портов)"
   id tunnel >/dev/null 2>&1 || useradd --system --create-home --home /var/lib/tunnel --shell /usr/sbin/nologin tunnel
   install -d -m 700 -o tunnel -g tunnel /var/lib/tunnel/.ssh
-  # можно: открыть у себя 9090 (бот) и 9428 (логи → Нидерланды); пройти к базе, метрикам игры и машины
-  echo "restrict,port-forwarding,permitlisten=\"127.0.0.1:9090\",permitlisten=\"127.0.0.1:9428\",permitopen=\"127.0.0.1:5432\",permitopen=\"127.0.0.1:8080\",permitopen=\"127.0.0.1:9100\" $(cat "$D/tunnel.pub")" > /var/lib/tunnel/.ssh/authorized_keys
+  {
+    # сервер бота: открыть у себя 9090 (бот) и 9428 (логи → Нидерланды); пройти к базе, метрикам игры и машины
+    if [ -s "$D/tunnel.pub" ]; then
+      echo "restrict,port-forwarding,permitlisten=\"127.0.0.1:9090\",permitlisten=\"127.0.0.1:9428\",permitopen=\"127.0.0.1:5432\",permitopen=\"127.0.0.1:8080\",permitopen=\"127.0.0.1:9100\" $(cat "$D/tunnel.pub")"
+    fi
+    # сервер в Европе: открыть у себя 18090 и 18091 (пересылка игры в Европу); пройти никуда (порт 1 закрыт)
+    if [ -s "$D/relay.pub" ]; then
+      echo "restrict,port-forwarding,permitlisten=\"127.0.0.1:18090\",permitlisten=\"127.0.0.1:18091\",permitopen=\"127.0.0.1:1\" $(cat "$D/relay.pub")"
+    fi
+  } > /var/lib/tunnel/.ssh/authorized_keys
   chown tunnel:tunnel /var/lib/tunnel/.ssh/authorized_keys
   chmod 600 /var/lib/tunnel/.ssh/authorized_keys
 fi
@@ -213,9 +244,13 @@ if ! grep -q '^AUTH_SIGNING_KEY=' /etc/massovka/secrets.env 2>/dev/null; then
   # umask — только для этого файла, иначе конфиги ниже станут нечитаемыми для служб
   ( umask 077; echo "AUTH_SIGNING_KEY=$(openssl rand -hex 32)" >> /etc/massovka/secrets.env )
 fi
+# ключ нагрузочного прогона (load-test.yml читает его по SSH): снимает лимиты по адресу только с тестовых клиентов
+if ! grep -q '^LOAD_KEY=' /etc/massovka/secrets.env 2>/dev/null; then
+  ( umask 077; echo "LOAD_KEY=$(openssl rand -hex 24)" >> /etc/massovka/secrets.env )
+fi
 chmod 600 /etc/massovka/secrets.env
 
-envsum_before=$(cat /etc/massovka/*.env 2>/dev/null | sha256sum)
+envsum_before=$( { cat /etc/massovka/*.env 2>/dev/null || true; } | sha256sum)
 game_port() { [ "$1" = green ] && echo 8082 || echo 8081; }
 # база стран для замера доступности (geo.ts): привозит game-deploy, если версия поменялась
 if [ -s "$D/geoip.mmdb" ]; then
@@ -224,19 +259,30 @@ if [ -s "$D/geoip.mmdb" ]; then
   cp "$D/geoip.version" /etc/massovka/geoip.version
 fi
 geoip=""; [ -s /opt/massovka/geoip/country.mmdb ] && geoip=/opt/massovka/geoip/country.mmdb
-# регион — в ответе /v1/probe и в событиях замера; сервер бота пересылает аналитику в Москву по туннелю
-if [ "${ROLE:-game}" = game ]; then region=msk; events_up=""; else region=nl; events_up=http://127.0.0.1:18080; fi
-# потолок комнат под память машины: нагрузочный прогон 23.11 — около 1,5 МБ на комнату (250 комнат = 440 МБ);
-# на сайт, базу, Caddy и «Фильм матча» оставляем ~600 МБ, комнату считаем по 2 МБ с запасом.
-# 1 ГБ → ~150 комнат, 2 ГБ → ~650, 4 ГБ → ~1650. Больше лимита — «сервер занят», а не подкачка и лаги у всех.
+# регион — в ответе /v1/probe и в событиях замера; сервер бота пересылает аналитику на игровой сервер
+# по туннелю (EVENTS_TO: Москва — 18080, Европа — 28080)
+if [ "${ROLE:-game}" = game ]; then region=${REGION:-msk}; events_up=""; else region=nl; events_up=http://127.0.0.1:${EVENTS_TO:-18080}; fi
+# потолок комнат под память машины. Нагрузочный прогон 24.11 (scripts/load.ts, 60 комнат с ходьбой, 5 минут):
+# память комнаты растёт к концу матча — до ~3–5 МБ, живых данных ~2,5 МБ
+# (с кучей 120 МБ 60 комнат падают). Оставляем ~600 МБ сайту, базе, Caddy и «Фильму матча», комнату
+# считаем по 3 МБ: 1 ГБ → ~100 комнат, 2 ГБ → ~430, 4 ГБ → ~1100 — и не больше, чем тянет процессор (ниже).
+# Больше — «площадка переполнена», а не падение и лаги у всех.
 mem_mb=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)
-max_rooms=$(( (mem_mb - 600) / 2 ))
-[ "$max_rooms" -lt 50 ] && max_rooms=50
+max_rooms=$(( (mem_mb - 600) / 3 ))
+# процессор: прогон против Москвы 24.11 (load-test prod, 1 vCPU): 98 комнат = 100% ядра, пинг через матч
+# p50 0,2–0,5 с, p99 до 3,4 с, часть игроков не вошла (игра + TLS Caddy + сайт на одном ядре).
+# Около 40 комнат на ядро оставляют запас; уточнять прогоном после каждого изменения машины.
+cpus=$(nproc)
+cpu_rooms=$(( cpus * 40 ))
+[ "$max_rooms" -gt "$cpu_rooms" ] && max_rooms=$cpu_rooms
+[ "$max_rooms" -lt 30 ] && max_rooms=30
 [ "$max_rooms" -gt 2000 ] && max_rooms=2000
 cat > /etc/massovka/game.env <<EOF
 NODE_ENV=production
 PUBLIC_WS_BASE=wss://$HOST
 PUBLIC_API_BASE=https://$HOST
+# свои входы: игрок остаётся на том адресе, через который пришёл (api.benobody.app или запасной <IP>.sslip.io)
+PUBLIC_WS_HOSTS=${WS_HOSTS:-}
 SITE_URL=${BOT_SITE:-https://${SITE_HOST:-$HOST}}
 TG_APP_NAME=play
 # клипы для Telegram лежат на игровом сервере в Москве — бот (Нидерланды) даёт ссылки туда
@@ -256,7 +302,7 @@ for c in blue green; do
 PORT=$(game_port $c)
 INSTANCE=$c
 PEER_HTTP=http://127.0.0.1:$(game_port "$o")
-PEER_WS_URL=wss://$HOST/i/$o/ws
+PEER_WS_URL=wss://${PEER_HOST:-$HOST}/i/$o/ws
 EOF
 done
 # ключ Telegram-бота привозит выкладка из GitHub Secrets TELEGRAM_BOT_TOKEN (в /tmp/deploy/bot.env),
@@ -338,13 +384,17 @@ ProtectSystem=full
 WantedBy=multi-user.target
 EOF
 
-# адреса — в файл: их читает caddy.sh (его вызывает и выкладка сайта)
+# адреса — в файл: их читает caddy.sh (его вызывает и выкладка сайта).
+# RELAY — Москва пересылает игру в Европу (включает переключение, infra-move.yml); выкладка его не сбрасывает
+relay=${RELAY-$(grep '^RELAY=' /etc/massovka/hosts.env 2>/dev/null | cut -d= -f2- || true)}
 cat > /etc/massovka/hosts.env <<EOF
 HOST=$HOST
 ALT_HOST=${ALT_HOST:-}
 SITE_HOST=${SITE_HOST:-}
 SITE_REDIRECT=${SITE_REDIRECT:-}
 BOT_UPSTREAM=${BOT_UPSTREAM:-}
+RELAY_FRONT=${RELAY_FRONT:-}
+RELAY=$relay
 EOF
 install -d /opt/massovka/bin
 install -m 755 "$D/caddy.sh" /opt/massovka/bin/caddy.sh
@@ -432,5 +482,8 @@ for _ in $(seq 1 30); do
   sleep 1
 done
 curl -fsS http://127.0.0.1:8080/healthz && echo
+# метрики игры через внутренний вход (их читают Grafana и сторож): пусто — графики и тревоги ослепли
+m=$(curl -fsS http://127.0.0.1:8080/metrics 2>/dev/null | grep -c '^game_' || true)
+if [ "${m:-0}" -gt 0 ]; then echo "метрики игры: $m строк"; else echo "::warning::метрики игры через 127.0.0.1:8080 не отдаются — Grafana и сторож их не увидят"; fi
 systemctl is-active "massovka-game@$(cat /etc/massovka/active-color)" caddy
 echo "Node: $(/opt/node/bin/node -v); Caddy: $(cat /etc/caddy/VERSION 2>/dev/null || echo ?)"

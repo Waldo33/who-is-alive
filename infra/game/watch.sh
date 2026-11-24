@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Сторож (сервер в Нидерландах, раз в минуту): сайт, игра, бот, туннель в Москву.
+# Сторож (сервер в Нидерландах, раз в минуту): сайт, игра, бот, туннели к игровым серверам.
+# Где живёт игра — /etc/massovka/game-site (msk | eu, пишет observe.sh): по нему метки метрик и тексты тревог.
 # Тревога в Telegram — если проверка не проходит 5 минут подряд; «восстановлено» — когда снова в порядке.
 # Связь Нидерланды → Москва режется фильтрами (новые соединения проходят на 20–40%), поэтому каждая
 # внешняя проверка делает до 6 попыток с коротким таймаутом: хоть одна удалась — значит, работает.
@@ -8,6 +9,8 @@ set -uo pipefail
 STATE=/var/lib/massovka-watch
 LIMIT=5
 mkdir -p "$STATE"
+G=$(cat /etc/massovka/game-site 2>/dev/null || echo msk)
+case "$G" in eu) GW="в Европе" ;; *) G=msk; GW="в Москве" ;; esac
 
 send() {
   curl -s -m 15 -X POST "https://api.telegram.org/bot${ALERTS_BOT_TOKEN}/sendMessage" \
@@ -43,9 +46,34 @@ check() {
 }
 
 http_ok https://benobody.app/; check site $? "сайт benobody.app"
+# песочница — отдельная страница сайта (Next рендерит её сам): 5xx здесь при живой главной — сломанная сборка
+http_ok https://benobody.app/sandbox; check site_sandbox $? "страница песочницы benobody.app/sandbox"
+
+# сертификаты (Caddy продлевает сам; не продлил — узнаём за две недели). Раз в час: связь до Москвы
+# режется фильтром, поэтому без ответа просто ждём следующего часа, тревожит только известный срок
+if [ "$(date +%M)" = 17 ] || [ ! -s "$STATE/cert_days" ]; then
+  min=""
+  for h in benobody.app api.benobody.app; do
+    for _ in 1 2 3 4 5 6; do
+      end=$(echo | timeout 8 openssl s_client -connect "$h:443" -servername "$h" 2>/dev/null | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2)
+      [ -n "$end" ] && break
+      sleep 1
+    done
+    [ -z "$end" ] && continue
+    d=$(( ($(date -d "$end" +%s) - $(date +%s)) / 86400 ))
+    if [ -z "$min" ] || [ "$d" -lt "$min" ]; then min=$d; fi
+  done
+  [ -n "$min" ] && echo "$min" > "$STATE/cert_days"
+fi
+cd_=$(cat "$STATE/cert_days" 2>/dev/null || echo "")
+if [ -n "$cd_" ]; then [ "$cd_" -ge 14 ]; check cert $? "сертификат benobody.app истекает через $cd_ дн. — Caddy не продлил"; fi
 http_ok https://api.benobody.app/healthz; check game $? "игровой сервер api.benobody.app"
-# бот через Москву — заодно проверка туннеля
-http_ok https://api.benobody.app/tg/info; check bot_via_msk $? "бот через Москву (туннель Нидерланды → Москва)"
+# бот через игровой сервер — заодно проверка туннеля
+http_ok https://api.benobody.app/tg/info; check bot_via_msk $? "бот через игровой сервер $GW (туннель из Нидерландов)"
+# сервер в Европе по своему адресу (пока DNS смотрит на Москву — переезд, docs/infra-plan.md › этап 3)
+if [ -s /etc/massovka/eu-host ]; then
+  http_ok "https://$(cat /etc/massovka/eu-host)/healthz"; check game_eu $? "игровой сервер в Европе ($(cat /etc/massovka/eu-host))"
+fi
 
 # IPv6: у серверов его нет, поэтому записей AAAA у домена быть не должно — иначе телефоны с IPv6
 # уходят мимо игры (22.11 benobody.app и www смотрели на заглушку Timeweb)
@@ -78,27 +106,40 @@ if [ -x /usr/local/bin/victoria-metrics ]; then
   pct() { awk -v v="$1" 'BEGIN { printf "%d", v * 100 }'; }
   # «в норме»: значение не выше порога (0 — норма, как у остальных проверок)
   within() { awk -v v="$1" -v lim="$2" 'BEGIN { exit !(v <= lim) }'; }
-  for s in msk nl; do
-    name=$([ $s = msk ] && echo "Москвы" || echo "в Нидерландах")
+  for s in msk eu nl; do
+    case $s in msk) name="Москвы" ;; eu) name="в Европе" ;; *) name="в Нидерландах" ;; esac
     # диск Нидерландов уже проверяется выше по df (работает и без метрик)
     [ $s = nl ] && d="" || d=$(vm "1 - node_filesystem_avail_bytes{server=\"$s\",mountpoint=\"/\"} / node_filesystem_size_bytes{server=\"$s\",mountpoint=\"/\"}" | awk '{print $NF}' | head -1)
     if [ -n "$d" ]; then within "$d" 0.85; check "disk_$s" $? "диск сервера $name заполнен на $(pct "$d")%"; fi
     m=$(vm "1 - node_memory_MemAvailable_bytes{server=\"$s\"} / node_memory_MemTotal_bytes{server=\"$s\"}" | awk '{print $NF}' | head -1)
     if [ -n "$m" ]; then within "$m" 0.92; check "mem_$s" $? "память сервера $name занята на $(pct "$m")%"; fi
   done
+  # шаг матча на сервере: обычно меньше 1 мс; дольше 20 мс в p99 — сервер не успевает, у игроков лаги
+  st=$(vm "max(game_step_ms_p99{server=\"$G\"})" | awk '{print $NF}' | head -1)
+  if [ -n "$st" ]; then within "$st" 20; check step_msk $? "матчи $GW тормозят: шаг p99 $(printf '%.0f' "$st") мс (норма < 1)"; fi
   # ошибки JS с телефонов (lib/errors.ts): больше 30 за 10 минут — что-то сломали выкладкой
-  e=$(vm 'sum(increase(game_client_errors_total{server="msk"}[10m]))' | awk '{print $NF}' | head -1)
+  e=$(vm "sum(increase(game_client_errors_total{server=\"$G\"}[10m]))" | awk '{print $NF}' | head -1)
   if [ -n "$e" ]; then within "$e" 30; check client_errors $? "ошибки на телефонах: $(printf '%.0f' "$e") за 10 минут (VictoriaLogs: client_error)"; fi
   # комнаты у потолка MAX_ROOMS: выше 80% — скоро новые получат «сервер занят»
-  r=$(vm 'max(game_rooms{server="msk"}) / max(game_rooms_limit{server="msk"})' | awk '{print $NF}' | head -1)
-  if [ -n "$r" ]; then within "$r" 0.8; check rooms_msk $? "комнат в Москве $(pct "$r")% от лимита — скоро «сервер занят»"; fi
+  r=$(vm "max(game_rooms{server=\"$G\"}) / max(game_rooms_limit{server=\"$G\"})" | awk '{print $NF}' | head -1)
+  if [ -n "$r" ]; then within "$r" 0.8; check rooms_msk $? "комнат $GW $(pct "$r")% от лимита — скоро «сервер занят»"; fi
+  # выкладка синий/зелёный: старый экземпляр доигрывает матчи до 20 минут и выходит сам — дольше 30 минут
+  # в drain значит завис (новая выкладка будет ждать его 15 минут, а потом оборвёт матчи)
+  dr=$(vm "max(max_over_time(game_draining{server=\"$G\"}[30m]) * min_over_time(game_draining{server=\"$G\"}[30m]))" | awk '{print $NF}' | head -1)
+  if [ -n "$dr" ]; then within "$dr" 0; check drain_stuck $? "экземпляр игры $GW больше 30 минут в drain (выкладка синий/зелёный)"; fi
   # клипы для Telegram в Москве: лимит папки 1 ГБ, старые вытесняются — на 80% пора думать об S3
-  c=$(vm 'max(game_clips_bytes{server="msk"}) / max(game_clips_limit_bytes{server="msk"})' | awk '{print $NF}' | head -1)
-  if [ -n "$c" ]; then within "$c" 0.8; check clips_msk $? "место под клипы в Москве занято на $(pct "$c")% из 1 ГБ (пора S3)"; fi
+  c=$(vm "max(game_clips_bytes{server=\"$G\"}) / max(game_clips_limit_bytes{server=\"$G\"})" | awk '{print $NF}' | head -1)
+  if [ -n "$c" ]; then within "$c" 0.8; check clips_msk $? "место под клипы $GW занято на $(pct "$c")% из 1 ГБ (пора S3)"; fi
 fi
-# ночная копия базы Москвы: свежей суток с запасом (раз в сутки в 03:40 UTC)
+# копия восстанавливается (раз в неделю, observe.sh › backup-check): итог не старше 8 суток и «ok»
+if systemctl is-enabled -q massovka-backup-check.timer 2>/dev/null && [ -s /var/lib/postgresql/backup-check.status ]; then
+  bc=$(cat /var/lib/postgresql/backup-check.status)
+  [ "${bc%% *}" = ok ] && [ -n "$(find /var/lib/postgresql/backup-check.status -mmin -11520 2>/dev/null)" ]
+  check backup_restore $? "копия базы игры не восстанавливается или давно не проверялась: ${bc#* }"
+fi
+# ночная копия базы игры: свежей суток с запасом (раз в сутки в 03:40 UTC)
 if systemctl is-enabled -q massovka-msk-backup.timer 2>/dev/null; then
-  [ -n "$(find /var/backups/massovka-msk -name '*.dump' -mmin -1560 2>/dev/null | head -1)" ]
-  check msk_backup $? "копия базы Москвы старше 26 часов"
+  [ -n "$(find "/var/backups/massovka-$G" -name '*.dump' -mmin -1560 2>/dev/null | head -1)" ]
+  check msk_backup $? "копия базы игры ($G) старше 26 часов"
 fi
 exit 0

@@ -158,6 +158,60 @@ describe('игровой сервер: ошибки с телефонов', () =
   });
 });
 
+describe('игровой сервер: комнаты нагрузочного прогона', () => {
+  it('пустая тестовая комната закрывается через 15 секунд, обычная держится 10 минут', async () => {
+    let t = 1_000_000;
+    const srv = new GameServer({ authSecret: SECRET, log: silentLogger, loadKey: 'k'.repeat(24), now: () => t });
+    servers.push(srv);
+    const http = `http://127.0.0.1:${await srv.listen(0, '127.0.0.1')}`;
+    const mk = async (load: boolean) => {
+      const u = (await (await fetch(`${http}/v1/auth/anon`, { method: 'POST' })).json()) as { token: string };
+      const r = await fetch(`${http}/v1/rooms`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${u.token}`, ...(load ? { 'x-kto-load': 'k'.repeat(24) } : {}) },
+        body: '{}',
+      });
+      return ((await r.json()) as { code: string }).code;
+    };
+    const test = await mk(true);
+    const real = await mk(false);
+    srv.housekeeping();
+    t += 16_000;
+    srv.housekeeping();
+    expect(srv.rooms.has(test)).toBe(false);
+    expect(srv.rooms.has(real)).toBe(true);
+    t += 10 * 60_000;
+    srv.housekeeping();
+    expect(srv.rooms.has(real)).toBe(false);
+  });
+});
+
+describe('игровой сервер: метрики', () => {
+  it('изнутри машины — и напрямую, и через внутренний вход Caddy; с внешним адресом — 404', async () => {
+    const srv = new GameServer({ authSecret: SECRET, log: silentLogger, trustProxy: true });
+    servers.push(srv);
+    const http = `http://127.0.0.1:${await srv.listen(0, '127.0.0.1')}`;
+    expect((await fetch(`${http}/metrics`)).status).toBe(200);
+    // внутренний вход Caddy (127.0.0.1:8080) ставит X-Forwarded-For с адресом клиента — 127.0.0.1
+    const viaFront = await fetch(`${http}/metrics`, { headers: { 'x-forwarded-for': '127.0.0.1' } });
+    expect(viaFront.status).toBe(200);
+    expect(await viaFront.text()).toContain('game_rooms{');
+    expect((await fetch(`${http}/metrics`, { headers: { 'x-forwarded-for': '203.0.113.5' } })).status).toBe(404);
+  });
+});
+
+describe('игровой сервер: лимиты по игроку, а не по адресу', () => {
+  it('один игрок — не больше 5 комнат в минуту; другие с того же адреса создают свободно', async () => {
+    const { http } = await boot();
+    const a = await anon(http);
+    for (let i = 0; i < 5; i++) await create(http, a.token);
+    const r = await fetch(`${http}/v1/rooms`, { method: 'POST', headers: { authorization: `Bearer ${a.token}` }, body: '{}' });
+    expect(r.status).toBe(429);
+    // соседи по мобильному оператору (тот же адрес) не страдают
+    for (let i = 0; i < 12; i++) await create(http, (await anon(http)).token);
+  });
+});
+
 describe('игровой сервер: потолок комнат', () => {
   it('больше MAX_ROOMS — «сервер занят» (503), идущие комнаты живут', async () => {
     const srv = new GameServer({ authSecret: SECRET, log: silentLogger, maxRooms: 2 });
@@ -448,3 +502,28 @@ describe('игровой сервер: матч', () => {
     expect(lc.reconnects).toBe(0);
   }, 90_000);
 });
+
+describe('игровой сервер: адрес WebSocket по входу', () => {
+  it('свой вход из списка — wss://<тот же хост>, чужой — основной адрес', async () => {
+    const srv = new GameServer({ authSecret: SECRET, log: silentLogger, publicWsBase: 'wss://api.example', publicWsHosts: ['api.example', '1-2-3-4.sslip.io'] });
+    servers.push(srv);
+    const port = await srv.listen(0, '127.0.0.1');
+    const { request } = await import('node:http');
+    const post = (host: string, path: string, body: string, auth?: string) =>
+      new Promise<{ status: number; json: Record<string, unknown> }>((ok, bad) => {
+        const rq = request({ host: '127.0.0.1', port, path, method: 'POST', headers: { host, 'content-type': 'application/json', ...(auth ? { authorization: `Bearer ${auth}` } : {}) } }, (res) => {
+          let d = '';
+          res.on('data', (c) => (d += c));
+          res.on('end', () => ok({ status: res.statusCode ?? 0, json: d ? (JSON.parse(d) as Record<string, unknown>) : {} }));
+        });
+        rq.on('error', bad);
+        rq.end(body);
+      });
+    const { json: u } = await post('1-2-3-4.sslip.io', '/v1/auth/anon', '');
+    const viaAlt = await post('1-2-3-4.sslip.io', '/v1/rooms', '{}', u.token as string);
+    expect(viaAlt.json.wsUrl).toBe('wss://1-2-3-4.sslip.io/i/blue/ws');
+    const viaOther = await post('evil.example', '/v1/rooms', '{}', u.token as string);
+    expect(viaOther.json.wsUrl).toBe('wss://api.example/i/blue/ws');
+  });
+});
+

@@ -18,6 +18,9 @@ await page.addStyleTag({
 });
 await page.evaluate(() => globalThis.document.fonts.load('8px "Press Start 2P"', 'Аa'));
 await page.evaluate(([s, t]) => ((globalThis.__seed = s[0]), (globalThis.__theme = t)), [seedsArg.split(',').map(Number), themeArg === undefined ? -1 : Number(themeArg)]);
+if (process.env.FILM_KIND) await page.evaluate((k) => (globalThis.__kind = k), process.env.FILM_KIND);
+if (process.env.FILM_FINALE) await page.evaluate((f) => (globalThis.__finale = f), process.env.FILM_FINALE);
+if (process.env.FILM_FRAMES) await page.evaluate((f) => (globalThis.__frames = f), Number(process.env.FILM_FRAMES));
 if (process.env.FILM_FROM) await page.evaluate((f) => (globalThis.__from = f), Number(process.env.FILM_FROM));
 await page.addScriptTag({ content: out.outputFiles[0].text });
 await page.waitForFunction(() => globalThis.__out, null, { timeout: 120000 });

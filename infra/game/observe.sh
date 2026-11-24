@@ -3,8 +3,11 @@
 #   оба сервера: node_exporter (127.0.0.1:9100), журнал → VictoriaLogs (systemd-journal-upload);
 #   game (Москва): роль базы «только чтение» grafana_ro (для Grafana и ночной копии);
 #   infra (Нидерланды): VictoriaMetrics (:8428), VictoriaLogs (:9428), Grafana (:3001, /grafana), копии базы Москвы.
-# Москва и Нидерланды связаны только туннелем (setup.sh): Москва видит логи Нидерландов на 127.0.0.1:9428,
-# Нидерланды видят базу, метрики и node_exporter Москвы на 127.0.0.1:15432, :18080, :19100.
+# Игровые серверы и Нидерланды связаны только туннелями (setup.sh): игровой сервер видит логи Нидерландов
+# на 127.0.0.1:9428, Нидерланды видят базу, метрики и node_exporter Москвы на 127.0.0.1:15432, :18080, :19100,
+# а сервера в Европе — на :25432, :28080, :29100.
+# GAME_SITE (msk | eu, запоминается в /etc/massovka/game-site) — где сейчас живёт игра: оттуда Grafana
+# берёт базу и туда смотрят ночные копии (переезд в Европу, docs/infra-plan.md › этап 3).
 set -euo pipefail
 D=${D:-/tmp/deploy}
 ROLE=${ROLE:-game}
@@ -87,6 +90,11 @@ fi
 
 [ "$ROLE" = infra ] || exit 0
 
+GS=${GAME_SITE:-$(cat /etc/massovka/game-site 2>/dev/null || echo msk)}
+case "$GS" in eu) DBP=25432; GN="Европы" ;; *) GS=msk; DBP=15432; GN="Москвы" ;; esac
+echo "$GS" > /etc/massovka/game-site
+say "игра живёт: $GS (база через 127.0.0.1:$DBP)"
+
 # ───────────── VictoriaMetrics (Нидерланды) ─────────────
 id victoria >/dev/null 2>&1 || useradd --system --home /var/lib/victoria --shell /usr/sbin/nologin victoria
 install -d -o victoria -g victoria /var/lib/victoria/metrics /var/lib/victoria/logs
@@ -99,7 +107,10 @@ for b in victoria-metrics victoria-logs; do
   fi
 done
 install -d -m 755 /etc/victoria
-cat > /etc/victoria/scrape.yml <<'EOF'
+# Москва — пока есть её туннель; Европа — когда настроен туннель в Европу (TUNNEL_EU_TO)
+msk_on=""; systemctl is-enabled -q massovka-tunnel 2>/dev/null && msk_on=1
+eu_on=""; { [ -n "${TUNNEL_EU_TO:-}" ] || systemctl is-enabled -q massovka-tunnel-eu 2>/dev/null; } && eu_on=1
+cat > /etc/victoria/scrape.yml <<EOF
 global:
   scrape_interval: 30s
 scrape_configs:
@@ -107,13 +118,13 @@ scrape_configs:
     static_configs:
       - targets: ['127.0.0.1:9100']
         labels: { server: nl }
-      - targets: ['127.0.0.1:19100']
-        labels: { server: msk }
+$([ -n "$msk_on" ] && printf "      - targets: ['127.0.0.1:19100']\n        labels: { server: msk }")
+$([ -n "$eu_on" ] && printf "      - targets: ['127.0.0.1:29100']\n        labels: { server: eu }")
   - job_name: game
     metrics_path: /metrics
     static_configs:
-      - targets: ['127.0.0.1:18080']
-        labels: { server: msk }
+$([ -n "$msk_on" ] && printf "      - targets: ['127.0.0.1:18080']\n        labels: { server: msk }")
+$([ -n "$eu_on" ] && printf "      - targets: ['127.0.0.1:28080']\n        labels: { server: eu }")
       - targets: ['127.0.0.1:8080']
         labels: { server: nl }
   - job_name: victoria
@@ -215,7 +226,11 @@ EOF
   fi
   cat > /etc/massovka-grafana/datasources/massovka.yml <<EOF
 apiVersion: 1
-deleteDatasources: []
+# «База Москвы» переименована в «База игры» (переезд в Европу, 24.11): тот же uid под новым именем
+# Grafana не принимает («data source with the same uid already exists») и не запускается — старое имя удалить
+deleteDatasources:
+  - name: База Москвы
+    orgId: 1
 datasources:
   - name: Метрики
     uid: vm
@@ -228,11 +243,11 @@ datasources:
     type: victoriametrics-logs-datasource
     access: proxy
     url: http://127.0.0.1:9428
-  - name: База Москвы
+  - name: База игры
     uid: pg
     type: grafana-postgresql-datasource
     access: proxy
-    url: 127.0.0.1:15432
+    url: 127.0.0.1:$DBP
     user: grafana_ro
     jsonData:
       database: massovka
@@ -278,23 +293,24 @@ EOF
   sudo -u grafana /opt/grafana/bin/grafana cli --homepath /opt/grafana --config /etc/massovka-grafana/grafana.ini admin reset-admin-password --password-from-stdin < /etc/massovka-grafana/admin.pw >/dev/null 2>&1 && echo "пароль Grafana на месте" || echo "::warning::пароль Grafana не обновился"
 fi
 
-# ───────────── ночная копия базы Москвы (Нидерланды, 30 дней) ─────────────
+# ───────────── ночная копия базы игры (Нидерланды, 30 дней) ─────────────
+# папка по серверу (massovka-msk, massovka-eu): копии Москвы доживают свои 30 дней рядом с новыми
 if [ -f /etc/massovka-grafana/pgro.env ]; then
-  install -d -m 750 -o postgres -g postgres /var/backups/massovka-msk
+  install -d -m 750 -o postgres -g postgres "/var/backups/massovka-$GS"
   install -m 640 -o root -g postgres /etc/massovka-grafana/pgro.env /etc/massovka/pgro-backup.env
-  cat > /opt/massovka/bin/msk-backup.sh <<'EOF'
+  cat > /opt/massovka/bin/msk-backup.sh <<EOF
 #!/bin/sh
-# копия базы Москвы через туннель (127.0.0.1:15432), хранить 30 дней
+# копия базы игры ($GS) через туннель (127.0.0.1:$DBP), хранить 30 дней
 set -e
-f=/var/backups/massovka-msk/massovka-$(date +%F).dump
-PGPASSWORD="$PGRO_PASSWORD" pg_dump -h 127.0.0.1 -p 15432 -U grafana_ro -Fc -f "$f.part" massovka
-mv "$f.part" "$f"
-find /var/backups/massovka-msk -name '*.dump' -mtime +30 -delete
+f=/var/backups/massovka-$GS/massovka-\$(date +%F).dump
+PGPASSWORD="\$PGRO_PASSWORD" pg_dump -h 127.0.0.1 -p $DBP -U grafana_ro -Fc -f "\$f.part" massovka
+mv "\$f.part" "\$f"
+find /var/backups/massovka-msk /var/backups/massovka-eu -name '*.dump' -mtime +30 -delete 2>/dev/null || true
 EOF
   chmod 755 /opt/massovka/bin/msk-backup.sh
   unit massovka-msk-backup.service >/dev/null <<'EOF'
 [Unit]
-Description=Массовка: копия базы Москвы (через туннель)
+Description=Массовка: копия базы игры (через туннель)
 [Service]
 Type=oneshot
 User=postgres
@@ -305,7 +321,7 @@ RestartSec=10min
 EOF
   unit massovka-msk-backup.timer >/dev/null <<'EOF'
 [Unit]
-Description=Массовка: копия базы Москвы раз в сутки
+Description=Массовка: копия базы игры раз в сутки
 [Timer]
 OnCalendar=*-*-* 03:40:00
 Persistent=true
@@ -315,7 +331,52 @@ EOF
   systemctl enable massovka-msk-backup.timer >/dev/null 2>&1
   systemctl restart massovka-msk-backup.timer
   # первая копия — сразу, не дожидаясь ночи
-  ls /var/backups/massovka-msk/*.dump >/dev/null 2>&1 || systemctl start --no-block massovka-msk-backup.service
+  ls "/var/backups/massovka-$GS"/*.dump >/dev/null 2>&1 || systemctl start --no-block massovka-msk-backup.service
+fi
+
+# ───────────── проверка копии: раз в неделю восстановить в черновую базу и посчитать строки ─────────────
+# копия, которую нельзя восстановить, — не копия (docs/infra-plan.md › этап 4); итог — файл для сторожа
+if [ -f /etc/massovka-grafana/pgro.env ]; then
+  cat > /opt/massovka/bin/backup-check.sh <<'EOF'
+#!/bin/sh
+# последняя копия базы игры → черновая база massovka_restore_check → сколько событий и игроков → удалить
+out=/var/lib/postgresql/backup-check.status
+f=$(ls -1t /var/backups/massovka-"$(cat /etc/massovka/game-site 2>/dev/null || echo msk)"/*.dump 2>/dev/null | head -1)
+if [ -z "$f" ]; then echo "fail нет копий" > "$out"; exit 1; fi
+dropdb --if-exists massovka_restore_check 2>/dev/null
+if ! createdb massovka_restore_check || ! pg_restore --no-owner --no-privileges -d massovka_restore_check "$f" 2>/tmp/backup-check.err; then
+  echo "fail не восстановилась: $(basename "$f") $(tail -1 /tmp/backup-check.err)" > "$out"
+  dropdb --if-exists massovka_restore_check 2>/dev/null
+  exit 1
+fi
+n=$(psql -tA -d massovka_restore_check -c "select count(*) from analytics_events" 2>/dev/null)
+d=$(psql -tA -d massovka_restore_check -c "select count(distinct device_id) from analytics_events" 2>/dev/null)
+dropdb --if-exists massovka_restore_check
+if [ -z "$n" ]; then echo "fail нет таблицы analytics_events в $(basename "$f")" > "$out"; exit 1; fi
+echo "ok $(basename "$f") событий=$n телефонов=$d" > "$out"
+EOF
+  chmod 755 /opt/massovka/bin/backup-check.sh
+  unit massovka-backup-check.service >/dev/null <<'EOF'
+[Unit]
+Description=Массовка: проверка, что копия базы игры восстанавливается
+[Service]
+Type=oneshot
+User=postgres
+ExecStart=/opt/massovka/bin/backup-check.sh
+EOF
+  unit massovka-backup-check.timer >/dev/null <<'EOF'
+[Unit]
+Description=Массовка: проверка копии базы раз в неделю
+[Timer]
+OnCalendar=Mon *-*-* 04:30:00
+Persistent=true
+[Install]
+WantedBy=timers.target
+EOF
+  systemctl enable massovka-backup-check.timer >/dev/null 2>&1
+  systemctl restart massovka-backup-check.timer
+  # первая проверка — сразу
+  [ -s /var/lib/postgresql/backup-check.status ] || systemctl start --no-block massovka-backup-check.service
 fi
 sleep 3
 say "наблюдение готово: $(systemctl is-active victoria-metrics victoria-logs grafana node_exporter systemd-journal-upload | tr '\n' ' ')"

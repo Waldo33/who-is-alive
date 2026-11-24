@@ -10,6 +10,7 @@ import { setPriority } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { ClipStore } from './clips';
+import type { MatchRecordings } from './recordings';
 import type { FilmJob, FilmRendered } from './film-render';
 import type { Logger } from './log';
 
@@ -33,6 +34,8 @@ export interface FilmServiceOptions {
   /** Не больше стольких задач в очереди; лишние — отказ (клиент смонтирует сам). */
   maxQueue?: number;
   timeoutMs?: number;
+  /** Куда сохранять записи матчей (для перемонтажа); нет — не сохранять. */
+  recordings?: MatchRecordings;
 }
 
 /** Где лежит процесс монтажа: рядом со сборкой (dist/film-worker.mjs) или исходник под tsx (dev, тесты). */
@@ -59,6 +62,11 @@ export class FilmService {
   /** Смонтировать фильм. null — не вышло (или очередь полна): клиент смонтирует сам. */
   make(req: Omit<FilmJob, 'site' | 'link'>): Promise<FilmDone | null> {
     const job: FilmJob = { ...req, site: this.o.site, link: `https://${this.o.site}/?src=film&l=${req.lang}` };
+    // запись матча — даже если фильм не смонтируется: по ней его можно смонтировать потом
+    this.o.recordings
+      ?.save(job)
+      .then((name) => this.o.log('info', 'match_recorded', { name }))
+      .catch((e: unknown) => this.o.log('warn', 'match_record_failed', { err: String(e).slice(0, 300) }));
     if (this.queue.length >= (this.o.maxQueue ?? 4)) {
       this.o.log('warn', 'film_queue_full', { queued: this.queued });
       return Promise.resolve(null);

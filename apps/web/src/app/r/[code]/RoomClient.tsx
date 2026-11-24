@@ -297,7 +297,13 @@ function ErrorScreen({ t, errorKey }: { t: Dict; errorKey: string }) {
       <p className="error" role="alert">
         {msg}
       </p>
-      <Link className="btn" href="/">
+      {/* площадка занята (всплеск игроков): сыграть с ботами — песочница работает без сервера */}
+      {(errorKey === 'busy' || errorKey === 'server_busy') && (
+        <Link className="btn" href="/sandbox?go">
+          {t.start.play}
+        </Link>
+      )}
+      <Link className={errorKey === 'busy' || errorKey === 'server_busy' ? 'btn alt' : 'btn'} href="/">
         {errorKey === 'room_full' || errorKey === 'room_playing' || errorKey === 'kicked' || errorKey === 'closed' ? t.lobby.createOwn : t.lobby.backHome}
       </Link>
     </main>

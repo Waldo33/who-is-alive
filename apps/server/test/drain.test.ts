@@ -87,6 +87,8 @@ describe('выкладка без обрыва: drain и переезд комн
     b.srv.drain();
     await until(() => g.srv.rooms.has(code) && la.moves === 1 && lc.moves === 1, 5000, 'переезд');
     await until(() => !!g.srv.rooms.get(code)?.members.get(a.userId)?.peer && !!g.srv.rooms.get(code)?.members.get(c.userId)?.peer, 5000, 'оба на зелёном');
+    // рассылка состава после второго входа может прийти чуть позже — ждём, пока режиссёр увидит обоих
+    await until(() => !!la.room && la.room.members.length === 2 && la.room.members.every((m) => m.online), 5000, 'режиссёр видит обоих на связи');
     const after = la.room!;
     expect(after.code).toBe(code);
     expect(after.directorId).toBe(a.userId);
@@ -155,10 +157,13 @@ describe('выкладка без обрыва: drain и переезд комн
     const { b, g, drained } = await pair(1, 400);
     const u = await anon(b.http);
     const half = 'ABCDEFGHJKMN';
+    // комнат на игрока — 5 в минуту: каждую пару создают разные игроки
     for (let i = 0; i < 8; i++) {
-      expect(half).toContain((await create(b.http, u.token)).charAt(0));
-      expect(half).not.toContain((await create(g.http, u.token)).charAt(0));
+      const x = await anon(b.http);
+      expect(half).toContain((await create(b.http, x.token)).charAt(0));
+      expect(half).not.toContain((await create(g.http, x.token)).charAt(0));
     }
+    await create(b.http, u.token);
     // без соседа лобби не уезжают — закрываются по сроку
     b.srv.setPeer(undefined);
     const la = link(b.ws, u, [...b.srv.rooms.keys()][0], 'U');
@@ -169,5 +174,104 @@ describe('выкладка без обрыва: drain и переезд комн
     await until(() => drained.includes('blue'), 3000, 'срок drain');
     expect(b.srv.rooms.size).toBe(0);
     await until(() => why === 'closed', 2000, 'закрыто');
+  });
+  it('пустые комнаты при переезде не держат место заново: тестовая закрывается через 15 с, обычная досчитывает свои 10 минут', async () => {
+    let t = 1_000_000;
+    const KEY = 'k'.repeat(24);
+    const mk = (instance: string) => {
+      const s = new GameServer({ authSecret: SECRET, log: silentLogger, instance, loadKey: KEY, now: () => t });
+      servers.push(s);
+      return s;
+    };
+    const blue = mk('blue');
+    const green = mk('green');
+    const bh = `http://127.0.0.1:${await blue.listen(0, '127.0.0.1')}`;
+    const gh = `http://127.0.0.1:${await green.listen(0, '127.0.0.1')}`;
+    blue.setPeer({ http: gh, wsUrl: `${gh.replace('http', 'ws')}/i/green/ws` });
+    green.setPeer({ http: bh, wsUrl: `${bh.replace('http', 'ws')}/i/blue/ws` });
+    const room = async (load: boolean) => {
+      const u = await anon(bh);
+      const r = await fetch(`${bh}/v1/rooms`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${u.token}`, ...(load ? { 'x-kto-load': KEY } : {}) },
+        body: '{}',
+      });
+      return ((await r.json()) as { code: string }).code;
+    };
+    const test = await room(true);
+    const real = await room(false);
+    blue.housekeeping(); // обе пустые с этого момента
+    t += 5 * 60_000 - 16_000; // обычная пустует почти 5 минут, первая тестовая уже закрыта; вторую создаём только что
+    const test2 = await room(true);
+    blue.housekeeping();
+    expect(blue.rooms.has(test)).toBe(false);
+    expect(blue.rooms.has(test2)).toBe(true);
+    await fetch(`${bh}/internal/drain`, { method: 'POST' });
+    blue.housekeeping();
+    await until(() => green.rooms.has(test2) && green.rooms.has(real), 3000, 'переезд');
+    green.housekeeping();
+    t += 17_000;
+    green.housekeeping();
+    expect(green.rooms.has(test2)).toBe(false);
+    expect(green.rooms.has(real)).toBe(true);
+    t += 5 * 60_000; // обычная: всего чуть больше 10 минут пустоты — закрыта, а не держится ещё 10 после переезда
+    green.housekeeping();
+    expect(green.rooms.has(real)).toBe(false);
+  });
+  it('переезд на другой сервер: drain с адресом соседа в теле — лобби Москвы уезжает в Европу', async () => {
+    const mk = () => {
+      const s = new GameServer({ authSecret: SECRET, log: silentLogger, instance: 'blue' });
+      servers.push(s);
+      return s;
+    };
+    const msk = mk();
+    const eu = mk();
+    const mh = `http://127.0.0.1:${await msk.listen(0, '127.0.0.1')}`;
+    const eh = `http://127.0.0.1:${await eu.listen(0, '127.0.0.1')}`;
+    const [a, c] = await Promise.all([anon(mh), anon(mh)]);
+    const code = await create(mh, a.token, { name: 'Аня', settings: SETTINGS });
+    const la = link(`${mh.replace('http', 'ws')}/i/blue/ws`, a, code, 'Аня');
+    const lc = link(`${mh.replace('http', 'ws')}/i/blue/ws`, c, code, 'Костя');
+    await la.connect();
+    await lc.connect();
+    // у Европы уже есть своя комната — она остаётся как была
+    const other = await create(eh, (await anon(eh)).token, { name: 'Чужой' });
+    const r = await fetch(`${mh}/internal/drain`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ peer: { http: eh, wsUrl: `${eh.replace('http', 'ws')}/ws` } }),
+    });
+    expect(r.status).toBe(200);
+    await until(() => eu.rooms.has(code) && la.moves === 1 && lc.moves === 1, 5000, 'переезд в Европу');
+    await until(() => !!la.room && la.room.members.length === 2 && la.room.members.every((m) => m.online), 5000, 'оба на связи в Европе');
+    expect(la.room!.directorId).toBe(a.userId);
+    expect(msk.rooms.size).toBe(0);
+    expect(eu.rooms.has(other)).toBe(true);
+    // по старому адресу Москвы опоздавший тоже попадает в Европу
+    const info = (await (await fetch(`${mh}/v1/rooms/${code}`)).json()) as { wsUrl: string };
+    expect(info.wsUrl).toBe(`${eh.replace('http', 'ws')}/ws`);
+  });
+
+  it('чужая комната с тем же кодом у соседа: не переезжаем, доживаем на месте', async () => {
+    const mk = () => {
+      const s = new GameServer({ authSecret: SECRET, log: silentLogger, instance: 'blue', drainMs: 60_000 });
+      servers.push(s);
+      return s;
+    };
+    const msk = mk();
+    const eu = mk();
+    const mh = `http://127.0.0.1:${await msk.listen(0, '127.0.0.1')}`;
+    const eh = `http://127.0.0.1:${await eu.listen(0, '127.0.0.1')}`;
+    const a = await anon(mh);
+    const code = await create(mh, a.token, { name: 'A' });
+    // подделываем занятый код у соседа: снимок той же комнаты с другим режиссёром
+    const snap = { ...msk.rooms.get(code)!.snapshot(), directorId: 'someone-else' };
+    expect((await fetch(`${eh}/internal/import`, { method: 'POST', body: JSON.stringify(snap) })).status).toBe(204);
+    const la = link(`${mh.replace('http', 'ws')}/i/blue/ws`, a, code, 'A');
+    await la.connect();
+    await fetch(`${mh}/internal/drain`, { method: 'POST', body: JSON.stringify({ peer: { http: eh, wsUrl: 'wss://eu.example/ws' } }) });
+    await new Promise((r) => setTimeout(r, 500));
+    expect(msk.rooms.has(code)).toBe(true);
+    expect(la.moves).toBe(0);
   });
 });

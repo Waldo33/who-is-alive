@@ -119,7 +119,7 @@ export function mountSandbox(root: HTMLElement, opts: ShellOptions): () => void 
   const start = root.querySelector<HTMLElement>('.kto-start')!;
   const nameInput = root.querySelector<HTMLInputElement>('.kto-input')!;
   // Сложность одним переключателем: лёгкая = kidsMode, жёсткая = strictCrowd, обычная — оба выкл.
-  // Запоминается (kto:diff; старый флажок kto:strict = жёсткая): «Играть» с главной (?go) пропускает этот экран
+  // Запоминается (kto:diff; старый флажок kto:strict = жёсткая) и показывается перед каждым матчем с ИИ
   type Diff = 'easy' | 'normal' | 'hard';
   let diff: Diff = 'normal';
   try {
@@ -291,11 +291,8 @@ export function mountSandbox(root: HTMLElement, opts: ShellOptions): () => void 
     }
   });
 
-  // «Играть» на главной (?go): сразу в матч, без стартового экрана. Звук включится с первым касанием.
-  if (new URLSearchParams(location.search).has('go')) {
-    track('quick_play');
-    root.querySelector<HTMLButtonElement>('.kto-play')!.click();
-  }
+  // «Играть» на главной (?go) ведёт на этот же экран: имя и сложность выбираются всегда (решение владельца).
+  if (new URLSearchParams(location.search).has('go')) track('quick_play');
 
   if (dev) {
     const form = root.querySelector<HTMLFormElement>('.kto-dev')!;

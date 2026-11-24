@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
-import { createHash, randomBytes, randomInt } from 'node:crypto';
+import { createHash, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { CLIP_MIME, ClipStore } from './clips';
@@ -28,6 +28,12 @@ export interface GameServerOptions {
   instance?: string;
   /** Публичная основа адреса WebSocket, например wss://api.benobody.app. Нет — из заголовка Host. */
   publicWsBase?: string;
+  /**
+   * Свои входы (хосты без схемы): запрос пришёл через один из них — адрес WebSocket тот же
+   * (wss://<хост>). Сервер в Европе доступен и как api.benobody.app, и по запасному адресу <IP>.sslip.io:
+   * игрок остаётся на том входе, через который пришёл.
+   */
+  publicWsHosts?: string[];
   /** Разрешённые сайты (CORS и Origin у WebSocket). '*' — любые (разработка). */
   allowedOrigins?: string[] | '*';
   /** За прокси (Caddy): адрес клиента — из X-Forwarded-For. */
@@ -48,6 +54,11 @@ export interface GameServerOptions {
   film?: FilmService;
   /** Страна по адресу для замера доступности (geo.ts); нет — неизвестна. */
   geo?: Geo;
+  /**
+   * Ключ нагрузочного прогона (scripts/load.ts, load-test.yml): запросы с заголовком x-kto-load
+   * не упираются в лимиты по адресу (один раннер = тысячи игроков), а их комнаты не монтируют фильм.
+   */
+  loadKey?: string;
   /** Где стоит сервер (msk, nl…): в ответе /v1/probe. */
   region?: string;
   /**
@@ -69,10 +80,13 @@ export interface GameServerOptions {
 /** Лимиты (docs/server-migration.md › 3.3). */
 const MSGS_PER_SEC = 30;
 const MAX_STRIKES = 3;
-const CONNS_PER_IP = 20;
-const ROOMS_PER_IP_MIN = 10;
-const AUTH_PER_IP_MIN = 30;
-const EVENTS_PER_IP_MIN = 120;
+// за одним адресом бывают тысячи людей (мобильные операторы, VPN, вайфай кафе) — лимиты по IP только
+// грубая страховка от ботов, а комнаты ограничиваем по игроку (docs/infra-plan.md › этап 4)
+const CONNS_PER_IP = 200;
+const ROOMS_PER_USER_MIN = 5;
+const ROOMS_PER_IP_MIN = 60;
+const AUTH_PER_IP_MIN = 300;
+const EVENTS_PER_IP_MIN = 600;
 /** Ошибки JS с телефонов: телефон шлёт не больше 10 за заход, это страховка от флуда. */
 const ERRORS_PER_IP_MIN = 30;
 // на сервере бота все запросы телефонов приходят через Москву (один адрес) — лимит с запасом
@@ -81,6 +95,8 @@ const BOT_PER_IP_MIN = 600;
 const LOBBY_IDLE_MS = 30 * 60_000;
 const ROOM_MAX_AGE_MS = 6 * 3600_000;
 const EMPTY_CLOSE_MS = 10 * 60_000;
+/** Комнаты нагрузочного прогона: пустая закрывается почти сразу — не держит места у настоящих игроков. */
+const LOAD_EMPTY_CLOSE_MS = 15_000;
 const HELLO_TIMEOUT_MS = 10_000;
 const HEARTBEAT_MS = 10_000;
 
@@ -115,12 +131,17 @@ export class GameServer {
   private readonly conns = new Map<WebSocket, ConnState>();
   private readonly ipConns = new Counter();
   private readonly roomRate = new RateWindow(ROOMS_PER_IP_MIN, 60_000);
+  private readonly roomUserRate = new RateWindow(ROOMS_PER_USER_MIN, 60_000);
   private readonly authRate = new RateWindow(AUTH_PER_IP_MIN, 60_000);
   private readonly eventsRate = new RateWindow(EVENTS_PER_IP_MIN, 60_000);
   private readonly errorsRate = new RateWindow(ERRORS_PER_IP_MIN, 60_000);
   private readonly botRate = new RateWindow(BOT_PER_IP_MIN, 60_000);
   readonly store: Store;
   private readonly emptySince = new Map<Room, number>();
+  /** Коды комнат нагрузочного прогона (создатель пришёл с LOAD_KEY). */
+  private readonly loadRooms = new Set<string>();
+  /** Комнаты, которые нельзя перевезти (код у соседа занят другой комнатой). */
+  private readonly noMove = new Set<string>();
   private loop: ReturnType<typeof setInterval> | null = null;
   private slow: ReturnType<typeof setInterval> | null = null;
   private hb: ReturnType<typeof setInterval> | null = null;
@@ -145,7 +166,7 @@ export class GameServer {
       if (!/^\/i\/[a-z0-9-]{1,16}\/ws$/.test(path) && path !== '/ws') return socket.destroy();
       if (!this.originOk(req.headers.origin)) return socket.destroy();
       const ip = this.ip(req);
-      if (this.ipConns.get(ip) >= CONNS_PER_IP) {
+      if (this.ipConns.get(ip) >= CONNS_PER_IP && !this.isLoad(req)) {
         this.stats.rejected.inc('ip_conns');
         return socket.destroy();
       }
@@ -186,13 +207,14 @@ export class GameServer {
       const empty = this.emptySince.get(r);
       let why = '';
       if (r.members.size === 0) why = 'no_members';
-      else if (empty !== undefined && now - empty > EMPTY_CLOSE_MS) why = 'empty';
+      else if (empty !== undefined && now - empty > (this.loadRooms.has(r.code) ? LOAD_EMPTY_CLOSE_MS : EMPTY_CLOSE_MS)) why = 'empty';
       else if (now - r.createdAt > ROOM_MAX_AGE_MS) why = 'age';
       else if (r.status === 'lobby' && now - r.lastActive > LOBBY_IDLE_MS) why = 'idle';
       if (why) this.dropRoom(r, why);
     }
     if (this.draining) this.drainStep(now);
     this.roomRate.sweep(now);
+    this.roomUserRate.sweep(now);
     this.authRate.sweep(now);
     this.eventsRate.sweep(now);
     this.botRate.sweep(now);
@@ -202,6 +224,8 @@ export class GameServer {
     r.close(why);
     this.rooms.delete(r.code);
     this.emptySince.delete(r);
+    this.loadRooms.delete(r.code);
+    this.noMove.delete(r.code);
   }
 
   private heartbeat(): void {
@@ -236,7 +260,7 @@ export class GameServer {
       if (p === '/readyz') return this.reply(res, this.draining ? 503 : 200, { ok: !this.draining, instance: this.instance });
       if (p === '/metrics' && req.method === 'GET') return await this.metrics(req, res);
       if (p === '/v1/auth/anon' && req.method === 'POST') {
-        if (!this.authRate.take(this.ip(req), this.now())) return this.reply(res, 429, { error: 'rate_limited' });
+        if (!this.isLoad(req) && !this.authRate.take(this.ip(req), this.now())) return this.reply(res, 429, { error: 'rate_limited' });
         return this.reply(res, 200, await this.auth.issue());
       }
       if (p.startsWith('/internal/')) return await this.internalRoute(req, res, p);
@@ -279,7 +303,8 @@ export class GameServer {
     const userId = await this.bearer(req);
     if (!userId) return this.reply(res, 401, { error: 'bad_token' });
     if (this.draining || this.rooms.size >= this.maxRooms) return this.reply(res, 503, { error: 'server_busy' });
-    if (!this.roomRate.take(this.ip(req), this.now())) return this.reply(res, 429, { error: 'rate_limited' });
+    const load = this.isLoad(req);
+    if (!load && (!this.roomUserRate.take(userId, this.now()) || !this.roomRate.take(this.ip(req), this.now()))) return this.reply(res, 429, { error: 'rate_limited' });
     const body = (await readJson(req)) as { name?: unknown; settings?: unknown; lang?: unknown } | null;
     const settings = RoomSettingsSchema.safeParse(body?.settings);
     const code = this.newCode();
@@ -293,10 +318,12 @@ export class GameServer {
       now: this.now,
       log: this.log,
       speed: this.speed,
-      film: this.o.film,
+      // нагрузочный прогон: фильм матча не монтируем (ffmpeg исказил бы замер и занял бы процессор)
+      film: load ? undefined : this.o.film,
     });
     this.rooms.set(code, room);
-    this.log('info', 'room_created', { room: code, user: hashId(userId) });
+    if (load) this.loadRooms.add(code);
+    this.log('info', 'room_created', { room: code, user: hashId(userId), ...(load ? { load: true } : {}) });
     return this.reply(res, 200, { code, wsUrl: this.wsUrl(req) });
   }
 
@@ -347,7 +374,9 @@ export class GameServer {
       const snap = (await readJson(req, 65_536)) as RoomSnapshot | null;
       if (!snap || snap.v !== 1 || typeof snap.code !== 'string' || !Array.isArray(snap.members)) return this.reply(res, 400, { error: 'bad_snapshot' });
       const have = this.rooms.get(snap.code);
-      if (have && !have.closed) return this.reply(res, 409, { error: 'exists' });
+      // 409 — эта же комната уже здесь (повтор после сбоя); тот же код у другой комнаты (другой сервер) — 422,
+      // и переезжать нельзя: игроки попали бы в чужую комнату
+      if (have && !have.closed) return have.directorId === snap.directorId ? this.reply(res, 409, { error: 'exists' }) : this.reply(res, 422, { error: 'code_taken' });
       const room = new Room({
         code: snap.code,
         directorId: snap.directorId,
@@ -361,10 +390,20 @@ export class GameServer {
         restore: snap,
       });
       this.rooms.set(snap.code, room);
-      this.log('info', 'room_imported', { room: snap.code, members: snap.members.length });
+      if (snap.load === true) this.loadRooms.add(snap.code);
+      // пустая комната продолжает отсчёт до закрытия, а не держит место ещё 10 минут
+      if (typeof snap.emptyMs === 'number' && snap.emptyMs >= 0) this.emptySince.set(room, this.now() - Math.min(snap.emptyMs, EMPTY_CLOSE_MS));
+      this.log('info', 'room_imported', { room: snap.code, members: snap.members.length, ...(snap.load ? { load: true } : {}) });
       return this.reply(res, 204);
     }
     if (p === '/internal/drain' && req.method === 'POST') {
+      // переезд на другой сервер (Москва → Европа): сосед — из тела запроса, а не соседний цвет
+      const body = (await readJson(req, 4096)) as { peer?: { http?: unknown; wsUrl?: unknown } } | null;
+      const np = body?.peer;
+      if (np && typeof np.http === 'string' && typeof np.wsUrl === 'string' && /^https?:\/\//.test(np.http) && /^wss?:\/\//.test(np.wsUrl)) {
+        this.setPeer({ http: np.http.replace(/\/$/, ''), wsUrl: np.wsUrl });
+        this.log('info', 'peer_set', { http: np.http, wsUrl: np.wsUrl });
+      }
       this.drain();
       return this.reply(res, 200, { draining: true, rooms: this.rooms.size });
     }
@@ -405,7 +444,7 @@ export class GameServer {
         this.dropRoom(r, 'drain_empty');
         continue;
       }
-      if (this.peer && r.canMove() && !this.moving.has(r.code)) void this.moveRoom(r);
+      if (this.peer && r.canMove() && !this.moving.has(r.code) && !this.noMove.has(r.code)) void this.moveRoom(r);
     }
     if (now >= this.drainUntil) {
       for (const r of [...this.rooms.values()]) this.dropRoom(r, 'drain_deadline');
@@ -423,7 +462,12 @@ export class GameServer {
     if (!peer) return;
     this.moving.add(r.code);
     try {
-      const snap = r.snapshot();
+      const empty = this.emptySince.get(r);
+      const snap: RoomSnapshot = {
+        ...r.snapshot(),
+        ...(this.loadRooms.has(r.code) ? { load: true } : {}),
+        ...(empty !== undefined ? { emptyMs: this.now() - empty } : {}),
+      };
       const res = await fetch(`${peer.http}/internal/import`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -431,11 +475,18 @@ export class GameServer {
         signal: AbortSignal.timeout(5000),
       });
       // 409 — у соседа уже есть такая (повтор после сбоя): всё равно переезжаем к нему
+      if (res.status === 422) {
+        // код занят чужой комнатой у соседа — эта доживёт здесь до срока drain
+        this.log('warn', 'room_move_conflict', { room: r.code });
+        this.noMove.add(r.code);
+        return;
+      }
       if (res.status !== 204 && res.status !== 409) throw new Error(`HTTP ${res.status}`);
       if (r.closed || r.status !== 'lobby') return;
       r.moveTo(peer.wsUrl);
       this.rooms.delete(r.code);
       this.emptySince.delete(r);
+      this.loadRooms.delete(r.code);
     } catch (e) {
       // сосед не ответил — попробуем на следующем шаге drain (раз в секунду)
       this.log('warn', 'room_move_failed', { room: r.code, err: String(e) });
@@ -487,6 +538,14 @@ export class GameServer {
     res.end(randomBytes(kb * 1024));
   }
 
+  /** Нагрузочный прогон с верным ключом (заголовок x-kto-load). */
+  private isLoad(req: IncomingMessage): boolean {
+    const k = this.o.loadKey;
+    const h = req.headers['x-kto-load'];
+    if (!k || typeof h !== 'string' || h.length !== k.length) return false;
+    return timingSafeEqual(Buffer.from(h), Buffer.from(k));
+  }
+
   /** Запрос изнутри машины (сосед-экземпляр, сосед по туннелю), не снаружи: внешним Caddy ставит адрес клиента. */
   private internal(req: IncomingMessage): boolean {
     const loop = (x: string) => x === '127.0.0.1' || x === '::1' || x === '::ffff:127.0.0.1';
@@ -511,8 +570,9 @@ export class GameServer {
   }
 
   private async metrics(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    // только изнутри: снаружи Caddy этот путь не пропускает, а здесь — запросы без прокси
-    if (this.o.trustProxy && req.headers['x-forwarded-for']) return this.reply(res, 404, { error: 'not_found' });
+    // только изнутри машины: напрямую или через внутренний вход Caddy 127.0.0.1:8080 (синий/зелёный —
+    // он ставит X-Forwarded-For: 127.0.0.1); снаружи Caddy этот путь не пропускает вовсе
+    if (this.o.trustProxy && !this.internal(req)) return this.reply(res, 404, { error: 'not_found' });
     let players = 0;
     let playing = 0;
     const steps: number[] = [];
@@ -545,7 +605,9 @@ export class GameServer {
   }
 
   private wsUrl(req: IncomingMessage): string {
-    const base = this.o.publicWsBase ?? `ws://${req.headers.host ?? 'localhost'}`;
+    const host = (req.headers.host ?? '').toLowerCase();
+    const own = host && this.o.publicWsHosts?.includes(host) ? `wss://${host}` : undefined;
+    const base = own ?? this.o.publicWsBase ?? `ws://${req.headers.host ?? 'localhost'}`;
     return `${base}/i/${this.instance}/ws`;
   }
 

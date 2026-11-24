@@ -15,6 +15,7 @@ import hashlib
 import hmac
 import json
 import os
+import socket
 import sys
 import time
 import urllib.error
@@ -99,6 +100,62 @@ def ipv4(server):
     return None
 
 
+def describe(s):
+    """Поля сервера без секретов: статус, тариф, локация, ОС, сети."""
+    keep = {k: s.get(k) for k in ('id', 'status', 'preset_id', 'location', 'availability_zone', 'os', 'is_ddos_guard', 'created_at')}
+    keep['networks'] = [{'type': n.get('type'), 'ips': [i.get('type') for i in n.get('ips', [])]} for n in s.get('networks', [])]
+    return json.dumps(keep, ensure_ascii=False)
+
+
+def drop(s):
+    print(f'::warning::сервер {s["id"]} сломан при создании: {describe(s)} — удаляю')
+    r = api('DELETE', f'/servers/{s["id"]}', soft=True)
+    print('удалён' if '_error' not in r else f'удалить не вышло: HTTP {r["_error"]} {r["_msg"][:200]} — удалить в панели')
+    time.sleep(10)
+
+
+def wait(sid):
+    """Ждать статуса on и публичного IPv4 (до 25 минут). Статус error — сразу (None, сервер)."""
+    ip = None
+    asked_ip = 0
+    last = None
+    for n in range(150):
+        s = api('GET', f'/servers/{sid}')['server']
+        ip = ipv4(s)
+        if s.get('status') != last:
+            last = s.get('status')
+            print(f'статус: {last}')
+        if s.get('status') == 'on' and ip:
+            return ip, s
+        if s.get('status') == 'error':
+            return None, s
+        # некоторые тарифы (MSK Ultra, с ноября 2026 и Нидерланды) создаются без публичного IPv4 — заказать.
+        # Отказ «abuse_prepayment_required» — Timeweb просит баланс не меньше required_balance:
+        # пробуем раз в минуту, пока владелец пополняет (до 25 минут)
+        if s.get('status') == 'on' and not ip and n >= asked_ip:
+            r = api('POST', f'/servers/{sid}/ips', {'type': 'ipv4'}, soft=True)
+            if '_error' not in r:
+                print('IPv4: заказан')
+                asked_ip = 10**9
+            else:
+                print(f'IPv4: отказ ({r["_msg"][:200]}) — повторю через минуту')
+                asked_ip = n + 6
+        time.sleep(10)
+    print(f'::error::сервер не готов за 25 минут: {describe(s)}')
+    sys.exit(1)
+
+
+def port_open(ip, port, seconds):
+    end = time.time() + seconds
+    while time.time() < end:
+        try:
+            with socket.create_connection((ip, port), timeout=5):
+                return True
+        except OSError:
+            time.sleep(5)
+    return False
+
+
 def main():
     pub = ssh_key()
     # открытый ключ — не секрет: им шифруют данные для переноса на сервер (infra/game/import.py)
@@ -118,12 +175,29 @@ def main():
         return
     if len(servers) > 1:
         print(f'::warning::серверов с именем {NAME}: {len(servers)} (id: {[x["id"] for x in servers]}) — беру первый, лишние удалить в панели')
+    # сломанный при создании (статус error и ни разу не получил адрес, 24.11 у Cloud NL-15) — удалить и
+    # создать заново: в нём ничего нет. Только по разрешению (RECREATE_BROKEN=1) и только без IPv4:
+    # рабочий сервер с базой так не удалится, даже если Timeweb на минуту покажет «error»
+    if servers and servers[0].get('status') == 'error' and not ipv4(servers[0]) and os.environ.get('RECREATE_BROKEN') == '1':
+        drop(servers[0])
+        servers = []
+    # тариф сменили (Cloud NL-15 без своего IPv4 так и не открыл SSH, 24.11; решение владельца — NL-30),
+    # а сервер старого тарифа ни разу не открыл SSH — в нём ничего нет: удалить и создать на новом
+    if servers and os.environ.get('RECREATE_BROKEN') == '1' and servers[0].get('preset_id') not in PRESETS:
+        ip0 = ipv4(servers[0])
+        if not ip0 or not port_open(ip0, 22, 30):
+            drop(servers[0])
+            servers = []
     if servers:
         s = servers[0]
         print(f'сервер есть: id={s["id"]}, статус={s.get("status")}')
+        ip, s = wait(s['id'])
+        if not ip:
+            print(f'::error::сервер не в порядке: {describe(s)}')
+            sys.exit(1)
     else:
         os_id = find_os()
-        s = None
+        ip = None
         for preset in PRESETS:
             body = {
                 'name': NAME,
@@ -139,27 +213,26 @@ def main():
                 continue
             s = r['server']
             print(f'сервер создан: id={s["id"]}, тариф {preset}')
-            break
-        if s is None:
-            print('::error::ни один тариф не свободен:', PRESETS)
+            ip, s = wait(s['id'])
+            if ip:
+                break
+            # только что созданный не поднялся (статус error) — удалить и попробовать следующий тариф
+            drop(s)
+        if not ip:
+            print('::error::ни один тариф не поднялся:', PRESETS)
             sys.exit(1)
     sid = s['id']
-    ip = None
-    asked_ip = False
-    for _ in range(90):
-        s = api('GET', f'/servers/{sid}')['server']
-        ip = ipv4(s)
-        if s.get('status') == 'on' and ip:
-            break
-        # некоторые тарифы (MSK Ultra) создаются без публичного IPv4 — заказать его
-        if s.get('status') == 'on' and not ip and not asked_ip:
-            asked_ip = True
-            r = api('POST', f'/servers/{sid}/ips', {'type': 'ipv4'}, soft=True)
-            print('IPv4: заказан' if '_error' not in r else f'IPv4: отказ ({r["_msg"][:200]})')
-        time.sleep(10)
-    if not ip or s.get('status') != 'on':
-        print(f'::error::сервер не готов: статус={s.get("status")}, ip={ip}')
-        sys.exit(1)
+    # Cloud NL-15 создаётся без IPv4: заказанный потом адрес система видит только после перезагрузки
+    # (24.11: адрес есть, SSH 15 минут молчит). Порт 22 не отвечает — перезагрузить один раз
+    if os.environ.get('RECREATE_BROKEN') == '1' and not port_open(ip, 22, 90):
+        print('SSH не отвечает — перезагружаю сервер (новый IPv4 появится в системе)')
+        r = api('POST', f'/servers/{sid}/reboot', {}, soft=True)
+        if '_error' in r:
+            r = api('POST', f'/servers/{sid}/action', {'action': 'reboot'}, soft=True)
+        print('перезагрузка: ' + ('ok' if '_error' not in r else f'HTTP {r["_error"]} {r["_msg"][:200]}'))
+        time.sleep(20)
+        ip, s = wait(sid)
+        print('SSH после перезагрузки: ' + ('есть' if ip and port_open(ip, 22, 300) else 'нет'))
     host = ip.replace('.', '-') + '.sslip.io'
     print(f'готов: ip={ip}, host={host}, локация={s.get("location")}')
     with open(os.environ.get('GITHUB_OUTPUT', '/dev/null'), 'a') as f:

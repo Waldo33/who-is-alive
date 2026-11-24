@@ -45,7 +45,32 @@ const FPS = 30;
 const REVEAL_STEP = 140;
 /** Хлопушка перед куском фильма и крючок фильма. */
 export const CLAP_MS = 450;
-export const HOOK_MS = 1500;
+export const HOOK_MS = 1300;
+/**
+ * «Ирис» — круг затемнения, как в старом кино: сужается на герое в конце куска фильма и раскрывается
+ * в начале следующего. Края — ступенями по логическим пикселям (палитра и чёткость сохраняются).
+ */
+export function drawIris(g: CanvasRenderingContext2D, cx: number, cy: number, r: number): void {
+  g.fillStyle = PAL.ink;
+  for (let y = 0; y < LH; y++) {
+    const dy = y + 0.5 - cy;
+    if (Math.abs(dy) >= r) {
+      g.fillRect(0, y, LW, 1);
+      continue;
+    }
+    const half = Math.sqrt(r * r - dy * dy);
+    const x0 = Math.round(cx - half);
+    const x1 = Math.round(cx + half);
+    if (x0 > 0) g.fillRect(0, y, x0, 1);
+    if (x1 < LW) g.fillRect(x1, y, LW - x1, 1);
+  }
+}
+
+/** Радиус, при котором ирис с центром (cx, cy) открывает весь кадр. */
+export function irisFull(cx: number, cy: number): number {
+  return Math.hypot(Math.max(cx, LW - cx), Math.max(cy, LH - cy)) + 1;
+}
+
 /** Кусок фильма: сколько мира до и после главного события. */
 const SEG_PRE = 2600;
 const SEG_POST = 900;
@@ -97,6 +122,8 @@ export interface ClipInput {
   mode?: ClipMode;
   /** Счёт матча после этого дубля (кусок фильма): цвет игрока → очки, в нижней полосе. */
   score?: { color: number; points: number }[];
+  /** Счёт до этого дубля: виден до удара, потом сменяется счётом после (изменившиеся вспыхивают). */
+  scoreBefore?: { color: number; points: number }[];
   /** Ссылка в QR концовки (по умолчанию https://site). */
   link?: string;
   /**
@@ -162,10 +189,22 @@ interface Timing {
 }
 const CLIP_T: Timing = { base: 1.25, slow: 0.4, slowPre: 700, slowPost: 500, hold: 450, cutBefore: 1600, wideMin: 900 };
 const SEG_T: Timing = { base: 1.4, slow: 0.5, slowPre: 500, slowPost: 400, hold: 400, cutBefore: 1400, wideMin: 700 };
+/** Главный момент фильма: темп клипа, но короче замедление и хвост — чтобы в фильм влез ещё момент. */
+const FEAT_T: Timing = { base: 1.35, slow: 0.45, slowPre: 600, slowPost: 350, hold: 450, cutBefore: 1500, wideMin: 900 };
+/** Хвост мира после удара у главного момента фильма (дальше — ирис на герое). */
+const FEAT_POST = 1000;
 const BLOOP_T: Timing = { base: 1.1, slow: 0.5, slowPre: 300, slowPost: 300, hold: 250, cutBefore: 0, wideMin: 0 };
 
 /** Камера разбора: целое увеличение (пиксели остаются чёткими), видна четверть арены. */
 const ZOOM = 2;
+/**
+ * Наезд камеры — не скачком, а за ZOOM_MS ступенями целого числа выходных пикселей на пиксель мира
+ * (на сервере ×3 → ×4 → ×5 → ×6, на телефоне ×6 … ×12): каждый пиксель мира остаётся ровным квадратом,
+ * а центр кадра плавно уходит от середины площади к участникам.
+ */
+const ZOOM_MS = 600;
+/** Камера догоняет цель с этой постоянной времени, мс (не зависит от частоты кадров). */
+const CAM_TAU = 140;
 const PART1_SPEED = 1.5;
 const PART1_MAX_MS = 4500;
 
@@ -237,7 +276,12 @@ export class ClipPlayerScene {
   private colors = new Map<number, number>();
   /** Когда (мс разбора) загорается каждый живой; герой — последним. */
   private litAt = new Map<number, number>();
-  private cam = { x: -1, y: 0 };
+  private cam = { x: 0, y: 0 };
+  private camInit = false;
+  private camT = -1;
+  /** Где на экране герой (логические пиксели) — центр «ириса» при переходе в фильме. */
+  private heroAt: { x: number; y: number } | null = null;
+  private readonly scale: number;
   /** Звук клипа (музыка темы и эффекты момента); без него клип немой. */
   sound: (ClipSoundCore & { stream?: MediaStream }) | null = null;
   private musicResumeAt = 0;
@@ -255,7 +299,8 @@ export class ClipPlayerScene {
   private opp: number | undefined;
 
   constructor(private inp: ClipInput) {
-    const { c, g } = scaledCanvas(LW, LH, inp.scale ?? CLIP_SCALE);
+    this.scale = inp.scale ?? CLIP_SCALE;
+    const { c, g } = scaledCanvas(LW, LH, this.scale);
     this.c = c;
     this.g = g;
     const wc = canvas(inp.arena.width, inp.arena.height);
@@ -264,7 +309,7 @@ export class ClipPlayerScene {
     this.art = getArt(inp.arena);
     this.mode = inp.mode ?? 'clip';
     const full = this.mode === 'clip' || this.mode === 'feature';
-    this.tm = full ? CLIP_T : this.mode === 'blooper' ? BLOOP_T : SEG_T;
+    this.tm = this.mode === 'feature' ? FEAT_T : full ? CLIP_T : this.mode === 'blooper' ? BLOOP_T : SEG_T;
     const m = inp.moment;
     const focused = m.kind === 'knockout' || m.kind === 'hit_bot' || m.kind === 'star3';
     if (this.mode === 'hook') this.win = { from: Math.max(m.from, m.at - 450), to: Math.max(m.from, m.at - 120) };
@@ -272,7 +317,8 @@ export class ClipPlayerScene {
       this.win = focused
         ? { from: Math.max(m.from, m.at - SEG_PRE), to: Math.min(m.to, m.at + SEG_POST) }
         : { from: Math.max(m.from, m.to - SEG_PLAIN), to: m.to };
-    } else this.win = { from: m.from, to: m.to };
+    } else if (this.mode === 'feature' && focused) this.win = { from: m.from, to: Math.max(m.from, Math.min(m.to, m.at + FEAT_POST)) };
+    else this.win = { from: m.from, to: m.to };
     const len = this.win.to - this.win.from;
     this.speed1 = Math.max(PART1_SPEED, len / (this.mode === 'feature' ? FEATURE_PUZZLE_MAX : PART1_MAX_MS));
     const speed2 = full ? Math.max(this.tm.base, len / PART_MAX_MS) : this.tm.base;
@@ -425,8 +471,9 @@ export class ClipPlayerScene {
     }
     this.sound?.pump();
     const alpha = Math.max(0, Math.min(1, (target - w.time) / TICK_MS));
-    const zoomed = this.mode === 'hook' || (reveal && local >= this.cutAt);
-    this.drawWorld(w, alpha, reveal, ms, zoomed, local);
+    // наезд: 0 — общий план, 1 — крупно (крючок фильма — крупно сразу)
+    const zp = this.mode === 'hook' ? 1 : reveal ? Math.max(0, Math.min(1, (local - this.cutAt) / ZOOM_MS)) : 0;
+    this.drawWorld(w, alpha, reveal, ms, zp, local);
     this.drawBands(kind, local, target);
     const g = this.g;
     if (reveal && local < FLASH_MS && this.mode !== 'blooper') {
@@ -437,7 +484,8 @@ export class ClipPlayerScene {
     }
     // вспышка на самом ударе (оружием — красная)
     const sinceHit = local - this.hitClip;
-    if (reveal && sinceHit >= 0 && sinceHit < 140) {
+    // в коротком куске фильма вспышка раскрытия только что была — на ударе хватает встряски и искр
+    if (reveal && sinceHit >= 0 && sinceHit < 140 && (this.mode === 'clip' || this.mode === 'feature')) {
       g.fillStyle = this.focusKill ? PAL.red : PAL.white;
       g.globalAlpha = (this.focusKill ? 0.4 : 0.6) * (1 - sinceHit / 140);
       g.fillRect(0, AY, LW, PANEL_Y - AY);
@@ -516,7 +564,8 @@ export class ClipPlayerScene {
     return at !== undefined && local >= at;
   }
 
-  private drawWorld(w: World, alpha: number, reveal: boolean, now: number, zoomed: boolean, local: number): void {
+  private drawWorld(w: World, alpha: number, reveal: boolean, now: number, zp: number, local: number): void {
+    const zoomed = zp > 0;
     const g = this.wg;
     const a = this.art;
     const m = this.inp.moment;
@@ -705,30 +754,44 @@ export class ClipPlayerScene {
     const out = this.g;
     out.fillStyle = PAL.ink;
     out.fillRect(0, 0, LW, LH);
-    let zoom = 1;
-    let cx = 0;
-    let cy = 0;
-    if (zoomed) {
-      zoom = ZOOM;
-      const vw = W / zoom;
-      const vh = H / zoom;
-      const f = this.focus(w) ?? { x: W / 2, y: H / 2 };
-      const tx = Math.max(0, Math.min(W - vw, f.x - vw / 2));
-      const ty = Math.max(0, Math.min(H - vh, f.y - 8 - vh / 2));
-      const first = this.cam.x < 0;
-      this.cam.x = first ? tx : this.cam.x + (tx - this.cam.x) * 0.18;
-      this.cam.y = first ? ty : this.cam.y + (ty - this.cam.y) * 0.18;
-      cx = Math.round(this.cam.x);
-      cy = Math.round(this.cam.y);
-      // встряска: в стоп-кадре удара и на крючке фильма
-      const shake = this.mode === 'hook' ? local % 240 < 120 : sinceHit >= 0 && sinceHit < this.tm.hold;
-      if (shake) cx = Math.max(0, Math.min(W - vw, cx + (Math.floor((this.mode === 'hook' ? local : sinceHit) / 60) % 2 ? 1 : -1)));
-      out.drawImage(this.wc, cx, cy, vw, vh, 0, AY, W, H);
+    // наезд ступенями: k выходных пикселей на пиксель мира — всегда целое (пиксели не плывут)
+    const sc = this.scale;
+    const ease = zp * zp * (3 - 2 * zp);
+    const k = sc + Math.round(ease * sc * (ZOOM - 1));
+    const zoom = k / sc;
+    const vw = W / zoom;
+    const vh = H / zoom;
+    const clampX = (x: number) => Math.max(0, Math.min(W - vw, x));
+    const clampY = (y: number) => Math.max(0, Math.min(H - vh, y));
+    const f = zoomed ? (this.focus(w) ?? { x: W / 2, y: H / 2 }) : { x: W / 2, y: H / 2 };
+    const fy = f.y - 8;
+    const dt = this.camT < 0 ? 0 : Math.max(0, now - this.camT);
+    this.camT = now;
+    if (zp < 1) {
+      // во время наезда центр кадра идёт от середины площади к участникам вместе с увеличением
+      this.cam.x = clampX(W / 2 + (f.x - W / 2) * ease - vw / 2);
+      this.cam.y = clampY(H / 2 + (fy - H / 2) * ease - vh / 2);
+      this.camInit = true;
     } else {
-      this.cam.x = -1;
-      out.drawImage(this.wc, 0, AY);
+      const tx = clampX(f.x - vw / 2);
+      const ty = clampY(fy - vh / 2);
+      const kk = this.camInit ? 1 - Math.exp(-dt / CAM_TAU) : 1;
+      this.cam.x += (tx - this.cam.x) * kk;
+      this.cam.y += (ty - this.cam.y) * kk;
+      this.camInit = true;
     }
+    // встряска: в стоп-кадре удара и на крючке фильма — на пиксель мира
+    const shake = zoomed && (this.mode === 'hook' ? local % 240 < 120 : sinceHit >= 0 && sinceHit < this.tm.hold);
+    const cx = clampX(this.cam.x + (shake ? (Math.floor((this.mode === 'hook' ? local : sinceHit) / 60) % 2 ? 1 : -1) : 0));
+    const cy = this.cam.y;
+    out.save();
+    out.setTransform(1, 0, 0, 1, 0, 0);
+    out.drawImage(this.wc, Math.round(-cx * k), Math.round(AY * sc - cy * k), W * k, H * k);
+    out.restore();
     const toScreen = (p: { x: number; y: number }) => ({ x: (p.x - cx) * zoom, y: AY + (p.y - cy) * zoom });
+    const hp = hero !== undefined ? pos.get(hero) : undefined;
+    if (hp) this.heroAt = toScreen(hp);
+    else if (this.hit && !this.heroAt) this.heroAt = toScreen(this.hit);
 
     // имена на плашках над головами (герой — залитая плашка и стрелка); кто вне кадра — стрелка у края
     if (reveal) {
@@ -800,6 +863,13 @@ export class ClipPlayerScene {
     return eid === undefined ? undefined : this.inp.players.find((p) => p.eid === eid);
   }
 
+  /** Где герой на экране сейчас (для «ириса» фильма); не видно — середина поля. */
+  heroPoint(): { x: number; y: number } {
+    const h = this.heroAt;
+    if (!h) return { x: LW / 2, y: (AY + PANEL_Y) / 2 };
+    return { x: Math.max(8, Math.min(LW - 8, h.x)), y: Math.max(AY + 8, Math.min(PANEL_Y - 8, h.y - 8)) };
+  }
+
   /** Точка события на экране (неудачный дубль в окошке титров кадрируется вокруг неё). */
   focusPoint(): { x: number; y: number } | null {
     return this.hit ? { x: this.hit.x, y: AY + this.hit.y - 8 } : null;
@@ -833,7 +903,7 @@ export class ClipPlayerScene {
     g.globalAlpha = 0.85;
     text(g, this.inp.site, SAFE_L + 2, WM_Y, PAL.white, font, { align: 'left', maxWidth: SAFE_R - SAFE_L });
     g.globalAlpha = 1;
-    this.drawScore();
+    this.drawScore(kind === 'reveal' && this.mode !== 'hook' && (this.hitClip === Infinity || local >= this.hitClip) ? local - (this.hitClip === Infinity ? 0 : this.hitClip) : -1);
     const cap = this.inp.captions;
     const blink = Math.floor(local / 400) % 2 === 0;
     if (this.mode === 'hook') {
@@ -892,19 +962,26 @@ export class ClipPlayerScene {
     if (on) this.g.fillRect(LW - 9, 9, 4, 4);
   }
 
-  /** Счёт матча после дубля — в нижней полосе цветными квадратиками (кусок фильма). */
-  private drawScore(): void {
-    const sc = this.inp.score;
+  /**
+   * Счёт матча в нижней полосе цветными квадратиками (кусок фильма): до удара — счёт до дубля,
+   * после (since ≥ 0 — мс после удара) — после дубля; изменившиеся очки мигают жёлтым.
+   */
+  private drawScore(since = -1): void {
+    const after = this.inp.score;
+    const before = this.inp.scoreBefore ?? after;
+    const sc = since >= 0 ? after : before;
     if (!sc?.length) return;
     const g = this.g;
     const cell = 26;
     let x = Math.round(LW / 2 - (sc.length * cell) / 2);
-    for (const s of sc) {
+    sc.forEach((s, i) => {
+      const changed = since >= 0 && before && before[i] && before[i].points !== s.points;
+      const blink = changed && since < 900 && Math.floor(since / 150) % 2 === 0;
       g.fillStyle = PLAYER_COLORS[s.color];
       g.fillRect(x + 2, 297, 7, 7);
-      text(g, String(s.points), x + 11, 296, PAL.white, this.inp.font, { align: 'left', outline: null });
+      text(g, String(s.points), x + 11, 296, blink ? PAL.yellow : PAL.white, this.inp.font, { align: 'left', outline: null });
       x += cell;
-    }
+    });
   }
 
   /** Хлопушка перед куском фильма: «Дубль N» на чёрном, планка хлопает. */

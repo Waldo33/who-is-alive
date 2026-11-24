@@ -1,4 +1,4 @@
-# Диагностика серверов: службы, наблюдение, сторож и журналы (без секретов). Запуск — правкой этого файла.
+# Диагностика серверов: службы, наблюдение, сторож и журналы (без секретов). Запуск — правкой этого файла (24.11 20:20).
 name: infra-diag
 
 on:
@@ -51,9 +51,30 @@ jobs:
           curl -sS -m15 -u "admin:$(cat /etc/massovka-grafana/admin.pw)" 'http://127.0.0.1:3001/api/search?type=dash-db' | python3 -c 'import json,sys;[print("панель:", d["title"]) for d in json.load(sys.stdin)]'
           printf "событий в базе Москвы за сутки: "; PGPASSWORD=$(. /etc/massovka-grafana/pgro.env; echo $PGRO_PASSWORD) psql -h 127.0.0.1 -p 15432 -U grafana_ro -d massovka -Atc "select count(*)||' ('||count(distinct device_id)||' устройств)' from analytics_events where created_at > now()-interval '1 day'"
           curl -sS -m10 -o /dev/null -w "grafana снаружи: %{http_code}\n" https://72-56-73-184.sslip.io/grafana/login
+          curl -sS -m10 -o /dev/null -w "grafana /grafana/: %{http_code} → %{redirect_url}\n" https://72-56-73-184.sslip.io/grafana/
+          systemctl is-active caddy grafana; systemctl show grafana -p NRestarts -p ActiveEnterTimestamp -p MemoryCurrent
+          echo "── журнал Grafana"; journalctl -u grafana -n 40 --no-pager -o cat | grep -viE 'level=info' | cut -c1-300 | tail -25
+          ss -ltnp | grep -E ':3001|:8080|:443' || true
+          grep -n "grafana\|^[a-z0-9:/.-]* {" /etc/caddy/Caddyfile | head -20
           systemctl list-timers --no-pager | grep -E "backup" || true
           ls -la /var/backups/massovka-msk 2>/dev/null | tail -3
           for u in node_exporter victoria-metrics victoria-logs grafana systemd-journal-upload; do echo "· $u"; journalctl -u $u -n 4 --no-pager -o cat | tr '\\t' ' ' | cut -c1-220; done
+          echo "── замер доступности (net_probe, всё время)"
+          PGPASSWORD=$(. /etc/massovka-grafana/pgro.env; echo $PGRO_PASSWORD) psql -h 127.0.0.1 -p 15432 -U grafana_ro -d massovka -P pager=off -c "
+            with p as (select device_id, props, case when props->>'cc'='RU' then 'RU без VPN'
+              when props->>'tz' like 'Europe/Moscow' or props->>'tz' in ('Europe/Samara','Europe/Volgograd','Europe/Kaliningrad','Asia/Yekaterinburg','Asia/Novosibirsk','Asia/Omsk','Asia/Krasnoyarsk','Asia/Irkutsk','Asia/Vladivostok') then 'RU через VPN'
+              when props->>'cc' is null then '?' else 'заграница' end as who from analytics_events where name='net_probe')
+            select who, count(distinct device_id) tel, count(*) n,
+              round(100.0*avg((props->>'msk_http')::int)) msk_http, round(100.0*avg((props->>'msk_big')::int)) msk_big, round(100.0*avg((props->>'msk_ws')::int)) msk_ws,
+              round(100.0*avg((props->>'eu_http')::int)) eu_http, round(100.0*avg((props->>'eu_big')::int)) eu_big, round(100.0*avg((props->>'eu_ws')::int)) eu_ws,
+              percentile_cont(0.5) within group (order by (props->>'msk_http_ms')::int) msk_ms, percentile_cont(0.5) within group (order by (props->>'eu_http_ms')::int) eu_ms
+            from p group by 1 order by 2 desc" || true
+          PGPASSWORD=$(. /etc/massovka-grafana/pgro.env; echo $PGRO_PASSWORD) psql -h 127.0.0.1 -p 15432 -U grafana_ro -d massovka -P pager=off -c "
+            select props->>'cc' cc, count(distinct device_id) tel, round(100.0*avg((props->>'msk_ws')::int)) msk_ws, round(100.0*avg((props->>'eu_ws')::int)) eu_ws
+            from analytics_events where name='net_probe' group by 1 order by 2 desc limit 15" || true
+          PGPASSWORD=$(. /etc/massovka-grafana/pgro.env; echo $PGRO_PASSWORD) psql -h 127.0.0.1 -p 15432 -U grafana_ro -d massovka -P pager=off -c "
+            select date_trunc('hour', created_at) h, count(distinct device_id) tel, count(*) filter (where name='match_start') matches
+            from analytics_events where created_at > now() - interval '2 days' group by 1 order by 1 desc limit 48" || true
           echo "── клипы Telegram"
           ls -ld /var/lib/massovka-clips 2>&1; ls /var/lib/massovka-clips | wc -l
           echo "── сторож"

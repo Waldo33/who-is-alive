@@ -316,7 +316,7 @@ const FILM_WINNER = 2;
  * и за победителя, не больше одного провала; результат — по порядку дублей (виден ход матча).
  * Если ярких нет — хотя бы один, самый сильный.
  */
-export function pickFilmMoments<T extends FilmCandidate>(cands: readonly T[], opts: { max?: number; winner?: string } = {}): T[] {
+export function pickFilmMoments<T extends FilmCandidate>(cands: readonly T[], opts: { max?: number; winner?: string; rival?: string } = {}): T[] {
   const max = opts.max ?? FILM_MAX;
   const pool = cands.filter((c) => c.moment.kind !== 'end');
   const strong = pool.filter((c) => c.moment.score >= FILM_MIN_SCORE);
@@ -332,6 +332,8 @@ export function pickFilmMoments<T extends FilmCandidate>(cands: readonly T[], op
       let s = c.moment.score;
       if (c.hero && !heroes.has(c.hero)) s += FILM_NEW_HERO;
       if (c.hero && c.hero === opts.winner && !heroes.has(c.hero)) s += FILM_WINNER;
+      // соперник из сюжета финала (дуэль, фотофиниш) — его момент тоже работает на историю
+      if (c.hero && c.hero === opts.rival && !heroes.has(c.hero)) s += FILM_WINNER;
       // при равенстве — позже (ближе к развязке матча)
       if (bi < 0 || s > bs + 1e-9 || (Math.abs(s - bs) < 1e-9 && c.round > left[bi].round)) {
         bs = s;

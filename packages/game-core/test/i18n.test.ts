@@ -76,11 +76,17 @@ describe('i18n', () => {
       for (const s of [c.film, c.hook, c.hookSub, c.cast, c.lead, c.cameo, c.extrasRole, c.bloopers, tp(lang, c.bots, 28), fmt(c.filmMaking, { n: 100 }), fmt(c.making, { n: 100 }), c.ready, c.failed, c.find, c.reveal, fmt(c.round, { n: 7 }), ...Object.values(c.kinds), c.cta, ...Object.values(t.card), c.findMe, c.thatWasMe, c.gotMe, c.whoGotMe, c.deathBtnLong, fmt(c.watch, { name: 'Ш'.repeat(12) }), fmt(c.koOf, { name: 'Ш'.repeat(11) }), c.star3Of, c.botOf, c.preparingLong]) {
         expect(s.length, `${lang}: «${s}»`).toBeLessThanOrEqual(21);
       }
+      // финал фильма: заголовок сюжета — крупно (×4/3, до 14 знаков), доказательство и вызов — обычным
+      for (const st of Object.values(c.stories)) {
+        expect(st.title.length, `${lang}: «${st.title}»`).toBeLessThanOrEqual(14);
+        for (const s of [fmt(st.fact, { n: 8, a: 3, b: 2 }), st.cta]) expect(s.length, `${lang}: «${s}»`).toBeLessThanOrEqual(21);
+      }
+      for (const s of [c.photoTie, c.rival, c.rewind]) expect(s.length, `${lang}: «${s}»`).toBeLessThanOrEqual(21);
       for (const s of [c.send, c.save, c.close]) expect(s.length).toBeLessThanOrEqual(10);
       // рядом с QR (33 пикс.) в концовке и титрах фильма — до 12 знаков
       for (const s of [c.play1, c.play2]) expect(s.length, s).toBeLessThanOrEqual(12);
-      // кнопка клипа призрака: 80 пикс. — до 9 знаков (и «100%»)
-      for (const s of [c.deathBtn, c.send, c.preparing]) expect(s.length).toBeLessThanOrEqual(9);
+      // кнопка клипа призрака в шапке: 65 пикс. — до 7 знаков (и «100%»)
+      for (const s of [c.deathBtn, c.sendShort, c.preparing]) expect(s.length, s).toBeLessThanOrEqual(7);
     }
   });
 
