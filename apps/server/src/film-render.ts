@@ -127,6 +127,12 @@ function setup(fonts: string): Promise<typeof import('@napi-rs/canvas')> {
   return ready;
 }
 
+/** Подготовить всё, что монтажу нужно один раз на процесс (прогрев процесса монтажа). */
+export async function warmRender(o: Pick<FilmRenderOpts, 'fonts' | 'native'>): Promise<void> {
+  if (o.native) await setupNative(o.fonts, o.native);
+  else await setup(o.fonts);
+}
+
 /** Контекст с «виртуальными часами»: звук планируется по времени кадра, а рендерится потом целиком. */
 function clocked<T extends object>(ctx: T, now: () => number): T {
   return new Proxy(ctx, {

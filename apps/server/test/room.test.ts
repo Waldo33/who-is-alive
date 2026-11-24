@@ -129,6 +129,7 @@ describe('фильм матча в комнате', () => {
     let now = 1_000_000;
     const jobs: { takes: unknown[]; match: { winners: string[] } }[] = [];
     const film = {
+      warm: () => {},
       make: (job: (typeof jobs)[number]) => {
         jobs.push(job);
         return Promise.resolve({ id: 'f'.repeat(20), ext: 'mp4' as const, thumb: true, ms: 1 });
@@ -176,7 +177,7 @@ describe('клип выбывшего на сервере (комната)', () 
   it('сервер с монтажом объявляет caps clip; живому и вне матча — отказ, телефон пишет сам', () => {
     let now = 1_000_000;
     const asked: unknown[] = [];
-    const film = { clip: (j: unknown) => (asked.push(j), null) } as unknown as NonNullable<ConstructorParameters<typeof Room>[0]['film']>;
+    const film = { clip: (j: unknown) => (asked.push(j), null), preclip: () => null, warm: () => {} } as unknown as NonNullable<ConstructorParameters<typeof Room>[0]['film']>;
     const room = new Room({ code: 'ABCD', directorId: 'a', directorName: 'A', settings: { roundSec: 60, maxRounds: 3, kidsMode: false, aiFill: false }, lang: 'ru', now: () => now, log: silentLogger, film });
     const [pa, pb] = [fakePeer(), fakePeer()];
     room.join('a', 'A', pa);

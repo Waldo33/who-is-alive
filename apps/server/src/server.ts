@@ -619,7 +619,7 @@ export class GameServer {
     // фильм матча: сколько смонтировано, неудач, очередь, время последнего (тревога, если монтаж встал)
     const f = this.o.film;
     if (f) lines.push(`game_films_total ${f.made}`, `game_films_failed_total ${f.failed}`, `game_film_queue ${f.queued}`, `game_film_last_ms ${f.lastMs}`,
-        `game_death_clips_total ${f.clipsMade}`, `game_death_clips_failed_total ${f.clipsFailed}`, `game_death_clips_busy_total ${f.clipsRejected}`, `game_death_clip_last_ms ${f.lastClipMs}`);
+        `game_death_clips_total ${f.clipsMade}`, `game_death_clips_failed_total ${f.clipsFailed}`, `game_death_clips_busy_total ${f.clipsRejected}`, `game_death_clip_last_ms ${f.lastClipMs}`, `game_death_preclips_total ${f.preclips}`, `game_film_worker_starts_total ${f.workerStarts}`);
     res.writeHead(200, { 'content-type': 'text/plain; version=0.0.4' });
     res.end(lines.join('\n') + '\n');
   }
@@ -768,6 +768,7 @@ export class GameServer {
       st.userId = userId;
       st.room = room;
       st.name = m.name;
+      if (m.clip) room.setClipPrefs(userId, m.clip);
       peer.send(this.flagsText());
       return;
     }

@@ -13,6 +13,8 @@ export interface ServerLinkOptions {
   WebSocketImpl?: typeof WebSocket;
   /** Тишина дольше этого — связь считаем мёртвой и переподключаемся (мс). */
   silenceMs?: number;
+  /** Язык и «без крови» для клипа выбывшего (уходят в hello): сервер заготовит клип до нажатия. */
+  clipPrefs?: () => { lang: 'ru' | 'en'; mild: boolean };
 }
 
 type Listener<T> = (v: T) => void;
@@ -82,7 +84,7 @@ export class ServerLink implements Transport {
     this.lastMsgAt = Date.now();
     ws.onopen = () => {
       this.lastMsgAt = Date.now();
-      this.raw({ t: 'hello', v: WIRE_VERSION, token: this.o.token, code: this.o.code, name: this.name });
+      this.raw({ t: 'hello', v: WIRE_VERSION, token: this.o.token, code: this.o.code, name: this.name, ...(this.o.clipPrefs ? { clip: this.o.clipPrefs() } : {}) });
     };
     ws.onmessage = (e: MessageEvent) => {
       this.lastMsgAt = Date.now();

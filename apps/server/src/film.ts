@@ -1,17 +1,20 @@
 /**
  * «Фильм матча» на сервере: дубли копит MatchRunner (room.ts), в конце матча комната ставит задачу сюда.
  * Монтаж — в отдельном процессе (film-worker.ts → film-render.ts), по одному за раз, с низким приоритетом;
+ * процесс живёт между задачами (прогревается в начале матча, гаснет после 10 минут простоя);
  * готовый mp4 и обложка ложатся в хранилище клипов (clips.ts) и раздаются по /v1/clips/<id>.mp4 —
  * их сразу берут и «Поделиться», и Telegram (сторис, видео-карточка) без загрузки с телефона.
  */
 import { fork } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { setPriority } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { ClipStore } from './clips';
 import type { MatchRecordings } from './recordings';
-import type { ClipJob, FilmJob, FilmRendered } from './film-render';
+import type { ClipJob, FilmJob, FilmRenderOpts, FilmRendered } from './film-render';
+import type { WorkerMsg } from './film-worker';
 import type { Logger } from './log';
 
 export type { FilmJob } from './film-render';
@@ -38,6 +41,8 @@ export interface FilmServiceOptions {
   recordings?: MatchRecordings;
   /** Аварийный выключатель видео (video-switch.ts): false — не монтировать ничего. */
   enabled?: () => boolean;
+  /** Сколько процесс монтажа живёт без задач, мс (по умолчанию 10 минут). */
+  idleMs?: number;
 }
 
 /** Где лежит процесс монтажа: рядом со сборкой (dist/film-worker.mjs) или исходник под tsx (dev, тесты). */
@@ -60,14 +65,17 @@ export function nativePath(): string | undefined {
 
 /** Клип выбывшего ждёт не дольше: дольше — телефон смонтирует сам (у него ~13–16 с). */
 const CLIP_MAX_WAIT_MS = 8000;
+/** Заготовку берём, только если монтаж свободен (или вот-вот освободится). */
+const PRECLIP_MAX_WAIT_MS = 1500;
 
-type Task =
-  | { kind: 'film'; job: FilmJob; done: (r: FilmDone | null) => void }
-  | { kind: 'clip'; job: ClipJob; done: (r: FilmDone | null) => void };
+type Task = ({ kind: 'film'; job: FilmJob } | { kind: 'clip'; job: ClipJob; pre?: boolean }) & {
+  done: (r: FilmDone | null) => void;
+  p?: Promise<FilmDone | null>;
+};
 
 export class FilmService {
   private queue: Task[] = [];
-  private busy: { kind: Task['kind']; since: number } | null = null;
+  private busy: { kind: Task['kind']; since: number; p?: Promise<FilmDone | null> } | null = null;
   made = 0;
   failed = 0;
   lastMs = 0;
@@ -75,6 +83,10 @@ export class FilmService {
   clipsFailed = 0;
   clipsRejected = 0;
   lastClipMs = 0;
+  /** Заготовлено клипов (до нажатия «Клип»). */
+  preclips = 0;
+  /** Сколько раз запускали процесс монтажа (живёт между задачами — обычно раз на матч или реже). */
+  workerStarts = 0;
   /** Сколько обычно монтируется (скользящее среднее, мс): для оценки очереди. */
   private est = { film: 15_000, clip: 6_000 };
 
@@ -87,7 +99,7 @@ export class FilmService {
   /** Через сколько мс начнётся новый клип: текущая задача + клипы в очереди (фильмы встают после клипов). */
   clipWait(now = Date.now()): number {
     const cur = this.busy ? Math.max(0, this.est[this.busy.kind] - (now - this.busy.since)) : 0;
-    return cur + this.queue.filter((t) => t.kind === 'clip').length * this.est.clip;
+    return cur + this.queue.filter((t) => t.kind === 'clip' && !t.pre).length * this.est.clip;
   }
 
   /**
@@ -102,16 +114,44 @@ export class FilmService {
       this.o.log('info', 'clip_busy', { wait, queued: this.queued });
       return null;
     }
-    const job: ClipJob = { ...req, site: this.o.site, link: `https://${this.o.site}/?src=clip&l=${req.lang}` };
     onQueued?.(wait + this.est.clip);
-    return new Promise((done) => {
-      // клип ждёт игрок прямо сейчас — вперёд фильмов (фильм монтируется, пока идут итоги)
-      const i = this.queue.findIndex((t) => t.kind === 'film');
-      const task: Task = { kind: 'clip', job, done };
-      if (i < 0) this.queue.push(task);
-      else this.queue.splice(i, 0, task);
-      void this.next();
+    // клип ждёт игрок прямо сейчас — вперёд заготовок и фильмов (фильм монтируется, пока идут итоги)
+    return this.enqueue(req, false);
+  }
+
+  /**
+   * Заготовить клип выбывшего, пока он ещё не попросил (кнопка «Клип» появится через 3,4 с после
+   * удара — к нажатию клип уже готов). Только когда монтажу нечего делать: заготовка не должна
+   * задерживать тех, кто уже ждёт. null — не взялись.
+   */
+  preclip(req: Omit<ClipJob, 'site' | 'link'>): Promise<FilmDone | null> | null {
+    if (this.o.enabled && !this.o.enabled()) return null;
+    if (this.clipWait() > PRECLIP_MAX_WAIT_MS || this.queue.some((t) => t.kind === 'clip')) return null;
+    this.preclips++;
+    return this.enqueue(req, true);
+  }
+
+  /** Сколько мс ещё ждать задачу, уже стоящую в очереди или в работе (оценка). */
+  etaOf(p: Promise<FilmDone | null>, now = Date.now()): number {
+    const cur = this.busy ? Math.max(500, this.est[this.busy.kind] - (now - this.busy.since)) : 0;
+    if (this.busy?.p === p) return cur;
+    const i = this.queue.findIndex((t) => t.p === p);
+    if (i < 0) return this.est.clip;
+    return cur + this.queue.slice(0, i + 1).reduce((a, t) => a + this.est[t.kind], 0);
+  }
+
+  private enqueue(req: Omit<ClipJob, 'site' | 'link'>, pre: boolean): Promise<FilmDone | null> {
+    const job: ClipJob = { ...req, site: this.o.site, link: `https://${this.o.site}/?src=clip&l=${req.lang}` };
+    let task!: Task;
+    const p = new Promise<FilmDone | null>((done) => {
+      task = { kind: 'clip', job, done, pre };
     });
+    task.p = p;
+    const i = this.queue.findIndex((t) => t.kind === 'film' || (!pre && t.kind === 'clip' && t.pre));
+    if (i < 0) this.queue.push(task);
+    else this.queue.splice(i, 0, task);
+    void this.next();
+    return p;
   }
 
   /** Смонтировать фильм. null — не вышло (или очередь полна): клиент смонтирует сам. */
@@ -138,8 +178,8 @@ export class FilmService {
     const task = this.queue.shift();
     if (!task) return;
     const t0 = Date.now();
-    this.busy = { kind: task.kind, since: t0 };
-    const res = task.kind === 'film' ? await this.makeFilm(task.job, t0) : await this.makeClip(task.job, t0);
+    this.busy = { kind: task.kind, since: t0, p: task.p };
+    const res = task.kind === 'film' ? await this.makeFilm(task.job, t0) : await this.makeClip(task.job, t0, !!task.pre);
     if (res) this.est[task.kind] = Math.round(this.est[task.kind] * 0.7 + res.ms * 0.3);
     this.busy = null;
     task.done(res);
@@ -177,7 +217,7 @@ export class FilmService {
     }
   }
 
-  private async makeClip(job: ClipJob, t0: number): Promise<FilmDone | null> {
+  private async makeClip(job: ClipJob, t0: number, pre: boolean): Promise<FilmDone | null> {
     try {
       const { r, renderer } = await this.renderAny('clip', job, 'ultrafast');
       if (!r) return null;
@@ -185,7 +225,7 @@ export class FilmService {
       const res: FilmDone = { ...saved, ext: 'mp4', ms: Date.now() - t0 };
       this.clipsMade++;
       this.lastClipMs = res.ms;
-      this.o.log('info', 'clip_made', { ms: res.ms, render: r.renderMs, dur: r.durationMs, renderer, known: job.known, queued: this.queue.length });
+      this.o.log('info', 'clip_made', { ms: res.ms, render: r.renderMs, dur: r.durationMs, renderer, known: job.known, pre, queued: this.queue.length });
       return res;
     } catch (e) {
       this.clipsFailed++;
@@ -194,30 +234,138 @@ export class FilmService {
     }
   }
 
-  private render(kind: 'film' | 'clip', job: FilmJob | ClipJob, preset: string, native?: string): Promise<FilmRendered | null> {
+  /** Процесс монтажа: живёт между задачами (модули, шрифты и темы — один раз), гаснет после простоя. */
+  private worker: Worker | null = null;
+
+  /** Прогреть процесс монтажа заранее (начался матч): первый клип не ждёт загрузки. */
+  warm(): void {
+    if (this.o.enabled && !this.o.enabled()) return;
+    try {
+      this.ensureWorker(nativePath());
+    } catch (e) {
+      this.o.log('warn', 'film_warm_failed', { err: String(e).slice(0, 300) });
+    }
+    this.armIdle();
+  }
+
+  /** Погасить процесс монтажа (сервер выходит). */
+  stop(): void {
+    this.dropWorker();
+  }
+
+  private ensureWorker(native: string | undefined): Worker {
+    const cur = this.worker;
+    if (cur && cur.native === native && cur.jobs < WORKER_MAX_JOBS && cur.rssMb < WORKER_MAX_RSS_MB) return cur;
+    this.dropWorker();
     const w = workerPath();
-    if (!existsSync(w.path)) return Promise.reject(new Error(`нет ${w.path}`));
-    return new Promise((resolve, reject) => {
-      const child = fork(w.path, [], { execArgv: w.execArgv, serialization: 'advanced', stdio: ['ignore', 'ignore', 'inherit', 'ipc'] });
-      try {
-        if (child.pid) setPriority(child.pid, 15);
-      } catch {
-        // не дали понизить приоритет — монтаж всё равно идёт
-      }
+    if (!existsSync(w.path)) throw new Error(`нет ${w.path}`);
+    const child = fork(w.path, [], { execArgv: w.execArgv, serialization: 'advanced', stdio: ['ignore', 'ignore', 'inherit', 'ipc'] });
+    try {
+      if (child.pid) setPriority(child.pid, 15);
+    } catch {
+      // не дали понизить приоритет — монтаж всё равно идёт
+    }
+    this.workerStarts++;
+    const wk: Worker = { child, native, jobs: 0, rssMb: 0, seq: 0, wait: new Map() };
+    child.on('message', (m: WorkerReply) => {
+      const cb = wk.wait.get(m.id);
+      if (!cb) return;
+      wk.wait.delete(m.id);
+      wk.rssMb = m.rssMb ?? 0;
+      cb(m);
+    });
+    child.once('exit', (code, sig) => {
+      if (this.worker === wk) this.worker = null;
+      for (const cb of wk.wait.values()) cb({ id: -1, ok: false, err: `монтаж завершился: ${code ?? sig}` });
+      wk.wait.clear();
+    });
+    child.on('error', () => {
+      // упал при запуске — придёт exit
+    });
+    const opts: Pick<FilmRenderOpts, 'fonts' | 'native'> = { fonts: this.o.fonts, native };
+    child.send({ warm: opts } satisfies WorkerMsg);
+    hold(wk, false);
+    this.worker = wk;
+    return wk;
+  }
+
+  private dropWorker(): void {
+    const wk = this.worker;
+    this.worker = null;
+    if (!wk) return;
+    if (wk.wait.size) wk.child.kill('SIGKILL');
+    else wk.child.disconnect();
+  }
+
+  private idle: ReturnType<typeof setTimeout> | null = null;
+
+  /** Простоял без задач — погасить (память — игре и сайту). */
+  private armIdle(): void {
+    if (this.idle) clearTimeout(this.idle);
+    this.idle = setTimeout(() => {
+      this.idle = null;
+      if (!this.busy && !this.queue.length) this.dropWorker();
+    }, this.o.idleMs ?? WORKER_IDLE_MS);
+    this.idle.unref?.();
+  }
+
+  private render(kind: 'film' | 'clip', job: FilmJob | ClipJob, preset: string, native?: string): Promise<FilmRendered | null> {
+    let wk: Worker;
+    try {
+      wk = this.ensureWorker(native);
+    } catch (e) {
+      return Promise.reject(e instanceof Error ? e : new Error(String(e)));
+    }
+    wk.jobs++;
+    const id = ++wk.seq;
+    hold(wk, true);
+    return new Promise<FilmRendered | null>((resolve, reject) => {
       const timer = setTimeout(() => {
-        child.kill('SIGKILL');
+        wk.wait.delete(id);
+        // зависший процесс — в утиль, следующая задача поднимет новый
+        if (this.worker === wk) this.worker = null;
+        wk.child.kill('SIGKILL');
         reject(new Error('timeout'));
       }, kind === 'clip' ? 45_000 : (this.o.timeoutMs ?? 90_000));
-      child.once('message', (m: { ok: true; r: FilmRendered | null } | { ok: false; err: string }) => {
+      wk.wait.set(id, (m) => {
         clearTimeout(timer);
         if (m.ok) resolve(m.r ? { ...m.r, thumb: Buffer.from(m.r.thumb) } : null);
         else reject(new Error(m.err));
       });
-      child.once('exit', (code) => {
-        clearTimeout(timer);
-        reject(new Error(`монтаж завершился: ${code}`));
-      });
-      child.send({ [kind === 'clip' ? 'clip' : 'job']: job, opts: { fonts: this.o.fonts, tmp: this.o.store.dir, ffmpeg: this.o.ffmpeg, preset, native } });
+      const msg: WorkerMsg = { id, [kind === 'clip' ? 'clip' : 'job']: job, opts: { fonts: this.o.fonts, tmp: this.o.store.dir, ffmpeg: this.o.ffmpeg, preset, native } };
+      wk.child.send(msg);
+    }).finally(() => {
+      if (!wk.wait.size) hold(wk, false);
+      this.armIdle();
     });
   }
 }
+
+/** Процесс монтажа отслужил столько задач — новый (память нативных модулей не копится). */
+const WORKER_MAX_JOBS = 40;
+const WORKER_MAX_RSS_MB = 700;
+/** Без задач столько — погасить процесс монтажа. */
+const WORKER_IDLE_MS = 10 * 60_000;
+
+interface Worker {
+  child: ChildProcess;
+  native: string | undefined;
+  jobs: number;
+  rssMb: number;
+  seq: number;
+  wait: Map<number, (m: WorkerReply) => void>;
+}
+
+/** Пока процесс монтажа занят, он держит сервер (скрипт) живым; без задач — нет: выход не ждёт его. */
+function hold(wk: Worker, on: boolean): void {
+  const ch = wk.child as ChildProcess & { channel?: { ref(): void; unref(): void } | null };
+  if (on) {
+    wk.child.ref();
+    ch.channel?.ref();
+  } else {
+    wk.child.unref();
+    ch.channel?.unref();
+  }
+}
+
+type WorkerReply = { id: number; rssMb?: number } & ({ ok: true; r: FilmRendered | null } | { ok: false; err: string });
