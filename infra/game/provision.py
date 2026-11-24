@@ -115,11 +115,11 @@ def drop(s):
 
 
 def wait(sid):
-    """Ждать статуса on и публичного IPv4 (до 15 минут). Статус error — сразу (None, сервер)."""
+    """Ждать статуса on и публичного IPv4 (до 25 минут). Статус error — сразу (None, сервер)."""
     ip = None
-    asked_ip = False
+    asked_ip = 0
     last = None
-    for _ in range(90):
+    for n in range(150):
         s = api('GET', f'/servers/{sid}')['server']
         ip = ipv4(s)
         if s.get('status') != last:
@@ -129,13 +129,19 @@ def wait(sid):
             return ip, s
         if s.get('status') == 'error':
             return None, s
-        # некоторые тарифы (MSK Ultra) создаются без публичного IPv4 — заказать его
-        if s.get('status') == 'on' and not ip and not asked_ip:
-            asked_ip = True
+        # некоторые тарифы (MSK Ultra, с ноября 2026 и Нидерланды) создаются без публичного IPv4 — заказать.
+        # Отказ «abuse_prepayment_required» — Timeweb просит баланс не меньше required_balance:
+        # пробуем раз в минуту, пока владелец пополняет (до 25 минут)
+        if s.get('status') == 'on' and not ip and n >= asked_ip:
             r = api('POST', f'/servers/{sid}/ips', {'type': 'ipv4'}, soft=True)
-            print('IPv4: заказан' if '_error' not in r else f'IPv4: отказ ({r["_msg"][:200]})')
+            if '_error' not in r:
+                print('IPv4: заказан')
+                asked_ip = 10**9
+            else:
+                print(f'IPv4: отказ ({r["_msg"][:200]}) — повторю через минуту')
+                asked_ip = n + 6
         time.sleep(10)
-    print(f'::error::сервер не готов за 15 минут: {describe(s)}')
+    print(f'::error::сервер не готов за 25 минут: {describe(s)}')
     sys.exit(1)
 
 
