@@ -31,9 +31,9 @@ permissions:
   actions: read
 
 env:
-  MODE: ${{ inputs.mode || 'direct' }}
-  SW: ${{ contains(fromJSON('["switch","direct"]'), inputs.mode || 'direct') }}
-  DN: ${{ contains(fromJSON('["dns","direct"]'), inputs.mode || 'direct') }}
+  MODE: ${{ inputs.mode || 'rollback' }}
+  SW: ${{ contains(fromJSON('["switch","direct"]'), inputs.mode || 'rollback') }}
+  DN: ${{ contains(fromJSON('["dns","direct"]'), inputs.mode || 'rollback') }}
 
 jobs:
   move:
