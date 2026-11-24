@@ -37,12 +37,12 @@ export const ru = {
     ninja: { title: 'Каскадёр', text: 'удар из засады' as string | Plural },
     paranoid: {
       title: 'Параноик',
-      text: { one: '{n} удар по боту', few: '{n} удара по ботам', many: '{n} ударов по ботам', other: '{n} удара по ботам' } as string | Plural,
+      text: { one: '{n} удар мимо', few: '{n} удара мимо', many: '{n} ударов мимо', other: '{n} удара мимо' } as string | Plural,
     },
     botlike: { title: 'Чистая массовка', text: 'вне подозрений' as string | Plural },
     greedy: { title: 'Звёздная болезнь', text: 'звёзд: {n}' as string | Plural },
     kamikaze: { title: 'Вырезан первым', text: 'выбыл за {n} с' as string | Plural },
-    clairvoyant: { title: 'Голос за кадром', text: 'угадал из-за кадра' as string | Plural },
+    clairvoyant: { title: 'Голос за кадром', text: 'угадал за кадром' as string | Plural },
     topHunter: { title: 'Кастинг-директор', text: 'вырезал: {n}' as string | Plural },
   },
   names: {

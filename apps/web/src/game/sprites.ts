@@ -350,6 +350,7 @@ export function makeIcons(): { canvas: HTMLCanvasElement; names: string[] } {
 
 /**
  * Иконки наград 12×12 — по одной на награду (порядок = `AWARD_ICON_IDS`): цветные, в стиле площадки.
+ * Рисуются ×2 в тёмном окошке (night), поэтому крупные тёмные части — steel, а не dusk/ink.
  * Буквы: o ink, w white, m mist, s slate, d steel, n dusk, y yellow, a amber, r red, R wine,
  * c cyan, b blue, g green, p peach.
  */
@@ -374,15 +375,15 @@ const AWARD_ICONS: Record<AwardId, string[]> = {
   ninja: [
     '............',
     '...oooooo...',
-    '..onnnnnno..',
-    '.onnnnnnnno.',
+    '..oddddddo..',
+    '.oddddddddo.',
     'orrrrrrrrrro',
     'oRRRRRRRRRRo',
     '.oppppppppo.',
     '.opowppowpo.',
-    '.onnnnnnnnor',
-    '.onnnnnnnnoR',
-    '..onnnnnnor.',
+    '.oddddddddor',
+    '.oddddddddoR',
+    '..oddddddor.',
     '...oooooo...',
   ],
   // «Параноик»: вытаращенный глаз с красными прожилками
@@ -452,12 +453,12 @@ const AWARD_ICONS: Record<AwardId, string[]> = {
     '...omdmdo...',
     '...ommmmo...',
     '...omdmdo...',
-    '..oommmmoo..',
-    '..o.oooo.o..',
-    '..oo....oo..',
-    '...oooooo...',
-    '.....oo.....',
-    '....odd o...',
+    '.s.ommmmo.s.',
+    '.s..oooo..s.',
+    '..s......s..',
+    '...ssssss...',
+    '.....ss.....',
+    '....osso....',
     '...oooooo...',
   ],
   // «Кастинг-директор»: хлопушка
@@ -467,11 +468,11 @@ const AWARD_ICONS: Record<AwardId, string[]> = {
     'oowwoowwoowo',
     '.oooooooooo.',
     'oooooooooooo',
-    'onnnnnnnnnno',
-    'onwwwnnwwwno',
-    'onnnnnnnnnno',
-    'onwwnnnwwwno',
-    'onnnnnnnnnno',
+    'oddddddddddo',
+    'odwwwddwwwdo',
+    'oddddddddddo',
+    'odwwdddwwwdo',
+    'oddddddddddo',
     'oooooooooooo',
     '............',
   ],

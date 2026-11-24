@@ -10,13 +10,13 @@ export const en: Dict = {
     description: 'A pixel party game: hide in a crowd of bots and spot your friends before they spot you.',
   },
   awards: {
-    blindNeighbors: { title: 'Blind Neighbors', text: '{n} s side by side' },
+    blindNeighbors: { title: 'Blind Neighbors', text: '{n} s together' },
     ninja: { title: 'Stunt Double', text: 'ambush hit' },
     paranoid: { title: 'Paranoid', text: { one: '{n} bot hit', other: '{n} bot hits' } },
     botlike: { title: 'Perfect Extra', text: 'never suspected' },
     greedy: { title: 'Diva', text: 'stars: {n}' },
     kamikaze: { title: 'First Cut', text: 'out in {n} s' },
-    clairvoyant: { title: 'Voice-over', text: 'guessed off-screen' },
+    clairvoyant: { title: 'Voice-over', text: 'off-screen guess' },
     topHunter: { title: 'Casting Director', text: 'cuts: {n}' },
   },
   names: {

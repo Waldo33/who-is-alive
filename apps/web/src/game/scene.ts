@@ -2727,7 +2727,7 @@ export class GameScene extends Phaser.Scene {
       const total = this.ovText(0, y, String(sim.scores[p.pid]), 'sand', false);
       total.x = 171 - total.width;
     });
-    s.awards.forEach((a, i) => this.awardCard(16, AY + 112 + i * 42, a.id, a.pids, a.value));
+    s.awards.forEach((a, i) => this.awardCard(AY + 112 + i * 42, a.id, a.pids, a.value));
     if (!s.awards.length) this.ovText(90, AY + 130, this.t.game.noAwards, 'mist');
     // Одна главная кнопка: следующий дубль. Он начнётся сам — отсчёт идёт заливкой кнопки (у всех);
     // ускорить может только режиссёр (хост), у остальных та же кнопка — неактивной плашкой с секундами.
@@ -2797,21 +2797,32 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  private awardCard(x: number, y: number, id: AwardId, pids: string[], value: number): void {
+  /**
+   * Плашка награды во всю ширину ряда кнопок (x = 9…171): главное — крупная иконка ×2 в тёмном окошке
+   * в янтарной рамке слева, текст справа — спокойный: название песочным, имя белым, пояснение приглушённым (по 16 знаков).
+   */
+  private awardCard(y: number, id: AwardId, pids: string[], value: number): void {
+    const x = 9;
+    const W = 162;
     const def = this.t.awards[id];
     const fit = (t: string, n: number) => (t.length > n ? t.slice(0, n - 1) + '…' : t);
     const names = pids.map((pid) => this.sim.info(pid)?.name ?? '?');
     const g = this.add.graphics();
-    g.fillStyle(hexToInt(PAL.ink)).fillRect(x, y, 148, 40);
-    g.fillStyle(hexToInt(PAL.grape)).fillRect(x + 1, y + 1, 146, 38);
-    g.fillStyle(hexToInt(PAL.orchid)).fillRect(x + 1, y + 1, 146, 1);
+    g.fillStyle(hexToInt(PAL.ink)).fillRect(x, y, W, 40);
+    g.fillStyle(hexToInt(PAL.grape)).fillRect(x + 1, y + 1, W - 2, 38);
+    g.fillStyle(hexToInt(PAL.orchid)).fillRect(x + 1, y + 1, W - 2, 1);
+    // окошко иконки как медаль: тёмное, в янтарной рамке — иконка не сливается с фиолетовым
+    g.fillStyle(hexToInt(PAL.ink)).fillRect(x + 2, y + 6, 28, 28);
+    g.fillStyle(hexToInt(PAL.amber)).fillRect(x + 3, y + 7, 26, 26);
+    g.fillStyle(hexToInt(PAL.night)).fillRect(x + 4, y + 8, 24, 24);
     this.ov(g, 2010);
-    // своя иконка награды 12×12 в левом верхнем углу, заголовок — справа от неё
-    this.ov(this.add.image(x + 3, y + 2, 'awards', Math.max(0, AWARD_ICON_IDS.indexOf(id))).setOrigin(0), 2100);
-    this.ovText(x + 18, y + 4, fit(def.title, 16), 'yellow', false);
+    const frame = Math.max(0, AWARD_ICON_IDS.indexOf(id));
+    this.ov(this.add.image(x + 4, y + 8, 'awards', frame).setOrigin(0).setScale(2), 2100);
+    const tx = x + 31;
+    this.ovText(tx, y + 4, fit(def.title, 16), 'sand', false);
     const who = names.length > 1 ? names.map((n) => n.split(' ')[0]).join(this.t.game.and) : names[0];
-    this.ovText(x + 4, y + 15, fit(who, 18), 'white', false);
-    this.ovText(x + 4, y + 26, fit(tp(this.lang, def.text, value), 18), 'mist', false);
+    this.ovText(tx, y + 15, fit(who, 16), 'white', false);
+    this.ovText(tx, y + 26, fit(tp(this.lang, def.text, value), 16), 'mist', false);
   }
 
   private buildMatchEnd(): void {
@@ -2840,7 +2851,7 @@ export class GameScene extends Phaser.Scene {
       const total = this.ovText(0, y, String(m.scores[p.pid]), 'sand', false);
       total.x = 166 - total.width;
     });
-    m.awards.forEach((a, i) => this.awardCard(16, AY + 124 + i * 42, a.id, a.pids, a.value));
+    m.awards.forEach((a, i) => this.awardCard(AY + 124 + i * 42, a.id, a.pids, a.value));
     // Одна главная: «Ещё раз» у режиссёра. Матч с ИИ — вторая «С друзьями» (настоящая комната),
     // в комнате — «Поделиться» иконкой; у остальных — «Поделиться» второй кнопкой во всю ширину.
     if (this.init0.spectator) {

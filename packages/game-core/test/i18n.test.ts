@@ -19,9 +19,9 @@ describe('i18n', () => {
 
   it('множественное число', () => {
     const p = DICTS.ru.awards.paranoid.text;
-    expect(tp('ru', p, 1)).toBe('1 удар по боту');
-    expect(tp('ru', p, 3)).toBe('3 удара по ботам');
-    expect(tp('ru', p, 5)).toBe('5 ударов по ботам');
+    expect(tp('ru', p, 1)).toBe('1 удар мимо');
+    expect(tp('ru', p, 3)).toBe('3 удара мимо');
+    expect(tp('ru', p, 5)).toBe('5 ударов мимо');
     expect(tp('en', DICTS.en.awards.paranoid.text, 1)).toBe('1 bot hit');
     expect(tp('en', DICTS.en.awards.paranoid.text, 2)).toBe('2 bot hits');
   });
@@ -60,7 +60,8 @@ describe('i18n', () => {
       expect(g.action.length * 16, g.action).toBeLessThanOrEqual(176);
       for (const a of Object.values(t.awards)) {
         expect(a.title.length, `${lang}: ${a.title}`).toBeLessThanOrEqual(16);
-        expect(tp(lang, a.text, 12).length, `${lang}: ${tp(lang, a.text, 12)}`).toBeLessThanOrEqual(18);
+        // плашка награды (scene.ts › awardCard): слева крупная иконка, тексту остаётся 16 знаков
+        expect(tp(lang, a.text, 12).length, `${lang}: ${tp(lang, a.text, 12)}`).toBeLessThanOrEqual(16);
       }
       // кнопки итогов на холсте (scene.ts › addRow): ширина = 8 пикс. на знак + поля по 6, иконка 16 + зазор 4;
       // ряд — 162 пикс., «Поделиться» иконкой — 30 пикс. + зазор 2
