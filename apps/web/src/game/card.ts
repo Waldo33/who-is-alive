@@ -2,7 +2,7 @@ import { PAL, PLAYER_COLORS } from '@kto/assets';
 import { tp } from '@kto/game-core';
 import type { ArenaDef, AwardCard, Dict, Lang, PlayerInfo } from '@kto/game-core';
 import { fitSize, frame, getArt, scaledCanvas, text } from './art';
-import { CH_H, CH_W, F, OL_H, OL_W } from './sprites';
+import { AWARD_ICON, CH_H, CH_W, F, OL_H, OL_W } from './sprites';
 
 /**
  * Карточка результата матча 1080×1350 (4:5 — так её не обрезают ленты соцсетей):
@@ -90,8 +90,8 @@ export function drawResultCard(inp: CardInput): HTMLCanvasElement {
     g.fillRect(x + 1, y + 1, LW - 18, 31);
     g.fillStyle = PAL.orchid;
     g.fillRect(x + 1, y + 1, LW - 18, 1);
-    frame(g, art.icons.canvas, 8, 8, Math.max(0, crown), x + 4, y + 4);
-    text(g, fit(def.title, 18), x + 15, y + 4, PAL.yellow, font, { align: 'left', outline: null });
+    frame(g, art.awards.canvas, AWARD_ICON, AWARD_ICON, Math.max(0, art.awards.names.indexOf(a.id)), x + 3, y + 2);
+    text(g, fit(def.title, 18), x + 18, y + 4, PAL.yellow, font, { align: 'left', outline: null });
     const who = a.pids.map((pid) => byColor(pid)?.name ?? '?');
     const whoS = who.length > 1 ? who.map((n) => n.split(' ')[0]).join(t.game.and) : who[0];
     text(g, whoS, x + 4, y + 14, PAL.white, font, { align: 'left', outline: null, maxWidth: LW - 24 });

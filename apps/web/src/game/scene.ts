@@ -32,7 +32,7 @@ import type { FontColor } from './font';
 import { registerFonts } from './font';
 import {
   CH_H, CH_W, F, OL_H, OL_W,
-  makeArenaBackground, makeArrow, makeGear, makeHudIcons, makeCharacterSheets, makeHedge, makeIconSheet, makeIcons, makeMark, makePigeon,
+  makeArenaBackground, makeArrow, makeGear, makeHudIcons, makeCharacterSheets, makeHedge, makeIconSheet, makeIcons, makeAwardIcons, AWARD_ICON, AWARD_ICON_IDS, makeMark, makePigeon,
   makePoof, makeProp, makeRing, makeShadow, makeStar, makeStarFlash, makeStunStars, makeVignette,
 } from './sprites';
 import { isThemeLoaded, loadTheme, lookCount, preloadThemes, themeLook, themePack, variantOf } from './themes';
@@ -534,6 +534,7 @@ export class GameScene extends Phaser.Scene {
     const icons = makeIcons();
     this.iconNames = icons.names;
     this.addSheet('icons', icons.canvas, 8, 8);
+    this.addSheet('awards', makeAwardIcons().canvas, AWARD_ICON, AWARD_ICON);
   }
 
   /**
@@ -2793,8 +2794,9 @@ export class GameScene extends Phaser.Scene {
     g.fillStyle(hexToInt(PAL.grape)).fillRect(x + 1, y + 1, 146, 38);
     g.fillStyle(hexToInt(PAL.orchid)).fillRect(x + 1, y + 1, 146, 1);
     this.ov(g, 2010);
-    this.ov(this.add.image(x + 9, y + 9, 'icons', this.icon('crown')).setOrigin(0.5), 2100);
-    this.ovText(x + 17, y + 4, fit(def.title, 16), 'yellow', false);
+    // своя иконка награды 12×12 в левом верхнем углу, заголовок — справа от неё
+    this.ov(this.add.image(x + 3, y + 2, 'awards', Math.max(0, AWARD_ICON_IDS.indexOf(id))).setOrigin(0), 2100);
+    this.ovText(x + 18, y + 4, fit(def.title, 16), 'yellow', false);
     const who = names.length > 1 ? names.map((n) => n.split(' ')[0]).join(this.t.game.and) : names[0];
     this.ovText(x + 4, y + 15, fit(who, 18), 'white', false);
     this.ovText(x + 4, y + 26, fit(tp(this.lang, def.text, value), 18), 'mist', false);
