@@ -1,0 +1,99 @@
+# То же, что «система» в infra/game/setup.sh (содержимое файлов — байт в байт, иначе сухой прогон покажет разницу)
+- name: Пользователь game
+  ansible.builtin.user:
+    name: game
+    system: true
+    home: /opt/massovka
+    create_home: false
+    shell: /usr/sbin/nologin
+
+- name: Пользователь caddy
+  ansible.builtin.user:
+    name: caddy
+    system: true
+    home: /var/lib/caddy
+    create_home: false
+    shell: /usr/sbin/nologin
+
+- name: Папки игры
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner | default('root') }}"
+    group: "{{ item.owner | default('root') }}"
+    mode: "{{ item.mode | default('0755') }}"
+  loop:
+    - { path: /opt/massovka, owner: game }
+    - { path: /opt/massovka/releases, owner: game }
+    - { path: /var/lib/caddy, owner: caddy }
+    - { path: /etc/caddy }
+    - { path: /etc/massovka, mode: '0700' }
+
+# подкачка 1 ГБ — страховка от нехватки памяти
+- name: Подкачка — есть ли файл
+  ansible.builtin.stat:
+    path: /swapfile
+  register: swapfile
+
+- name: Подкачка — создать файл 1 ГБ
+  ansible.builtin.shell: fallocate -l 1G /swapfile && chmod 600 /swapfile && mkswap /swapfile >/dev/null
+  when: not swapfile.stat.exists
+
+- name: Подкачка — включена ли
+  ansible.builtin.command: swapon --show=NAME --noheadings
+  register: swaps
+  changed_when: false
+  check_mode: false
+
+- name: Подкачка — включить
+  ansible.builtin.command: swapon /swapfile
+  when: "'/swapfile' not in swaps.stdout"
+
+- name: Подкачка — в fstab
+  ansible.builtin.lineinfile:
+    path: /etc/fstab
+    regexp: '^/swapfile'
+    line: /swapfile none swap sw 0 0
+
+- name: Сеть — много соединений
+  ansible.builtin.copy:
+    src: 90-massovka-sysctl.conf
+    dest: /etc/sysctl.d/90-massovka.conf
+    mode: '0644'
+  notify: sysctl
+
+- name: SSH только по ключу
+  ansible.builtin.copy:
+    src: 90-massovka-sshd.conf
+    dest: /etc/ssh/sshd_config.d/90-massovka.conf
+    mode: '0644'
+  notify: ssh
+
+- name: Файрвол — какие правила есть
+  ansible.builtin.command: ufw status
+  register: ufw
+  changed_when: false
+  check_mode: false
+  failed_when: false
+
+- name: Файрвол — 22, 80, 443 (tcp) и 443 (udp, HTTP/3)
+  ansible.builtin.command: "ufw allow {{ item }}"
+  loop: [22/tcp, 80/tcp, 443/tcp, 443/udp]
+  when: "ufw.rc == 0 and (item ~ ' ') not in ufw.stdout"
+
+- name: Файрвол — включить
+  ansible.builtin.command: ufw --force enable
+  when: "ufw.rc == 0 and 'Status: active' not in ufw.stdout"
+
+- name: Журнал — папка настроек
+  ansible.builtin.file:
+    path: /etc/systemd/journald.conf.d
+    state: directory
+    mode: '0755'
+
+- name: Журнал не больше 500 МБ
+  ansible.builtin.copy:
+    src: 90-massovka-journald.conf
+    dest: /etc/systemd/journald.conf.d/90-massovka.conf
+    mode: '0644'
+  notify: journald
