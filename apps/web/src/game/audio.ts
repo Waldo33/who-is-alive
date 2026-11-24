@@ -259,6 +259,11 @@ export class Audio {
     if (this.musicEnabled) this.music?.resume();
   }
 
+  /** Леший рядом: песня темы замолкает (у всех одинаково). */
+  setHush(on: boolean): void {
+    this.music?.setHush(on);
+  }
+
   /** Ночь темы с рассудком 0–1 (общая для всех, не свой рассудок). */
   setDread(v: number): void {
     this.music?.setDread(v);

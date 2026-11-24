@@ -9,7 +9,7 @@ import type { ActKind, CrowdKind, Dir, EmoteKind, EntitySpawn, WorldEvent } from
 
 import { NavGrid } from './nav';
 import { Rng } from './rng';
-import { fireLevel, nightLevel, sanityDrain } from './sanity';
+import { fireLevel, leshySec, nightLevel, playLenSec, sanityDrain } from './sanity';
 import { ROTATION_THEMES, THEME_COUNT, hasSanity, killerExposed, themeRules, twistEmote } from './themes';
 import { ROUND_MODS, roundMod } from './mods';
 import { World } from './world';
@@ -82,6 +82,8 @@ export interface PlayerRound {
   kiki: Kiki[];
   /** Раньше этого времени мира новая кикимора не появится. */
   kikiNextAt: number;
+  /** «Факел!» вовремя: до этого времени мира в руке горит факел (рассудок растёт, кикиморы не подходят). */
+  torchUntil: number;
 }
 
 /** Кикимора — кошмар одного игрока: появляется из воды (`at` — когда вылезет), идёт к нему, касание — вырезан. */
@@ -196,6 +198,8 @@ export class MatchSim {
   private forcedKind: CrowdKind | null = null;
   private moodOn = false;
   private crowdCount = 0;
+  /** Леший в этом дубле уже прошёл (тема с рассудком). */
+  private leshyFired = false;
   private hardChecked = -1;
   crowdShowTimes: number[] = [];
   zoneStarted = false;
@@ -350,6 +354,7 @@ export class MatchSim {
       sanityMin: this.cfg.sanityStart,
       kiki: [],
       kikiNextAt: 0,
+      torchUntil: 0,
     }));
     this.bots = new BotBrain(this.world, this.cfg, new Rng(rng.fork()), (ev) => this.emit(ev), themeRules(this.theme).twist);
     const pset = new Set(playerEids);
@@ -385,10 +390,11 @@ export class MatchSim {
   }
 
   private beginPlay(): void {
-    this.setPhase('play', this.cfg.roundSec * 1000);
+    this.setPhase('play', playLenSec(this.cfg, this.theme) * 1000);
     this.playStart = this.world.time;
-    this.plannedPlayEnd = this.playStart + this.cfg.roundSec * 1000;
+    this.plannedPlayEnd = this.playStart + playLenSec(this.cfg, this.theme) * 1000;
     this.crowdCount = 0;
+    this.leshyFired = false;
     this.hardChecked = -1;
     this.scheduleCrowd(this.playStart);
     // звёзды выходят по одной: сначала starsAtStart, остальные — с шагом появления
@@ -542,6 +548,11 @@ export class MatchSim {
       if (!p.alive) continue;
       if (p.crowdAnswered === c.warnAt && p.crowdPick === c.kind && !p.crowdLate) {
         this.addSanity(p, cfg.sanityGesture); // толпа успокаивает (только в теме с рассудком)
+        if (hasSanity(this.theme) && !c.vote) {
+          // купальские обряды: факел в руке; хоровод рядом с другими танцующими лечит сильнее
+          if (c.kind === 'jump') p.torchUntil = c.windowEnd + cfg.torchMs;
+          else if (c.kind === 'dance' && this.danceNear(p.eid, c.showAt, c.windowEnd) >= cfg.danceRingMin) this.addSanity(p, cfg.danceRing);
+        }
         continue;
       }
       this.addSanity(p, -cfg.sanitySlip);
@@ -566,6 +577,24 @@ export class MatchSim {
     }
   }
 
+  /** Сколько фигур рядом станцевали «Хоровод» в окне команды (по событиям `act`, у всех одинаково). */
+  private danceNear(eid: number, from: number, to: number): number {
+    const me = this.world.get(eid);
+    if (!me) return 0;
+    const dancers = new Set<number>();
+    const log = this.world.log;
+    for (let i = log.length - 1; i >= 0 && log[i].at >= from - 5000; i--) {
+      const ev = log[i];
+      if (ev.t === 'act' && ev.kind === 'dance' && ev.at >= from && ev.at <= to && ev.eid !== eid) dancers.add(ev.eid);
+    }
+    let n = 0;
+    for (const id of dancers) {
+      const o = this.world.get(id);
+      if (o?.alive && Math.hypot(o.x - me.x, o.y - me.y) <= this.cfg.sanityCrowdRadius) n++;
+    }
+    return n;
+  }
+
   private emit(ev: WorldEvent): void {
     this.world.push(ev);
   }
@@ -580,7 +609,15 @@ export class MatchSim {
       this.moodOn = true;
       this.bots.setMood(this.nextVote, t, this.nextCrowdAt);
     }
-    if (t >= this.nextCrowdAt && this.crowdCanStart(t)) {
+    // Леший: в свою секунду — «Тсс!»; перед ней обычных команд нет, чтобы он пришёл вовремя (sanity.ts › leshySec)
+    const clock = playLenSec(cfg, this.theme) * 1000 - (this.plannedPlayEnd - t);
+    const lesh = hasSanity(this.theme) && !this.leshyFired ? leshySec(this.round) * 1000 : Infinity;
+    if (clock >= lesh && this.crowdCanStart(t)) {
+      this.leshyFired = true;
+      this.fireCrowd('freeze', false);
+    }
+    const leshyNear = clock >= lesh - (cfg.leshyLeadSec + 6) * 1000;
+    if (!leshyNear && t >= this.nextCrowdAt && this.crowdCanStart(t)) {
       if (this.nextVote) this.fireCrowd(this.nextVote, true, this.nextGhost);
       else this.fireCrowd(this.forcedKind ?? this.rng.pick<CrowdKind>(['freeze', 'jump', 'dance']), false);
     }
@@ -738,6 +775,7 @@ export class MatchSim {
       const e = this.world.get(p.eid)!;
       let rate: number;
       if (fire > 0 && Math.hypot(e.x - fx, e.y - fy) <= cfg.sanityFireRadius) rate = cfg.sanityFireGain * fire;
+      else if (t < p.torchUntil) rate = cfg.sanityFireGain;
       else {
         rate = -sanityDrain(cfg, sec) * Math.max(0.4, 1 - cfg.sanityFlowerSlow * p.stars);
         let near = 0;
@@ -800,6 +838,13 @@ export class MatchSim {
       const dy = e.y - k.y;
       const d = Math.hypot(dx, dy);
       const step = (speed * TICK_MS) / 1000;
+      // факел в руке: кикимора не подходит ближе света и пятится
+      if (t < p.torchUntil && d < cfg.torchRadius) {
+        k.x -= (dx / (d || 1)) * step;
+        k.y -= (dy / (d || 1)) * step;
+        continue;
+      }
+      if (t < p.torchUntil && d - step < cfg.torchRadius) continue;
       if (d > step) {
         k.x += (dx / d) * step;
         k.y += (dy / d) * step;

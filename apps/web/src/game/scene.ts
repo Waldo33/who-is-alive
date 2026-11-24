@@ -15,6 +15,8 @@ import {
   hasSanity,
   sanityStage,
   nightLevel,
+  playLenSec,
+  leshySec,
   fireLevel,
 } from '@kto/game-core';
 import type { AwardId, ClientSession, CrowdKind, Dict, Entity, GameConfig, Lang, Moment, Notice, RoundSummary, ThemeText, World, WorldEvent } from '@kto/game-core';
@@ -205,8 +207,7 @@ export class GameScene extends Phaser.Scene {
   /** Мигалка «звёзд розыска»: время начала. */
   private siren = 0;
   /** Ночь темы с `night` («Купальская ночь»): вуаль с просветом у костра и сплошная — когда костёр прогорел. */
-  private nightVeil!: Phaser.GameObjects.Image;
-  private nightFull!: Phaser.GameObjects.Rectangle;
+  private nightVeil!: Phaser.GameObjects.RenderTexture;
   /** Рассудок (тема с рассудком): тьма по краям своего экрана, свеча на панели, стадия и «сердце». */
   private madVeil!: Phaser.GameObjects.Image;
   private candleG!: Phaser.GameObjects.Graphics;
@@ -221,6 +222,18 @@ export class GameScene extends Phaser.Scene {
   /** «Краем глаза»: в «Мороке» и «Кошмаре» тень мелькает у края своего экрана и пропадает. */
   private glimpse!: Phaser.GameObjects.Image;
   private glimpseAt = 0;
+  /** «Факел!» вовремя: у кого (eid) и до какого времени мира горит факел — по событиям `act`, у всех одинаково. */
+  private torches = new Map<number, number>();
+  private torchG!: Phaser.GameObjects.Graphics;
+  /** «Тсс!»: огромная тень ползёт по лугу в стоп-кадре. */
+  private giant!: Phaser.GameObjects.Image;
+  private giantFor = -1;
+  private giantT0 = 0;
+  /** Леший этого дубля: шаги до «Тсс!» (sanity.ts › leshySec), выдох над лугом, шаги прочь. */
+  private leshy = { round: -1, stage: 'wait' as 'wait' | 'near' | 'over' | 'leave' | 'done', nextAt: 0, steps: 0, warn: -1 };
+  /** Галлюцинация на «Мороке»: у фигуры (индекс) на миг вместо лица — тьма и белые глаза. */
+  private halluc: { idx: number; until: number } | null = null;
+  private hallucAt = 0;
   private glimpseOff = 0;
   private heartAt = 0;
   private pigeons: Pigeon[] = [];
@@ -345,6 +358,7 @@ export class GameScene extends Phaser.Scene {
     this.views = [];
     this.starSprites.clear();
     this.kikiViews.clear();
+    this.torches.clear();
     this.hedges = [];
     this.props = [];
     this.pigeons = [];
@@ -458,8 +472,10 @@ export class GameScene extends Phaser.Scene {
     // ночь «Купальской ночи»: под интерфейсом и прожектором, над фигурами; у своего рассудка — края темнеют
     if (!this.textures.exists('nightveil')) this.textures.addCanvas('nightveil', makeNightVeil());
     if (!this.textures.exists('madveil')) this.textures.addCanvas('madveil', makeMadVeil());
-    this.nightVeil = this.add.image(0, AY, 'nightveil').setOrigin(0, 0).setDepth(940).setVisible(false);
-    this.nightFull = this.add.rectangle(0, AY, 180, 260, hexToInt(PAL.night), 1).setOrigin(0, 0).setDepth(941).setVisible(false);
+    // ночь — одна текстура: вуаль, полная тьма, когда костёр прогорел, и просветы вокруг факелов
+    if (!this.textures.exists('torchhole')) this.textures.addCanvas('torchhole', makeTorchHole());
+    this.nightVeil = this.add.renderTexture(0, AY, 180, 260).setOrigin(0, 0).setDepth(940).setVisible(false);
+    this.torchG = this.add.graphics().setDepth(943);
     this.madVeil = this.add.image(0, AY, 'madveil').setOrigin(0, 0).setDepth(945).setVisible(false);
     this.candleG = this.add.graphics().setDepth(1100);
     // кикиморы — поверх тьмы краёв: выходят из неё
@@ -986,6 +1002,11 @@ export class GameScene extends Phaser.Scene {
 
   private onWorldEvent(ev: WorldEvent): void {
     const myEid = this.me()?.eid;
+    if (ev.t === 'act' && ev.kind === 'jump' && hasSanity(this.sim.theme)) {
+      // «Факел!» вовремя — факел в руке; опоздавшему не достаётся (та же улика, что и сейчас)
+      const c = this.sim.world.crowd;
+      if (c && !c.vote && c.kind === 'jump' && ev.at >= c.showAt && ev.at <= c.windowEnd) this.torches.set(ev.eid, c.windowEnd + this.cfg.torchMs);
+    }
     switch (ev.t) {
       case 'hit':
         // ночью Майами — удар оружием: звук, тряска и стоп-кадр — в момент удара (weaponImpact)
@@ -1022,7 +1043,7 @@ export class GameScene extends Phaser.Scene {
         if (ev.eid === myEid) this.myStarsTaken = Math.min(3, this.myStarsTaken + 1);
         this.audio.play('starTake', ev.eid === myEid ? this.myStarsTaken : 0);
         if (ev.eid === myEid) haptic('success');
-        if (ev.eid !== myEid && this.sim.phase === 'play') this.tip('star');
+        if (ev.eid !== myEid && this.sim.phase === 'play' && !hasSanity(this.sim.theme)) this.tip('star');
         if (themePack(this.sim.theme).starSiren && this.sim.phase === 'play') {
           this.audio.play('siren');
           this.siren = performance.now();
@@ -1812,7 +1833,7 @@ export class GameScene extends Phaser.Scene {
   /** Сколько секунд идёт игра дубля (0 — отсчёт и между дублями). */
   private playSec(): number {
     if (this.sim.phase !== 'play') return 0;
-    return Math.max(0, this.cfg.roundSec - this.sim.timeLeft() / 1000);
+    return Math.max(0, playLenSec(this.cfg, this.sim.theme) - this.sim.timeLeft() / 1000);
   }
 
   /**
@@ -1823,9 +1844,10 @@ export class GameScene extends Phaser.Scene {
   private renderNight(): void {
     const ph = this.sim.phase;
     const on = themePack(this.sim.theme).night && isThemeLoaded(this.sim.theme) && (ph === 'play' || ph === 'countdown');
+    this.torchG.clear();
+    this.renderLeshy();
     if (!on) {
       this.nightVeil.setVisible(false);
-      this.nightFull.setVisible(false);
       return;
     }
     const sec = this.playSec();
@@ -1833,8 +1855,119 @@ export class GameScene extends Phaser.Scene {
     const fire = fireLevel(this.cfg, sec);
     // костёр мерцает: просвет чуть дышит
     const flick = fire > 0 ? 0.04 * Math.sin(performance.now() / 90) : 0;
-    this.nightVeil.setVisible(true).setAlpha(Math.max(0, n + flick));
-    this.nightFull.setVisible(fire < 1).setAlpha(n * (1 - fire) * 0.85);
+    const rt = this.nightVeil.setVisible(true);
+    rt.clear();
+    rt.draw('nightveil', 0, 0, Math.max(0, Math.min(1, n + flick)));
+    if (fire < 1) rt.fill(hexToInt(PAL.night), n * (1 - fire) * 0.85);
+    // факелы: вокруг носителя ночь отступает (у всех одинаково — факел достают и боты)
+    const w = this.sim.world;
+    const now = performance.now();
+    const g = this.torchG;
+    for (const [eid, until] of this.torches) {
+      const e = w.get(eid);
+      if (!e?.alive || w.time >= until) {
+        this.torches.delete(eid);
+        continue;
+      }
+      const left = until - w.time;
+      // догорает: свет мигает последние 2 с
+      if (left < 2000 && Math.floor(now / 120) % 3 === 0) continue;
+      const r = this.cfg.torchRadius;
+      const x = Math.round(e.x);
+      const y = Math.round(e.y) - 10;
+      rt.erase('torchhole', x - r, y - r);
+      // сам факел в руке — пока не идёт поза «Факел!» (там он над головой)
+      if (e.act === 'jump' && w.time < e.actEnd) continue;
+      const tx = x + 4;
+      const ty = AY + Math.round(e.y) - 9;
+      g.fillStyle(hexToInt(PAL.ink)).fillRect(tx - 1, ty - 1, 3, 6);
+      g.fillStyle(hexToInt(PAL.umber)).fillRect(tx, ty, 1, 4);
+      const fl = Math.floor(now / 110 + eid) % 3;
+      g.fillStyle(hexToInt(PAL.orange)).fillRect(tx - (fl === 1 ? 1 : 0), ty - 3, 2, 3);
+      g.fillStyle(hexToInt(PAL.yellow)).fillRect(tx, ty - 2 - (fl === 2 ? 1 : 0), 1, 2);
+    }
+    this.renderGiant();
+  }
+
+  /**
+   * Леший (как великан в хорроре: громкость шага — это расстояние). За `leshyLeadSec` до своей секунды
+   * его шаги слышны у всех, всё ближе, песня замолкает; потом команда «Тсс!» — в стоп-кадре он над лугом:
+   * тень, выдох, самый тяжёлый шаг. Потом три шага прочь. Звук общий: время дубля у всех одно.
+   */
+  private renderLeshy(): void {
+    const L = this.leshy;
+    const sim = this.sim;
+    if (!hasSanity(sim.theme) || sim.phase !== 'play') {
+      if (L.stage !== 'wait' && L.stage !== 'done') this.audio.setHush(false);
+      if (sim.phase !== 'play') L.round = -1;
+      return;
+    }
+    if (L.round !== sim.round) Object.assign(L, { round: sim.round, stage: 'wait', nextAt: 0, steps: 0, warn: -1 });
+    const now = performance.now();
+    const clock = this.playSec();
+    const lesh = leshySec(sim.round);
+    const lead = this.cfg.leshyLeadSec;
+    const c = sim.world.crowd;
+    if (L.stage === 'wait' && clock >= lesh - lead && clock < lesh + 4) {
+      L.stage = 'near';
+      this.audio.setHush(true);
+    }
+    if (L.stage === 'near') {
+      if (c && c.kind === 'freeze' && !c.vote && sim.world.time >= c.showAt && sim.world.time < c.resumeAt) {
+        L.stage = 'over';
+        L.warn = c.warnAt;
+        this.audio.play('leshyStep', 10);
+        this.audio.play('leshyBreath');
+        this.cameras.main.shake(400, 0.012);
+        haptic('heavy');
+      } else if (now >= L.nextAt) {
+        const k = Math.max(0, Math.min(9, Math.round(((clock - (lesh - lead)) / lead) * 9)));
+        this.audio.play('leshyStep', k);
+        if (k >= 5) this.cameras.main.shake(120, 0.002 + k * 0.0006);
+        L.nextAt = now + 1150 - k * 40;
+        if (clock > lesh + 6) {
+          L.stage = 'done';
+          this.audio.setHush(false);
+        }
+      }
+    } else if (L.stage === 'over' && c && sim.world.time >= c.resumeAt + 600) {
+      L.stage = 'leave';
+      L.steps = 0;
+      L.nextAt = now;
+    } else if (L.stage === 'leave' && now >= L.nextAt) {
+      this.audio.play('leshyStep', 6 - L.steps * 2);
+      L.steps++;
+      L.nextAt = now + 1200;
+      if (L.steps >= 3) {
+        L.stage = 'done';
+        this.audio.setHush(false);
+      }
+    }
+  }
+
+  /** Леший над лугом: в стоп-кадре его «Тсс!» по лугу ползёт огромная тень — у всех одна и та же. */
+  private renderGiant(): void {
+    const w = this.sim.world;
+    const c = w.crowd;
+    const on = hasSanity(this.sim.theme) && this.sim.phase === 'play' && !!c && c.warnAt === this.leshy.warn && w.time >= c.showAt && w.time < c.resumeAt + 400;
+    if (!on || !c) {
+      this.giant?.setVisible(false);
+      return;
+    }
+    if (!this.giant) this.giant = this.add.image(0, 0, 'kikimora', 0).setOrigin(0.5, 1).setScale(4).setDepth(944).setTintFill(hexToInt(PAL.ink));
+    if (this.giantFor !== c.warnAt) {
+      this.giantFor = c.warnAt;
+      this.giantT0 = performance.now();
+    }
+    const dur = Math.max(800, c.resumeAt - c.showAt + 400);
+    const k = Math.min(1, (performance.now() - this.giantT0) / dur);
+    const dir = c.warnAt % 2 ? 1 : -1;
+    const x = 90 + dir * (-150 + 300 * k);
+    this.giant
+      .setVisible(true)
+      .setPosition(Math.round(x), AY + 200)
+      .setFrame(Math.floor(performance.now() / 260) % 4)
+      .setAlpha(0.45 * Math.sin(Math.PI * k));
   }
 
   /**
@@ -1960,6 +2093,25 @@ export class GameScene extends Phaser.Scene {
       this.glimpseAt = now + (stage >= 3 ? 2500 : 5000) + Math.random() * 3000;
       this.glimpseOff = now + 160;
     } else if (this.glimpse.visible && (now > this.glimpseOff || stage < 2)) this.glimpse.setVisible(false);
+    // галлюцинации: у случайной фигуры рядом на миг вместо лица — тьма и белые глаза (только у себя)
+    if (stage >= 2 && now >= this.hallucAt) {
+      const w = this.sim.world;
+      const mine = me ? w.get(me.eid) : undefined;
+      const near = w.entities
+        .map((e, i) => ({ e, i }))
+        .filter(({ e }) => e.alive && mine && e.eid !== mine.eid && Math.hypot(e.x - mine.x, e.y - mine.y) < 70);
+      if (near.length) this.halluc = { idx: near[Math.floor(Math.random() * near.length)].i, until: now + 260 };
+      this.hallucAt = now + (stage >= 3 ? 1800 : 4000) + Math.random() * 2500;
+    }
+    if (this.halluc && (now > this.halluc.until || stage < 2)) this.halluc = null;
+    if (this.halluc) {
+      const v = this.views[this.halluc.idx];
+      if (v?.spr.visible) {
+        v.spr.setTintFill(hexToInt(PAL.ink));
+        g.fillStyle(hexToInt(PAL.white));
+        g.fillRect(Math.round(v.spr.x) - 3, Math.round(v.spr.y) - 11, 1, 2).fillRect(Math.round(v.spr.x) + 2, Math.round(v.spr.y) - 11, 1, 2);
+      }
+    }
     for (const [id, v] of this.kikiViews) {
       if (!seen.has(id) || !on) {
         // изгнана или растворилась — тает клочьями тумана
@@ -2792,7 +2944,8 @@ export class GameScene extends Phaser.Scene {
     const sim = this.sim;
     const left = sim.timeLeft();
     const sec = Math.ceil(left / 1000);
-    const showTimer = !this.tut && (sim.phase === 'play' || sim.phase === 'accuse' || sim.phase === 'countdown');
+    // с рассудком таймера нет: ночь идёт до последнего живого
+    const showTimer = !this.tut && !(hasSanity(sim.theme) && sim.phase === 'play') && (sim.phase === 'play' || sim.phase === 'accuse' || sim.phase === 'countdown');
     this.hud.timer.setText(this.tut ? '' : showTimer ? `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}` : tp(this.lang, this.t.game.roundShort, sim.round));
     // последние 10 с — coral и мигание в такт секунде
     const hurry = sim.phase === 'play' && sec <= 10 && !this.tut;
@@ -3662,6 +3815,19 @@ function makeKikimora(): HTMLCanvasElement {
       for (let x = 0; x < r.length; x++) if (r[x] !== '.') ppx(g, f * KIKI_W + x, y, col[r[x]]);
     }),
   );
+  return c;
+}
+
+/** Просвет факела в ночи: стирает вуаль — сплошь в середине, решёткой к краю (как вуаль у костра). */
+function makeTorchHole(): HTMLCanvasElement {
+  const R = 24;
+  const { c, g } = canvas(R * 2, R * 2);
+  for (let y = 0; y < R * 2; y++) {
+    for (let x = 0; x < R * 2; x++) {
+      const d = Math.hypot(x - R + 0.5, y - R + 0.5);
+      if (d < 14 || (d < 19 && (x + y) % 2 === 0) || (d < R && x % 2 === 0 && y % 2 === 0)) ppx(g, x, y, PAL.ink);
+    }
+  }
   return c;
 }
 

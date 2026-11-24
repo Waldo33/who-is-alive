@@ -5,7 +5,7 @@
 export type Sfx =
   | 'step' | 'hitPlayer' | 'hitBot' | 'poof' | 'starTake' | 'starSpawn' | 'crowd' | 'tick'
   | 'click' | 'ready' | 'accuseRight' | 'accuseWrong' | 'fanfare' | 'sad' | 'hedge' | 'pigeon' | 'drum' | 'denied' | 'count' | 'swing' | 'flicker' | 'dusk' | 'siren' | 'whack' | 'clang' | 'stab' | 'knockedOut'
-  | 'hitOther' | 'cut' | 'clap' | 'logo' | 'wrap' | 'unmask' | 'rewind';
+  | 'hitOther' | 'cut' | 'clap' | 'logo' | 'wrap' | 'unmask' | 'rewind' | 'leshyStep' | 'leshyBreath';
 
 /**
  * Приоритет эффекта (звуковой гайд, план звука): P1 — меняет решение игрока, обязан пробиться
@@ -13,7 +13,7 @@ export type Sfx =
  * на поле (−35…−39 дБ, глушит на 4 дБ); остальное — фон. Уровни проверяет `pnpm --filter web sound-check`.
  */
 export const P1: ReadonlySet<Sfx> = new Set<Sfx>(['hitPlayer', 'hitBot', 'starTake', 'crowd', 'ready', 'knockedOut', 'cut', 'drum', 'accuseRight', 'accuseWrong', 'unmask', 'wrap', 'logo']);
-export const P2: ReadonlySet<Sfx> = new Set<Sfx>(['hitOther', 'whack', 'clang', 'stab', 'starSpawn', 'flicker', 'dusk']);
+export const P2: ReadonlySet<Sfx> = new Set<Sfx>(['hitOther', 'whack', 'clang', 'stab', 'starSpawn', 'flicker', 'dusk', 'leshyBreath']);
 
 /**
  * Частые звуки: каждый раз чуть другие (±30 центов, ±1,5 дБ), чтобы за три матча не стать
@@ -126,6 +126,28 @@ export class Synth {
         this.tone('square', 466, 456, 0.3, 0.1, 0.08);
         break;
       case 'poof': this.noise(0.3, 0.3, 2400); break;
+      // Леший идёт («Купальская ночь»): шаг великана — глухой удар, хруст сучьев сверху, гул земли следом.
+      // step 0–10 — насколько близко: далёкий шаг тихий и тупой, близкий — с треском. Слышат все одинаково.
+      case 'leshyStep': {
+        const k = Math.min(1, (step + 1) / 11);
+        const v = 0.12 + 0.88 * k * k;
+        this.tone('square', 150, 48, 0.32, 0.36 * v);
+        this.tone('square', 420, 160, 0.2, 0.22 * v);
+        this.noise(0.28, 1 * v, 720);
+        this.noise(0.16, 1 * v, 1150, 0.005);
+        this.noise(0.06, 0.7 * v * (0.3 + k), 1900, 0.01);
+        if (k > 0.6) this.tone('triangle', 980, 720, 0.09, 0.14 * v, 0.05);
+        // земля гудит ещё миг
+        this.noise(0.5, 0.3 * v, 520, 0.12);
+        break;
+      }
+      // Леший над лугом: долгий хриплый выдох и низкий стон
+      case 'leshyBreath':
+        this.swell(1.8, 0.32, 650, 0, 0.5);
+        this.swell(1.6, 0.14, 1900, 0.1, 0.4);
+        this.tone('sawtooth', 112, 84, 1.6, 0.12);
+        this.tone('square', 224, 168, 1.4, 0.05);
+        break;
       // ночь Майами: бита — треск дерева, труба — звон металла, нож — свист и тычок;
       // бас — опора, слышно на телефоне то, что сверху
       case 'whack':
@@ -326,6 +348,26 @@ export class Synth {
     o.connect(g).connect(out ?? this.out);
     o.start(t);
     o.stop(t + dur + 0.02);
+  }
+
+  /** Шум с медленной атакой (дыхание, ветер): нарастает за `rise` доли длины, потом гаснет. */
+  private swell(dur: number, vol: number, freq: number, when = 0, rise = 0.4): void {
+    const ctx = this.ctx;
+    const t = ctx.currentTime + this.base + when;
+    const s = ctx.createBufferSource();
+    s.buffer = this.noiseBuf;
+    s.loop = true;
+    const f = ctx.createBiquadFilter();
+    f.type = 'bandpass';
+    f.frequency.value = freq * this.det;
+    f.Q.value = 0.8;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(vol * this.lvl, t + dur * rise);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    s.connect(f).connect(g).connect(this.out);
+    s.start(t, Math.random() * 0.5);
+    s.stop(t + dur + 0.05);
   }
 
   private noise(dur: number, vol: number, freq: number, when = 0, out?: AudioNode): void {

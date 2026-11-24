@@ -170,4 +170,39 @@ describe('рассудок («Купальская ночь»)', () => {
     expect(sim.summary?.points.a.stars).toBe(cfg.points.stars);
     expect(sim.summary?.points.b.stars).toBe(0);
   });
+
+  it('факел: рассудок растёт, кикимора не подходит ближе света; «Факел!» вовремя зажигает его', () => {
+    const cfg = makeConfig({ fixedTheme: KUPALA, endWhenLastAlive: false });
+    const sim = new MatchSim(cfg, players, 21);
+    toPlay(sim);
+    for (let i = 0; i < 20 * 50; i++) sim.tick(); // глухая ночь, костёр прогорел
+    const p = sim.pr[0];
+    p.sanity = 20;
+    sim.tick();
+    const k = p.kiki[0];
+    expect(k).toBeDefined();
+    p.torchUntil = sim.world.time + 5000;
+    const e = sim.world.get(p.eid)!;
+    k.x = e.x + 10;
+    k.y = e.y;
+    k.at = 0;
+    const s0 = p.sanity;
+    for (let i = 0; i < 20; i++) sim.tick();
+    expect(p.alive).toBe(true);
+    expect(p.sanity).toBeGreaterThan(s0);
+    const e2 = sim.world.get(p.eid)!;
+    expect(Math.hypot(k.x - e2.x, k.y - e2.y)).toBeGreaterThan(10);
+
+    // команда «Факел!»: кто повторил вовремя — с факелом
+    const sim2 = new MatchSim(makeConfig({ fixedTheme: KUPALA, endWhenLastAlive: false }), players, 5);
+    toPlay(sim2);
+    let lit = false;
+    for (let i = 0; i < 20 * 70 && !lit; i++) {
+      const c = sim2.world.crowd;
+      if (c && !c.vote && c.kind === 'jump' && sim2.world.time >= c.showAt + 100 && sim2.pr[0].crowdAnswered !== c.warnAt) sim2.intent('a', { k: 'crowd', kind: 'jump' });
+      sim2.tick();
+      lit = sim2.pr[0].torchUntil > sim2.world.time;
+    }
+    expect(lit).toBe(true);
+  });
 });

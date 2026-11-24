@@ -1,4 +1,5 @@
 import type { GameConfig } from './config';
+import { hasSanity } from './themes';
 
 /**
  * Рассудок («Купальская ночь», themes.ts › sanity). Шкала 0–100 у каждого живого игрока, у ботов её нет.
@@ -28,6 +29,23 @@ export function sanityDrain(cfg: GameConfig, sec: number): number {
 /** Насколько темно через `sec` секунд дубля: 0 — светлые сумерки, 1 — глухая ночь (плавно). */
 export function nightLevel(cfg: GameConfig, sec: number): number {
   return Math.max(0, Math.min(1, sec / cfg.sanityNightSec));
+}
+
+/**
+ * Длина дубля по плану, с. В теме с рассудком таймера нет: ночь идёт, пока в живых не останется один,
+ * `nightMaxSec` — только потолок на всякий случай (тогда к концу сужается изгородь).
+ */
+export function playLenSec(cfg: GameConfig, theme: number): number {
+  return hasSanity(theme) ? cfg.nightMaxSec : cfg.roundSec;
+}
+
+/**
+ * Леший проходит мимо: на какой секунде «часов дубля» (playLenSec − осталось, без пауз стоп-кадров) он над
+ * лугом — тогда ядро даёт команду «Тсс!». За `leshyLeadSec` до этого у всех слышны его шаги. Зависит
+ * только от номера дубля, поэтому клиент знает это сам — без новых сообщений по сети.
+ */
+export function leshySec(round: number): number {
+  return 34 + ((round * 5) % 4) * 4;
 }
 
 /** Горит ли костёр (и сколько от него осталось, 0–1): к глухой ночи прогорает. */

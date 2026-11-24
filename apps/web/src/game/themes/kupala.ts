@@ -462,6 +462,12 @@ const song: Song = {
   step(a: SongApi, st: SongStep) {
     const { s16: s, bar, t, dt, intensity: I } = st;
     const D = st.dread ?? 0;
+    // Леший рядом: всё замолкает, только сердце — тишина страшнее музыки
+    if (st.hush) {
+      if (s === 0 || s === 3) a.kick(t, s === 0 ? 0.3 : 0.2, 120);
+      if (s === 8 || s === 11) a.kick(t, s === 8 ? 0.26 : 0.18, 120);
+      return;
+    }
     const ch = bar % 4;
     const root = ROOTS[ch];
     // расстройка шкатулки: в сумерках чуть-чуть, к ночи — на четверть тона и гуляет

@@ -17,6 +17,7 @@ const SFX: Sfx[] = [
   'step', 'hitPlayer', 'hitBot', 'poof', 'starTake', 'starSpawn', 'crowd', 'tick', 'click', 'ready',
   'accuseRight', 'accuseWrong', 'fanfare', 'sad', 'hedge', 'pigeon', 'drum', 'denied', 'count', 'swing',
   'flicker', 'dusk', 'siren', 'whack', 'clang', 'stab', 'knockedOut', 'hitOther', 'cut', 'clap', 'logo', 'wrap', 'unmask', 'rewind',
+  'leshyStep', 'leshyBreath',
 ];
 
 // ── поддельные часы: Music планирует ноты по setInterval, в офлайне его крутим сами ──
@@ -144,7 +145,7 @@ void (async () => {
     const want = (k: string) => !only || only.some((o) => k.startsWith(o));
     for (const s of SFX) {
       if (!want('sfx:' + s)) continue;
-      const x = await render(3.5, { setup: (a) => a.play(s) });
+      const x = await render(3.5, { setup: (a) => a.play(s, s === 'leshyStep' ? 10 : 0) });
       out['sfx:' + s] = measure(x);
     }
     // детский режим: мягкие удары вместо треска и звона
