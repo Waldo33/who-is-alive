@@ -73,7 +73,7 @@ export function irisFull(cx: number, cy: number): number {
 
 /** Кусок фильма: сколько мира до и после главного события. */
 const SEG_PRE = 2600;
-const SEG_POST = 900;
+const SEG_POST = 1600;
 const SEG_PLAIN = 4000;
 
 /**
@@ -192,7 +192,7 @@ const SEG_T: Timing = { base: 1.4, slow: 0.5, slowPre: 500, slowPost: 400, hold:
 /** Главный момент фильма: темп клипа, но короче замедление и хвост — чтобы в фильм влез ещё момент. */
 const FEAT_T: Timing = { base: 1.35, slow: 0.45, slowPre: 600, slowPost: 350, hold: 450, cutBefore: 1500, wideMin: 900 };
 /** Хвост мира после удара у главного момента фильма (дальше — ирис на герое). */
-const FEAT_POST = 1000;
+const FEAT_POST = 1700;
 const BLOOP_T: Timing = { base: 1.1, slow: 0.5, slowPre: 300, slowPost: 300, hold: 250, cutBefore: 0, wideMin: 0 };
 
 /** Камера разбора: целое увеличение (пиксели остаются чёткими), видна четверть арены. */
@@ -315,9 +315,9 @@ export class ClipPlayerScene {
     if (this.mode === 'hook') this.win = { from: Math.max(m.from, m.at - 450), to: Math.max(m.from, m.at - 120) };
     else if (this.mode === 'segment') {
       this.win = focused
-        ? { from: Math.max(m.from, m.at - SEG_PRE), to: Math.min(m.to, m.at + SEG_POST) }
+        ? { from: Math.max(m.from, m.at - SEG_PRE), to: Math.min(Math.max(m.to, inp.rec.playEnd), m.at + SEG_POST) }
         : { from: Math.max(m.from, m.to - SEG_PLAIN), to: m.to };
-    } else if (this.mode === 'feature' && focused) this.win = { from: m.from, to: Math.max(m.from, Math.min(m.to, m.at + FEAT_POST)) };
+    } else if (this.mode === 'feature' && focused) this.win = { from: m.from, to: Math.max(m.from, Math.min(Math.max(m.to, inp.rec.playEnd), m.at + FEAT_POST)) };
     else this.win = { from: m.from, to: m.to };
     const len = this.win.to - this.win.from;
     this.speed1 = Math.max(PART1_SPEED, len / (this.mode === 'feature' ? FEATURE_PUZZLE_MAX : PART1_MAX_MS));
