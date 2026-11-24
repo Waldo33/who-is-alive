@@ -455,7 +455,8 @@ export class MatchSim {
     const k = Math.min(1, Math.max(0, (from - this.playStart) / span));
     const [a0, b0] = cfg.crowdCmdIntervalSec;
     const [a1, b1] = cfg.crowdCmdIntervalEndSec;
-    const mul = roundMod(this.mod) === 'rush' ? 0.5 : 1;
+    // «Купальская ночь»: обычные команды реже — главное в ночи Леший, жесты не должны его заслонять
+    const mul = (roundMod(this.mod) === 'rush' ? 0.5 : 1) * (hasSanity(this.theme) ? cfg.nightCrowdMul : 1);
     const sec = this.rng.range(a0 + (a1 - a0) * k, b0 + (b1 - b0) * k) * mul;
     return Math.round(Math.max(3, sec) * 20) * 50;
   }
@@ -647,7 +648,9 @@ export class MatchSim {
         this.leshyWarn = t; // warnAt команды = время её запуска
       }
     }
-    const leshyNear = !!visit && clock >= (visit.sec - cfg.leshyLeadSec - 6) * 1000;
+    // до прихода (с запасом на «Ау» и шаги) и после него — тишина без обычных команд
+    const prev = hasSanity(this.theme) ? leshyVisits(this.round)[this.leshyIdx - 1] : undefined;
+    const leshyNear = (!!visit && clock >= (visit.sec - cfg.leshyLeadSec - 6) * 1000) || (!!prev && clock < (prev.sec + cfg.leshyQuietSec) * 1000);
     if (!leshyNear && t >= this.nextCrowdAt && this.crowdCanStart(t)) {
       if (this.nextVote) this.fireCrowd(this.nextVote, true, this.nextGhost);
       else this.fireCrowd(this.forcedKind ?? this.rng.pick<CrowdKind>(['freeze', 'jump', 'dance']), false);

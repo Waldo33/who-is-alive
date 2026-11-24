@@ -177,13 +177,17 @@ describe('рассудок («Купальская ночь»)', () => {
     toPlay(sim);
     for (let i = 0; i < 20 * 120 && 180 - sim.timeLeft() / 1000 < leshySec(sim.round) + 10; i++) {
       // глухая ночь, Леший уже прошёл, костёр прогорел; на «Тсс!» Лешего замираем
+      sim.pr[0].sanity = 100;
       const c = sim.world.crowd;
       if (c && !c.vote && sim.world.time >= c.showAt + 100 && sim.pr[0].crowdAnswered !== c.warnAt) sim.intent('a', { k: 'crowd', kind: c.kind });
       sim.tick();
     }
     const p = sim.pr[0];
-    p.sanity = 20;
-    sim.tick();
+    // ждём, пока кикимора вылезет (Леший мог ещё не уйти)
+    for (let i = 0; i < 20 * 20 && !p.kiki.length; i++) {
+      p.sanity = 20;
+      sim.tick();
+    }
     const k = p.kiki[0];
     expect(k).toBeDefined();
     p.torchUntil = sim.world.time + 5000;
@@ -201,8 +205,10 @@ describe('рассудок («Купальская ночь»)', () => {
     // команда «Факел!»: кто повторил вовремя — с факелом
     const sim2 = new MatchSim(makeConfig({ fixedTheme: KUPALA, endWhenLastAlive: false }), players, 5);
     toPlay(sim2);
+    sim2.planCrowd('jump', 3000);
     let lit = false;
-    for (let i = 0; i < 20 * 70 && !lit; i++) {
+    for (let i = 0; i < 20 * 160 && !lit; i++) {
+      sim2.pr[0].sanity = 100;
       const c = sim2.world.crowd;
       if (c && !c.vote && sim2.world.time >= c.showAt + 100 && sim2.pr[0].crowdAnswered !== c.warnAt) sim2.intent('a', { k: 'crowd', kind: c.kind });
       sim2.tick();

@@ -234,6 +234,9 @@ export class GameScene extends Phaser.Scene {
   /** Когда грохнул шаг Лешего: ночь на миг темнеет. */
   private stepDarkAt = 0;
   private giantT0 = 0;
+  private giantFrame = -1;
+  private giantShadow?: Phaser.GameObjects.Graphics;
+  private giantDust: { x: number; y: number; dx: number; t0: number }[] = [];
   /** Приходы Лешего за ночь (sanity.ts › leshyVisits): «Ау», шаги, тишина; настоящий — выходит и забирает, ложный — уходит. */
   private leshy = { round: -1, idx: 0, sec: 0, stage: 'wait' as 'wait' | 'near' | 'over' | 'leave' | 'done', nextAt: 0, steps: 0, warn: -1 };
   /** Галлюцинация на «Мороке»: у фигуры (индекс) на миг вместо лица — тьма и белые глаза. */
@@ -2060,38 +2063,76 @@ export class GameScene extends Phaser.Scene {
     const on = hasSanity(this.sim.theme) && this.sim.phase === 'play' && !!c && c.warnAt === L.warn && w.time >= c.showAt && w.time < end;
     if (!on || !c) {
       this.giant?.setVisible(false);
+      this.giantShadow?.setVisible(false);
       return;
     }
-    if (!this.giant) this.giant = this.add.image(0, 0, 'leshy', 0).setOrigin(0.5, 1).setScale(2).setDepth(944);
+    if (!this.giant) {
+      // стоит на земле: тень под ногами, глубина как у толпы (кто ниже — тот перед ним), ночь ложится и на него
+      this.giantShadow = this.add.graphics().setDepth(2);
+      this.giant = this.add.image(0, 0, 'leshy', 0).setOrigin(0.5, 1);
+    }
     if (this.giantFor !== c.warnAt) {
       this.giantFor = c.warnAt;
       this.giantT0 = performance.now();
+      this.giantFrame = -1;
     }
     const now = performance.now();
     const dur = Math.max(1200, end - c.showAt);
     const k = Math.min(1, (now - this.giantT0) / dur);
     const dir = c.warnAt % 2 ? 1 : -1; // откуда выходит: 1 — слева направо
-    const mid = 90 + dir * 8;
+    const mid = 90 + dir * 10;
+    const from = 90 - dir * 125; // из-за края поля
+    const feet = 176;
     let x: number;
     let frame: number;
-    // выходит (четверть), стоит и озирается — пока не решит, кого забрать, — и уходит быстро
-    if (k < 0.25) {
-      x = mid - dir * (150 * (1 - k / 0.25));
-      frame = Math.floor(now / 240) % 4;
-    } else if (k < 0.88) {
+    let walking = true;
+    // выходит из леса сбоку, встаёт посреди толпы, озирается — пока не решит, кого забрать, — и уходит
+    if (k < 0.3) {
+      x = from + (mid - from) * (k / 0.3);
+      frame = Math.floor(now / 260) % 4;
+    } else if (k < 0.8) {
       x = mid;
-      frame = k < 0.4 ? 4 : k < 0.55 ? 5 : k < 0.7 ? 4 : 5;
+      frame = k < 0.42 ? 4 : k < 0.56 ? 5 : k < 0.68 ? 4 : 5;
+      walking = false;
     } else {
-      x = mid + dir * 150 * ((k - 0.88) / 0.12);
-      frame = Math.floor(now / 160) % 4;
+      x = mid + dir * 125 * ((k - 0.8) / 0.2);
+      frame = Math.floor(now / 220) % 4;
     }
-    const alpha = Math.min(1, k / 0.08, (1 - k) / 0.08);
+    x = Math.round(x);
+    // шаг: нога встала (кадры 0 и 2) — пыль, глухой удар, земля вздрагивает
+    if (walking && frame !== this.giantFrame && (frame === 0 || frame === 2)) {
+      const fx = x + (frame === 0 ? -5 : 5) * (dir < 0 ? -1 : 1);
+      for (let i = 0; i < 6; i++) this.giantDust.push({ x: fx, y: feet, dx: (i - 2.5) * 0.9, t0: now });
+      this.audio.play('leshyStep', 7);
+      this.cameras.main.shake(90, 0.004);
+    }
+    this.giantFrame = frame;
     this.giant
       .setVisible(true)
       .setFlipX(dir < 0)
-      .setPosition(Math.round(x), AY + 196)
-      .setFrame(frame)
-      .setAlpha(Math.max(0, alpha));
+      .setPosition(x, AY + feet + 1)
+      .setDepth(AY + feet)
+      .setFrame(frame);
+    const sg = this.giantShadow!.setVisible(true).clear();
+    sg.fillStyle(hexToInt(PAL.ink), 0.55).fillEllipse(x, AY + feet, 30, 6);
+    sg.fillStyle(hexToInt(PAL.ink), 0.35).fillEllipse(x + (dir > 0 ? 8 : -8), AY + feet + 1, 40, 8);
+    // пыль от шагов: клочья оседают за полсекунды
+    this.giantDust = this.giantDust.filter((d) => now - d.t0 < 500);
+    for (const d of this.giantDust) {
+      const q = (now - d.t0) / 500;
+      sg.fillStyle(hexToInt(q < 0.5 ? PAL.steel : PAL.dusk), 0.8 * (1 - q)).fillRect(Math.round(d.x + d.dx * q * 8), Math.round(AY + d.y - 1 - q * 4 * Math.abs(d.dx)), 2, 1);
+    }
+    // глаза горят и сквозь ночь (над вуалью), там, где они на кадре
+    const look = frame === 4 ? -1 : frame === 5 ? 1 : 0;
+    const flip = dir < 0 ? -1 : 1;
+    const ey = AY + feet + 1 - LESHY_H + 8 + 12 + 6 + (walking && frame % 2 === 1 ? 1 : 0);
+    const g = this.torchG;
+    for (const ox of [-3, 2]) {
+      const exx = x + flip * (ox + look) + (flip < 0 ? -1 : 0);
+      g.fillStyle(hexToInt(PAL.amber), 0.45).fillRect(exx - 1, ey - 1, 3, 3);
+      g.fillStyle(hexToInt(PAL.yellow)).fillRect(exx, ey, 1, 1);
+      g.fillStyle(hexToInt(PAL.white)).fillRect(exx, ey - 1, 1, 1);
+    }
   }
 
   /**
@@ -2916,8 +2957,13 @@ export class GameScene extends Phaser.Scene {
     const frozen = playing && this.sim.world.isFrozen();
     if (frozen !== this.wasFrozen) {
       this.wasFrozen = frozen;
+      // стоп-кадр Лешего (он один такой длины): мир не серый, а тёмный и выцветший — его глаза горят в нём
+      const leshyFreeze = frozen && hasSanity(this.sim.theme) && !!cr && cr.resumeAt - cr.showAt >= this.cfg.leshyPauseMs - TICK_MS;
       if (this.grayFx) {
-        if (frozen) this.grayFx.grayscale(1);
+        if (leshyFreeze) {
+          this.grayFx.grayscale(0.55);
+          this.grayFx.brightness(0.72, true);
+        } else if (frozen) this.grayFx.grayscale(1);
         else this.grayFx.reset();
       } else this.freezeVeil.setVisible(frozen);
     }
