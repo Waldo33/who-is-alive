@@ -37,6 +37,8 @@ jobs:
     defaults:
       run:
         working-directory: infra/terraform
+        # pipefail: иначе ошибка terraform или стоп summary.py терялись бы в | grep / | tee
+        shell: bash -eo pipefail {0}
     env:
       TWC_TOKEN: ${{ secrets.TWC_TOKEN }}
       TF_IN_AUTOMATION: '1'
