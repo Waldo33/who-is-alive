@@ -219,6 +219,9 @@ async function main(): Promise<void> {
     console.log(line);
   }
   stops.forEach((s) => s());
+  // выйти из комнат явно: сервер сразу освобождает места (а не держит пустые комнаты 10 минут)
+  for (const r of all) for (const p of r) if (p.ws.readyState === WebSocket.OPEN) p.ws.send(JSON.stringify({ t: 'leave' }));
+  await new Promise((r) => setTimeout(r, 1500));
   for (const r of all) for (const p of r) p.ws.terminate();
   const worst = Math.max(...reports.map((r) => r.p99).filter((x) => !Number.isNaN(x)));
   console.log(

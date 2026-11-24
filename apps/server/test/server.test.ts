@@ -152,6 +152,34 @@ describe('игровой сервер: ошибки с телефонов', () =
   });
 });
 
+describe('игровой сервер: комнаты нагрузочного прогона', () => {
+  it('пустая тестовая комната закрывается через 15 секунд, обычная держится 10 минут', async () => {
+    let t = 1_000_000;
+    const srv = new GameServer({ authSecret: SECRET, log: silentLogger, loadKey: 'k'.repeat(24), now: () => t });
+    servers.push(srv);
+    const http = `http://127.0.0.1:${await srv.listen(0, '127.0.0.1')}`;
+    const mk = async (load: boolean) => {
+      const u = (await (await fetch(`${http}/v1/auth/anon`, { method: 'POST' })).json()) as { token: string };
+      const r = await fetch(`${http}/v1/rooms`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${u.token}`, ...(load ? { 'x-kto-load': 'k'.repeat(24) } : {}) },
+        body: '{}',
+      });
+      return ((await r.json()) as { code: string }).code;
+    };
+    const test = await mk(true);
+    const real = await mk(false);
+    srv.housekeeping();
+    t += 16_000;
+    srv.housekeeping();
+    expect(srv.rooms.has(test)).toBe(false);
+    expect(srv.rooms.has(real)).toBe(true);
+    t += 10 * 60_000;
+    srv.housekeeping();
+    expect(srv.rooms.has(real)).toBe(false);
+  });
+});
+
 describe('игровой сервер: метрики', () => {
   it('изнутри машины — и напрямую, и через внутренний вход Caddy; с внешним адресом — 404', async () => {
     const srv = new GameServer({ authSecret: SECRET, log: silentLogger, trustProxy: true });

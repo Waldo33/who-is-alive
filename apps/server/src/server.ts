@@ -89,6 +89,8 @@ const BOT_PER_IP_MIN = 600;
 const LOBBY_IDLE_MS = 30 * 60_000;
 const ROOM_MAX_AGE_MS = 6 * 3600_000;
 const EMPTY_CLOSE_MS = 10 * 60_000;
+/** Комнаты нагрузочного прогона: пустая закрывается почти сразу — не держит места у настоящих игроков. */
+const LOAD_EMPTY_CLOSE_MS = 15_000;
 const HELLO_TIMEOUT_MS = 10_000;
 const HEARTBEAT_MS = 10_000;
 
@@ -130,6 +132,8 @@ export class GameServer {
   private readonly botRate = new RateWindow(BOT_PER_IP_MIN, 60_000);
   readonly store: Store;
   private readonly emptySince = new Map<Room, number>();
+  /** Коды комнат нагрузочного прогона (создатель пришёл с LOAD_KEY). */
+  private readonly loadRooms = new Set<string>();
   private loop: ReturnType<typeof setInterval> | null = null;
   private slow: ReturnType<typeof setInterval> | null = null;
   private hb: ReturnType<typeof setInterval> | null = null;
@@ -195,7 +199,7 @@ export class GameServer {
       const empty = this.emptySince.get(r);
       let why = '';
       if (r.members.size === 0) why = 'no_members';
-      else if (empty !== undefined && now - empty > EMPTY_CLOSE_MS) why = 'empty';
+      else if (empty !== undefined && now - empty > (this.loadRooms.has(r.code) ? LOAD_EMPTY_CLOSE_MS : EMPTY_CLOSE_MS)) why = 'empty';
       else if (now - r.createdAt > ROOM_MAX_AGE_MS) why = 'age';
       else if (r.status === 'lobby' && now - r.lastActive > LOBBY_IDLE_MS) why = 'idle';
       if (why) this.dropRoom(r, why);
@@ -212,6 +216,7 @@ export class GameServer {
     r.close(why);
     this.rooms.delete(r.code);
     this.emptySince.delete(r);
+    this.loadRooms.delete(r.code);
   }
 
   private heartbeat(): void {
@@ -308,6 +313,7 @@ export class GameServer {
       film: load ? undefined : this.o.film,
     });
     this.rooms.set(code, room);
+    if (load) this.loadRooms.add(code);
     this.log('info', 'room_created', { room: code, user: hashId(userId), ...(load ? { load: true } : {}) });
     return this.reply(res, 200, { code, wsUrl: this.wsUrl(req) });
   }
