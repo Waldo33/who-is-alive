@@ -672,7 +672,9 @@ export class FilmScene {
       if (ms >= start) {
         if (!this.bloopSound.has(i)) {
           this.bloopSound.add(i);
-          sc.sound = this.sound;
+          // неудачный дубль в титрах — только эффекты: его части не трогают музыку фильма
+          // (раньше тишина перед ударом и возобновление обрывали затухание и возвращали песню)
+          sc.sound = this.sound ? sfxOnly(this.sound) : null;
         }
         sc.draw(Math.min(ms - start, sc.duration));
       } else sc.draw(0);
@@ -690,6 +692,12 @@ export class FilmScene {
     }
     text(g, this.inp.site, cx, 200, PAL.cyan, font, { outline: null });
   }
+}
+
+/** Звук без управления музыкой: только эффекты и планирование. */
+function sfxOnly(s: ClipSoundCore): ClipSoundCore {
+  const no = () => {};
+  return { ...s, start: no, setTwist: no, pause: no, resume: no, intensity: no, level: no, fadeOut: no, hush: no, stop: no, play: (n, k) => s.play(n, k), pump: () => s.pump() };
 }
 
 function scenePiece(scene: ClipPlayerScene): Piece {
