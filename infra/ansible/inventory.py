@@ -32,6 +32,12 @@ def main():
             print(f'{group}: {name} {ip}')
             lines.append(f'{name} ansible_host={ip} ansible_user=root')
         lines.append('')
+    # Москва: туннели в неё (бот и пересылка) держим, пока сервер жив; выключат — туннели пропадут из плана
+    msk = servers.get('massovka-game')
+    msk_ip = provision.ipv4(msk) if msk else None
+    lines += ['[all:vars]', f'moscow_ip={msk_ip or ""}', '']
+    if msk_ip:
+        print(f'moscow_ip: {msk_ip}')
     with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'inventory.ini'), 'w') as f:
         f.write('\n'.join(lines))
 

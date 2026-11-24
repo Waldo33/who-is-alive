@@ -1,0 +1,78 @@
+# Туннели SSH (то же, что «туннели» в infra/game/setup.sh; юниты — байт в байт).
+# Из Москвы соединения за границу режутся, поэтому туннели поднимают Нидерланды и Европа:
+#   massovka-infra → Европа (massovka-tunnel-eu) и Москва (massovka-tunnel): бот -R 9090, логи -R 9428,
+#     база, метрики игры и машины — -L;
+#   massovka-eu → Москва (massovka-relay): Москва пересылает игру в Европу (-R 18090, -R 18091).
+# Принимающая сторона пускает их пользователем tunnel только на эти порты (authorized_keys ниже).
+- name: Ключ туннелей
+  ansible.builtin.command: ssh-keygen -q -t ed25519 -N '' -C massovka-tunnel -f /etc/massovka/tunnel_ed25519
+  args:
+    creates: /etc/massovka/tunnel_ed25519
+  when: tunnels | length > 0
+
+- name: Запасной адрес Европы — сторожу (проверка, пока DNS смотрит на Москву)
+  ansible.builtin.copy:
+    dest: /etc/massovka/eu-host
+    content: "{{ eu_ip | replace('.', '-') }}.sslip.io\n"
+    mode: '0644'
+  when: "'infra' in group_names and eu_ip | default('') != ''"
+
+- name: Юниты туннелей
+  ansible.builtin.template:
+    src: tunnel.service.j2
+    dest: "/etc/systemd/system/{{ item.name }}.service"
+    mode: '0644'
+  loop: "{{ tunnels }}"
+  loop_control: { label: "{{ item.name }} → {{ item.to }}" }
+  register: units
+
+- name: Туннели включены и запущены (перезапуск — только если юнит поменялся)
+  ansible.builtin.systemd_service:
+    name: "{{ item.item.name }}"
+    enabled: true
+    state: "{{ 'restarted' if item.changed else 'started' }}"
+    daemon_reload: "{{ item.changed }}"
+  loop: "{{ units.results | default([]) }}"
+  loop_control: { label: "{{ item.item.name }}" }
+
+# ── принимающая сторона (игровой сервер) ──
+- name: Открытый ключ туннеля сервера бота (Нидерланды)
+  ansible.builtin.slurp:
+    src: /etc/massovka/tunnel_ed25519.pub
+  delegate_to: "{{ groups['infra'][0] }}"
+  register: infra_pub
+  failed_when: false
+  check_mode: false
+  when: "'game' in group_names and groups['infra'] | default([]) | length > 0"
+
+- name: Запомнить ключ
+  ansible.builtin.set_fact:
+    infra_tunnel_pub: "{{ infra_pub.content | b64decode | trim }}"
+  when: infra_pub.content is defined
+
+- name: Вход для туннелей — пользователь tunnel
+  ansible.builtin.user:
+    name: tunnel
+    system: true
+    home: /var/lib/tunnel
+    create_home: true
+    shell: /usr/sbin/nologin
+  when: tunnel_keys | length > 0
+
+- name: Вход для туннелей — папка .ssh
+  ansible.builtin.file:
+    path: /var/lib/tunnel/.ssh
+    state: directory
+    owner: tunnel
+    group: tunnel
+    mode: '0700'
+  when: tunnel_keys | length > 0
+
+- name: Вход для туннелей — только проброс нужных портов
+  ansible.builtin.copy:
+    dest: /var/lib/tunnel/.ssh/authorized_keys
+    content: "{% for k in tunnel_keys %}{{ k }}\n{% endfor %}"
+    owner: tunnel
+    group: tunnel
+    mode: '0600'
+  when: tunnel_keys | length > 0

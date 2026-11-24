@@ -1,0 +1,14 @@
+# Нидерланды: туннели в Европу и (пока жива) в Москву — как TUNNEL_EU_TO / TUNNEL_TO в game-deploy
+eu_ip: "{{ hostvars[groups['game'][0]]['ansible_host'] if groups['game'] | default([]) | length > 0 else '' }}"
+tunnels_all:
+  - name: massovka-tunnel
+    to: "tunnel@{{ moscow_ip | default('') }}"
+    desc: "в Москву (бот; логи Москвы сюда; база, метрики Москвы отсюда)"
+    args: "-R 127.0.0.1:9090:127.0.0.1:8080 -R 127.0.0.1:9428:127.0.0.1:9428 -L 127.0.0.1:15432:127.0.0.1:5432 -L 127.0.0.1:18080:127.0.0.1:8080 -L 127.0.0.1:19100:127.0.0.1:9100"
+    when: "{{ moscow_ip | default('') != '' }}"
+  - name: massovka-tunnel-eu
+    to: "tunnel@{{ eu_ip }}"
+    desc: "в Европу (бот; логи сюда; база, метрики отсюда)"
+    args: "-R 127.0.0.1:9090:127.0.0.1:8080 -R 127.0.0.1:9428:127.0.0.1:9428 -L 127.0.0.1:25432:127.0.0.1:5432 -L 127.0.0.1:28080:127.0.0.1:8080 -L 127.0.0.1:29100:127.0.0.1:9100"
+    when: "{{ eu_ip != '' }}"
+tunnels: "{{ tunnels_all | selectattr('when') | list }}"
