@@ -1,6 +1,6 @@
 import type { Channel, PresenceMember, Transport } from './transport';
 import { WIRE_VERSION } from './wire';
-import type { ServerMsg, WireError, WireFilm, WireRoom, WireRoomSettings } from './wire';
+import type { ServerMsg, WireClip, WireError, WireFilm, WireRoom, WireRoomSettings } from './wire';
 
 export interface ServerLinkOptions {
   /** Адрес WebSocket экземпляра сервера, например wss://api.benobody.app/i/blue/ws. */
@@ -45,6 +45,11 @@ export class ServerLink implements Transport {
   private filmHandlers = new Set<Listener<WireFilm>>();
   /** Последнее известие о фильме матча (сбрасывает клиент, когда начинается новый матч). */
   film: WireFilm | null = null;
+  /** Что умеет сервер сверх базового протокола (из welcome): 'clip' — монтирует клип выбывшего. */
+  caps: string[] = [];
+  /** Видео не выключено аварийно (`{t:'flags'}`): false — клипов и фильма нет нигде. */
+  video = true;
+  private flagHandlers = new Set<Listener<{ video: boolean }>>();
   private firstJoin: { resolve: (r: WireRoom) => void; reject: (e: Error) => void } | null = null;
   private name: string;
   /** Переподключений за жизнь связи — для статистики сети. */
@@ -132,6 +137,7 @@ export class ServerLink implements Transport {
         const again = this.everJoined && !promoted;
         this.everJoined = true;
         this.spectator = !!m.spectator;
+        this.caps = Array.isArray(m.caps) ? m.caps : [];
         this.setRoom(m.room);
         if (this.firstJoin) {
           this.firstJoin.resolve(m.room);
@@ -195,7 +201,50 @@ export class ServerLink implements Transport {
         this.film = m;
         for (const h of this.filmHandlers) h(m);
         return;
+      case 'clip':
+        this.clipWait.get(m.n)?.(m);
+        return;
+      case 'flags':
+        this.video = m.video !== false;
+        for (const h of this.flagHandlers) h({ video: this.video });
+        return;
     }
+  }
+
+  /** Переключатели сервера (аварийный выключатель видео): сразу после входа и при смене. */
+  onFlags(h: Listener<{ video: boolean }>): () => void {
+    this.flagHandlers.add(h);
+    return () => this.flagHandlers.delete(h);
+  }
+
+  private clipWait = new Map<number, (m: WireClip) => void>();
+  private clipSeq = 0;
+
+  /**
+   * Клип выбывшего — смонтировать на сервере. null — сервер не умеет, занят, не вышло или молчит:
+   * тогда клип пишет телефон. onEta — сколько мс ещё ждать (сервер поставил в очередь).
+   */
+  deathClip(round: number, lang: 'ru' | 'en', mild: boolean, onEta?: (ms: number) => void): Promise<{ id: string; ext: 'mp4'; thumb: boolean } | null> {
+    if (!this.video || !this.caps.includes('clip') || !this.ws || this.ws.readyState !== 1) return Promise.resolve(null);
+    const n = ++this.clipSeq;
+    return new Promise((resolve) => {
+      let timer: ReturnType<typeof setTimeout>;
+      const finish = (r: { id: string; ext: 'mp4'; thumb: boolean } | null) => {
+        clearTimeout(timer);
+        this.clipWait.delete(n);
+        resolve(r);
+      };
+      // нет ответа «в очереди» за 3 с — связь плохая или сервер старый: монтирует телефон
+      timer = setTimeout(() => finish(null), 3000);
+      this.clipWait.set(n, (m) => {
+        if (m.state === 'making') {
+          clearTimeout(timer);
+          timer = setTimeout(() => finish(null), m.eta + 15_000);
+          onEta?.(m.eta);
+        } else finish(m.state === 'ready' ? { id: m.id, ext: m.ext, thumb: m.thumb } : null);
+      });
+      this.raw({ t: 'clip', n, round, lang, mild });
+    });
   }
 
   /** Фильм матча: монтируется, готов или не вышел. */

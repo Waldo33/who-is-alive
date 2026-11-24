@@ -4,6 +4,7 @@ import type { WireFilm } from '@kto/net';
 import { ClipPlayerScene, pickClipMime, recordClip } from './clip';
 import { loadTheme } from './themes';
 import { getAudio } from './audio';
+import { videoOff } from './video-switch';
 import type { ClipInput, ClipResult } from './clip';
 import { shareableClip } from '../lib/clips';
 import type { SharedClip } from '../lib/clips';
@@ -385,9 +386,9 @@ export async function shareClipInTelegram(file: File, text: string): Promise<boo
   return !!c && (await telegramShareCard({ kind: 'clip', clip: c.id, text, thumb: c.thumb }));
 }
 
-/** Можно ли записать клип в этом браузере. */
+/** Можно ли записать клип в этом браузере (и не выключено ли видео аварийно). */
 export function clipSupported(): boolean {
-  return !!pickClipMime();
+  return !videoOff() && !!pickClipMime();
 }
 
 /**

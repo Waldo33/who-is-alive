@@ -4,6 +4,7 @@ import { DelayedTransport, RemoteSession, ServerLink } from '@kto/net';
 import type { RoomMsg, WireRoom, WireRoomSettings } from '@kto/net';
 import type { ClientSession, PlayerInfo } from '@kto/game-core';
 import { createGameRoom, ensureGameUser, forgetGameUser, gameRoomInfo } from '@/lib/game-server';
+import { setVideoOff } from '@/game/video-switch';
 
 /**
  * Комната на своём игровом сервере (docs/server-migration.md): одно WebSocket-соединение на лобби
@@ -123,6 +124,8 @@ export class Room {
     const link = new ServerLink({ url: info.wsUrl, token: user.token, selfId: user.userId, code: this.state.code, name });
     this.link = link;
     link.onRoom((r) => this.onRoom(r));
+    // аварийный выключатель видео: сервер сказал — кнопки клипа и фильма прячутся сразу
+    link.onFlags((f) => setVideoOff(!f.video));
     link.onMessage((ch, msg) => {
       const m = msg as RoomMsg;
       if (ch === 'room' && m?.t === 'match_start') this.onMatchStart(m);

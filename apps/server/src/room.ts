@@ -4,6 +4,7 @@ import { DEFAULT_WIRE_SETTINGS, HostSession } from '@kto/net';
 import type { Channel, PresenceMember, RoomMsg, ServerMsg, Transport, WireError, WireRoom, WireRoomSettings } from '@kto/net';
 import type { Logger } from './log';
 import type { FilmDone, FilmService } from './film';
+import { deathClipJob } from './death-clip';
 // только тип: код монтажа живёт в отдельном процессе (film-worker.ts) и в основную сборку не попадает
 import type { FilmTake } from '../../web/src/game/film';
 
@@ -52,6 +53,8 @@ export interface RoomOptions {
   onEmpty?: (room: Room) => void;
   /** «Фильм матча» (film.ts): нет — фильм монтирует телефон. */
   film?: FilmService;
+  /** Видео не выключено аварийно (video-switch.ts). */
+  videoOn?: () => boolean;
   /** Комната переехала с соседнего экземпляра сервера (выкладка без обрыва): состав и настройки — оттуда. */
   restore?: RoomSnapshot;
 }
@@ -272,7 +275,7 @@ export class Room {
       this.members.set(userId, m);
     }
     this.lastActive = now;
-    this.sendTo(userId, { t: 'welcome', selfId: userId, room: this.view() });
+    this.sendTo(userId, { t: 'welcome', selfId: userId, room: this.view(), ...(this.o.film && (this.o.videoOn?.() ?? true) ? { caps: ['clip'] } : {}) });
     this.broadcastRoom();
     return null;
   }
@@ -453,6 +456,38 @@ export class Room {
       color,
       ai: true,
     }));
+  }
+
+  /** Клипы выбывших в этом дубле: игрок → сколько просил (ранний и полный — не больше двух). */
+  private clipAsks = new Map<string, number>();
+  private clipRound = -1;
+
+  /**
+   * Клип выбывшего — смонтировать на сервере (Rust, film.ts). Кого подсветить, решает сервер:
+   * героем всегда будет сам просящий (deathClipJob). Ответ — `clip` с тем же n.
+   */
+  clip(userId: string, m: { n: number; round: number; lang: 'ru' | 'en'; mild: boolean }): void {
+    const film = this.o.film;
+    const r = this.runner;
+    const fail = () => this.sendTo(userId, { t: 'clip', n: m.n, state: 'failed' });
+    const h = r?.host;
+    const eid = h?.sim.playerRound(userId)?.eid;
+    if (!film || !h || eid === undefined || h.round !== m.round) return fail();
+    if (this.clipRound !== h.round) {
+      this.clipRound = h.round;
+      this.clipAsks.clear();
+    }
+    const asks = this.clipAsks.get(userId) ?? 0;
+    if (asks >= 2) return fail();
+    const job = deathClipJob(h, userId, eid, { lang: m.lang, noGore: m.mild });
+    if (!job) return fail();
+    this.clipAsks.set(userId, asks + 1);
+    const p = film.clip(job, (eta) => this.sendTo(userId, { t: 'clip', n: m.n, state: 'making', eta }));
+    if (!p) return fail();
+    void p.then((done) => {
+      if (this.closed) return;
+      this.sendTo(userId, done ? { t: 'clip', n: m.n, state: 'ready', id: done.id, ext: done.ext, thumb: done.thumb } : { t: 'clip', n: m.n, state: 'failed' });
+    });
   }
 
   /** Игровое сообщение от игрока — безголовому хосту. «Ещё дубль» с новым составом — новый матч. */

@@ -1,0 +1,53 @@
+# Аварийный выключатель видео (docs/campaign-day.md): при большой нагрузке выключает клипы выбывших,
+# «Фильм матча» и клип из итогов — сервер перестаёт монтировать, у телефонов кнопки прячутся (и сами
+# телефоны видео не пишут). Без выкладки и перезапуска: сервер смотрит на файл раз в 5 секунд.
+# Запуск: Actions → video-switch → Run workflow → off (выключить) или on (вернуть).
+name: video-switch
+
+on:
+  workflow_dispatch:
+    inputs:
+      video:
+        description: 'Видео: off — выключить, on — вернуть'
+        required: true
+        type: choice
+        options: ['off', 'on']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: video-switch
+  cancel-in-progress: false
+
+jobs:
+  switch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      TWC_TOKEN: ${{ secrets.TWC_TOKEN }}
+      SSH_OPTS: -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=20 -o LogLevel=ERROR
+      FIND_ONLY: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m venv /tmp/py && /tmp/py/bin/pip install -q cryptography
+      - id: eu
+        env: { SERVER_NAME: massovka-eu }
+        run: /tmp/py/bin/python infra/game/provision.py
+      - name: Переключить
+        env:
+          IP: ${{ steps.eu.outputs.ip }}
+          VIDEO: ${{ inputs.video }}
+        run: |
+          ssh $SSH_OPTS root@$IP "VIDEO=$VIDEO bash -s" <<'SH'
+          set -e
+          f=/var/lib/massovka-clips/video-off
+          if [ "$VIDEO" = off ]; then install -d /var/lib/massovka-clips && date -u +%FT%TZ > "$f" && chmod 644 "$f"; else rm -f "$f"; fi
+          # сервер перечитывает файл раз в 5 секунд
+          sleep 7
+          got=$(curl -fsS -m5 http://127.0.0.1:8080/v1/flags || echo '?')
+          echo "сервер: $got"
+          want=$([ "$VIDEO" = off ] && echo false || echo true)
+          echo "$got" | grep -q "\"video\":$want" || { echo "::error::сервер не переключился ($got)"; exit 1; }
+          SH
+          echo "видео: **$VIDEO**" >> "$GITHUB_STEP_SUMMARY"
