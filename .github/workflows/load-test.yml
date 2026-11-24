@@ -1,7 +1,7 @@
 # Нагрузочный прогон игрового сервера (docs/infra-plan.md › этап 4, apps/server/scripts/load.ts).
 #   local — сервер поднимается на раннере: сколько процессора и памяти на комнату (сравнивать версии);
 #   prod  — N комнат × 4 игрока против https://api.benobody.app, рядом снимаем метрики Москвы по SSH.
-#           ТОЛЬКО НОЧЬЮ: тестовые комнаты занимают места под потолком MAX_ROOMS (~100 на 1 ГБ).
+#           ТОЛЬКО НОЧЬЮ: тестовые комнаты занимают места под потолком MAX_ROOMS (сейчас ~40: одно ядро).
 # Запуск: Actions → load-test → Run workflow (или gh workflow run load-test.yml -f target=prod -f rooms=100).
 # Push этого файла гоняет только local — проверка самого прогона.
 name: load-test
@@ -75,7 +75,7 @@ jobs:
                 "$(curl -s 127.0.0.1:8080/metrics | awk "/^game_rooms\\{/ {print \$2}")" \
                 "$(curl -s 127.0.0.1:8080/metrics | awk "/^game_players_online/ {print \$2}")" \
                 "$(curl -s 127.0.0.1:8080/metrics | awk "/^game_step_ms_p99/ {print \$2}")" \
-                "$(top -bn1 | awk "/^%Cpu/ {print 100-\$8\"%\"}")" \
+                "$(top -bn2 -d1 | awk "/^%Cpu/ {v=100-\$8} END {print v\"%\"}")" \
                 "$(( $(systemctl show massovka-game@$c -p MemoryCurrent --value) / 1048576 ))" \
                 "$(free -m | awk "/^Mem/ {print \$7}")"' 2>/dev/null || true
               sleep 10

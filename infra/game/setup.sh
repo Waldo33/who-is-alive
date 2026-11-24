@@ -233,10 +233,17 @@ if [ "${ROLE:-game}" = game ]; then region=msk; events_up=""; else region=nl; ev
 # потолок комнат под память машины. Нагрузочный прогон 24.11 (scripts/load.ts, 60 комнат с ходьбой, 5 минут):
 # память комнаты растёт к концу матча — до ~3–5 МБ, живых данных ~2,5 МБ
 # (с кучей 120 МБ 60 комнат падают). Оставляем ~600 МБ сайту, базе, Caddy и «Фильму матча», комнату
-# считаем по 3 МБ: 1 ГБ → ~100 комнат, 2 ГБ → ~430, 4 ГБ → ~1100. Больше — «площадка переполнена», а не падение.
+# считаем по 3 МБ: 1 ГБ → ~100 комнат, 2 ГБ → ~430, 4 ГБ → ~1100 — и не больше, чем тянет процессор (ниже).
+# Больше — «площадка переполнена», а не падение и лаги у всех.
 mem_mb=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)
 max_rooms=$(( (mem_mb - 600) / 3 ))
-[ "$max_rooms" -lt 50 ] && max_rooms=50
+# процессор: прогон против Москвы 24.11 (load-test prod, 1 vCPU): 98 комнат = 100% ядра, пинг через матч
+# p50 0,2–0,5 с, p99 до 3,4 с, часть игроков не вошла (игра + TLS Caddy + сайт на одном ядре).
+# Около 40 комнат на ядро оставляют запас; уточнять прогоном после каждого изменения машины.
+cpus=$(nproc)
+cpu_rooms=$(( cpus * 40 ))
+[ "$max_rooms" -gt "$cpu_rooms" ] && max_rooms=$cpu_rooms
+[ "$max_rooms" -lt 30 ] && max_rooms=30
 [ "$max_rooms" -gt 2000 ] && max_rooms=2000
 cat > /etc/massovka/game.env <<EOF
 NODE_ENV=production
@@ -437,5 +444,8 @@ for _ in $(seq 1 30); do
   sleep 1
 done
 curl -fsS http://127.0.0.1:8080/healthz && echo
+# метрики игры через внутренний вход (их читают Grafana и сторож): пусто — графики и тревоги ослепли
+m=$(curl -fsS http://127.0.0.1:8080/metrics 2>/dev/null | grep -c '^game_' || true)
+if [ "${m:-0}" -gt 0 ]; then echo "метрики игры: $m строк"; else echo "::warning::метрики игры через 127.0.0.1:8080 не отдаются — Grafana и сторож их не увидят"; fi
 systemctl is-active "massovka-game@$(cat /etc/massovka/active-color)" caddy
 echo "Node: $(/opt/node/bin/node -v); Caddy: $(cat /etc/caddy/VERSION 2>/dev/null || echo ?)"
