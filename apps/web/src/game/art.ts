@@ -5,6 +5,7 @@ import {
   makeArenaBackground,
   makeCharacterSheets,
   makeHedge,
+  makeAwardIcons,
   makeIcons,
   makeMark,
   makePoof,
@@ -50,6 +51,8 @@ export interface Art {
   mark: HTMLCanvasElement;
   vignette: HTMLCanvasElement;
   icons: { canvas: HTMLCanvasElement; names: string[] };
+  /** Иконки наград 12×12 (`AWARD_ICON`). */
+  awards: { canvas: HTMLCanvasElement; names: string[] };
 }
 
 let cache: { arenaId: string; art: Art } | null = null;
@@ -104,6 +107,7 @@ export function getArt(arena: ArenaDef): Art {
     mark: makeMark('!'),
     vignette: makeVignette(arena.width, arena.height),
     icons: makeIcons(),
+    awards: makeAwardIcons(),
   };
   cache = { arenaId: arena.id, art };
   return art;
