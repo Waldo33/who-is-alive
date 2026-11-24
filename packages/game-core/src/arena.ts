@@ -16,6 +16,11 @@ export interface Prop {
   y: number;
   /** Блокирующий след на земле. */
   foot: Rect;
+  /**
+   * Где за предметом нельзя стоять: высокий предмет (дерево) заслонил бы человечка целиком,
+   * и у стены получилось бы укрытие, где живого не видно. Закрыто для ходьбы всем — и игрокам, и ботам.
+   */
+  cover?: Rect;
 }
 
 export interface Point {
@@ -33,18 +38,29 @@ export interface ArenaDef {
   interest: Point[];
 }
 
-function prop(kind: PropKind, x: number, y: number, foot: Rect): Prop {
-  return { kind, x, y, foot };
+function prop(kind: PropKind, x: number, y: number, foot: Rect, cover?: Rect): Prop {
+  return cover ? { kind, x, y, foot, cover } : { kind, x, y, foot };
 }
+
+/** Дерево: крона ~22×30 над стволом — за ней человечек (12×16) пропадает целиком. */
+function tree(x: number, y: number): Prop {
+  return prop('tree', x, y, { x: x - 4, y: y - 4, w: 8, h: 5 }, { x: x - 10, y: y - 26, w: 20, h: 22 });
+}
+
+/**
+ * Верх полосы ходьбы — ноги не выше этой линии. Стена площадки рисуется в полосе 0…14 арены;
+ * человечек ростом 16 с ногами на 26 стоит на полу перед стеной, а не «в стене» и не за ней.
+ */
+export const WALK_TOP = 26;
 
 export function plazaArena(width = 180, height = 260): ArenaDef {
   const cx = width / 2;
   const props: Prop[] = [
     prop('fountain', cx, 144, { x: cx - 14, y: 120, w: 28, h: 22 }),
-    prop('tree', 18, 46, { x: 14, y: 42, w: 8, h: 5 }),
-    prop('tree', width - 18, 46, { x: width - 22, y: 42, w: 8, h: 5 }),
-    prop('tree', 18, 238, { x: 14, y: 234, w: 8, h: 5 }),
-    prop('tree', width - 18, 238, { x: width - 22, y: 234, w: 8, h: 5 }),
+    tree(18, 46),
+    tree(width - 18, 46),
+    tree(18, 238),
+    tree(width - 18, 238),
     prop('lamp', 56, 94, { x: 54, y: 92, w: 4, h: 3 }),
     prop('lamp', width - 56, 94, { x: width - 58, y: 92, w: 4, h: 3 }),
     prop('lamp', 56, 172, { x: 54, y: 170, w: 4, h: 3 }),
@@ -76,7 +92,7 @@ export function plazaArena(width = 180, height = 260): ArenaDef {
     id: 'plaza',
     width,
     height,
-    walk: { x: 10, y: 18, w: width - 20, h: height - 24 },
+    walk: { x: 10, y: WALK_TOP, w: width - 20, h: height - 6 - WALK_TOP },
     props,
     interest,
   };
