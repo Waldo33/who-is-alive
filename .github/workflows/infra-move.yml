@@ -7,6 +7,9 @@
 #              запоздавших;
 #   direct   — всё сразу (решение владельца 24.11: без плавного переезда; запуск 24.11 18:1x): дождаться сайта в Европе,
 #              switch, затем dns;
+#   finish   — DNS владелец меняет руками (домен не в облачном аккаунте Timeweb, API — 404): ждём, пока
+#              api.benobody.app смотрит на Европу; Москва пересылает запоздавших (с самопроверкой — не
+#              вышло, сразу назад), drain Москвы к Европе, события Москвы с переключения доливаются в Европу;
 #   rollback — Москва снова сама принимает игроков (DNS вернуть: dns с FROM/TO наоборот — в панели).
 name: infra-move
 
@@ -14,7 +17,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: 'check | switch | dns | direct | rollback'
+        description: 'check | switch | dns | direct | finish | rollback'
         default: check
   push:
     branches: [main]
@@ -31,14 +34,14 @@ permissions:
   actions: read
 
 env:
-  MODE: ${{ inputs.mode || 'rollback' }}
-  SW: ${{ contains(fromJSON('["switch","direct"]'), inputs.mode || 'rollback') }}
-  DN: ${{ contains(fromJSON('["dns","direct"]'), inputs.mode || 'rollback') }}
+  MODE: ${{ inputs.mode || 'finish' }}
+  SW: ${{ contains(fromJSON('["switch","direct"]'), inputs.mode || 'finish') }}
+  DN: ${{ contains(fromJSON('["dns","direct"]'), inputs.mode || 'finish') }}
 
 jobs:
   move:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 170
     env:
       TWC_TOKEN: ${{ secrets.TWC_TOKEN }}
       SSH_OPTS: -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=20 -o ServerAliveInterval=15 -o LogLevel=ERROR
@@ -89,7 +92,7 @@ jobs:
           SH
 
       - name: Готовность
-        if: env.SW == 'true' || env.MODE == 'check'
+        if: env.SW == 'true' || env.MODE == 'check' || env.MODE == 'finish'
         env:
           MSK: ${{ steps.msk.outputs.ip }}
           EU: ${{ steps.eu.outputs.ip }}
@@ -167,14 +170,59 @@ jobs:
           echo "api.benobody.app через Москву: $r"
           echo "$r" | grep -q '"eu"' || { echo "::error::через Москву отвечает не Европа"; exit 1; }
 
+      - name: Завершение — DNS на Европе, Москва пересылает, события доливаются
+        if: env.MODE == 'finish'
+        env:
+          MSK: ${{ steps.msk.outputs.ip }}
+          EU: ${{ steps.eu.outputs.ip }}
+        run: |
+          echo "── ждём, пока DNS (8.8.8.8) покажет Европу — меняет владелец в панели, до часа"
+          for _ in $(seq 1 120); do
+            a=$(dig +short A api.benobody.app @8.8.8.8 | tail -1); b=$(dig +short A benobody.app @8.8.8.8 | tail -1)
+            [ "$a" = "$EU" ] && [ "$b" = "$EU" ] && break
+            echo "$(date +%T) api → $a, benobody.app → $b"; sleep 30
+          done
+          [ "$a" = "$EU" ] && [ "$b" = "$EU" ] || { echo "::error::DNS так и не смотрит на Европу"; exit 1; }
+          echo "DNS: api и benobody.app → Европа; www → $(dig +short A www.benobody.app @8.8.8.8 | tail -1)"
+          echo "── Москва: пересылка в Европу (для запоздавших), с самопроверкой"
+          ssh $SSH_OPTS root@$MSK 'bash -s' <<'SH'
+          set -e
+          curl -fsS -m 5 http://127.0.0.1:18090/healthz >/dev/null || { echo "::warning::туннеля пересылки нет — Москва остаётся как есть"; exit 0; }
+          sed -i '/^RELAY=/d' /etc/massovka/hosts.env; echo 'RELAY=127.0.0.1:18090' >> /etc/massovka/hosts.env
+          /opt/massovka/bin/caddy.sh
+          sleep 2
+          r=$(curl -s -m 10 --resolve api.benobody.app:443:127.0.0.1 https://api.benobody.app/v1/probe || true)
+          echo "через Москву: ${r:-пусто}"
+          if ! echo "$r" | grep -q '"eu"'; then
+            sed -i '/^RELAY=/d' /etc/massovka/hosts.env; echo 'RELAY=' >> /etc/massovka/hosts.env
+            /opt/massovka/bin/caddy.sh
+            echo "::warning::пересылка не отвечает Европой — вернул Москву как было"; exit 0
+          fi
+          body='{"peer":{"http":"http://127.0.0.1:18091","wsUrl":"wss://api.benobody.app/ws"}}'
+          for p in 8081 8082; do
+            if curl -fsS -m 3 "http://127.0.0.1:$p/healthz" >/dev/null 2>&1; then printf ":$p → "; curl -fsS -m 10 -X POST -H 'content-type: application/json' -d "$body" "http://127.0.0.1:$p/internal/drain"; echo; fi
+          done
+          systemctl disable massovka-game@blue massovka-game@green >/dev/null 2>&1 || true
+          SH
+          echo "── события Москвы с первого переключения → Европа (без повторов)"
+          cols=created_at,user_id,device_id,session_id,room_code,name,props
+          ssh $SSH_OPTS root@$MSK "sudo -u postgres psql -d massovka -Atc \"copy (select $cols from analytics_events where created_at > '2026-11-24 15:00:00+00') to stdout\"" > /tmp/m.tsv
+          echo "строк из Москвы: $(wc -l < /tmp/m.tsv)"
+          { echo "create temp table m (like analytics_events including defaults);"
+            echo "copy m ($cols) from stdin;"; cat /tmp/m.tsv; echo '\.'
+            echo "insert into analytics_events ($cols) select $cols from m where not exists (select 1 from analytics_events a where a.created_at = m.created_at and a.name = m.name and a.device_id is not distinct from m.device_id and a.session_id is not distinct from m.session_id);"
+          } | ssh $SSH_OPTS root@$EU 'sudo -u postgres psql -q -v ON_ERROR_STOP=1 -d massovka' && echo "долито"
+          rm -f /tmp/m.tsv
+          echo "событий: Москва $(ssh $SSH_OPTS root@$MSK "sudo -u postgres psql -tAc 'select count(*) from analytics_events' massovka"), Европа $(ssh $SSH_OPTS root@$EU "sudo -u postgres psql -tAc 'select count(*) from analytics_events' massovka")"
+
       - uses: pnpm/action-setup@v4
-        if: env.SW == 'true' || env.DN == 'true'
+        if: env.SW == 'true' || env.DN == 'true' || env.MODE == 'finish'
       - uses: actions/setup-node@v4
-        if: env.SW == 'true' || env.DN == 'true'
+        if: env.SW == 'true' || env.DN == 'true' || env.MODE == 'finish'
         with:
           node-version: 22
           cache: pnpm
-      - if: env.SW == 'true' || env.DN == 'true'
+      - if: env.SW == 'true' || env.DN == 'true' || env.MODE == 'finish'
         run: pnpm install --frozen-lockfile
 
       - name: Матч через Москву (пересылка в Европу)
@@ -202,7 +250,7 @@ jobs:
           echo "8.8.8.8: api → $(dig +short A api.benobody.app @8.8.8.8 | tail -1), benobody.app → $(dig +short A benobody.app @8.8.8.8 | tail -1), www → $(dig +short A www.benobody.app @8.8.8.8 | tail -1)"
 
       - name: Матч напрямую в Европе по api.benobody.app
-        if: env.DN == 'true'
+        if: env.DN == 'true' || env.MODE == 'finish'
         env:
           EU: ${{ steps.eu.outputs.ip }}
         run: |
