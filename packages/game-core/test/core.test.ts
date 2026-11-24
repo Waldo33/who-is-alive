@@ -10,6 +10,7 @@ import {
   pickRoundAwards,
   plazaArena,
   planPath,
+  WALK_TOP,
   THEME_COUNT,
   THEME_RULES,
   seasonLeadTheme,
@@ -67,6 +68,30 @@ describe('NavGrid / A*', () => {
   });
   it('нет пути в непроходимую клетку', () => {
     expect(nav.findPath(nav.cellAt(90, 100), nav.cellAt(90, 130))).toBeNull();
+  });
+  it('у стен нет укрытий: ни в стене, ни за деревом или ларьком человечка не спрятать', () => {
+    // габариты спрайтов предметов (ширина × высота над точкой основания) — как их рисуют темы;
+    // фонарь — тонкий столб, за ним всё видно
+    const SIZE: Record<string, [number, number]> = {
+      tree: [22, 30], stall: [34, 30], planter: [32, 13], fountain: [34, 34], benchH: [22, 10], benchV: [9, 24],
+    };
+    const arena = plazaArena();
+    let worst = 0;
+    for (let i = 0; i < nav.cols * nav.rows; i++) {
+      if (!nav.walkable(i)) continue;
+      const x = nav.cx(i);
+      const y = nav.cy(i);
+      expect(y).toBeGreaterThanOrEqual(WALK_TOP);
+      // человечек 12×16, ноги в (x, y); предмет с основанием ниже рисуется поверх
+      for (const p of arena.props) {
+        const sz = SIZE[p.kind];
+        if (!sz || p.y <= y) continue;
+        const ox = Math.max(0, Math.min(x + 6, p.x + sz[0] / 2) - Math.max(x - 6, p.x - sz[0] / 2));
+        const oy = Math.max(0, Math.min(y, p.y) - Math.max(y - 16, p.y - sz[1]));
+        worst = Math.max(worst, (ox * oy) / (12 * 16));
+      }
+    }
+    expect(worst).toBeLessThanOrEqual(0.5);
   });
 });
 
