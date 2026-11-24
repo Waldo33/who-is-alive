@@ -1,0 +1,250 @@
+# Наблюдение (то же, что infra/game/observe.sh; файлы — байт в байт): node_exporter и отправка журнала —
+# на обоих серверах; VictoriaMetrics, VictoriaLogs, Grafana и копии базы игры — в Нидерландах.
+# Программы (node_exporter, Victoria*, Grafana) пока привозит game-deploy; роль раскладывает настройку и
+# перезапускает службу, только если поменялся её файл. Роль базы grafana_ro и пароли — по-прежнему observe.sh.
+
+# ── оба сервера ──
+- name: node_exporter установлен?
+  ansible.builtin.stat:
+    path: /usr/local/bin/node_exporter
+  register: ne_bin
+
+- name: node_exporter
+  when: ne_bin.stat.exists
+  block:
+    - name: node_exporter — пользователь
+      ansible.builtin.user:
+        name: node_exporter
+        system: true
+        create_home: false
+        shell: /usr/sbin/nologin
+    - name: node_exporter — служба
+      ansible.builtin.copy:
+        src: node_exporter.service
+        dest: /etc/systemd/system/node_exporter.service
+        mode: '0644'
+      notify: перезапустить node_exporter
+    - name: node_exporter — включён
+      ansible.builtin.systemd_service:
+        name: node_exporter
+        enabled: true
+        state: started
+
+- name: Журнал → VictoriaLogs — пакет
+  ansible.builtin.apt:
+    name: systemd-journal-remote
+    state: present
+
+- name: Журнал → VictoriaLogs — куда
+  ansible.builtin.copy:
+    src: journal-upload.conf
+    dest: /etc/systemd/journal-upload.conf
+    mode: '0644'
+  notify: перезапустить journal-upload
+
+- name: Журнал → VictoriaLogs — папка дополнения
+  ansible.builtin.file:
+    path: /etc/systemd/system/systemd-journal-upload.service.d
+    state: directory
+    mode: '0755'
+
+- name: Журнал → VictoriaLogs — пробовать снова, пока нет туннеля
+  ansible.builtin.copy:
+    src: journal-upload-90-massovka.conf
+    dest: /etc/systemd/system/systemd-journal-upload.service.d/90-massovka.conf
+    mode: '0644'
+  notify: перезапустить journal-upload
+
+- name: Журнал → VictoriaLogs — включён
+  ansible.builtin.systemd_service:
+    name: systemd-journal-upload
+    enabled: true
+
+# ── Нидерланды ──
+- name: Метрики, логи, Grafana, копии базы
+  when: "'infra' in group_names"
+  block:
+    - name: Где живёт игра
+      ansible.builtin.copy:
+        dest: /etc/massovka/game-site
+        content: "{{ game_site }}\n"
+        mode: '0644'
+
+    - name: Пользователь victoria
+      ansible.builtin.user:
+        name: victoria
+        system: true
+        home: /var/lib/victoria
+        create_home: false
+        shell: /usr/sbin/nologin
+
+    - name: Папки Victoria
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: victoria
+        group: victoria
+      loop: [/var/lib/victoria/metrics, /var/lib/victoria/logs]
+
+    - name: Папка настройки Victoria
+      ansible.builtin.file:
+        path: /etc/victoria
+        state: directory
+        mode: '0755'
+
+    - name: Туннели в Москву и Европу включены?
+      ansible.builtin.command: "systemctl is-enabled {{ item }}"
+      loop: [massovka-tunnel, massovka-tunnel-eu]
+      register: tunnels_enabled
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Что собирать (Москва — пока есть её туннель)
+      ansible.builtin.template:
+        src: scrape.yml.j2
+        dest: /etc/victoria/scrape.yml
+        mode: '0644'
+      vars:
+        msk_on: "{{ tunnels_enabled.results[0].rc == 0 }}"
+        eu_on: "{{ tunnels_enabled.results[1].rc == 0 or eu_ip | default('') != '' }}"
+      notify: перечитать scrape
+
+    - name: Службы VictoriaMetrics и VictoriaLogs
+      ansible.builtin.copy:
+        src: "{{ item }}.service"
+        dest: "/etc/systemd/system/{{ item }}.service"
+        mode: '0644'
+      loop: [victoria-metrics, victoria-logs]
+      register: victoria_units
+
+    - name: VictoriaMetrics и VictoriaLogs включены (перезапуск — если служба поменялась)
+      ansible.builtin.systemd_service:
+        name: "{{ item.item }}"
+        enabled: true
+        state: "{{ 'restarted' if item.changed else 'started' }}"
+        daemon_reload: "{{ item.changed }}"
+      loop: "{{ victoria_units.results }}"
+      loop_control: { label: "{{ item.item }}" }
+
+    - name: Grafana установлена?
+      ansible.builtin.stat:
+        path: /opt/grafana/bin/grafana
+      register: grafana_bin
+
+    - name: Пароль базы «только чтение» (его кладёт observe.sh)
+      ansible.builtin.slurp:
+        src: /etc/massovka-grafana/pgro.env
+      register: pgro
+      failed_when: false
+
+    - name: Запомнить пароль
+      ansible.builtin.set_fact:
+        pgro_password: "{{ (pgro.content | b64decode | regex_search('PGRO_PASSWORD=(.*)', '\\1') or ['']) | first }}"
+      no_log: true
+      when: pgro.content is defined
+
+    - name: Grafana
+      when: grafana_bin.stat.exists
+      block:
+        - name: Папки Grafana
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: directory
+            owner: grafana
+            group: grafana
+          loop: [/var/lib/grafana, /var/lib/grafana/plugins, /var/log/grafana]
+
+        - name: Папки настройки Grafana (отдельно от /etc/massovka — там секреты сервера)
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: directory
+            owner: root
+            group: grafana
+          loop: [/etc/massovka-grafana, /etc/massovka-grafana/datasources, /etc/massovka-grafana/dashboards]
+
+        - name: grafana.ini
+          ansible.builtin.template:
+            src: grafana.ini.j2
+            dest: /etc/massovka-grafana/grafana.ini
+            owner: root
+            group: grafana
+          notify: перезапустить grafana
+
+        - name: Источники данных (в файле пароль базы — без diff)
+          ansible.builtin.template:
+            src: datasources.yml.j2
+            dest: /etc/massovka-grafana/datasources/massovka.yml
+            owner: root
+            group: grafana
+          diff: false
+          notify: перезапустить grafana
+
+        - name: Панели — откуда
+          ansible.builtin.copy:
+            src: dashboards.yml
+            dest: /etc/massovka-grafana/dashboards/massovka.yml
+            owner: root
+            group: grafana
+          notify: перезапустить grafana
+
+        - name: Панели (infra/grafana)
+          ansible.builtin.copy:
+            src: "{{ playbook_dir }}/../grafana/{{ item }}"
+            dest: "/opt/massovka/grafana-dashboards/{{ item }}"
+          loop: [product.json, tech.json]
+
+        - name: Служба Grafana
+          ansible.builtin.copy:
+            src: grafana.service
+            dest: /etc/systemd/system/grafana.service
+            mode: '0644'
+          notify: перезапустить grafana
+
+        - name: Grafana включена
+          ansible.builtin.systemd_service:
+            name: grafana
+            enabled: true
+            state: started
+
+    - name: Ночная копия базы игры и еженедельная проверка, что она восстанавливается
+      when: pgro.content is defined
+      block:
+        - name: Папка копий
+          ansible.builtin.file:
+            path: "/var/backups/massovka-{{ game_site }}"
+            state: directory
+            owner: postgres
+            group: postgres
+            mode: '0750'
+
+        - name: msk-backup.sh
+          ansible.builtin.template:
+            src: msk-backup.sh.j2
+            dest: /opt/massovka/bin/msk-backup.sh
+            mode: '0755'
+
+        - name: backup-check.sh
+          ansible.builtin.copy:
+            src: backup-check.sh
+            dest: /opt/massovka/bin/backup-check.sh
+            mode: '0755'
+
+        - name: Службы и таймеры копий
+          ansible.builtin.copy:
+            src: "{{ item }}"
+            dest: "/etc/systemd/system/{{ item }}"
+            mode: '0644'
+          loop:
+            - massovka-msk-backup.service
+            - massovka-msk-backup.timer
+            - massovka-backup-check.service
+            - massovka-backup-check.timer
+          notify: перезапустить таймеры копий
+
+        - name: Таймеры копий включены
+          ansible.builtin.systemd_service:
+            name: "{{ item }}"
+            enabled: true
+            state: started
+          loop: [massovka-msk-backup.timer, massovka-backup-check.timer]

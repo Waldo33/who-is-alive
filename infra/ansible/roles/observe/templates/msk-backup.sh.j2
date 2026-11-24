@@ -1,0 +1,7 @@
+#!/bin/sh
+# копия базы игры ({{ game_site }}) через туннель (127.0.0.1:{{ game_db_port }}), хранить 30 дней
+set -e
+f=/var/backups/massovka-{{ game_site }}/massovka-$(date +%F).dump
+PGPASSWORD="$PGRO_PASSWORD" pg_dump -h 127.0.0.1 -p {{ game_db_port }} -U grafana_ro -Fc -f "$f.part" massovka
+mv "$f.part" "$f"
+find /var/backups/massovka-msk /var/backups/massovka-eu -name '*.dump' -mtime +30 -delete 2>/dev/null || true
