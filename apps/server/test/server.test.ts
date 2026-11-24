@@ -152,6 +152,20 @@ describe('игровой сервер: ошибки с телефонов', () =
   });
 });
 
+describe('игровой сервер: метрики', () => {
+  it('изнутри машины — и напрямую, и через внутренний вход Caddy; с внешним адресом — 404', async () => {
+    const srv = new GameServer({ authSecret: SECRET, log: silentLogger, trustProxy: true });
+    servers.push(srv);
+    const http = `http://127.0.0.1:${await srv.listen(0, '127.0.0.1')}`;
+    expect((await fetch(`${http}/metrics`)).status).toBe(200);
+    // внутренний вход Caddy (127.0.0.1:8080) ставит X-Forwarded-For с адресом клиента — 127.0.0.1
+    const viaFront = await fetch(`${http}/metrics`, { headers: { 'x-forwarded-for': '127.0.0.1' } });
+    expect(viaFront.status).toBe(200);
+    expect(await viaFront.text()).toContain('game_rooms{');
+    expect((await fetch(`${http}/metrics`, { headers: { 'x-forwarded-for': '203.0.113.5' } })).status).toBe(404);
+  });
+});
+
 describe('игровой сервер: лимиты по игроку, а не по адресу', () => {
   it('один игрок — не больше 5 комнат в минуту; другие с того же адреса создают свободно', async () => {
     const { http } = await boot();

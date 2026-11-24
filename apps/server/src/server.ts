@@ -531,8 +531,9 @@ export class GameServer {
   }
 
   private async metrics(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    // только изнутри: снаружи Caddy этот путь не пропускает, а здесь — запросы без прокси
-    if (this.o.trustProxy && req.headers['x-forwarded-for']) return this.reply(res, 404, { error: 'not_found' });
+    // только изнутри машины: напрямую или через внутренний вход Caddy 127.0.0.1:8080 (синий/зелёный —
+    // он ставит X-Forwarded-For: 127.0.0.1); снаружи Caddy этот путь не пропускает вовсе
+    if (this.o.trustProxy && !this.internal(req)) return this.reply(res, 404, { error: 'not_found' });
     let players = 0;
     let playing = 0;
     const steps: number[] = [];
