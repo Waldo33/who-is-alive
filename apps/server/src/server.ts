@@ -15,11 +15,11 @@ import { Counter, MsgBudget, RateWindow } from './limits';
 import type { ErrorTracker } from './errors';
 import { errFields, jsonLogger } from './log';
 import type { Logger } from './log';
-import type { Bot, FilmNotice } from './bot';
+import type { Bot, CardNotice, FilmNotice } from './bot';
 import { Room } from './room';
 import { MemoryStore, parseEvents } from './store';
 import type { Store } from './store';
-import type { Peer, RoomFilm, RoomSnapshot } from './room';
+import type { Peer, RoomCard, RoomFilm, RoomSnapshot } from './room';
 import type { Geo } from './geo';
 import { VideoSwitch } from './video-switch';
 
@@ -364,6 +364,7 @@ export class GameServer {
       film: load ? undefined : this.o.film,
       videoOn: () => this.video.on,
       onFilm: (r, f) => this.filmToChat(r, f),
+        onCard: (r, c) => this.cardToChat(r, c),
     });
     this.rooms.set(code, room);
     if (load) this.loadRooms.add(code);
@@ -445,6 +446,7 @@ export class GameServer {
         film: this.o.film,
         videoOn: () => this.video.on,
         onFilm: (r, f) => this.filmToChat(r, f),
+        onCard: (r, c) => this.cardToChat(r, c),
         restore: snap,
       });
       this.rooms.set(snap.code, room);
@@ -459,6 +461,12 @@ export class GameServer {
       // сервер бота: игровой сервер (по туннелю) сообщает, что фильм комнаты по приглашению готов
       if (!this.o.bot) return this.reply(res, 503, { error: 'no_bot' });
       const r = await this.o.bot.film(((await readJson(req, 4096)) ?? {}) as FilmNotice);
+      return this.reply(res, r.status, r.body);
+    }
+    if (p === '/internal/tg/card' && req.method === 'POST') {
+      // сервер бота: игровой сервер сообщает, что на карточке комнаты по приглашению (сбор, съёмка)
+      if (!this.o.bot) return this.reply(res, 503, { error: 'no_bot' });
+      const r = await this.o.bot.card(((await readJson(req, 4096)) ?? {}) as CardNotice);
       return this.reply(res, r.status, r.body);
     }
     // группы ошибок от сервера бота (Нидерланды, без своей базы) — по туннелю
@@ -622,7 +630,7 @@ export class GameServer {
   private filmToChat(room: Room, f: RoomFilm): void {
     const base = this.o.botInternal;
     if (!base || !room.invite) return;
-    const body: FilmNotice = { invite: room.invite, id: f.id, code: room.code, winners: f.winners, draw: f.draw };
+    const body: FilmNotice = { invite: room.invite, id: f.id, code: room.code, winners: f.winners, draw: f.draw, awards: f.awards };
     void fetch(`${base}/internal/tg/film`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -634,6 +642,23 @@ export class GameServer {
         this.log(r.ok ? 'info' : 'warn', 'film_to_chat', { room: room.code, status: r.status, sent: !!j?.sent });
       })
       .catch((e) => this.log('warn', 'film_to_chat', { room: room.code, err: String(e) }));
+  }
+
+  /** Живая карточка в чате: состав лобби или счёт съёмки — боту, он перерисует карточку (bot.ts › card). */
+  private cardToChat(room: Room, c: RoomCard): void {
+    const base = this.o.botInternal;
+    if (!base || !room.invite) return;
+    const body: CardNotice = { invite: room.invite, code: room.code, ...c };
+    void fetch(`${base}/internal/tg/card`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(10_000),
+    })
+      .then((r) => {
+        if (!r.ok) this.log('warn', 'card_to_chat', { room: room.code, status: r.status });
+      })
+      .catch((e) => this.log('warn', 'card_to_chat', { room: room.code, err: String(e) }));
   }
 
   private internal(req: IncomingMessage): boolean {

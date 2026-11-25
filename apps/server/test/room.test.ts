@@ -269,9 +269,11 @@ describe('фильм матча в комнате', () => {
       speed: 50,
       film: film as unknown as import('../src/film').FilmService,
       onFilm: (r, f) => toChat.push({ code: r.code, ...f }),
+      onCard: (_r, c) => cards.push(c),
     });
+    const cards: import('../src/room').RoomCard[] = [];
     // комнату собрала карточка из Telegram — готовый фильм уйдёт и в тот чат
-    const toChat: { code: string; id: string; winners: string[]; draw: boolean }[] = [];
+    const toChat: { code: string; id: string; winners: string[]; draw: boolean; awards: { id: string; names: string[] }[] }[] = [];
     room.invite = 'AbCd1234xyz9';
     const [pa, pb] = [fakePeer(), fakePeer()];
     room.join('a', 'A', pa);
@@ -298,7 +300,39 @@ describe('фильм матча в комнате', () => {
       expect(f.at(-1)).toEqual({ t: 'film', state: 'ready', id: 'f'.repeat(20), ext: 'mp4', thumb: true });
     }
     const names = room.runner!.host.match!.winners.map((pid) => ({ a: 'A', b: 'B' })[pid]);
-    expect(toChat).toEqual([{ code: 'FILM', id: 'f'.repeat(20), winners: names, draw: names.length > 1 }]);
+    expect(toChat).toMatchObject([{ code: 'FILM', id: 'f'.repeat(20), winners: names, draw: names.length > 1 }]);
+    // награды — с именами, а не pid
+    for (const a of toChat[0].awards) for (const n of a.names) expect(['A', 'B']).toContain(n);
+    // карточка в чате: сбор 1 → 2 из 4 («Готов» её не трогает), потом съёмка со счётом по дублям
+    expect(cards[0]).toEqual({ state: 'lobby', seats: [{ name: 'A', color: 0 }], max: 4 });
+    expect(cards[1]).toEqual({ state: 'lobby', seats: [{ name: 'A', color: 0 }, { name: 'B', color: 1 }], max: 4 });
+    expect(cards[2]).toMatchObject({ state: 'playing', take: 1, target: 8 });
+    const plays = cards.filter((c) => c.state === 'playing');
+    const last = plays.at(-1) as Extract<import('../src/room').RoomCard, { state: 'playing' }>;
+    const scores = room.runner!.host.match!.scores;
+    expect(last.scores.map((x) => x.score).sort()).toEqual(Object.values(scores).sort());
+    // после конца матча сбор не возвращается (карточку занимает фильм), закрытие — без «отменили»
+    const before = cards.length;
+    expect(cards.every((c) => c.state !== 'lobby' || cards.indexOf(c) < 2)).toBe(true);
+    room.close('test');
+    expect(cards.length).toBe(before);
+  });
+
+  it('лобби по карточке закрылось без матча — карточке «съёмку отменили»; без приглашения — молчим', () => {
+    const cards: import('../src/room').RoomCard[] = [];
+    const mk = (invite?: string) => {
+      const r = new Room({ code: 'CARD', directorId: 'a', directorName: 'A', settings: { roundSec: 60, maxRounds: 3, kidsMode: false, aiFill: false }, lang: 'ru', now: () => 1, log: silentLogger, onCard: (_r, c) => cards.push(c) });
+      r.invite = invite;
+      return r;
+    };
+    const plain = mk();
+    plain.join('a', 'A', fakePeer());
+    plain.close('test');
+    expect(cards).toEqual([]);
+    const room = mk('AbCd1234xyz9');
+    room.join('a', 'A', fakePeer());
+    room.close('empty');
+    expect(cards.map((c) => c.state)).toEqual(['lobby', 'closed']);
   });
 });
 

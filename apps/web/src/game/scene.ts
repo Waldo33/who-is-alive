@@ -4386,10 +4386,25 @@ export class GameScene extends Phaser.Scene {
    * «Фильм матча»: готовый с сервера (монтируется с разоблачения последнего дубля) — сразу видео;
    * сервер не монтирует (песочница, старый сервер) или не смог — монтируем на телефоне из дублей матча.
    */
+  /** Подпись фильма: звезда матча (или ничья), до двух наград и приглашение сыграть. */
+  private filmCaption(): string {
+    const m = this.sim.match;
+    if (!m) return this.t.clip.filmText;
+    const name = (pid: string) => this.sim.players.find((p) => p.pid === pid)?.name ?? '';
+    const winners = m.winners.map(name).filter(Boolean);
+    const head = !winners.length ? '' : winners.length > 1 ? fmt(this.t.clip.filmDraw, { names: winners.join(', ') }) : fmt(this.t.clip.filmStar, { name: winners[0] });
+    const awards = m.awards
+      .map((a) => ({ title: this.t.awards[a.id]?.title, names: a.pids.map(name).filter(Boolean) }))
+      .filter((a) => a.title && a.names.length)
+      .slice(0, 2)
+      .map((a) => fmt(this.t.clip.filmAward, { title: a.title, names: a.names.join(', ') }));
+    return [head, ...awards, this.t.clip.filmText].filter(Boolean).join('\n');
+  }
+
   private openFilm(): void {
     this.closeClip?.();
     const feed = this.init0.film;
-    const text = this.t.clip.filmText;
+    const text = this.filmCaption();
     const share = async (file: File, via: string) => {
       this.track('clip_send', { kind: 'film', type: file.type.split(';')[0], via });
       await this.init0.onShare?.(text, [file]);
@@ -4442,7 +4457,7 @@ export class GameScene extends Phaser.Scene {
     // модуль клипа в основной сборке (не ленивый чанк): после обновления сайта открытая вкладка
     // не сможет подгрузить чанк, которого уже нет на сервере, и кнопка молча не срабатывала бы
     this.closeClip = openClipOverlay(document.body, () => new FilmScene(inp), this.t, (f) => share(f, 'local'), (f) => save(f, 'local'), {
-      text: this.t.clip.filmText,
+      text: this.filmCaption(),
       onTelegram,
       making: this.t.clip.filmMaking,
     });

@@ -21,7 +21,7 @@ import { loadChunk } from '@/lib/chunk';
 import { setTrackContext, shareKind, track } from '@/lib/analytics';
 import { Snow, useNewYear } from '@/ui/Festive';
 import { Actor } from '@/ui/Actor';
-import { inTelegram, inviteLink, telegramReady, telegramShare, telegramShareCard, tgLink } from '@/lib/telegram';
+import { inTelegram, inviteLink, telegramInvite, telegramReady, telegramShare, telegramShareCard, tgLink } from '@/lib/telegram';
 import { download, shareContent, withLang } from '@/lib/share';
 import { Room, SPECTATE_DELAY_MS } from '@/net/room';
 import { GAME_API } from '@/lib/env';
@@ -283,6 +283,7 @@ function GameView({
               },
               on: (h) => room.link?.onFilm(h) ?? (() => undefined),
               url: (id, ext) => `${GAME_API}/v1/clips/${id}.${ext}`,
+              rematch: { code: room.state.code, invite: telegramInvite() },
             },
       });
       if (cancelled) running.destroy();
