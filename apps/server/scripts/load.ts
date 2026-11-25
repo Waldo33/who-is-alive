@@ -55,7 +55,9 @@ async function startLocal(): Promise<void> {
 const H = (): Record<string, string> => (key ? { 'x-kto-load': key } : {});
 
 // ───────────── статистика ─────────────
-const st = { rooms: 0, busy: 0, failed: 0, joined: 0, closed: 0, msgs: 0, bytes: 0, rtt: [] as number[], matches: 0 };
+const st = { rooms: 0, busy: 0, failed: 0, joined: 0, closed: 0, msgs: 0, bytes: 0, rtt: [] as number[], matches: 0, noStart: 0 };
+/** Комнаты (по номеру), где матч начался. */
+const started = new Set<number>();
 function pct(a: number[], p: number): number {
   if (!a.length) return NaN;
   const s = [...a].sort((x, y) => x - y);
@@ -111,11 +113,16 @@ async function room(i: number): Promise<Player[] | null> {
             const s = d.toString();
             if (s.startsWith('{"t":"welcome"')) {
               st.joined++;
+              // «Мотор!» ждёт «Готов» от всех, кроме режиссёра (иначе матч не стартует и прогон меряет пустые лобби)
+              if (k !== 0) ws.send(JSON.stringify({ t: 'ready', on: true }));
               done({ ws, director: k === 0 });
             } else if (s.includes('"t":"pong"')) {
               const m = /"c":(\d+(?:\.\d+)?)/.exec(s);
               if (m) st.rtt.push(Date.now() - Number(m[1]));
-            } else if (s.includes('"t":"match_start"') && k === 0) st.matches++;
+            } else if (s.includes('"t":"match_start"') && k === 0) {
+              st.matches++;
+              started.add(i);
+            }
             else if (k === 0 && s.includes('"phase":"match_end"')) {
               // матч кончился раньше прогона — «Ещё дубль», нагрузка не падает
               ws.send(JSON.stringify({ t: 'g', m: { t: 'i', i: { k: 'rematch' } } }));
@@ -135,7 +142,13 @@ async function room(i: number): Promise<Player[] | null> {
     return null;
   }
   st.rooms++;
-  players[0]!.ws.send(JSON.stringify({ t: 'start' }));
+  // «Готов» могут дойти позже «start» — режиссёр повторяет «Мотор!», пока матч не начнётся (до 10 с)
+  const director = players[0]!.ws;
+  for (let n = 0; n < 20 && !started.has(i) && director.readyState === WebSocket.OPEN; n++) {
+    director.send(JSON.stringify({ t: 'start' }));
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  if (!started.has(i)) st.noStart++;
   return players as Player[];
 }
 
@@ -192,7 +205,7 @@ async function main(): Promise<void> {
     const wait = 1000 - ((Date.now() - t0) % 1000);
     await new Promise((r) => setTimeout(r, wait));
   }
-  console.log(`заход за ${((Date.now() - t0) / 1000).toFixed(1)} с: комнат ${st.rooms}, «сервер занят» ${st.busy}, не вошли ${st.failed}`);
+  console.log(`заход за ${((Date.now() - t0) / 1000).toFixed(1)} с: комнат ${st.rooms}, «сервер занят» ${st.busy}, не вошли ${st.failed}, матч не начался ${st.noStart}`);
 
   const pid = server?.pid;
   let ticks = pid ? cpuTicks(pid) : 0;
@@ -225,12 +238,13 @@ async function main(): Promise<void> {
   for (const r of all) for (const p of r) p.ws.terminate();
   const worst = Math.max(...reports.map((r) => r.p99).filter((x) => !Number.isNaN(x)));
   console.log(
-    `итог: комнат ${st.rooms} из ${ROOMS} (занято ${st.busy}, не вошли ${st.failed}), закрылось соединений ${st.closed}, худший пинг p99 ${worst} мс` +
+    `итог: комнат ${st.rooms} из ${ROOMS} (занято ${st.busy}, не вошли ${st.failed}, матч не начался ${st.noStart}), закрылось соединений ${st.closed}, худший пинг p99 ${worst} мс` +
       (pid ? `, процессор до ${Math.max(...reports.map((r) => r.cpu))}% ядра, память до ${Math.max(...reports.map((r) => r.rss))} МБ (${(Math.max(...reports.map((r) => r.rss)) / Math.max(1, st.rooms)).toFixed(2)} МБ на комнату с базой)` : ''),
   );
   server?.kill('SIGTERM');
-  // провал — если больше 5% комнат не вошли по ошибке (не «занято») или соединения рвались
-  const bad = st.failed > ROOMS * 0.05;
+  // провал — если больше 5% комнат не вошли по ошибке (не «занято») или соединения рвались,
+  // и если в какой-то из поднятых комнат матч не начался: тогда прогон мерил бы пустые лобби
+  const bad = st.failed > ROOMS * 0.05 || st.noStart > 0;
   process.exit(bad ? 1 : 0);
 }
 
