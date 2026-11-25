@@ -1,6 +1,9 @@
 import type { WorldEvent } from './events';
 import type { NavGrid } from './nav';
 import { World, makeReplay } from './world';
+import { makeConfig } from './config';
+import { nightDeaths } from './sanity';
+import { hasSanity } from './themes';
 import type { WorldSnapshot } from './world';
 
 /** Всё, что нужно, чтобы позже проиграть кусок раунда (журнал мира сохраняется после смены раунда). */
@@ -31,6 +34,8 @@ export interface Moment {
   /** Участники главного события: кто действовал (выбил, ударил, собрал) и над кем. Для камеры и подписей клипа. */
   attacker?: number;
   victim?: number;
+  /** «Купальская ночь»: выбил не игрок — забрал Леший или сгинул в тумане (рассудок, кикимора). */
+  by?: 'leshy' | 'mist';
 }
 
 /** Окно момента: обычно ~6 с, но может растянуться, чтобы целиком вместить два события подряд или долгий подход. */
@@ -46,10 +51,15 @@ export const MOMENT_CORE_MS = 1500;
 const TRIM_PENALTY = 1;
 
 /** С какого момента событие нельзя резать: подход — не короче MOMENT_CORE_MS. */
-export function coreFrom(e: { from: number; at: number }): number {
+export function coreFrom(e: { from: number; at: number; by?: Moment['by'] }): number {
+  // удар Лешего читается только целиком: выход на поляну, замах, удар
+  if (e.by === 'leshy') return e.from;
   return Math.max(e.from, e.at - MOMENT_CORE_MS);
 }
 const STEP_MS = 250;
+/** Удар Лешего: показываем от его выхода на поляну, но окно не длиннее MOMENT_MAX_MS вместе с «после». */
+const LESHY_PRE_MS = 6500;
+const NIGHT_CFG = makeConfig();
 const CLOSE_PX = 20;
 /** Штраф за каждую секунду сверх 6 с: длинное окно берём, только если оно правда насыщеннее. */
 const LONG_PENALTY = 0.6;
@@ -88,6 +98,7 @@ export interface MomentEvent {
   selfRole?: 'attacker' | 'victim';
   attacker?: number;
   victim?: number;
+  by?: Moment['by'];
 }
 
 /** Кадр события по умолчанию: [до, после]. У выбивания «до» растягивается на весь подход нападавшего. */
@@ -111,10 +122,12 @@ export function momentEvents(rec: RoundRecording, selfEid?: number): MomentEvent
   const end = rec.playEnd;
   const isPlayer = new Set(rec.players.map((p) => p.eid));
   const out: MomentEvent[] = [];
-  const add = (at: number, pts: number, kind: Moment['kind'], pre?: number, selfRole?: MomentEvent['selfRole'], attacker?: number, victim?: number) => {
+  const add = (at: number, pts: number, kind: Moment['kind'], pre?: number, selfRole?: MomentEvent['selfRole'], attacker?: number, victim?: number, by?: Moment['by']) => {
     const [p0, post] = CONTEXT[kind];
-    out.push({ at, pts, kind, from: Math.max(start, at - (pre ?? p0)), to: Math.min(end, at + post), selfRole, attacker, victim });
+    out.push({ at, pts, kind, from: Math.max(start, at - (pre ?? p0)), to: Math.min(end, at + post), selfRole, attacker, victim, ...(by ? { by } : {}) });
   };
+  // «Купальская ночь»: смерть без нападавшего — Леший или туман, а не ближайший игрок
+  const night = hasSanity(rec.theme) ? new Map(nightDeaths(NIGHT_CFG, rec.log, rec.kills).map((d) => [d.target, d])) : null;
 
   // позиции живых игроков на каждом шаге (их всего 2–4) и близость раз в секунду
   const track = new Map<number, { t: number; x: number; y: number }[]>();
@@ -179,6 +192,14 @@ export function momentEvents(rec: RoundRecording, selfEid?: number): MomentEvent
   for (const ev of rec.log) {
     if (ev.at < start || ev.at > end) continue;
     if (ev.t === 'hit') {
+      const nd = night && ev.result === 'player' && ev.attacker === undefined ? night.get(ev.target) : undefined;
+      if (nd) {
+        const role = selfEid !== undefined && ev.target === selfEid ? 'victim' : undefined;
+        // Леший — главное событие ночи: виден его выход на поляну, замах и удар
+        if (nd.leshy !== undefined) add(ev.at, 9 + (role ? SELF_BONUS : 0), 'knockout', Math.min(LESHY_PRE_MS, ev.at - (nd.showAt ?? ev.at) + 300), role, undefined, ev.target, 'leshy');
+        else add(ev.at, 5 + (role ? SELF_BONUS : 0), 'knockout', APPROACH_MIN_MS, role, undefined, ev.target, 'mist');
+        continue;
+      }
       if (ev.result === 'player') {
         const known = rec.kills?.find((k) => k.victim === ev.target);
         const attacker = ev.attacker ?? known?.by ?? attackerOf(ev.target, ev.at, ev.x, ev.y);
@@ -270,7 +291,7 @@ export function findBestMoment(rec: RoundRecording, selfEid?: number): Moment | 
       const score = pts - cut - (Math.max(0, len - MOMENT_MS) / 1000) * LONG_PENALTY;
       // при равенстве: короче, затем позже (ближе к развязке)
       if (!best || score > bestScore + 1e-9 || (Math.abs(score - bestScore) < 1e-9 && (len < bestLen || (len === bestLen && from > best.from)))) {
-        best = { from, to, score: pts, kind: main.kind, at: main.at, selfRole: main.selfRole, attacker: main.attacker, victim: main.victim };
+        best = { from, to, score: pts, kind: main.kind, at: main.at, selfRole: main.selfRole, attacker: main.attacker, victim: main.victim, ...(main.by ? { by: main.by } : {}) };
         bestScore = score;
         bestLen = len;
       }

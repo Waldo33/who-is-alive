@@ -1,10 +1,11 @@
 import { PAL, PLAYER_COLORS } from '@kto/assets';
-import { TICK_MS, fmt, makeReplay, worldOf } from '@kto/game-core';
+import { TICK_MS, fireLevel, fmt, hasSanity, isLeshyCrowd, makeConfig, makeReplay, nightDeaths, nightLevel, worldOf } from '@kto/game-core';
 import type { ArenaDef, Dict, Moment, RoundRecording, World, WorldEvent } from '@kto/game-core';
 import qrcode from 'qrcode-generator';
 import type { ClipSoundCore } from './clip-audio';
 import { frame, getArt, scaledCanvas, text } from './art';
 import { canvas } from './pixels';
+import { LESHY_H, LESHY_W, giantEnd, giantPose, makeEmberVeil, makeLeshy, makeNightVeil } from './night-art';
 import type { Art } from './art';
 import { frameFor } from './frames';
 import { CH_H, CH_W, F, OL_H, OL_W } from './sprites';
@@ -31,6 +32,15 @@ const LH = 320;
 const AY = 24;
 const PANEL_Y = 284;
 export const CLIP_SCALE = 6;
+
+/** Числа ночи (костёр, темнота) — те же, что у ядра по умолчанию. */
+const NIGHT_CFG = makeConfig();
+let nightCache: { veil: HTMLCanvasElement; ember: HTMLCanvasElement; leshy: HTMLCanvasElement } | null = null;
+/** Вуали и кадры Лешего рисуются один раз на процесс (на сервере — на воркер фильма). */
+function nightArt(): { veil: HTMLCanvasElement; ember: HTMLCanvasElement; leshy: HTMLCanvasElement } {
+  nightCache ??= { veil: makeNightVeil(), ember: makeEmberVeil(), leshy: makeLeshy() };
+  return nightCache;
+}
 /** Безопасная зона: плашка подписи и водяной знак. */
 const SAFE_L = 6;
 const SAFE_R = 156;
@@ -297,6 +307,8 @@ export class ClipPlayerScene {
   private byAttacker = new Map<number, Kill[]>();
   /** Соперник героя в главном событии: на нём сжимается прицел. */
   private opp: number | undefined;
+  /** «Купальская ночь»: вуали, кадры Лешего, его удары из журнала и начало ночи (мировое время). */
+  private night: { veil: HTMLCanvasElement; ember: HTMLCanvasElement; leshy: HTMLCanvasElement; strikes: Map<number, { x: number; y: number; at: number }>; playStart: number } | null = null;
 
   constructor(private inp: ClipInput) {
     this.scale = inp.scale ?? CLIP_SCALE;
@@ -307,6 +319,14 @@ export class ClipPlayerScene {
     this.wc = wc.c;
     this.wg = wc.g;
     this.art = getArt(inp.arena);
+    if (hasSanity(inp.rec.theme)) {
+      const strikes = new Map<number, { x: number; y: number; at: number }>();
+      for (const d of nightDeaths(NIGHT_CFG, inp.rec.log, inp.rec.kills)) if (d.leshy !== undefined) strikes.set(d.leshy, { x: d.x, y: d.y, at: d.at });
+      // начало ночи: первые цветы выходят в первый же миг игры (запасной путь — отсчёт после первого кадра)
+      const first = inp.rec.log.find((e) => e.t === 'star_spawn');
+      const playStart = first?.at ?? (inp.rec.keyframes[0]?.time ?? 0) + 3000;
+      this.night = { veil: nightArt().veil, ember: nightArt().ember, leshy: nightArt().leshy, strikes, playStart };
+    }
     this.mode = inp.mode ?? 'clip';
     const full = this.mode === 'clip' || this.mode === 'feature';
     this.tm = this.mode === 'feature' ? FEAT_T : full ? CLIP_T : this.mode === 'blooper' ? BLOOP_T : SEG_T;
@@ -315,7 +335,7 @@ export class ClipPlayerScene {
     if (this.mode === 'hook') this.win = { from: Math.max(m.from, m.at - 450), to: Math.max(m.from, m.at - 120) };
     else if (this.mode === 'segment') {
       this.win = focused
-        ? { from: Math.max(m.from, m.at - SEG_PRE), to: Math.min(Math.max(m.to, inp.rec.playEnd), m.at + SEG_POST) }
+        ? { from: m.by === 'leshy' ? m.from : Math.max(m.from, m.at - SEG_PRE), to: Math.min(Math.max(m.to, inp.rec.playEnd), m.at + SEG_POST) }
         : { from: Math.max(m.from, m.to - SEG_PLAIN), to: m.to };
     } else if (this.mode === 'feature' && focused) this.win = { from: m.from, to: Math.max(m.from, Math.min(Math.max(m.to, inp.rec.playEnd), m.at + FEAT_POST)) };
     else this.win = { from: m.from, to: m.to };
@@ -474,7 +494,8 @@ export class ClipPlayerScene {
     this.sound?.pump();
     const alpha = Math.max(0, Math.min(1, (target - w.time) / TICK_MS));
     // наезд: 0 — общий план, 1 — крупно (крючок фильма — крупно сразу)
-    const zp = this.mode === 'hook' ? 1 : reveal ? Math.max(0, Math.min(1, (local - this.cutAt) / ZOOM_MS)) : 0;
+    // Леший выше кадра наезда — его удар показываем общим планом
+    const zp = this.inp.moment.by === 'leshy' ? 0 : this.mode === 'hook' ? 1 : reveal ? Math.max(0, Math.min(1, (local - this.cutAt) / ZOOM_MS)) : 0;
     this.drawWorld(w, alpha, reveal, ms, zp, local);
     this.drawBands(kind, local, target);
     const g = this.g;
@@ -566,6 +587,57 @@ export class ClipPlayerScene {
     return at !== undefined && local >= at;
   }
 
+  /** Секунда ночи в мировое время t (как у ядра: с паузами стоп-кадров). */
+  private nightSec(t: number): number {
+    return (t - (this.night?.playStart ?? 0)) / 1000;
+  }
+
+  /** Кадр костра «Купальской ночи» по силе огня (как scene.ts › fireBase): горит, слабее, тлеет, угли. */
+  private fireFrame(t: number): number {
+    if (!this.night) return 0;
+    const sec = this.nightSec(t);
+    const out = NIGHT_CFG.sanityFireOutSec;
+    const lvl = sec < out * 0.36 ? 3 : sec < out * 0.68 ? 2 : sec < out ? 1 : 0;
+    return (3 - lvl) * 4;
+  }
+
+  /** Где Леший в этот миг (если сейчас его стоп-кадр). */
+  private giantAt(w: World, t: number, now: number): ReturnType<typeof giantPose> | null {
+    const c = w.crowd;
+    if (!this.night || !c || !isLeshyCrowd(NIGHT_CFG, c) || t < c.showAt || t >= giantEnd(c)) return null;
+    return giantPose(c, t, this.night.strikes.get(c.warnAt) ?? null, now, this.inp.arena.width);
+  }
+
+  /** Ночь поверх мира: темнеет к ночи, у костра просвет, прогорел — только угли; глаза Лешего горят сквозь тьму. */
+  private drawNight(g: CanvasRenderingContext2D, t: number, giant: ReturnType<typeof giantPose> | null): void {
+    const nt = this.night!;
+    const sec = this.nightSec(t);
+    const n = 0.18 + 0.5 * nightLevel(NIGHT_CFG, sec);
+    const fire = fireLevel(NIGHT_CFG, sec);
+    g.globalAlpha = n;
+    g.drawImage(nt.veil, 0, 0);
+    if (fire < 1) {
+      g.globalAlpha = n * (1 - fire) * 0.85;
+      g.drawImage(nt.ember, 0, 0);
+    }
+    g.globalAlpha = 1;
+    if (!giant) return;
+    const look = giant.frame === 4 ? -1 : giant.frame === 5 || giant.frame === 7 ? 1 : 0;
+    const flip = giant.flipX ? -1 : 1;
+    const ey = giant.feet + 1 - LESHY_H + 26 + (giant.walking && giant.frame % 2 === 1 ? 1 : 0);
+    for (const ox of [-3, 2]) {
+      const ex = giant.x + flip * (ox + look) + (flip < 0 ? -1 : 0);
+      g.globalAlpha = 0.45;
+      g.fillStyle = PAL.amber;
+      g.fillRect(ex - 1, ey - 1, 3, 3);
+      g.globalAlpha = 1;
+      g.fillStyle = PAL.yellow;
+      g.fillRect(ex, ey, 1, 1);
+      g.fillStyle = PAL.white;
+      g.fillRect(ex, ey - 1, 1, 1);
+    }
+  }
+
   private drawWorld(w: World, alpha: number, reveal: boolean, now: number, zp: number, local: number): void {
     const zoomed = zp > 0;
     const g = this.wg;
@@ -605,7 +677,8 @@ export class ClipPlayerScene {
     const list: D[] = [];
     for (const p of this.inp.arena.props) {
       const pr = loc.props.get(p.kind)!;
-      const f = p.kind === 'fountain' ? Math.floor(now / 180) % Math.min(4, pr.frames) : p.kind === 'lamp' ? Math.floor(now / 900) % pr.frames : 0;
+      const f =
+        p.kind === 'fountain' ? Math.min(pr.frames - 1, this.fireFrame(t) + (Math.floor(now / 180) % Math.min(4, pr.frames))) : p.kind === 'lamp' ? Math.floor(now / 900) % pr.frames : 0;
       list.push({ y: p.y, draw: () => frame(g, pr.c, pr.fw, pr.fh, f, p.x - pr.fw / 2, p.y - pr.fh) });
     }
     const pos = new Map<number, { x: number; y: number }>();
@@ -680,10 +753,26 @@ export class ClipPlayerScene {
       const bob = Math.floor((now + st.id * 300) / 300) % 2;
       list.push({ y: st.y - 1, draw: () => frame(g, a.star, 10, 10, Math.floor(now / 140) % 4, st.x - 5, st.y - 8 - bob) });
     }
+    // Леший в своём стоп-кадре: стоит в толпе по глубине (кто ниже — перед ним)
+    const giant = this.giantAt(w, t, now);
+    if (giant) {
+      const gp = giant;
+      list.push({
+        y: gp.feet,
+        draw: () => {
+          g.globalAlpha = 0.55;
+          g.fillStyle = PAL.ink;
+          g.fillRect(gp.x - 15, gp.feet - 2, 30, 4);
+          g.globalAlpha = 1;
+          frame(g, this.night!.leshy, LESHY_W, LESHY_H, gp.frame, gp.x - LESHY_W / 2, gp.feet + 1 - LESHY_H, gp.flipX);
+        },
+      });
+    }
     list.sort((p, q) => p.y - q.y);
     for (const d of list) d.draw();
     const arms = armsOf(themeLook(this.inp.rec.theme, look).chars.map);
     for (const k of this.kills.values()) drawAir(px, k, gt(k), holders.get(k) ?? null, arms);
+    if (this.night) this.drawNight(g, t, giant);
 
     // прицел на сопернике героя: красные уголки сжимаются к удару
     const sinceHit = local - this.hitClip;
@@ -921,6 +1010,17 @@ export class ClipPlayerScene {
     const atk = this.player(m.attacker);
     const vic = this.player(m.victim);
     const after = world >= m.at && local >= this.hitClip;
+    if (m.by && vic) {
+      // «Купальская ночь»: не игрок выбил — Леший забрал или туман
+      if (after) this.caption(vic.name, PLAYER_COLORS[vic.color], m.by === 'leshy' ? t.clip.leshyOf : t.clip.mistOf, PAL.red);
+      else {
+        const l1 = this.mode === 'segment' ? fmt(t.clip.round, { n: this.inp.rec.round }) : (cap?.reveal ?? t.clip.reveal);
+        const giant = this.replay ? this.giantAt(this.replay, this.replay.time, local) : null;
+        this.caption(l1, PAL.white, giant ? t.clip.leshyOut : m.by === 'mist' ? t.clip.mistNear : (cap?.kind ?? t.clip.kinds[m.kind]), blink ? PAL.yellow : PAL.amber);
+      }
+      this.rec(blink);
+      return;
+    }
     if (after && atk) {
       // итог по именам: «Енот / вырезает: Батон»
       const l2 =

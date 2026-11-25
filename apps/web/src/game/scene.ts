@@ -1,5 +1,6 @@
 import * as Phaser from 'phaser';
-import { FACE_EYES, FACE_H, FACE_W, LESHY_H, LESHY_W, leshyFace, leshyFrames, type LeshyKey } from './leshy-art';
+import { FACE_EYES, FACE_H, FACE_W, LESHY_H, LESHY_W, leshyFace, type LeshyKey } from './leshy-art';
+import { giantEnd, giantPose, makeLeshy, makeNightVeil, makeTorchHole } from './night-art';
 import { PAL, PLAYER_COLORS, hexToInt } from '@kto/assets';
 import {
   LocalSession,
@@ -18,7 +19,9 @@ import {
   nightLevel,
   playLenSec,
   leshyVisits,
-  leshySpot,
+  isLeshyCrowd,
+  nightDeaths,
+  nightCause,
   fireLevel,
   LAG_GRACE_MS,
 } from '@kto/game-core';
@@ -1935,7 +1938,9 @@ export class GameScene extends Phaser.Scene {
         })
       : [{ eid: dc.eid, name: me.name, color: me.color }];
     const rec = recordRound(w, { round: this.sim.round, theme: this.sim.theme, players: known ? s!.reveal : [], playEnd: to, kills: s?.kills });
-    const moment: Moment = { from, to, score: 0, kind: 'knockout', at: dc.at, victim: dc.eid, attacker: dc.killer, selfRole: 'victim' };
+    // «Купальская ночь»: забрал Леший или туман — подпись про них, а не «кто вырезал»
+    const by = hasSanity(this.sim.theme) && dc.killer === undefined ? nightCause(this.cfg, w.log, dc.eid, dc.at, s?.kills) : undefined;
+    const moment: Moment = { from, to, score: 0, kind: 'knockout', at: dc.at, victim: dc.eid, attacker: dc.killer, selfRole: 'victim', ...(by ? { by } : {}) };
     const local = () => recordClipInBackground(
       {
         rec,
@@ -2279,9 +2284,9 @@ export class GameScene extends Phaser.Scene {
       const lead = this.cfg.leshyLeadSec;
       this.forestEyes(Math.max(0, Math.min(1, (this.playSec() - (L.sec - lead)) / lead)));
     }
-    const end = c ? (c.watchUntil ?? c.windowEnd + LAG_GRACE_MS) + 2600 : 0;
+    const end = c ? giantEnd(c) : 0;
     const on = replay
-      ? this.sim.phase === 'reveal' && !!c && this.isLeshyCrowd(c) && w.time >= c.showAt && w.time < end
+      ? this.sim.phase === 'reveal' && !!c && hasSanity(this.sim.theme) && isLeshyCrowd(this.cfg, c) && w.time >= c.showAt && w.time < end
       : hasSanity(this.sim.theme) && this.sim.phase === 'play' && !!c && c.warnAt === L.warn && w.time >= c.showAt && w.time < end;
     if (!on || !c) {
       this.giant?.setVisible(false);
@@ -2299,46 +2304,9 @@ export class GameScene extends Phaser.Scene {
       this.giantStrike = null;
     }
     const now = performance.now();
-    // время — мировое: приговор (удар) ядро выносит в judge (после того, как он постоял и посмотрел,
-    // watchUntil), сцена замахивается заранее
-    const wt = w.time - c.showAt;
-    const judge = (c.watchUntil ?? c.windowEnd + LAG_GRACE_MS) - c.showAt;
-    const spot = leshySpot(c.warnAt, 180);
-    const dir = spot.dir; // откуда выходит: 1 — слева направо
-    const from = 90 - dir * 125; // из-за края поля
-    let x: number = spot.x;
-    let feet = spot.y;
-    let frame: number;
-    let walking = false;
-    let flipX = dir < 0;
-    // в повторе удар берём из журнала: с той секунды, когда он случился
-    const rs = replay ? this.replayLeshy.get(c.warnAt) : undefined;
-    const st = replay ? (rs && w.time >= rs.at ? rs : null) : this.giantStrike;
-    const leaveAt = Math.max(judge + 500, st ? st.at - c.showAt + 900 : 0);
-    if (wt < 1600) {
-      // выходит из-за края поля
-      x = from + (spot.x - from) * (wt / 1600);
-      frame = Math.floor(now / 260) % 4;
-      walking = true;
-    } else if (st && wt < leaveAt) {
-      // бросок к тому, кто шевельнулся: в два шага оказывается рядом и бьёт
-      const q = Math.min(1, (w.time - st.at) / 160);
-      const side = st.x >= spot.x ? 1 : -1;
-      x = spot.x + (st.x - side * 20 - spot.x) * q;
-      feet = Math.round(spot.y + (st.y - spot.y) * q);
-      flipX = side < 0;
-      frame = w.time - st.at < 450 ? 7 : 4;
-    } else if (wt < leaveAt) {
-      // стоит и озирается; перед приговором — замах (бьёт ли — не знает никто, пока не ударит)
-      frame = wt >= judge - 800 && wt < judge + 300 ? 6 : Math.floor((wt - 1600) / 700) % 2 ? 5 : 4;
-    } else {
-      const base = st ? { x: st.x - (st.x >= spot.x ? 1 : -1) * 20, y: st.y } : spot;
-      x = base.x + dir * 140 * Math.min(1, (wt - leaveAt) / 1500);
-      feet = base.y;
-      frame = Math.floor(now / 220) % 4;
-      walking = true;
-    }
-    x = Math.round(x);
+    // поза — общая с клипом и фильмом (night-art.ts › giantPose); в повторе удар — из журнала дубля
+    const st = replay ? (this.replayLeshy.get(c.warnAt) ?? null) : this.giantStrike;
+    const { x, feet, frame, flipX, walking, dir } = giantPose(c, w.time, st, now);
     // шаг: нога встала (кадры 0 и 2) — пыль, глухой удар, земля вздрагивает
     if (walking && frame !== this.giantFrame && (frame === 0 || frame === 2)) {
       const fx = x + (frame === 0 ? -5 : 5) * (dir < 0 ? -1 : 1);
@@ -2986,11 +2954,6 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  /** Стоп-кадр Лешего: его «Тсс!» — длинный стоп-кадр (или с watchUntil, где он ещё и смотрит). */
-  private isLeshyCrowd(c: { kind: CrowdKind; vote?: boolean; showAt: number; resumeAt: number; watchUntil?: number }): boolean {
-    return hasSanity(this.sim.theme) && !c.vote && c.kind === 'freeze' && (c.watchUntil !== undefined || c.resumeAt - c.showAt >= this.cfg.leshyPauseMs - TICK_MS);
-  }
-
   /**
    * «Купальская ночь»: повтор как найденная плёнка. Из журнала — смерти (и чьи — Лешего), из них — время
    * повтора: перед каждой смертью замедление, в момент удара — стоп-кадр, между ними — быстрее; общая длина
@@ -3006,13 +2969,13 @@ export class GameScene extends Phaser.Scene {
     this.replayDeaths = [];
     this.replayDeathIdx = 0;
     if (!hasSanity(this.sim.theme)) return;
-    let lc: Extract<WorldEvent, { t: 'crowd' }> | null = null;
+    // смерти без нападавшего (Леший, туман) — из журнала; от рук игроков — тоже замедляем
+    const night = new Map(nightDeaths(cfg, this.sim.world.log, s.kills).map((d) => [d.at * 100000 + d.target, d]));
     for (const ev of this.sim.world.log) {
-      if (ev.t === 'crowd') lc = this.isLeshyCrowd(ev) ? ev : null;
       if (ev.t !== 'hit' || ev.result !== 'player') continue;
-      const leshy = !!lc && ev.attacker === undefined && ev.at > lc.windowEnd && ev.at <= (lc.watchUntil ?? lc.windowEnd + LAG_GRACE_MS) + 1000;
-      if (leshy) this.replayLeshy.set(lc!.at, { x: ev.x, y: ev.y, at: ev.at });
-      if (ev.at >= from && ev.at <= to) this.replayDeaths.push({ at: ev.at, leshy });
+      const d = night.get(ev.at * 100000 + ev.target);
+      if (d?.leshy !== undefined) this.replayLeshy.set(d.leshy, { x: ev.x, y: ev.y, at: ev.at });
+      if (ev.at >= from && ev.at <= to) this.replayDeaths.push({ at: ev.at, leshy: d?.leshy !== undefined });
     }
     // у каждой смерти — повтор в живую скорость (обычный повтор вдвое с лишним быстрее); близкие — одним куском
     const slows: { a: number; b: number; hold: number }[] = [];
@@ -4301,23 +4264,6 @@ interface LiveKill {
 }
 
 
-/**
- * Вуаль ночи 180×260: тёмно-синяя целиком, у костра (90, 132) — просвет с шахматной кромкой, чтобы свет
- * костра читался кругом, а не пятном. Прозрачность задаёт сцена (renderNight).
- */
-function makeNightVeil(): HTMLCanvasElement {
-  const { c, g } = canvas(180, 260);
-  for (let y = 0; y < 260; y++) {
-    for (let x = 0; x < 180; x++) {
-      const d = Math.hypot((x - 90) / 1.1, y - 132);
-      if (d < 30) continue;
-      if (d < 40 && (x + y) % 2 === 0) continue;
-      if (d < 48 && x % 2 === 0 && y % 2 === 0) continue;
-      ppx(g, x, y, PAL.night);
-    }
-  }
-  return c;
-}
 
 /** Тьма по краям своего экрана при потере рассудка: широкая кромка шахматкой, к центру реже. */
 /** Иконка рассудка: мозг сбоку. o — контур, L — блик, M — мякоть, D — тень, F — борозда. */
@@ -4535,21 +4481,6 @@ function makeKikimora(): HTMLCanvasElement {
   return c;
 }
 
-/** Леший — кадры из leshy-art.ts (буквы → цвета PAL). */
-function makeLeshy(): HTMLCanvasElement {
-  const col: Record<LeshyKey, string> = {
-    o: PAL.ink, n: PAL.night, u: PAL.umber, p: PAL.plum, b: PAL.brick, d: PAL.deep, P: PAL.pine, f: PAL.forest,
-    k: PAL.dusk, s: PAL.slate, m: PAL.mist, y: PAL.yellow, w: PAL.white, a: PAL.amber,
-  };
-  const frames = leshyFrames();
-  const { c, g } = canvas(LESHY_W * frames.length, LESHY_H);
-  frames.forEach((rows, f) =>
-    rows.forEach((r, y) => {
-      for (let x = 0; x < r.length; x++) if (r[x] !== '.') ppx(g, f * LESHY_W + x, y, col[r[x] as LeshyKey]);
-    }),
-  );
-  return c;
-}
 
 /** Цвет папоротника (триумф «Купальской ночи»): 0 — бутон, 1–2 — распускается, 3 — раскрыт и сияет. */
 function makeFern(): HTMLCanvasElement {
@@ -4606,18 +4537,6 @@ function makeLeshyFace(): HTMLCanvasElement {
   return c;
 }
 
-/** Просвет факела в ночи: стирает вуаль — сплошь в середине, решёткой к краю (как вуаль у костра). */
-function makeTorchHole(): HTMLCanvasElement {
-  const R = 24;
-  const { c, g } = canvas(R * 2, R * 2);
-  for (let y = 0; y < R * 2; y++) {
-    for (let x = 0; x < R * 2; x++) {
-      const d = Math.hypot(x - R + 0.5, y - R + 0.5);
-      if (d < 14 || (d < 19 && (x + y) % 2 === 0) || (d < R && x % 2 === 0 && y % 2 === 0)) ppx(g, x, y, PAL.ink);
-    }
-  }
-  return c;
-}
 
 function makeMadVeil(): HTMLCanvasElement {
   const { c, g } = canvas(180, 260);

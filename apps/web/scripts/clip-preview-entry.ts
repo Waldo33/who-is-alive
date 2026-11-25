@@ -15,7 +15,7 @@ for (const seed of seeds) {
   const s = createLocalSession(cfg, players, seed, 'me');
   for (let i = 0; i < 20 * 200 && s.phase !== 'reveal'; i++) s.tick();
   const sum = s.summary!;
-  const rec = recordRound(s.world, { round: s.round, theme: s.theme, players: sum.reveal, playEnd: sum.replayTo });
+  const rec = recordRound(s.world, { round: s.round, theme: s.theme, players: sum.reveal, playEnd: sum.replayTo, kills: sum.kills });
   await loadTheme(s.theme);
   const self = sum.reveal.find((r) => r.pid === 'me')!.eid;
   const moment = findBestMoment({ ...rec, kills: sum.kills }, self)!;

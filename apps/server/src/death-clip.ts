@@ -6,7 +6,7 @@
  * сущность самого просящего; до разоблачения дубля в кадре подсвечен и подписан только он,
  * остальные живые — обычная толпа (как в клипе с телефона).
  */
-import { recordRound } from '@kto/game-core';
+import { hasSanity, makeConfig, nightCause, recordRound } from '@kto/game-core';
 import type { ArenaDef, Moment, RoundSummary, World } from '@kto/game-core';
 import type { ClipJob } from './film-render';
 
@@ -50,6 +50,8 @@ export function deathClipJob(
   // мир идёт дальше, пока задача ждёт в очереди: снимок того, что уже было
   rec.log = rec.log.slice();
   rec.keyframes = rec.keyframes.slice();
-  const moment: Moment = { from, to, score: 0, kind: 'knockout', at, victim: eid, attacker: killer, selfRole: 'victim' };
+  // «Купальская ночь»: забрал Леший или туман — подпись про них (клип рисует ночь сам)
+  const by = hasSanity(v.theme) && killer === undefined ? nightCause(makeConfig(), w.log, eid, at, s?.kills) : undefined;
+  const moment: Moment = { from, to, score: 0, kind: 'knockout', at, victim: eid, attacker: killer, selfRole: 'victim', ...(by ? { by } : {}) };
   return { rec, moment, arena: v.arena, players, hero: eid, known, noGore: o.noGore, lang: o.lang };
 }

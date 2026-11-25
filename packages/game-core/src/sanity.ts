@@ -1,4 +1,5 @@
 import type { GameConfig } from './config';
+import { TICK_MS } from './config';
 import { hasSanity } from './themes';
 
 /**
@@ -98,4 +99,67 @@ export function leshySec(round: number): number {
 export function fireLevel(cfg: GameConfig, sec: number): number {
   const out = cfg.sanityFireOutSec;
   return Math.max(0, Math.min(1, (out - sec) / 10));
+}
+
+/** Стоп-кадр «Тсс!» Лешего (а не обычная команда): длинный, без голосования, на «замри»; с watchUntil он ещё и смотрит. */
+export function isLeshyCrowd(cfg: GameConfig, c: { kind: string; vote?: boolean; showAt: number; resumeAt: number; watchUntil?: number }): boolean {
+  return !c.vote && c.kind === 'freeze' && (c.watchUntil !== undefined || c.resumeAt - c.showAt >= cfg.leshyPauseMs - TICK_MS);
+}
+
+/** Как в события crowd: время команды (warnAt = at), окна и сколько Леший смотрит. */
+interface CrowdEv {
+  t: 'crowd';
+  kind: string;
+  at: number;
+  showAt: number;
+  resumeAt: number;
+  windowEnd: number;
+  vote?: boolean;
+  watchUntil?: number;
+}
+
+/** Смерть игрока в «Купальской ночи» по журналу: забрал Леший (при каком его «Тсс!») или сгинул в тумане. */
+export interface NightDeath {
+  target: number;
+  at: number;
+  x: number;
+  y: number;
+  /** warnAt «Тсс!» Лешего, при котором он забрал; нет — рассудок или кикимора. */
+  leshy?: number;
+  /** Когда Леший вышел на поляну (showAt его стоп-кадра). */
+  showAt?: number;
+}
+
+/**
+ * Смерти игроков не от рук игроков (kills — кто кого выбил, из итогов дубля) в теме с рассудком: удар Лешего — после окна его «Тсс!»
+ * (приговор — в watchUntil или windowEnd + запас на сеть 600 мс; ещё секунда — запас), остальные — туман.
+ * Только по журналу мира: клип, фильм и повтор знают это без новых сообщений.
+ */
+export function nightDeaths(cfg: GameConfig, log: readonly { t: string; at: number }[], kills?: readonly { victim: number; at: number }[]): NightDeath[] {
+  const out: NightDeath[] = [];
+  let lc: CrowdEv | null = null;
+  for (const raw of log) {
+    if (raw.t === 'crowd') {
+      const c = raw as CrowdEv;
+      lc = isLeshyCrowd(cfg, c) ? c : null;
+      continue;
+    }
+    if (raw.t !== 'hit') continue;
+    const ev = raw as { t: 'hit'; target: number; result: string; attacker?: number; x: number; y: number; at: number };
+    // удар игрока по игроку в журнале тоже без нападавшего (тайна) — его знают итоги дубля (kills)
+    if (ev.result !== 'player' || ev.attacker !== undefined || kills?.some((k) => k.victim === ev.target)) continue;
+    const leshy = !!lc && ev.at > lc.windowEnd && ev.at <= (lc.watchUntil ?? lc.windowEnd + 600) + 1000;
+    out.push({ target: ev.target, at: ev.at, x: ev.x, y: ev.y, ...(leshy ? { leshy: lc!.at, showAt: lc!.showAt } : {}) });
+  }
+  return out;
+}
+
+/**
+ * Отчего погиб игрок eid в миг at («Купальская ночь»): 'leshy' — забрал Леший; 'mist' — туман (только если
+ * kills из итогов дубля известны: иначе удар игрока от тумана по журналу не отличить); undefined — не ночь.
+ */
+export function nightCause(cfg: GameConfig, log: readonly { t: string; at: number }[], eid: number, at: number, kills?: readonly { victim: number; at: number }[]): 'leshy' | 'mist' | undefined {
+  const d = nightDeaths(cfg, log, kills).find((x) => x.target === eid && x.at === at);
+  if (!d) return undefined;
+  return d.leshy !== undefined ? 'leshy' : kills ? 'mist' : undefined;
 }
