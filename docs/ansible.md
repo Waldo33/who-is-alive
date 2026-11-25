@@ -10,9 +10,9 @@ Terraform (`docs/terraform.md`) создаёт машину и задаёт та
   файрвол (22, 80, 443 tcp/udp), журнал ≤ 500 МБ;
 - `postgres` — Postgres, настройка под маленькую машину, база `massovka` с паролем, рождённым на сервере
   (`/etc/massovka/secrets.env`), копия базы раз в сутки на 14 дней;
-- `tunnels` — туннели SSH: из Нидерландов в Европу и Москву (`massovka-tunnel-eu`, `massovka-tunnel`), из Европы
-  в Москву (`massovka-relay`); вход `tunnel` на игровом сервере только для проброса нужных портов. Адрес Москвы
-  дает инвентарь (`moscow_ip`, пусто — туннелей в Москву нет), ключ сервера бота роль читает с Нидерландов;
+- `tunnels` — туннель SSH из Нидерландов в Европу (`massovka-tunnel-eu`); вход `tunnel` на игровом сервере только
+  для проброса нужных портов, ключ сервера бота роль читает с Нидерландов. Туннели в Москву (`massovka-tunnel`,
+  `massovka-relay`) выключены 25.11.2026 — `tunnels_retired`: роль их останавливает и убирает юниты;
 - `app` — `game.env` (потолок комнат по памяти и ядрам), `game-blue/green.env`, юниты `massovka-game@` и `caddy`,
   ограничение памяти, `hosts.env` (RELAY сохраняется), `caddy.sh`. Адреса — в `group_vars/{game,infra}.yml`,
   куда переезжают комнаты (`peer_host`) — считает инвентарь по DNS. Ничего не перезапускает;
@@ -44,4 +44,4 @@ Terraform (`docs/terraform.md`) создаёт машину и задаёт та
 - Сухой прогон — сам на каждом PR с правкой `infra/ansible`; итог (`PLAY RECAP`) — в Summary прогона.
 - Применить — Actions › `infra-ansible` › Run workflow, `apply` = true.
 - Инвентарь — `inventory.py`: адреса из Timeweb по именам серверов, ключ SSH выводится из `TWC_TOKEN`
-  (как в `provision.py`). Москва (`massovka-game`) в инвентарь не входит — она доживает неделю.
+  (как в `provision.py`). Москва (`massovka-game`) выведена 25.11.2026.

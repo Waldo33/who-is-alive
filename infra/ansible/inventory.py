@@ -11,7 +11,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'game'))
 import provision  # noqa: E402  (api, ipv4, ssh_key)
 
-# группа Ansible → имя сервера в Timeweb. Москва (massovka-game) доживает неделю и сюда не входит.
+# группа Ansible → имя сервера в Timeweb (Москва, massovka-game, выключена 25.11.2026)
 HOSTS = {
     'game': ['massovka-eu'],
     'infra': ['massovka-infra'],
@@ -33,9 +33,6 @@ def main():
             print(f'{group}: {name} {ip}')
             lines.append(f'{name} ansible_host={ip} ansible_user=root')
         lines.append('')
-    # Москва: туннели в неё (бот и пересылка) держим, пока сервер жив; выключат — туннели пропадут из плана
-    msk = servers.get('massovka-game')
-    msk_ip = provision.ipv4(msk) if msk else None
     # куда переезжают комнаты при выкладке: на домен, если DNS уже смотрит на Европу, иначе на её sslip.io
     eu = servers.get('massovka-eu')
     eu_ip = provision.ipv4(eu) if eu else None
@@ -45,9 +42,7 @@ def main():
         dns = None
     peer = 'api.benobody.app' if eu_ip and dns == eu_ip else (f"{eu_ip.replace('.', '-')}.sslip.io" if eu_ip else '')
     print(f'api.benobody.app → {dns}; переезд комнат — на {peer}')
-    lines += ['[all:vars]', f'moscow_ip={msk_ip or ""}', f'peer_host={peer}', '']
-    if msk_ip:
-        print(f'moscow_ip: {msk_ip}')
+    lines += ['[all:vars]', f'peer_host={peer}', '']
     with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'inventory.ini'), 'w') as f:
         f.write('\n'.join(lines))
 

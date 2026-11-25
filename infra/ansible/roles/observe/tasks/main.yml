@@ -92,22 +92,20 @@
         state: directory
         mode: '0755'
 
-    - name: Туннели в Москву и Европу включены?
-      ansible.builtin.command: "systemctl is-enabled {{ item }}"
-      loop: [massovka-tunnel, massovka-tunnel-eu]
-      register: tunnels_enabled
+    - name: Туннель в Европу включён?
+      ansible.builtin.command: systemctl is-enabled massovka-tunnel-eu
+      register: tunnel_eu
       changed_when: false
       failed_when: false
       check_mode: false
 
-    - name: Что собирать (Москва — пока есть её туннель)
+    - name: Что собирать
       ansible.builtin.template:
         src: scrape.yml.j2
         dest: /etc/victoria/scrape.yml
         mode: '0644'
       vars:
-        msk_on: "{{ tunnels_enabled.results[0].rc == 0 }}"
-        eu_on: "{{ tunnels_enabled.results[1].rc == 0 or eu_ip | default('') != '' }}"
+        eu_on: "{{ tunnel_eu.rc == 0 or eu_ip | default('') != '' }}"
       notify: перечитать scrape
 
     - name: Службы VictoriaMetrics и VictoriaLogs

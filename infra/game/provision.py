@@ -169,7 +169,7 @@ def main():
             host = ip.replace('.', '-') + '.sslip.io'
             print(f'{NAME}: {host}')
             with open(os.environ.get('GITHUB_OUTPUT', '/dev/null'), 'a') as f:
-                f.write(f'ip={ip}\nhost={host}\n')
+                f.write(f'ip={ip}\nhost={host}\nserver_id={servers[0]["id"]}\n')
         else:
             print(f'{NAME}: нет')
         return
