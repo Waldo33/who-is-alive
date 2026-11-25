@@ -1,4 +1,5 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { DICTS } from '@kto/game-core';
 import { errFields } from './log';
 import type { Logger } from './log';
 import type { Store } from './store';
@@ -65,11 +66,22 @@ const T = {
     clipTitle: 'Лучший момент дубля',
     solve: '🎬 На кастинг',
     openApp: 'Открыть игру',
-    filmText: '🎬 Фильм матча · комната {code}\n{result}\nЕщё дубль? Жми кнопку — та же комната.',
-    filmWin: 'Победа: {names}',
-    filmDraw: 'Ничья: {names}',
-    filmAgain: '🎬 Ещё дубль',
+    filmAgain: '🎬 Реванш',
     filmWatch: '▶ Смотреть фильм',
+    filmDone: '🎬 Снято! Звезда фильма — {name}',
+    filmDoneDraw: '🎬 Снято! Ничья: {names}',
+    filmAward: '🏅 {title} — {names}',
+    filmRoom: 'Комната {code}. Реванш? Жми кнопку — та же комната.',
+    cardGather: '🎬 Массовка · режиссёр собирает съёмку',
+    cardSeats: 'В кадре: {names} · {n} из {max}',
+    cardWait1: 'Ждём друзей — жми кнопку и заходи!',
+    cardWait2: 'Можно начинать — или подождать ещё.',
+    cardWait3: 'Осталось одно место!',
+    cardFull: 'Все в сборе. Ждём «Мотор!»',
+    cardShooting: '🔴 Идёт съёмка · комната {code} · дубль {take}',
+    cardTarget: 'Играют до {n} очков.',
+    cardWatch: '👀 Смотреть',
+    cardClosed: '🎬 Съёмку отменили. Жми кнопку — соберёмся заново.',
   },
   en: {
     start: 'Be Nobody is a pixel party game: hide in a crowd of bots and spot your friends before they spot you.',
@@ -95,11 +107,22 @@ const T = {
     clipTitle: 'Best moment of the take',
     solve: '🎬 Join the casting',
     openApp: 'Open the game',
-    filmText: '🎬 Match film · room {code}\n{result}\nAnother take? Tap the button — same room.',
-    filmWin: 'Winner: {names}',
-    filmDraw: 'Draw: {names}',
-    filmAgain: '🎬 Another take',
+    filmAgain: '🎬 Rematch',
     filmWatch: '▶ Watch the film',
+    filmDone: "🎬 That's a wrap! Star of the film: {name}",
+    filmDoneDraw: "🎬 That's a wrap! Draw: {names}",
+    filmAward: '🏅 {title}: {names}',
+    filmRoom: 'Room {code}. Rematch? Tap the button — same room.',
+    cardGather: '🎬 Be Nobody · the director is casting',
+    cardSeats: 'On set: {names} · {n} of {max}',
+    cardWait1: 'Waiting for friends — tap the button to join!',
+    cardWait2: 'Ready to roll — or wait for more.',
+    cardWait3: 'One spot left!',
+    cardFull: 'Full cast. Waiting for “Action!”',
+    cardShooting: '🔴 Shooting · room {code} · take {take}',
+    cardTarget: 'First to {n} points wins.',
+    cardWatch: '👀 Watch',
+    cardClosed: '🎬 Shoot cancelled. Tap the button to start again.',
   },
 };
 type Lang = keyof typeof T;
@@ -133,7 +156,32 @@ export interface FilmNotice {
   code: string;
   winners: string[];
   draw: boolean;
+  /** Награды матча с именами (необязательное — старые версии игрового сервера не шлют). */
+  awards?: { id: string; names: string[] }[];
+  /** Готовая строка счёта компании в чате («Енот 5 : 3 Голубь») — необязательное. */
+  score?: string;
 }
+
+/** Живая карточка «Собрать комнату» (игровой сервер → /internal/tg/card): сбор, съёмка, отмена. */
+export type CardNotice = { invite: string; code: string } & (
+  | { state: 'lobby'; seats: { name: string; color: number }[]; max: number }
+  | { state: 'playing'; take: number; target: number; scores: { name: string; color: number; score: number }[] }
+  | { state: 'closed' }
+);
+
+/** Правка одной карточки — не чаще (Telegram режет частые правки одного сообщения). */
+const CARD_GAP_MS = 3_000;
+/** Цвета игроков (PLAYER_COLORS: красный, синий, жёлтый, зелёный) — квадратиками. */
+const SEAT = ['🟥', '🟦', '🟨', '🟩'];
+/** Имя игрока в карточке: без @ и ссылок (сообщение без разметки, но Telegram сам подсвечивает адреса). */
+const cardName = (x: unknown): string =>
+  typeof x === 'string'
+    ? x
+        .replace(/https?:|[@/\\]/gi, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 16)
+    : '';
 
 export interface InitData {
   user: { id: number; first_name?: string; username?: string; language_code?: string };
@@ -157,6 +205,8 @@ interface PrepareBody {
   clip?: string;
   text?: string;
   thumb?: boolean;
+  /** kind 'clip' (фильм матча): кнопка «Реванш» — в ту же комнату (метка карточки или код). */
+  invite?: string;
 }
 
 export class Bot {
@@ -403,9 +453,118 @@ export class Bot {
     this.o.log('info', 'tg_card_sent', {});
   }
 
+  // ───────────── живая карточка «Собрать комнату» ─────────────
+
+  /** Очередь правок карточек: когда правили последний раз и что поставить следующим (только самое свежее). */
+  private edits = new Map<string, { at: number; timer: ReturnType<typeof setTimeout> | null; job: (() => Promise<void>) | null }>();
+  /** Карточки, ставшие видео (фильм): дальше правится подпись, а не текст. */
+  private media = new Set<string>();
+
   /**
-   * Фильм матча готов: карточка приглашения превращается в видео с итогом и кнопкой «Ещё дубль»
-   * (та же метка — та же комната). Каждый следующий матч этой комнаты заменяет видео на новое.
+   * Игровой сервер: что сейчас на карточке комнаты по приглашению — состав лобби («2 из 4»), счёт съёмки
+   * по дублям или «съёмку отменили». Правка уходит сразу, если карточку давно не трогали, иначе — самая
+   * свежая через CARD_GAP_MS (промежуточные состояния пропускаем).
+   */
+  async card(n: CardNotice): Promise<BotReply> {
+    if (!INVITE_TAG.test(n?.invite ?? '') || !/^[A-Z]{4}$/.test(n?.code ?? '') || !['lobby', 'playing', 'closed'].includes(n?.state)) return { status: 400, body: { error: 'bad_card' } };
+    const card = await this.o.store.tgCard(n.invite);
+    if (!card) return { status: 200, body: { sent: false } };
+    const t = T[card.lang];
+    const join = await this.link(`g_${n.invite}`);
+    let text: string;
+    let button: string;
+    if (n.state === 'lobby') {
+      const seats = (Array.isArray(n.seats) ? n.seats : []).slice(0, 8);
+      const max = Math.max(2, Math.min(8, Number(n.max) || 4));
+      const names = seats.map((x) => cardName(x?.name)).filter(Boolean);
+      const k = seats.length;
+      const squares = Array.from({ length: max }, (_, i) => (i < k ? (SEAT[Number(seats[i]?.color)] ?? '⬛') : '⬜')).join('');
+      const hint = k >= max ? t.cardFull : k === max - 1 ? t.cardWait3 : k >= 2 ? t.cardWait2 : t.cardWait1;
+      text = [t.cardGather, fmt(t.cardSeats, { names: names.join(', ') || '…', n: k, max }), squares, hint].join('\n');
+      button = t.lobbyJoin;
+    } else if (n.state === 'playing') {
+      const take = Math.max(1, Math.min(99, Math.floor(Number(n.take)) || 1));
+      const rows = (Array.isArray(n.scores) ? n.scores : []).slice(0, 8);
+      const line = rows.map((x) => `${SEAT[Number(x?.color)] ?? ''}${cardName(x?.name)} ${Math.max(0, Math.floor(Number(x?.score)) || 0)}`).join(' · ');
+      const target = Math.max(1, Math.min(99, Math.floor(Number(n.target)) || 8));
+      text = [fmt(t.cardShooting, { code: n.code, take }), line, fmt(t.cardTarget, { n: target })].filter(Boolean).join('\n');
+      // опоздавший по карточке попадёт в комнату зрителем (или на место ИИ)
+      button = t.cardWatch;
+    } else {
+      text = t.cardClosed;
+      button = t.lobbyJoin;
+    }
+    const markup = { inline_keyboard: [[{ text: button, url: join }]] };
+    const job = () => this.editCard(n.invite, card.inlineId, text, markup);
+    const e = this.edits.get(n.invite) ?? { at: 0, timer: null, job: null };
+    this.edits.set(n.invite, e);
+    e.job = job;
+    if (e.timer) return { status: 200, body: { sent: true, queued: true } };
+    const wait = e.at + CARD_GAP_MS - Date.now();
+    if (wait <= 0) {
+      await this.flushCard(n.invite);
+      return { status: 200, body: { sent: true } };
+    }
+    e.timer = setTimeout(() => void this.flushCard(n.invite), wait);
+    e.timer.unref?.();
+    return { status: 200, body: { sent: true, queued: true } };
+  }
+
+  private async flushCard(tag: string): Promise<void> {
+    const e = this.edits.get(tag);
+    if (!e) return;
+    e.timer = null;
+    const job = e.job;
+    e.job = null;
+    if (!job) return;
+    e.at = Date.now();
+    try {
+      await job();
+    } catch (err) {
+      const msg = String(err);
+      // «не изменилось» — не ошибка (то же состояние пришло дважды, например после переезда комнаты)
+      if (/not modified/i.test(msg)) return;
+      this.o.log('warn', 'tg_card_edit', { err: msg });
+      // Telegram просит подождать — повторить это же состояние, если новее не пришло
+      if (/Too Many Requests/i.test(msg) && !e.job && !e.timer) {
+        e.job = job;
+        e.timer = setTimeout(() => void this.flushCard(tag), 5_000);
+        e.timer.unref?.();
+      }
+    }
+  }
+
+  /** Текст карточки; если она уже видео (фильм прошлого матча) — подпись под ним. */
+  private async editCard(tag: string, inlineId: string, text: string, markup: unknown): Promise<void> {
+    if (!this.media.has(tag)) {
+      try {
+        await this.api('editMessageText', { inline_message_id: inlineId, text, reply_markup: markup });
+        return;
+      } catch (err) {
+        if (!/no text in the message/i.test(String(err))) throw err;
+        this.media.add(tag);
+      }
+    }
+    await this.api('editMessageCaption', { inline_message_id: inlineId, caption: text, reply_markup: markup });
+  }
+
+  /** Подпись «Снято!»: звезда фильма (или ничья), до двух наград, счёт компании, комната. */
+  private filmCaption(t: Texts, lang: Lang, n: FilmNotice): string {
+    const names = (Array.isArray(n.winners) ? n.winners : []).map(cardName).filter(Boolean).slice(0, 4);
+    const head = !names.length ? '🎬' : n.draw ? fmt(t.filmDoneDraw, { names: names.join(', ') }) : fmt(t.filmDone, { name: names[0] });
+    const titles = DICTS[lang].awards as Record<string, { title: string } | undefined>;
+    const awards = (Array.isArray(n.awards) ? n.awards : [])
+      .map((a) => ({ title: titles[String(a?.id)]?.title, names: (Array.isArray(a?.names) ? a.names : []).map(cardName).filter(Boolean).slice(0, 3) }))
+      .filter((a) => a.title && a.names.length)
+      .slice(0, 2)
+      .map((a) => fmt(t.filmAward, { title: a.title!, names: a.names.join(', ') }));
+    const score = typeof n.score === 'string' ? n.score.replace(/\s+/g, ' ').trim().slice(0, 120) : '';
+    return [head, ...awards, score, fmt(t.filmRoom, { code: n.code })].filter(Boolean).join('\n');
+  }
+
+  /**
+   * Фильм матча готов: карточка приглашения превращается в видео «Снято!» со звездой, наградами и кнопкой
+   * «Реванш» (та же метка — та же комната). Каждый следующий матч этой комнаты заменяет видео на новое.
    * Telegram не смог взять видео — хотя бы текст с итогом и ссылкой на ролик.
    */
   async film(n: FilmNotice): Promise<BotReply> {
@@ -414,9 +573,15 @@ export class Bot {
     const card = await this.o.store.tgCard(n.invite);
     if (!card) return { status: 200, body: { sent: false } };
     const t = T[card.lang];
-    const names = (Array.isArray(n.winners) ? n.winners : []).filter((x) => typeof x === 'string' && x.trim()).slice(0, 4).map((x) => x.trim().slice(0, 24));
-    const result = names.length ? fmt(n.draw ? t.filmDraw : t.filmWin, { names: names.join(', ') }) : '';
-    const caption = fmt(t.filmText, { code: n.code, result }).replace('\n\n', '\n');
+    // недоставленный счёт съёмки больше не нужен — карточку займёт фильм
+    const e = this.edits.get(n.invite);
+    if (e) {
+      if (e.timer) clearTimeout(e.timer);
+      e.timer = null;
+      e.job = null;
+      e.at = Date.now();
+    }
+    const caption = this.filmCaption(t, card.lang, n);
     const video = `${this.o.clipBase}/v1/clips/${n.id}.mp4`;
     const again = { text: t.filmAgain, url: await this.link(`g_${n.invite}`) };
     try {
@@ -425,16 +590,13 @@ export class Bot {
         media: { type: 'video', media: video, caption, supports_streaming: true },
         reply_markup: { inline_keyboard: [[again]] },
       });
+      this.media.add(n.invite);
       this.o.log('info', 'tg_film_sent', { room: n.code });
       return { status: 200, body: { sent: true } };
-    } catch (e) {
-      this.o.log('warn', 'tg_film_media', { room: n.code, err: String(e) });
+    } catch (err) {
+      this.o.log('warn', 'tg_film_media', { room: n.code, err: String(err) });
     }
-    await this.api('editMessageText', {
-      inline_message_id: card.inlineId,
-      text: caption,
-      reply_markup: { inline_keyboard: [[{ text: t.filmWatch, url: video }], [again]] },
-    });
+    await this.editCard(n.invite, card.inlineId, caption, { inline_keyboard: [[{ text: t.filmWatch, url: video }], [again]] });
     this.o.log('info', 'tg_film_sent', { room: n.code, text: true });
     return { status: 200, body: { sent: true, text: true } };
   }
@@ -452,7 +614,9 @@ export class Bot {
     else if (body.kind === 'daily' && this.casting) result = await this.dailyCard(t, SQUARES.test(body.squares ?? '') ? body.squares! : '');
     else if (body.kind === 'clip' && CLIP_ID.test(body.clip ?? '')) {
       if (!this.o.clipBase) return { status: 503, body: { error: 'no_clips' } };
-      result = await this.clipCard(t, body.clip!, typeof body.text === 'string' ? body.text.slice(0, 200) : '', body.thumb === true);
+      // фильм матча из комнаты — кнопка «Реванш» туда же (по метке карточки или по коду комнаты)
+      const again = INVITE_TAG.test(body.invite ?? '') ? `g_${body.invite}` : /^[A-Z]{4}$/.test(body.code ?? '') ? `r_${body.code}` : '';
+      result = await this.clipCard(t, body.clip!, typeof body.text === 'string' ? body.text.slice(0, 300) : '', body.thumb === true, again);
     } else result = await this.inviteCard(t);
     const msg = await this.api<{ id: string }>('savePreparedInlineMessage', {
       user_id: init.user.id,
@@ -467,7 +631,7 @@ export class Bot {
   // ───────────── клипы ─────────────
 
   /** Видео-карточка: клип (mp4 в Москве — его забирает сервер Telegram), подпись и кнопка «Играть». */
-  private async clipCard(t: Texts, id: string, text: string, thumb: boolean) {
+  private async clipCard(t: Texts, id: string, text: string, thumb: boolean, again = '') {
     const base = `${this.o.clipBase}/v1/clips/${id}`;
     return {
       type: 'video',
@@ -477,7 +641,7 @@ export class Bot {
       thumbnail_url: thumb ? `${base}.jpg` : `${this.o.site}/icons/icon-192.png`,
       title: t.clipTitle,
       caption: text || t.inviteText,
-      reply_markup: { inline_keyboard: [[{ text: t.play, url: await this.link('play') }]] },
+      reply_markup: { inline_keyboard: [[again ? { text: t.filmAgain, url: await this.link(again) } : { text: t.play, url: await this.link('play') }]] },
     };
   }
 

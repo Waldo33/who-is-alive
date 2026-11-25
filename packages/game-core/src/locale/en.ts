@@ -341,7 +341,11 @@ export const en: Dict = {
     cast: 'Starring',
     play1: 'Play it',
     play2: 'with friends',
-    filmText: 'Our Be Nobody movie 🎬 Can you spot the real players?',
+    filmText: 'Our Be Nobody movie 🎬 Your turn?',
+    // film caption in a Telegram chat: star of the match and awards
+    filmStar: "🎬 That's a wrap! Star of the film: {name}",
+    filmDraw: "🎬 That's a wrap! Draw: {names}",
+    filmAward: '🏅 {title}: {names}',
     // film credits: roles instead of a score table
     lead: 'Starring',
     cameo: 'Cameo',

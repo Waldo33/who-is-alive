@@ -123,7 +123,7 @@ describe('фильм матча в чат приглашения', () => {
   const hdr = (bot: Bot) => ({ 'x-telegram-bot-api-secret-token': bot.hookSecret });
   const film = { invite: 'AbCd1234xyz9', id: 'cd'.repeat(10), code: 'WXYZ', winners: ['Аня'], draw: false };
 
-  it('карточку «Собрать комнату» отправили — в конце матча она становится видео с итогом и «Ещё дубль»', async () => {
+  it('карточку «Собрать комнату» отправили — в конце матча она становится видео «Снято!» и «Реванш»', async () => {
     const { bot, calls, store } = makeBot();
     // без отправленной карточки — молчим
     expect((await bot.film(film)).body).toEqual({ sent: false });
@@ -143,11 +143,47 @@ describe('фильм матча в чат приглашения', () => {
     expect(edit.media.type).toBe('video');
     expect(edit.media.media).toBe(`https://msk.example/v1/clips/${'cd'.repeat(10)}.mp4`);
     expect(edit.media.caption).toContain('WXYZ');
-    expect(edit.media.caption).toContain('Победа: Аня');
+    expect(edit.media.caption).toContain('Звезда фильма — Аня');
     // та же метка — та же комната
     expect(edit.reply_markup.inline_keyboard[0][0].url).toBe('https://t.me/be_nobody_bot/play?startapp=g_AbCd1234xyz9');
     expect((await bot.film({ ...film, id: '../x' })).status).toBe(400);
   });
+
+  it('живая карточка: сбор «2 из 4» с именами, «осталось одно место», съёмка со счётом, правки не чаще раза в 3 с', async () => {
+    const { bot, calls, store } = makeBot();
+    const card = { invite: 'AbCd1234xyz9', code: 'WXYZ' };
+    // карточку ещё не отправили — молчим; мусор — 400
+    expect((await bot.card({ ...card, state: 'lobby', seats: [{ name: 'Енот', color: 0 }], max: 4 })).body).toEqual({ sent: false });
+    expect((await bot.card({ ...card, code: 'x', state: 'closed' })).status).toBe(400);
+    await store.saveTgCard({ tag: 'AbCd1234xyz9', inlineId: 'IM1', lang: 'ru' });
+    calls.length = 0;
+    expect((await bot.card({ ...card, state: 'lobby', seats: [{ name: 'Енот', color: 0 }, { name: '@spam http://x', color: 1 }], max: 4 })).body).toEqual({ sent: true });
+    const first = calls.find((c) => c.method === 'editMessageText')!.body as { inline_message_id: string; text: string; reply_markup: { inline_keyboard: { url: string }[][] } };
+    expect(first.inline_message_id).toBe('IM1');
+    expect(first.text).toContain('В кадре: Енот, spam x · 2 из 4');
+    expect(first.text).toContain('🟥🟦⬜⬜');
+    expect(first.text).toContain('Можно начинать');
+    expect(first.reply_markup.inline_keyboard[0][0].url).toBe('https://t.me/be_nobody_bot/play?startapp=g_AbCd1234xyz9');
+    // через секунду ещё двое — правка ждёт, промежуточное «3 из 4» пропускается
+    calls.length = 0;
+    expect((await bot.card({ ...card, state: 'lobby', seats: [{ name: 'Енот', color: 0 }, { name: 'B', color: 1 }, { name: 'C', color: 2 }], max: 4 })).body).toEqual({ sent: true, queued: true });
+    await bot.card({ ...card, state: 'playing', take: 2, target: 8, scores: [{ name: 'Енот', color: 0, score: 3 }, { name: 'B', color: 1, score: 1 }] });
+    expect(calls).toEqual([]);
+    await new Promise((r) => setTimeout(r, 3100));
+    expect(calls.filter((c) => c.method === 'editMessageText')).toHaveLength(1);
+    const shooting = calls[0].body.text as string;
+    expect(shooting).toContain('Идёт съёмка · комната WXYZ · дубль 2');
+    expect(shooting).toContain('🟥Енот 3 · 🟦B 1');
+    // фильм занял карточку — дальше правится подпись под видео
+    await bot.film({ invite: 'AbCd1234xyz9', id: 'cd'.repeat(10), code: 'WXYZ', winners: ['Енот'], draw: false, awards: [{ id: 'clairvoyant', names: ['B'] }, { id: 'nope', names: ['C'] }], score: 'Енот 5 : 3 B' });
+    const media = calls.find((c) => c.method === 'editMessageMedia')!.body as { media: { caption: string } };
+    expect(media.media.caption).toBe('🎬 Снято! Звезда фильма — Енот\n🏅 Голос за кадром — B\nЕнот 5 : 3 B\nКомната WXYZ. Реванш? Жми кнопку — та же комната.');
+    calls.length = 0;
+    await new Promise((r) => setTimeout(r, 3100));
+    await bot.card({ ...card, state: 'lobby', seats: [{ name: 'Енот', color: 0 }, { name: 'B', color: 1 }, { name: 'C', color: 2 }], max: 4 });
+    expect(calls.map((c) => c.method)).toEqual(['editMessageCaption']);
+    expect(calls[0].body.caption).toContain('Осталось одно место!');
+  }, 10_000);
 
   it('Telegram не взял видео — карточка становится текстом со ссылкой на ролик', async () => {
     const calls: string[] = [];
