@@ -1,6 +1,7 @@
 {
   "name": "kto-tut-zhivoy",
   "private": true,
+  "license": "UNLICENSED",
   "packageManager": "pnpm@10.18.3",
   "engines": { "node": ">=20" },
   "scripts": {
