@@ -40,6 +40,6 @@ jobs:
           J() { journalctl -u 'massovka-game@*' --since "$SINCE" --no-pager -o short-iso "$@"; }
           echo "── запуски и остановки"; journalctl -u 'massovka-game@*' --since "$SINCE" --no-pager -o short-iso | grep -E "Started|Stopped|Main process exited|Failed|core-dump|killed" | tail -40
           echo "── сколько каких сообщений"; J -o cat | grep -o '"msg":"[a-z_]*"' | sort | uniq -c | sort -rn | head -50
-          echo "── ошибки и предупреждения"; J | grep -E '"level":"(error|warn)"|Error|TypeError|at .*\.js|throw' | grep -v '"msg":"film_to_chat"' | tail -80 | cut -c1-600
+          echo "── ошибки и предупреждения"; J | grep -E '"level":"(error|warn)"|Error|TypeError|at .*\.js|throw' | grep -v '"msg":"film_to_chat"' | tail -80 | cut -c1-3000
           echo "── места: подмена ботом / возврат / новичок"; J | grep -E 'seat_|join|leave|left|drain|move|room_' | tail -150 | cut -c1-300
           SH
