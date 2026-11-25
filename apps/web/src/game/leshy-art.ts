@@ -238,13 +238,18 @@ function frame(f: number): string[] {
 /**
  * Морда Лешего во весь экран — скример «Тебя забрал Леший». Череп из бересты вплотную: тяжёлое надбровье,
  * провалы глазниц с горящими углями, вытянутая пасть со щепками-зубами, у висков — основания рогов, по
- * краям — борода-лишайник. Кадр 0 — пасть приоткрыта, 1 — распахнута и глаза разгорелись. Показывается ×2.
+ * краям — борода-лишайник. Кадры 0–3: пасть всё шире (0 — сомкнута, 3 — челюсть вывихнута до низа кадра), глаза разгораются,
+ * надбровье опускается. Показывается ×2 (бросок — ×3).
  */
 export const FACE_W = 90;
 export const FACE_H = 110;
 
+export const FACE_FRAMES = 4;
+/** Где глаза в кадре морды (для угольков во тьме до и после скримера). */
+export const FACE_EYES: readonly (readonly [number, number])[] = [[31, 39], [59, 39]];
+
 export function leshyFace(): string[][] {
-  return [face(0), face(1)];
+  return [face(0), face(1), face(2), face(3)];
 }
 
 function face(open: number): string[] {
@@ -259,7 +264,7 @@ function face(open: number): string[] {
   const cx = 45;
   const at = (x: number, y: number): LeshyKey | null => g[Math.round(y)]?.[Math.round(x)] ?? null;
   // полуширина черепа по строкам: лоб, скулы, впалые щёки, челюсть уходит вниз вместе с пастью
-  const jawEnd = open ? 104 : 92;
+  const jawEnd = [88, 92, 104, 109][open];
   const half = (y: number): number => {
     if (y < 6) return 0;
     if (y < 30) return Math.round(22 + Math.sqrt((y - 6) / 24) * 12); // купол лба
@@ -343,7 +348,7 @@ function face(open: number): string[] {
         if (d < 1) put(x, y, d > 0.86 ? 'n' : 'o');
       }
     // уголь в глубине: жёлтое ядро, белая сердцевина, янтарный ореол решёткой
-    const r = open ? 4.2 : 3.2;
+    const r = [2.6, 3.2, 4.2, 5.2][open];
     const px = ex + side * -1;
     const py = ey + 1;
     for (let y = py - 7; y <= py + 7; y++)
@@ -365,8 +370,8 @@ function face(open: number): string[] {
 
   // ── пасть: вытянутая чёрная дыра до подбородка, щепки-зубы по краям ──
   const mTop = 58;
-  const mBot = open ? 99 : 80;
-  const mw = open ? 15 : 12;
+  const mBot = [68, 80, 99, 107][open];
+  const mw = [9, 12, 15, 17][open];
   for (let y = mTop; y <= mBot; y++) {
     const k = (y - mTop) / (mBot - mTop);
     const hw = Math.round(mw * Math.pow(Math.sin(Math.min(1, k * 0.9 + 0.1) * Math.PI), 0.55) + 1);
@@ -380,8 +385,8 @@ function face(open: number): string[] {
     while (bot > mTop && at(x, bot) !== 'o' && at(x, bot) !== 'n') bot--;
     const room = bot - top;
     if (room < 4) continue;
-    const lenT = Math.min(room / 2 - 1, 3 + Math.floor(h2(x, 11) * (open ? 7 : 4)));
-    const lenB = Math.min(room / 2 - 1, 2 + Math.floor(h2(x, 13) * (open ? 5 : 3)));
+    const lenT = Math.min(room / 2 - 1, 3 + Math.floor(h2(x, 11) * (open >= 2 ? 7 : 4)));
+    const lenB = Math.min(room / 2 - 1, 2 + Math.floor(h2(x, 13) * (open >= 2 ? 5 : 3)));
     for (let j = 0; j < lenT; j++) put(x + (j > lenT * 0.6 && h2(x, 3) < 0.4 ? 1 : 0), top + j, j < lenT - 1 ? 'm' : 'w');
     for (let j = 0; j < lenB; j++) put(x, bot - j, j < lenB - 1 ? 's' : 'm');
   }

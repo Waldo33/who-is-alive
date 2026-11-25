@@ -166,19 +166,42 @@ export class Synth {
         this.formant(920, 300, 0.7, 0.22, 0.05, 0.12, [900, 1300, 2600], 9);
         this.tone('square', 160, 40, 0.5, 0.4, 0.05);
         break;
-      // скример: морда Лешего во весь экран — удар, хор визгливых голосов вразнобой (малые секунды,
-      // быстрая дрожь), рваный треск сверху и провал вниз в конце. Слышит только вырезанный — и соседи.
-      case 'scream':
-        this.noise(0.05, 0.9, 3600);
-        this.tone('square', 220, 55, 0.35, 0.45);
-        this.noise(0.12, 0.7, 1300, 0.01);
-        for (const [f, v] of [[1180, 0.12], [1250, 0.1], [1660, 0.07], [940, 0.09]] as const) {
-          this.formant(f, f * 0.6, 0.85, v, 0.02, 0.02, [f, f * 2, 3000], 13);
+      // скример: морда Лешего во весь экран (scene.ts › leshyScreamer, картинка идёт по этим же отметкам).
+      // 0–0,26 с — вдох перед ударом: шум нарастает (обратная тарелка) и свист снизу вверх; 0,26 — удар:
+      // щелчок сверху, «тук» и хор визгливых голосов вразнобой (малые секунды) с «шершавостью» 70–90 Гц, как у
+      // настоящего вопля; 0,95 — морда бросается вплотную: второй удар и короткий взвизг; потом — тишина,
+      // гул и сердце. Слышит только вырезанный (и соседи).
+      case 'scream': {
+        const H = 0.26;
+        this.swell(H, 0.42, 3000, 0, 1);
+        this.swell(H, 0.3, 900, 0, 1);
+        this.tone('sine', 300, 1400, H, 0.08);
+        // удар
+        this.noise(0.04, 1, 3600, H);
+        this.tone('square', 240, 50, 0.32, 0.42, H);
+        this.noise(0.14, 0.7, 1300, H + 0.01);
+        // визг: голоса разной высоты, вверх на миг — и вниз, срываясь
+        for (const [f, v, am] of [[1180, 0.12, 73], [1250, 0.1, 87], [1660, 0.07, 79], [940, 0.09, 61]] as const) {
+          this.formant(f * 0.9, f * 1.12, 0.08, v, 0.3, H, [f, f * 2, 3000], 11, am);
+          this.formant(f * 1.12, f * 0.62, 0.62, v, 0.02, H + 0.08, [f, f * 2, 3000], 13, am);
         }
-        this.swell(0.8, 0.36, 2800, 0.02, 0.05);
-        this.swell(0.7, 0.25, 5200, 0.05, 0.05);
-        this.tone('sawtooth', 600, 120, 0.7, 0.18, 0.15);
+        // под ним — рык
+        this.formant(190, 140, 0.7, 0.16, 0.05, H, [700, 1100, 2400], 6, 37);
+        this.swell(0.6, 0.3, 2800, H, 0.05);
+        // бросок вплотную
+        const L = 0.95;
+        this.noise(0.04, 0.9, 3400, L);
+        this.tone('square', 200, 45, 0.25, 0.38, L);
+        for (const [f, am] of [[1400, 83], [1480, 71]] as const) this.formant(f * 1.1, f * 0.7, 0.24, 0.1, 0.02, L, [f, f * 2, 3200], 14, am);
+        // потом — темнота: низкий гул и сердце
+        this.swell(1.4, 0.12, 500, L + 0.25, 0.3);
+        [1.35, 1.57, 2.15, 2.37].forEach((d, i) => {
+          this.tone('sine', 72, 42, 0.2, i % 2 ? 0.25 : 0.35, d);
+          this.noise(0.04, i % 2 ? 0.45 : 0.7, 1100, d);
+          this.tone('square', 220, 120, 0.08, i % 2 ? 0.1 : 0.15, d);
+        });
         break;
+      }
       // «Ау-у…» из леса: Леший зовёт голосом заблудившегося и сам себе вторит эхом
       case 'leshyCall':
         for (let e = 0; e < 3; e++) {
@@ -420,7 +443,7 @@ export class Synth {
    * Голос: пила с дрожью через полосы-форманты (гласная — по частотам `fmt`), медленная атака и спад.
    * f0→f1 — высота, att — доля длины на нарастание, vib — дрожь, Гц.
    */
-  private formant(f0: number, f1: number, dur: number, vol: number, att: number, when: number, fmt: number[], vib: number): void {
+  private formant(f0: number, f1: number, dur: number, vol: number, att: number, when: number, fmt: number[], vib: number, am = 0): void {
     const ctx = this.ctx;
     const t = ctx.currentTime + this.base + when;
     const o = ctx.createOscillator();
@@ -446,7 +469,19 @@ export class Synth {
       fg.gain.value = [1.4, 1, 0.5][i] ?? 0.4;
       o.connect(f).connect(fg).connect(g);
     });
-    g.connect(this.out);
+    if (am > 0) {
+      // «шершавость» крика: громкость дрожит с частотой am (30–150 Гц) — так звучит настоящий вопль ужаса
+      const amG = ctx.createGain();
+      amG.gain.value = 0.5;
+      const amO = ctx.createOscillator();
+      amO.frequency.value = am;
+      const amD = ctx.createGain();
+      amD.gain.value = 0.5;
+      amO.connect(amD).connect(amG.gain);
+      g.connect(amG).connect(this.out);
+      amO.start(t);
+      amO.stop(t + dur + 0.02);
+    } else g.connect(this.out);
     o.start(t);
     lfo.start(t);
     o.stop(t + dur + 0.02);

@@ -1,5 +1,5 @@
 import * as Phaser from 'phaser';
-import { FACE_H, FACE_W, LESHY_H, LESHY_W, leshyFace, leshyFrames, type LeshyKey } from './leshy-art';
+import { FACE_EYES, FACE_H, FACE_W, LESHY_H, LESHY_W, leshyFace, leshyFrames, type LeshyKey } from './leshy-art';
 import { PAL, PLAYER_COLORS, hexToInt } from '@kto/assets';
 import {
   LocalSession,
@@ -1455,36 +1455,89 @@ export class GameScene extends Phaser.Scene {
 
   /** Крупно и сразу понятно: тебя выбили, теперь ты призрак. */
   /**
-   * Скример «Тебя забрал Леший»: морда рывком на весь экран — сперва ближе (×1), через миг вплотную (×2)
-   * с распахнутой пастью и разгоревшимися глазами, дрожит; визг. Потом резкая темнота, на ней «вырезан».
-   * Без мигания: один рывок и один обрыв. Звук громкий — игрок уже вырезан, ничего не выдаёт.
+   * Скример «Тебя забрал Леший» — по отметкам звука `scream` (sfx.ts). Приёмы хоррора: короткий вдох
+   * перед ударом (темнеет, во тьме зажигаются глаза), удар картинки и звука в один кадр, морда с перелётом
+   * (×3 → ×2), не застывает — пасть ходит, морда дрожит и рвётся полосами; второй бросок вплотную и обрыв
+   * в темноту, где ещё миг тлеют глаза; потом сердце и «вырезан». Без мигания: свет только гаснет.
+   * Звук громкий — игрок уже вырезан, ничего не выдаёт.
    */
   private leshyScreamer(then: () => void): void {
     const W = 180;
     const H = 320;
-    const dark = this.add.rectangle(0, 0, W, H, hexToInt(PAL.ink), 0.82).setOrigin(0, 0).setDepth(1800);
-    const face = this.add.sprite(W / 2, Math.round(H * 0.46), 'leshyFace', 0).setDepth(1801);
+    const HIT = 260;
+    const LUNGE = 950;
+    const CUT = 1060;
+    const dark = this.add.rectangle(0, 0, W, H, hexToInt(PAL.ink), 1).setOrigin(0, 0).setDepth(1800).setAlpha(0);
+    this.tweens.add({ targets: dark, alpha: 0.9, duration: 200 });
+    const cx = W / 2;
+    const cy = Math.round(H * 0.46);
+    // где глаза морды на экране при масштабе sc (в кадре морды — FACE_EYES)
+    const eyesAt = (sc: number) => FACE_EYES.map(([x, y]) => [cx + (x - FACE_W / 2) * sc, cy + (y - FACE_H / 2) * sc] as const);
     this.audio.play('scream');
-    haptic('heavy');
-    navigator.vibrate?.([220, 40, 320]);
-    this.cameras.main.shake(700, 0.03);
-    const base = { x: face.x, y: face.y };
-    this.time.delayedCall(110, () => face.setFrame(1).setScale(2));
-    const jitter = this.tweens.addCounter({
-      from: 0,
-      to: 1,
-      duration: 760,
-      onUpdate: () => face.setPosition(base.x + Math.round((Math.random() - 0.5) * 6), base.y + Math.round((Math.random() - 0.5) * 6)),
+    // вдох: во тьме зажигаются два уголька
+    const eyes = eyesAt(2).map(([x, y]) => this.add.rectangle(Math.round(x), Math.round(y), 2, 2, hexToInt(PAL.yellow)).setDepth(1801).setVisible(false));
+    this.time.delayedCall(90, () => eyes.forEach((e) => e.setVisible(true)));
+    // морда — тремя полосами (глаза, пасть, челюсть): дрожат каждая по-своему, будто картинку рвёт
+    const bands = [[0, 44], [44, 76], [76, FACE_H]].map(([y0, y1]) =>
+      this.add.sprite(cx, cy, 'leshyFace', 1).setCrop(0, y0, FACE_W, y1 - y0).setDepth(1802).setVisible(false),
+    );
+    let frame = 1;
+    let scale = 3;
+    let shake = 0;
+    const place = () => {
+      for (const b of bands) {
+        b.setFrame(frame).setScale(scale);
+        b.setPosition(cx + Math.round((Math.random() - 0.5) * 2 * shake), cy + Math.round((Math.random() - 0.5) * shake));
+      }
+    };
+    // удар: перелёт ×3, через кадр — ×2 с распахнутой пастью
+    this.time.delayedCall(HIT, () => {
+      eyes.forEach((e) => e.setVisible(false));
+      bands.forEach((b) => b.setVisible(true));
+      shake = 6;
+      place();
+      haptic('heavy');
+      navigator.vibrate?.([200, 40, 120, 40, 300]);
+      this.cameras.main.shake(650, 0.035);
     });
-    this.time.delayedCall(760, () => {
-      jitter.stop();
-      face.destroy();
-      // резкая темнота, «вырезан» проступает на ней, темнота медленно уходит
-      dark.setFillStyle(hexToInt(PAL.ink), 1).setDepth(1680);
-      this.time.delayedCall(320, () => {
-        then();
-        this.tweens.add({ targets: dark, alpha: 0, delay: 500, duration: 900, onComplete: () => dark.destroy() });
-      });
+    this.time.delayedCall(HIT + 60, () => {
+      frame = 2;
+      scale = 2;
+      place();
+    });
+    // пасть ходит рывками, дрожь стихает к броску
+    const chatter = this.time.addEvent({
+      delay: 70,
+      loop: true,
+      callback: () => {
+        frame = Math.random() < 0.55 ? 3 : 2;
+        shake = Math.max(2, shake - 0.4);
+        place();
+      },
+      paused: true,
+    });
+    this.time.delayedCall(HIT + 140, () => (chatter.paused = false));
+    // бросок вплотную
+    this.time.delayedCall(LUNGE, () => {
+      chatter.remove();
+      frame = 3;
+      scale = 3;
+      shake = 4;
+      place();
+      this.cameras.main.shake(220, 0.05);
+      navigator.vibrate?.(260);
+    });
+    // обрыв: темнота, в ней ещё тлеют глаза
+    this.time.delayedCall(CUT, () => {
+      bands.forEach((b) => b.destroy());
+      dark.setAlpha(1).setDepth(1680);
+      const glow = eyesAt(3).map(([x, y]) => this.add.rectangle(Math.round(x), Math.round(y), 4, 3, hexToInt(PAL.amber)).setDepth(1681));
+      this.tweens.add({ targets: glow, alpha: 0, duration: 700, ease: 'Quad.easeIn', onComplete: () => glow.forEach((g) => g.destroy()) });
+    });
+    this.time.delayedCall(CUT + 330, () => {
+      eyes.forEach((e) => e.destroy());
+      then();
+      this.tweens.add({ targets: dark, alpha: 0, delay: 600, duration: 900, onComplete: () => dark.destroy() });
     });
   }
 
