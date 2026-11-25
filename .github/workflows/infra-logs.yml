@@ -1,0 +1,45 @@
+# Журнал игрового сервера в Европе: ошибки, падения, перезапуски, события мест (подмена ботом) — без секретов.
+# Запуск: вручную (workflow_dispatch) или push в ветку claude/** с правкой этого файла.
+name: infra-logs
+
+on:
+  workflow_dispatch:
+    inputs:
+      since:
+        description: 'С какого момента (journalctl --since)'
+        default: '-24h'
+  push:
+    branches: ['claude/**']
+    paths: ['.github/workflows/infra-logs.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  logs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TWC_TOKEN: ${{ secrets.TWC_TOKEN }}
+      SSH_OPTS: -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=20 -o LogLevel=ERROR
+      FIND_ONLY: '1'
+      SINCE: ${{ inputs.since || '-24h' }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m venv /tmp/py && /tmp/py/bin/pip install -q cryptography
+      - id: eu
+        env: { SERVER_NAME: massovka-eu }
+        run: /tmp/py/bin/python infra/game/provision.py
+      - name: Журнал игры (Европа)
+        env:
+          IP: ${{ steps.eu.outputs.ip }}
+        run: |
+          ssh $SSH_OPTS root@$IP "SINCE='$SINCE' bash -s" <<'SH'
+          echo "── службы"; cat /etc/massovka/active-color
+          systemctl show 'massovka-game@blue' 'massovka-game@green' -p Id -p ActiveState -p NRestarts -p ActiveEnterTimestamp --no-pager
+          J() { journalctl -u 'massovka-game@*' --since "$SINCE" --no-pager -o short-iso "$@"; }
+          echo "── запуски и остановки"; journalctl -u 'massovka-game@*' --since "$SINCE" --no-pager -o short-iso | grep -E "Started|Stopped|Main process exited|Failed|core-dump|killed" | tail -40
+          echo "── сколько каких сообщений"; J -o cat | grep -o '"msg":"[a-z_]*"' | sort | uniq -c | sort -rn | head -50
+          echo "── ошибки и предупреждения"; J | grep -E '"level":"(error|warn)"|Error|TypeError|at .*\.js|throw' | grep -v '"msg":"film_to_chat"' | tail -80 | cut -c1-600
+          echo "── места: подмена ботом / возврат / новичок"; J | grep -E 'seat_|join|leave|left|drain|move|room_' | tail -150 | cut -c1-300
+          SH
