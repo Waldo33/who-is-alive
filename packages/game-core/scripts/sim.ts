@@ -98,8 +98,11 @@ while (rounds < target) {
         if (a.correct) tally.stolen++;
       }
       for (const r of s.reveal) {
+        // за голову лидера крадут по bounty: и угадавшие, и выбившие
         const by = s.accusations.filter((a) => a.correct && a.eid === r.eid).length;
-        check(-(s.points[r.pid].stolen ?? 0) <= by, 'украли больше, чем угадавших');
+        const head = r.pid === sim.bountyPid ? sim.cfg.points.bounty : sim.cfg.points.accuse;
+        const hunted = r.pid === sim.bountyPid ? (s.kills ?? []).filter((k) => k.victim === r.eid).length * sim.cfg.points.bounty : 0;
+        check(-(s.points[r.pid].stolen ?? 0) <= by * head + hunted, 'украли больше, чем угадавших');
         check(sim.scores[r.pid] >= 0, 'счёт ниже нуля');
       }
     }

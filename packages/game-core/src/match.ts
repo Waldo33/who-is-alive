@@ -110,6 +110,8 @@ export interface PointsLine {
   accuse: number;
   /** Сколько очков украли угадавшие тебя (≤ 0). Старые записи — без поля. */
   stolen?: number;
+  /** «Награда за голову»: прибавка за выбитого или угаданного лидера матча. */
+  bounty?: number;
   total: number;
 }
 
@@ -142,6 +144,18 @@ export type Notice =
   | { t: 'denied'; pid: string; reason: 'no_attacks' | 'out_of_range' | 'stunned' | 'autopilot' | 'not_now' }
   /** Итог удара — только для того, кто бил (по сети уходит ему лично, чтобы показать результат без задержки показа мира). */
   | { t: 'attack'; pid: string; target: number; result: 'player' | 'bot'; at: number };
+
+/**
+ * «Награда за голову»: лидер матча на начало дубля — единственный, у кого больше всех очков (не 0).
+ * Имя лидера видят все, какой он человечек — нет. Считается из счёта, поэтому одинаково у хоста и гостей.
+ */
+export function bountyLeader(scores: Record<string, number>): string | null {
+  const list = Object.entries(scores);
+  if (!list.length) return null;
+  const top = Math.max(...list.map(([, v]) => v));
+  const leaders = list.filter(([, v]) => v === top);
+  return top > 0 && leaders.length === 1 ? leaders[0][0] : null;
+}
 
 /** Наблюдатель-ИИ (песочница и безголовая симуляция) получает только то, что видно на поле. */
 export interface AiAgent {
@@ -191,6 +205,8 @@ export class MatchSim {
   private posHist: { t: number; pos: Map<number, [number, number]> }[] = [];
   /** Выбивания раунда: кто кого (сущности) — уходят в итоги раунда. */
   private roundKills: { by: number; victim: number; at: number }[] = [];
+  /** Лидер, за голову которого в этом дубле награда (bountyLeader на начало дубля). */
+  bountyPid: string | null = null;
   agents: AiAgent[] = [];
 
   playStart = 0;
@@ -323,6 +339,7 @@ export class MatchSim {
     this.theme = this.themeOrder[(this.round - 1) % this.themeOrder.length];
     if (this.nightFinale && this.round > 1 && Math.max(...Object.values(this.scores)) >= this.cfg.nightFinaleScore) this.theme = NIGHT_THEME;
     this.pickMod();
+    this.bountyPid = bountyLeader(this.scores);
     this.summary = null;
     const rng = this.rng;
     // случайные id, новые каждый раунд
@@ -1033,8 +1050,12 @@ export class MatchSim {
   private finishRound(): void {
     const cfg = this.cfg;
     const pts: Record<string, PointsLine> = {};
-    for (const p of this.pr) pts[p.pid] = { kill: p.kills * cfg.points.kill, survive: 0, stars: 0, accuse: 0, stolen: 0, total: 0 };
+    for (const p of this.pr) pts[p.pid] = { kill: p.kills * cfg.points.kill, survive: 0, stars: 0, accuse: 0, stolen: 0, bounty: 0, total: 0 };
     const aliveEids = new Set(this.pr.filter((p) => p.alive).map((p) => p.eid));
+    // в «Купальской ночи» гибнут все: метка вырезанного на игрока верна, даже если ночь потом забрала и его
+    // (он продержался дольше обвинителя); в обычных дублях — только на живого
+    const night = hasSanity(this.theme);
+    const caughtEids = night ? new Set(this.pr.map((p) => p.eid)) : aliveEids;
     // с рассудком: дубль выигрывает последний выживший — один живой; все сгинули — кто продержался дольше;
     // плёнка кончилась при нескольких живых — у кого голова яснее
     if (hasSanity(this.theme) && this.pr.length >= 2) this.starWinner = this.lastSurvivor();
@@ -1042,32 +1063,50 @@ export class MatchSim {
     const accusedCount = new Map<number, number>();
     for (const p of this.pr) {
       // метка на того, кого потом вырезали, не считается: он уже ничего не получит
-      if (p.accused !== null && !this.world.get(p.accused)?.alive) p.accused = null;
+      if (p.accused !== null && !this.world.get(p.accused)?.alive && !(night && caughtEids.has(p.accused))) p.accused = null;
       if (p.accused === null) continue;
-      const correct = aliveEids.has(p.accused);
+      const correct = caughtEids.has(p.accused);
       accusations.push({ pid: p.pid, eid: p.accused, correct });
       if (correct) accusedCount.set(p.accused, (accusedCount.get(p.accused) ?? 0) + 1);
     }
     // выжил и три звезды — засчитываются всегда, ничего не сгорает
     for (const p of this.pr) {
       if (p.alive) this.addScore(p.pid, cfg.points.survive, 'survive', pts);
-      if (this.starWinner === p.pid) this.addScore(p.pid, cfg.points.stars, 'stars', pts);
+      // в «Купальской ночи» победитель ночи и так получает больше всех за место — без второго бонуса
+      if (this.starWinner === p.pid && !night) this.addScore(p.pid, cfg.points.stars, 'stars', pts);
     }
     // «Кража»: угадал живого — забрал у него очко из счёта матча. Угадавшему +1 всегда,
     // у вычисленного −1 за каждого угадавшего, но счёт не уходит ниже нуля. Отстающие догоняют лидера.
+    // «Награда за голову»: угадал или выбил лидера — вместо +1 получаешь +2, у лидера уходит 2.
+    const leader = this.bountyPid ? this.pr.find((q) => q.pid === this.bountyPid) : undefined;
+    const steal = (from: PlayerRound, n: number) => {
+      const take = Math.min(n, this.scores[from.pid]);
+      if (take > 0) this.addScore(from.pid, -take, 'stolen', pts);
+    };
     for (const a of accusations) {
       if (!a.correct) continue;
-      this.addScore(a.pid, cfg.points.accuse, 'accuse', pts);
       const victim = this.pr.find((q) => q.eid === a.eid)!;
-      const take = Math.min(cfg.points.accuse, this.scores[victim.pid]);
-      if (take > 0) this.addScore(victim.pid, -take, 'stolen', pts);
+      const head = victim === leader;
+      this.addScore(a.pid, cfg.points.accuse, 'accuse', pts);
+      if (head) this.addScore(a.pid, cfg.points.bounty - cfg.points.accuse, 'bounty', pts);
+      steal(victim, head ? cfg.points.bounty : cfg.points.accuse);
+    }
+    if (leader) {
+      for (const k of this.roundKills) {
+        if (k.victim !== leader.eid) continue;
+        const hunter = this.pr.find((q) => q.eid === k.by);
+        if (!hunter || hunter === leader) continue;
+        // +1 за выбитого уже начислено при ударе — добавляем до награды
+        this.addScore(hunter.pid, cfg.points.bounty - cfg.points.kill, 'bounty', pts);
+        steal(leader, cfg.points.bounty);
+      }
     }
     // «Купальская ночь»: место — по тому, кто продержался дольше: очко за каждого, кто сгинул раньше
     if (hasSanity(this.theme)) {
       const died = (p: PlayerRound) => p.diedAt ?? Infinity;
       for (const p of this.pr) this.addScore(p.pid, this.pr.filter((q) => died(q) < died(p)).length, 'survive', pts);
     }
-    for (const p of this.pr) pts[p.pid].total = pts[p.pid].kill + pts[p.pid].survive + pts[p.pid].stars + pts[p.pid].accuse + (pts[p.pid].stolen ?? 0);
+    for (const p of this.pr) pts[p.pid].total = pts[p.pid].kill + pts[p.pid].survive + pts[p.pid].stars + pts[p.pid].accuse + (pts[p.pid].stolen ?? 0) + (pts[p.pid].bounty ?? 0);
 
     const stats: RoundStats[] = this.pr.map((p) => ({
       pid: p.pid,
@@ -1078,7 +1117,7 @@ export class MatchSim {
       botHits: p.botHits,
       stars: p.stars,
       accused: p.accused,
-      accuseCorrect: p.accused !== null && aliveEids.has(p.accused),
+      accuseCorrect: p.accused !== null && caughtEids.has(p.accused),
       accusedAsGhost: p.accusedAsGhost,
       timesAccused: accusedCount.get(p.eid) ?? 0,
     }));
