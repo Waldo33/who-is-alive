@@ -164,6 +164,24 @@ export interface AiAgent {
   update(sim: MatchSim): void;
 }
 
+/**
+ * Копия значения, где pid `from` заменён на `to` — и в строках, и в ключах объектов
+ * (итоги дублей, награды, записи для фильма). pid уникальны и ни с чем не совпадают.
+ */
+export function renamePid<T>(v: T, from: string, to: string): T {
+  const walk = (x: unknown): unknown => {
+    if (x === from) return to;
+    if (Array.isArray(x)) return x.map(walk);
+    if (x && typeof x === 'object') {
+      const o: Record<string, unknown> = {};
+      for (const [k, val] of Object.entries(x)) o[k === from ? to : k] = walk(val);
+      return o;
+    }
+    return x;
+  };
+  return walk(v) as T;
+}
+
 /** Насколько поздно может прийти по сети нажатие, чтобы его засчитали по времени экрана игрока. */
 export const LAG_GRACE_MS = 600;
 
@@ -421,11 +439,58 @@ export class MatchSim {
     this.mod = this.rng.pick(pool);
   }
 
-  /** Подключить ИИ-агентов (песочница/симуляция). */
+  /** Подключить ИИ-агентов (песочница/симуляция; на сервере — и посреди матча, вместо ушедшего игрока). */
   addAgent(a: AiAgent): void {
+    if (this.agents.some((x) => x.pid === a.pid)) return;
     this.agents.push(a);
     const p = this.playerRound(a.pid);
-    if (p) a.onRound(this, p.eid);
+    if (!p) return;
+    // игрок ушёл на автопилоте — дальше ведёт ИИ (на автопилоте намерения не принимаются)
+    if (p.autopilot) {
+      p.autopilot = false;
+      this.bots.remove(p.eid);
+      if (p.alive) this.emit({ t: 'stop', eid: p.eid, at: this.world.time });
+    }
+    a.onRound(this, p.eid);
+  }
+
+  /** Убрать ИИ с места (вернулся игрок или место занял новый). */
+  removeAgent(pid: string): void {
+    this.agents = this.agents.filter((a) => a.pid !== pid);
+    this.intents = this.intents.filter((x) => x.pid !== pid);
+  }
+
+  /**
+   * Место в матче переходит к другому (сервер: новый игрок занял место ИИ посреди матча).
+   * Очки, выбивания, персонаж дубля (живой или вырезанный) и история дублей остаются за местом —
+   * меняется только, чьё оно: pid, имя, ИИ ли. Цвет — тот же (по нему игрока узнают в итогах).
+   */
+  replacePlayer(oldPid: string, info: PlayerInfo): boolean {
+    const i = this.players.findIndex((p) => p.pid === oldPid);
+    if (i < 0 || (info.pid !== oldPid && this.info(info.pid))) return false;
+    this.removeAgent(oldPid);
+    this.players[i] = { ...info, color: this.players[i].color };
+    const to = info.pid;
+    if (to === oldPid) return true;
+    for (const r of [this.scores, this.matchKills]) {
+      r[to] = r[oldPid] ?? 0;
+      delete r[oldPid];
+    }
+    for (const p of this.pr) if (p.pid === oldPid) p.pid = to;
+    if (this.bountyPid === oldPid) this.bountyPid = to;
+    if (this.starWinner === oldPid) this.starWinner = to;
+    if (this.hostPid === oldPid) this.hostPid = to;
+    const nb = [...this.neighbors.values()];
+    this.neighbors.clear();
+    for (const n of nb) {
+      if (n.a === oldPid) n.a = to;
+      if (n.b === oldPid) n.b = to;
+      this.neighbors.set([n.a, n.b].sort().join('|'), n);
+    }
+    if (this.summary) this.summary = renamePid(this.summary, oldPid, to);
+    this.roundAwards = renamePid(this.roundAwards, oldPid, to);
+    if (this.match) this.match = renamePid(this.match, oldPid, to);
+    return true;
   }
 
   private beginPlay(): void {

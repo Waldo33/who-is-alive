@@ -125,7 +125,7 @@ export class Room {
     this.set({ selfId: user.userId });
     // язык и «без крови» — серверу для клипа выбывшего: он смонтирует его сразу после удара, до нажатия
     const clipPrefs = () => ({ lang: detectLang(), mild: mildOn() });
-    const link = new ServerLink({ url: info.wsUrl, token: user.token, selfId: user.userId, code: this.state.code, name, clipPrefs });
+    const link = new ServerLink({ url: info.wsUrl, token: user.token, selfId: user.userId, code: this.state.code, name, clipPrefs, seat: true });
     this.link = link;
     link.onRoom((r) => this.onRoom(r));
     // аварийный выключатель видео: сервер сказал — кнопки клипа и фильма прячутся сразу
@@ -182,10 +182,11 @@ export class Room {
     this.applyRoom(r);
     // режиссёр сменился посреди матча: кнопки «Дальше» и «Ещё дубль» — у нового
     if (r.directorId !== prevHost && this.session instanceof RemoteSession && !this.link?.spectator) this.session.setHost(r.directorId);
-    // зритель стал игроком (занял место после матча)
+    // зритель стал игроком: занял место после матча или место ИИ посреди матча (тогда — сразу в игру по снимку)
     if (this.state.status === 'watch' && this.link && !this.link.spectator) {
       this.stopWatching();
       this.set({ status: 'lobby' });
+      if (r.status === 'playing') this.beginRemote(this.membersAsPlayers(r), r.directorId, true);
     }
     // матч у игроков кончился — зритель досматривает (задержка) и занимает место
     if (this.state.status === 'watch') {

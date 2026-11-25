@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { ServerMsg } from '@kto/net';
 import { MsgBudget, RateWindow } from '../src/limits';
 import { silentLogger } from '../src/log';
-import { HOLD_MS, Room, cleanName } from '../src/room';
+import { BOT_AFTER_MS, HOLD_MS, Room, cleanName } from '../src/room';
 import type { Peer } from '../src/room';
 import { GameServer } from '../src/server';
 
@@ -70,6 +70,120 @@ describe('комната', () => {
     expect(room.spectators.has('c')).toBe(true);
     expect(room.members.has('c')).toBe(false);
     expect(room.join('a', 'A', fakePeer())).toBeNull();
+    room.close('test');
+  });
+
+  it('ушедшего посреди матча подменяет ИИ: очки за местом, вернулся — управление снова его', () => {
+    const { room, advance } = makeRoom();
+    const [pa, pb] = [fakePeer(), fakePeer()];
+    room.join('a', 'A', pa);
+    room.join('b', 'B', pb);
+    room.setReady('b', true);
+    expect(room.start('a')).toBeNull();
+    const h = room.runner!.host;
+    for (let i = 0; i < 100; i++) room.runner!.step();
+    expect(h.phase).toBe('play');
+    h.sim.scores.b = 3;
+    // обрыв связи: ИИ — не сразу
+    room.disconnected('b', pb);
+    advance(BOT_AFTER_MS - 1000);
+    room.housekeeping();
+    expect(h.sim.info('b')!.ai).toBeFalsy();
+    advance(2000);
+    room.housekeeping();
+    expect(h.sim.info('b')!.ai).toBe(true);
+    expect(h.sim.agents.some((x) => x.pid === 'b')).toBe(true);
+    // всем ушёл новый состав (без сущностей)
+    const pl = pa.got.filter((m) => m.t === 'g' && (m.m as { t: string }).t === 'players');
+    expect(pl.length).toBe(1);
+    expect(JSON.stringify(pl[0])).not.toContain('eid');
+    for (let i = 0; i < 200; i++) room.runner!.step();
+    expect(h.sim.scores.b).toBeGreaterThanOrEqual(3);
+    // вернулся — снова человек
+    room.join('b', 'B', fakePeer());
+    expect(h.sim.info('b')!.ai).toBeFalsy();
+    expect(h.sim.agents.some((x) => x.pid === 'b')).toBe(false);
+    // ушёл сам («Назад») — ИИ сразу
+    room.leave('b');
+    expect(h.sim.info('b')!.ai).toBe(true);
+    room.close('test');
+  });
+
+  it('новичок по ссылке посреди матча занимает место ИИ: очки и персонаж — от места', () => {
+    const now = 1_000_000;
+    const room = new Room({ code: 'ABCD', directorId: 'a', directorName: 'A', settings: { roundSec: 60, maxRounds: 3, kidsMode: false, aiFill: true }, lang: 'ru', now: () => now, log: silentLogger });
+    const pa = fakePeer();
+    room.join('a', 'A', pa);
+    expect(room.start('a')).toBeNull();
+    const h = room.runner!.host;
+    expect(h.aiSeats().length).toBe(3);
+    for (let i = 0; i < 100; i++) room.runner!.step();
+    h.sim.scores['ai-1'] = 4;
+    h.sim.scores['ai-2'] = 2;
+    const eid1 = h.sim.playerRound('ai-1')!.eid;
+    // старый клиент (без seat) — по-прежнему зритель
+    expect(room.join('old', 'Old', fakePeer())).toBeNull();
+    expect(room.spectators.has('old')).toBe(true);
+    // ИИ-1 вырезан в этом дубле — новичок сядет на живого
+    h.sim.playerRound('ai-1')!.alive = false;
+    const pc = fakePeer();
+    expect(room.join('c', 'Вася', pc, { seat: true })).toBeNull();
+    expect(room.members.has('c')).toBe(true);
+    expect(room.spectators.has('c')).toBe(false);
+    const w = pc.got.find((m) => m.t === 'welcome') as Extract<ServerMsg, { t: 'welcome' }>;
+    expect(w.spectator).toBeFalsy();
+    const seat = h.sim.info('c')!;
+    expect(seat.name).toBe('Вася');
+    expect(seat.ai).toBeFalsy();
+    expect(h.sim.info('ai-2')).toBeUndefined();
+    expect(h.sim.scores.c).toBe(2);
+    expect(h.sim.playerRound('c')!.alive).toBe(true);
+    expect(room.members.get('c')!.color).toBe(seat.color);
+    // гость сам просит снимок — получает своего персонажа
+    room.game('c', { t: 'resync' });
+    const rs = pc.got.map((m) => (m.t === 'g' ? (m.m as { t: string; me?: { eid: number }; players?: { pid: string }[] }) : null)).find((m) => m?.t === 'resync');
+    expect(rs?.players?.some((p) => p.pid === 'c')).toBe(true);
+    // второй новичок — на место вырезанного ИИ: до конца дубля за кадром
+    h.sim.playerRound('ai-3')!.alive = false;
+    const pd = fakePeer();
+    expect(room.join('d', 'Петя', pd, { seat: true })).toBeNull();
+    const d = h.sim.playerRound('d')!;
+    expect([eid1, h.sim.playerRound('d')!.eid]).toContain(d.eid);
+    expect(d.alive).toBe(false);
+    // играть дальше: следующий дубль — живые
+    for (let i = 0; i < 6000 && h.round === 1; i++) room.runner!.step();
+    expect(h.sim.playerRound('d')!.alive).toBe(true);
+    room.close('test');
+  });
+
+  it('место ушедшего ждёт его 75 с, потом его занимает зритель; ушедший сам — сразу', () => {
+    const { room, advance } = makeRoom();
+    const [pa, pb] = [fakePeer(), fakePeer()];
+    room.join('a', 'A', pa);
+    room.join('b', 'B', pb);
+    room.setReady('b', true);
+    room.start('a');
+    const h = room.runner!.host;
+    for (let i = 0; i < 100; i++) room.runner!.step();
+    room.disconnected('b', pb);
+    advance(BOT_AFTER_MS + 1000);
+    room.housekeeping();
+    const pc = fakePeer();
+    expect(room.join('c', 'C', pc, { seat: true })).toBeNull();
+    expect(room.spectators.has('c')).toBe(true);
+    advance(HOLD_MS);
+    room.housekeeping();
+    expect(room.members.has('c')).toBe(true);
+    expect(room.members.has('b')).toBe(false);
+    expect(h.sim.info('c')).toBeTruthy();
+    expect(h.sim.info('b')).toBeUndefined();
+    // а теперь ушёл сам — зритель садится сразу
+    const pe = fakePeer();
+    room.join('e', 'E', pe, { seat: true });
+    expect(room.spectators.has('e')).toBe(true);
+    room.leave('a');
+    expect(h.sim.info('e')).toBeTruthy();
+    expect(room.directorId).not.toBe('a');
     room.close('test');
   });
 

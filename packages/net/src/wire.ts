@@ -44,6 +44,8 @@ export const ClientMsg = z.discriminatedUnion('t', [
     name: Name,
     /** Язык и «без крови» для клипа выбывшего: сервер заготовит его до нажатия. Старые клиенты не шлют. */
     clip: z.object({ lang: z.enum(['ru', 'en']), mild: z.boolean() }).optional(),
+    /** Клиент умеет войти в идущий матч на место ИИ (иначе — только зрителем). Старые клиенты не шлют. */
+    seat: z.boolean().optional(),
   }),
   z.object({ t: z.literal('ready'), on: z.boolean() }),
   z.object({ t: z.literal('rename'), name: Name }),

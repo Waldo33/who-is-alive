@@ -30,7 +30,12 @@ export type RoomMsg =
   | { t: 'st'; phase: Phase; round: number; theme: number; mod?: number; tl: number; ppe: number; scores: Record<string, number>; played: number; wt?: number }
   | { t: 'reveal'; summary: RoundSummary; awards: AwardCard[][] }
   | { t: 'match_end'; match: MatchSummary }
-  | { t: 'pong_all'; hostNow: number };
+  | { t: 'pong_all'; hostNow: number }
+  /**
+   * Состав матча изменился посреди матча (сервер): за ушедшего играет ИИ (ai: true) или место ИИ занял
+   * новый игрок (pid, имя). Чья сущность — не сообщается. Старые клиенты сообщение пропускают.
+   */
+  | { t: 'players'; players: PlayerInfo[] };
 
 /** Что игрок знает о себе (личный канал). */
 export interface MeMsg {
