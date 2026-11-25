@@ -89,6 +89,9 @@ def main():
     # ни с одним регионом (SignatureDoesNotMatch) — похоже, API отдаёт не тот секрет
     if os.environ.get('S3_ACCESS_KEY') and os.environ.get('S3_SECRET_KEY'):
         keys.insert(0, (os.environ['S3_ACCESS_KEY'], os.environ['S3_SECRET_KEY']))
+        print('S3: ключи из GitHub Secrets (S3_ACCESS_KEY / S3_SECRET_KEY) есть — пробую их первыми')
+    else:
+        print('S3: секретов S3_ACCESS_KEY / S3_SECRET_KEY в GitHub нет (или пустые) — только ключи из API')
     try:
         keys += [(u.get('access_key'), u.get('secret_key')) for u in get('/storages/users').get('users', [])]
     except urllib.error.HTTPError:
