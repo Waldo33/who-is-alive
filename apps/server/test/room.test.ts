@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { hasSanity } from '@kto/game-core';
 import type { ServerMsg } from '@kto/net';
 import { MsgBudget, RateWindow } from '../src/limits';
 import { silentLogger } from '../src/log';
@@ -25,10 +26,6 @@ function makeRoom() {
 }
 
 describe('комната', () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
   it('отключившийся держит место 75 с, потом место свободно; режиссёр в лобби не теряет роль сразу', () => {
     const { room, advance } = makeRoom();
     const pa = fakePeer();
@@ -114,17 +111,19 @@ describe('комната', () => {
   });
 
   it('новичок по ссылке посреди матча занимает место ИИ: очки и персонаж — от места', () => {
-    // зерно матча — постоянное: иначе изредка первым выпадает «Купальская ночь», где матч — одна ночь,
-    // и до второго дубля дело не доходит (тест падал через раз)
-    vi.spyOn(Math, 'random').mockReturnValue(0.25);
     const now = 1_000_000;
-    const room = new Room({ code: 'ABCD', directorId: 'a', directorName: 'A', settings: { roundSec: 60, maxRounds: 3, kidsMode: false, aiFill: true }, lang: 'ru', now: () => now, log: silentLogger });
-    const pa = fakePeer();
-    room.join('a', 'A', pa);
-    expect(room.start('a')).toBeNull();
+    // первая тема матча случайна (зерно комнаты); «Купальская ночь» — матч в один дубль, а тесту нужен второй:
+    // такую комнату пересоздаём
+    let room: Room;
+    for (;;) {
+      room = new Room({ code: 'ABCD', directorId: 'a', directorName: 'A', settings: { roundSec: 60, maxRounds: 3, kidsMode: false, aiFill: true }, lang: 'ru', now: () => now, log: silentLogger });
+      room.join('a', 'A', fakePeer());
+      expect(room.start('a')).toBeNull();
+      if (!hasSanity(room.runner!.host.sim.theme)) break;
+      room.close('test');
+    }
     const h = room.runner!.host;
     expect(h.aiSeats().length).toBe(3);
-    expect(h.sim.lastRound).toBe(false);
     for (let i = 0; i < 100; i++) room.runner!.step();
     h.sim.scores['ai-1'] = 4;
     h.sim.scores['ai-2'] = 2;

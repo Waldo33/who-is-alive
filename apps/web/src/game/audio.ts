@@ -84,18 +84,48 @@ export class Audio {
   private round: RoundMusic = 'full';
   private orch: Orchestra | null = null;
   private roundGain: GainNode | null = null;
+  /** Что сейчас задано музыке: после пересоздания контекста вернуть как было. */
+  private mood = { hush: false, dread: -1, intensity: 0 };
+  /**
+   * Игра уходила в фон (свернули, экран погас, звонок, Telegram свернул Mini App). Пока звук
+   * после этого не подтвердил, что жив, каждое касание его проверяет и чинит (wake).
+   */
+  private away = false;
+  /** Контекст сломан насовсем (iOS: застрял в interrupted или «running», но часы стоят) — пересоздать при касании. */
+  private broken = false;
+  private probe: number | null = null;
 
   constructor() {
     this.enabled = stored(STORAGE_KEY) !== 'off';
     const m = stored(MUSIC_KEY);
     // раньше был один переключатель: выключенный звук выключает и музыку
     this.musicEnabled = m ? m !== 'off' : this.enabled;
-    document.addEventListener('visibilitychange', () => {
-      if (!this.ctx) return;
-      if (document.hidden) void this.ctx.suspend().catch(() => undefined);
-      // вернуться из фона, если играет хоть что-то: музыка без эффектов тоже должна вернуться
-      else if (this.enabled || this.musicEnabled) void this.ctx.resume().catch(() => undefined);
+    // Уход в фон и возврат. Свернуть игру можно по-разному, и браузеры сообщают об этом по-разному:
+    // visibilitychange (вкладка), pagehide/pageshow (iOS при блокировке и из кэша), blur/focus
+    // (шторка, звонок) и свои события Telegram (Mini App свернули — страница может остаться «видимой»).
+    const away = () => {
+      this.away = true;
+      if (this.ctx && this.ctx.state === 'running') void this.ctx.suspend().catch(() => undefined);
+    };
+    const back = () => {
+      this.away = true; // подтвердит только касание: до него звук мог «ожить» лишь на вид
+      // вернуть звук, если играет хоть что-то: музыка без эффектов тоже должна вернуться.
+      // Без жеста iOS может не пустить — тогда вернёт первое касание (unlock)
+      if (this.ctx && (this.enabled || this.musicEnabled)) void this.ctx.resume().catch(() => undefined);
+    };
+    document.addEventListener('visibilitychange', () => (document.hidden ? away() : back()));
+    window.addEventListener('pagehide', away);
+    window.addEventListener('pageshow', (e) => {
+      if ((e as PageTransitionEvent).persisted) back();
     });
+    window.addEventListener('blur', () => {
+      if (!document.hasFocus()) this.away = true; // не глушим: blur бывает и от фрейма внутри страницы
+    });
+    window.addEventListener('focus', () => {
+      if (this.away) back();
+    });
+    window.addEventListener('kto:away', away);
+    window.addEventListener('kto:back', back);
     // iOS разрешает запуск звука только из «настоящего» жеста: touchend или click, но не touchstart
     // (а ввод Phaser идёт по touchstart). После блокировки экрана, звонка или ухода в другое
     // приложение контекст встаёт в suspended/interrupted, и вернуть его можно только так же.
@@ -110,17 +140,79 @@ export class Audio {
     return this.ctx?.state ?? 'none';
   }
 
-  /** Вызывать из обработчика тапа. Безопасно вызывать сколько угодно раз. */
+  /**
+   * Вызывать из обработчика тапа (и так уже зовётся на каждое касание). Безопасно вызывать сколько
+   * угодно раз. Будит звук после фона, а если контекст не оживает — пересоздаёт его.
+   */
   unlock(): void {
-    if (this.ctx && this.ctx.state === 'closed') this.ctx = null; // iOS иногда закрывает контекст после долгого фона
-    if (this.ctx) {
-      // 'suspended' и iOS-овый 'interrupted' — оба лечатся resume() из жеста
-      if (this.ctx.state !== 'running' && (this.enabled || this.musicEnabled)) void this.ctx.resume().catch(() => undefined);
-      return;
+    const ctx = this.ctx;
+    if (!ctx) return this.build();
+    if (!this.enabled && !this.musicEnabled) return; // звук выключен — будить нечего
+    // iOS иногда закрывает контекст после долгого фона или оставляет мёртвым
+    if (ctx.state === 'closed' || this.broken) return this.rebuild();
+    if (ctx.state === 'running' && !this.away) return;
+    // 'suspended' и iOS-овый 'interrupted' лечатся resume() из жеста, но не всегда: бывает, что
+    // контекст навсегда застрял в 'interrupted' или пишет 'running', а часы стоят и звука нет.
+    // Тогда спасает только новый контекст: первое касание даёт шанс resume и проверяет (check),
+    // не помогло — следующее касание пересоздаёт контекст (broken).
+    if (ctx.state !== 'running') void ctx.resume().catch(() => undefined);
+    this.kick(ctx);
+    this.check(ctx);
+  }
+
+  /** Пустой звук прямо в жесте: на iOS это «включает» вывод, даже если контекст уже running. */
+  private kick(ctx: AudioContext): void {
+    try {
+      const blip = ctx.createBufferSource();
+      blip.buffer = ctx.createBuffer(1, 1, ctx.sampleRate);
+      blip.connect(ctx.destination);
+      blip.start();
+    } catch {
+      /* контекст в плохом состоянии — разберётся проверка */
     }
+  }
+
+  /**
+   * Через 300 мс после касания: если звук идёт (running и часы контекста двигаются) — всё хорошо,
+   * больше не проверяем до следующего ухода в фон. Иначе — следующее касание пересоздаст контекст.
+   */
+  private check(ctx: AudioContext): void {
+    if (this.probe !== null) return;
+    const t0 = ctx.currentTime;
+    this.probe = window.setTimeout(() => {
+      this.probe = null;
+      if (ctx !== this.ctx || document.hidden) return;
+      if (ctx.state === 'running' && ctx.currentTime > t0) this.away = false;
+      // не ожил или «работает», а часы стоят
+      else this.broken = true;
+    }, 300);
+  }
+
+  /** Новый контекст вместо сломанного: та же музыка с начала, те же настройки. */
+  private rebuild(): void {
+    const old = this.ctx;
+    this.music?.stop();
+    this.ctx = null;
+    this.music = null;
+    this.synth = null;
+    this.broken = false;
+    // часы нового контекста начинаются с нуля — старые отметки глушили бы все эффекты
+    this.lastAt.clear();
+    this.p1At = [];
+    if (old && old.state !== 'closed') void old.close().catch(() => undefined);
+    this.build(false);
+  }
+
+  private build(fresh = true): void {
     const AC = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
     if (!AC) return;
-    this.ctx = new AC();
+    let ctx: AudioContext;
+    try {
+      ctx = new AC();
+    } catch {
+      return; // iOS: слишком много контекстов — попробуем на следующем касании
+    }
+    this.ctx = ctx;
     // общий выравниватель: на динамике телефона ничего не хрипит, когда всё звучит разом
     const comp = this.ctx.createDynamicsCompressor();
     comp.threshold.value = -14;
@@ -156,13 +248,16 @@ export class Audio {
     // касании и сыграть пустой звук — иначе музыка меню заиграет только со второго касания,
     // а им обычно бывает «Играть»
     if (this.ctx.state !== 'running') void this.ctx.resume().catch(() => undefined);
-    const blip = this.ctx.createBufferSource();
-    blip.buffer = this.ctx.createBuffer(1, 1, this.ctx.sampleRate);
-    blip.connect(this.ctx.destination);
-    blip.start();
-    this.apply();
+    this.kick(this.ctx);
+    this.apply(true);
+    const { hush, dread, intensity } = this.mood;
+    if (hush) this.music.setHush(true);
+    if (dread >= 0) this.music.setDread(dread);
+    if (intensity) this.music.setIntensity(intensity);
+    // проверить, что звук действительно пошёл (iOS после фона создаёт и «мёртвые» контексты)
+    this.check(ctx);
     // открытие игры: звуковой логотип над музыкой меню (раз за запуск)
-    if (this.want.mode === 'menu') this.play('logo');
+    if (fresh && this.want.mode === 'menu') this.play('logo');
   }
 
   /** Эффекты вкл/выкл. */
@@ -261,16 +356,19 @@ export class Audio {
 
   /** Леший рядом: песня темы замолкает (у всех одинаково). */
   setHush(on: boolean): void {
+    this.mood.hush = on;
     this.music?.setHush(on);
   }
 
   /** Ночь темы с рассудком 0–1 (общая для всех, не свой рассудок). */
   setDread(v: number): void {
+    this.mood.dread = v;
     this.music?.setDread(v);
   }
 
   /** Напряжение раунда 0–2. */
   setIntensity(level: number): void {
+    this.mood.intensity = level;
     this.music?.setIntensity(level);
   }
 
