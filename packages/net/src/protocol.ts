@@ -68,8 +68,26 @@ export type PrivateMsg =
   | { t: 'pong'; c: number; wt: number }
   /** Итог своего удара (только нападавшему): цель и кто она — ему это и так покажет «поф». */
   | { t: 'atk'; target: number; result: 'player' | 'bot'; at: number }
-  /** Полный снимок для переподключения. */
-  | { t: 'resync'; world: WorldSnapshot; round: number; theme: number; t0: number; me: MeMsg; st: Extract<RoomMsg, { t: 'st' }>; players: PlayerInfo[]; cfg: Partial<GameConfig>; hostId: string };
+  /**
+   * Полный снимок для переподключения. summary/awards — итоги дубля (если он уже кончился: обвинение,
+   * разоблачение, итоги), match — итоги матча: без них вернувшийся посреди разоблачения застревал
+   * на старом экране. Старые хосты их не шлют.
+   */
+  | {
+      t: 'resync';
+      world: WorldSnapshot;
+      round: number;
+      theme: number;
+      t0: number;
+      me: MeMsg;
+      st: Extract<RoomMsg, { t: 'st' }>;
+      players: PlayerInfo[];
+      cfg: Partial<GameConfig>;
+      hostId: string;
+      summary?: RoundSummary;
+      awards?: AwardCard[][];
+      match?: MatchSummary;
+    };
 
 /** Игрок → хост (канал host). Хост проверяет каждое сообщение схемой. */
 export const IntentMsg = z.discriminatedUnion('k', [
