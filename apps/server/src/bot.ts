@@ -68,6 +68,7 @@ const T = {
     openApp: 'Открыть игру',
     filmAgain: '🎬 Реванш',
     filmWatch: '▶ Смотреть фильм',
+    filmPuzzle: '🔎 Найди актёра',
     filmDone: '🎬 Снято! Звезда фильма — {name}',
     filmDoneDraw: '🎬 Снято! Ничья: {names}',
     filmAward: '🏅 {title} — {names}',
@@ -109,6 +110,7 @@ const T = {
     openApp: 'Open the game',
     filmAgain: '🎬 Rematch',
     filmWatch: '▶ Watch the film',
+    filmPuzzle: '🔎 Find the actor',
     filmDone: "🎬 That's a wrap! Star of the film: {name}",
     filmDoneDraw: "🎬 That's a wrap! Draw: {names}",
     filmAward: '🏅 {title}: {names}',
@@ -160,6 +162,8 @@ export interface FilmNotice {
   awards?: { id: string; names: string[] }[];
   /** Готовая строка счёта компании в чате («Енот 5 : 3 Голубь») — необязательное. */
   score?: string;
+  /** Код загадки из фильма (puzzles.ts) — кнопка «Найди актёра» под видео (необязательное). */
+  puzzle?: string;
 }
 
 /** Живая карточка «Собрать комнату» (игровой сервер → /internal/tg/card): сбор, съёмка, отмена. */
@@ -584,11 +588,14 @@ export class Bot {
     const caption = this.filmCaption(t, card.lang, n);
     const video = `${this.o.clipBase}/v1/clips/${n.id}.mp4`;
     const again = { text: t.filmAgain, url: await this.link(`g_${n.invite}`) };
+    // загадка из этого фильма — для тех в чате, кто не играл
+    const puzzle = n.puzzle && /^[A-Z2-9]{5}$/.test(n.puzzle) ? { text: t.filmPuzzle, url: await this.link(`c_${n.puzzle}`) } : null;
+    const rows = puzzle ? [[again], [puzzle]] : [[again]];
     try {
       await this.api('editMessageMedia', {
         inline_message_id: card.inlineId,
         media: { type: 'video', media: video, caption, supports_streaming: true },
-        reply_markup: { inline_keyboard: [[again]] },
+        reply_markup: { inline_keyboard: rows },
       });
       this.media.add(n.invite);
       this.o.log('info', 'tg_film_sent', { room: n.code });
@@ -596,7 +603,7 @@ export class Bot {
     } catch (err) {
       this.o.log('warn', 'tg_film_media', { room: n.code, err: String(err) });
     }
-    await this.editCard(n.invite, card.inlineId, caption, { inline_keyboard: [[{ text: t.filmWatch, url: video }], [again]] });
+    await this.editCard(n.invite, card.inlineId, caption, { inline_keyboard: [[{ text: t.filmWatch, url: video }], ...rows] });
     this.o.log('info', 'tg_film_sent', { room: n.code, text: true });
     return { status: 200, body: { sent: true, text: true } };
   }

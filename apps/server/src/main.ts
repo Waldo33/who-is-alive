@@ -11,6 +11,7 @@ import { ClipStore } from './clips';
 import { S3Client, s3FromEnv } from './s3';
 import { FilmService } from './film';
 import { MatchRecordings } from './recordings';
+import { PuzzleStore } from './puzzles';
 import { GameServer } from './server';
 import { MemoryStore, PgStore } from './store';
 import type { Store } from './store';
@@ -104,6 +105,8 @@ if (s3) {
     .putLifecycle([
       { prefix: 'clips/', days: 2 },
       { prefix: 'matches/', days: 2 },
+      // загадки из фильма: ролики в TikTok смотрят неделями
+      { prefix: 'puzzles/', days: 30 },
     ])
     .then(() => s3.putCors())
     .then(() => log('info', 's3_ready', { bucket: s3cfg?.bucket }))
@@ -112,6 +115,8 @@ if (s3) {
 
 // клипы для Telegram и фильмы матча: systemd StateDirectory=massovka-clips (/var/lib/massovka-clips)
 const clips = new ClipStore(env.CLIP_DIR || env.STATE_DIRECTORY || undefined, undefined, s3 ? { s3, log } : undefined);
+// загадки из фильма (/v1/puzzles): в подпапке клипов (общая у синего и зелёного), 30 суток, копия в S3
+const puzzles = new PuzzleStore(join(clips.dir, 'puzzles'), undefined, s3 ? { s3, log } : undefined);
 
 // «Фильм матча» монтирует сервер, если есть ffmpeg и шрифты (иначе — телефон, как раньше); FILM=off — выключить
 const ffmpeg = env.FFMPEG || 'ffmpeg';
@@ -151,6 +156,7 @@ const server = new GameServer({
   log,
   clips,
   film,
+  puzzles,
   video,
   // фильм матча — в чат Telegram, откуда позвали (бот на другом сервере, туннель: http://127.0.0.1:9090)
   botInternal: env.BOT_INTERNAL || undefined,

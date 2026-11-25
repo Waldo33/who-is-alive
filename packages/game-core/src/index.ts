@@ -17,3 +17,4 @@ export * from './daily';
 export * from './story';
 export * from './sanity';
 export * from './boss';
+export * from './film-puzzle';

@@ -30,6 +30,8 @@ export interface FilmFeed {
   url(id: string, ext: string): string;
   /** Комната матча: под фильмом в чате — кнопка «Реванш» туда же (метка карточки бота или код). */
   rematch?: { code: string; invite?: string };
+  /** Код загадки «Найди актёра» из этого фильма (сервер вырезал её из дублей); null — загадки нет. */
+  puzzle?(): string | null;
 }
 
 /**

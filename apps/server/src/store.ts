@@ -20,6 +20,10 @@ export interface Store {
   /** Инлайн-карточка «Собрать комнату», отправленная в чат: метка приглашения → id сообщения (для фильма матча). */
   saveTgCard(card: TgCard): Promise<void>;
   tgCard(tag: string): Promise<TgCard | null>;
+  /** Загадка из фильма (/c/<код>): итог зрителя — первый с телефона окончательный. */
+  savePuzzleResult(r: PuzzleResult): Promise<void>;
+  /** Сколько зрителей сыграло загадку и сколько нашли актёра. */
+  puzzleStats(code: string): Promise<{ played: number; found: number }>;
   /** Трекер ошибок (errors.ts): прибавить случаи к группам. Ответ — отпечатки новых групп и вернувшихся после недели тишины. */
   saveErrors(rows: ErrorRow[]): Promise<string[]>;
   /** Уборка: группы и дни старше 90 суток. */
@@ -35,6 +39,13 @@ export interface DailyScore {
   name: string;
   tries: number;
   won: boolean;
+}
+
+export interface PuzzleResult {
+  code: string;
+  device: string;
+  found: boolean;
+  tries: number;
 }
 
 export interface TgCard {
@@ -102,6 +113,15 @@ const MIGRATIONS: string[] = [
      count integer not null default 0,
      primary key (day, fp)
    )`,
+  // загадки из фильма (puzzles.ts): по строке на телефон, первая попытка — окончательная
+  `create table if not exists puzzle_results (
+     code text not null,
+     device text not null,
+     found boolean not null,
+     tries integer not null,
+     created_at timestamptz not null default now(),
+     primary key (code, device)
+   )`,
 ];
 
 /** Неделя тишины — и группа считается вернувшейся (снова тревога). */
@@ -162,6 +182,15 @@ export class PgStore implements Store {
     const res = await this.pool.query(`select tag, inline_id, lang from tg_inline_cards where tag = $1 and created_at > now() - interval '${TG_CARD_TTL}'`, [tag]);
     const x = res.rows[0];
     return x ? { tag: x.tag, inlineId: x.inline_id, lang: x.lang === 'en' ? 'en' : 'ru' } : null;
+  }
+
+  async savePuzzleResult(r: PuzzleResult): Promise<void> {
+    await this.pool.query(`insert into puzzle_results (code, device, found, tries) values ($1, $2, $3, $4) on conflict do nothing`, [r.code, r.device, r.found, r.tries]);
+  }
+
+  async puzzleStats(code: string): Promise<{ played: number; found: number }> {
+    const res = await this.pool.query(`select count(*)::int as played, count(*) filter (where found)::int as found from puzzle_results where code = $1`, [code]);
+    return { played: res.rows[0]?.played ?? 0, found: res.rows[0]?.found ?? 0 };
   }
 
   async saveErrors(rows: ErrorRow[]): Promise<string[]> {
@@ -250,6 +279,19 @@ export class MemoryStore implements Store {
 
   async tgCard(tag: string): Promise<TgCard | null> {
     return this.cards.get(tag) ?? null;
+  }
+
+  puzzles: PuzzleResult[] = [];
+
+  async savePuzzleResult(r: PuzzleResult): Promise<void> {
+    if (this.puzzles.some((x) => x.code === r.code && x.device === r.device)) return;
+    this.puzzles.push({ ...r });
+    if (this.puzzles.length > 20_000) this.puzzles.splice(0, this.puzzles.length - 20_000);
+  }
+
+  async puzzleStats(code: string): Promise<{ played: number; found: number }> {
+    const rows = this.puzzles.filter((x) => x.code === code);
+    return { played: rows.length, found: rows.filter((x) => x.found).length };
   }
 
   errors = new Map<string, ErrorRow & { firstSeen: number; lastSeen: number }>();

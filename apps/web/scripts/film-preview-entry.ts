@@ -4,7 +4,7 @@ import { FilmScene, filmInput } from '../src/game/film';
 import type { FilmTake } from '../src/game/film';
 import { loadAllThemes } from '../src/game/themes';
 
-const G = globalThis as unknown as { __seed: number; __kind?: string; __theme?: number; __frames?: number; __from?: number; __finale?: string; __out: unknown };
+const G = globalThis as unknown as { __seed: number; __kind?: string; __theme?: number; __frames?: number; __from?: number; __finale?: string; __puzzle?: string; __out: unknown };
 void (async () => {
   await loadAllThemes();
   const cfg = makeConfig(G.__theme !== undefined && G.__theme >= 0 ? { fixedTheme: G.__theme } : {});
@@ -20,7 +20,7 @@ void (async () => {
       takes.push({ rec: recordRound(s.world, { round: s.round, theme: s.theme, players: sum.reveal, playEnd: sum.replayTo, kills: sum.kills }), summary: sum, arena: s.arena });
     }
   }
-  const inp = filmInput(takes, players, s.match!, { t: DICTS.ru, lang: 'ru', font: '"Press Start 2P"', site: 'benobody.app', link: 'https://benobody.app/?src=film' });
+  const inp = filmInput(takes, players, s.match!, { t: DICTS.ru, lang: 'ru', font: '"Press Start 2P"', site: 'benobody.app', link: G.__puzzle ? `https://benobody.app/${G.__puzzle}?src=film_qr` : 'https://benobody.app/?src=film', puzzle: G.__puzzle });
   if (!inp) {
     G.__out = [{ name: 'info', url: 'data:text/plain,' + encodeURIComponent('нет фильма') }];
     return;

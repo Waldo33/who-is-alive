@@ -49,6 +49,8 @@ export class ServerLink implements Transport {
   private filmHandlers = new Set<Listener<WireFilm>>();
   /** Последнее известие о фильме матча (сбрасывает клиент, когда начинается новый матч). */
   film: WireFilm | null = null;
+  /** Код загадки из фильма этого матча (`{t:'puzzle'}`); новый матч — снова null. */
+  puzzle: string | null = null;
   /** Что умеет сервер сверх базового протокола (из welcome): 'clip' — монтирует клип выбывшего. */
   caps: string[] = [];
   /** Видео не выключено аварийно (`{t:'flags'}`): false — клипов и фильма нет нигде. */
@@ -201,7 +203,12 @@ export class ServerLink implements Transport {
         }
         return;
       }
+      case 'puzzle':
+        this.puzzle = m.code;
+        return;
       case 'film':
+        // новый матч: загадки прошлого больше нет
+        if (m.state === 'none') this.puzzle = null;
         this.film = m;
         for (const h of this.filmHandlers) h(m);
         return;

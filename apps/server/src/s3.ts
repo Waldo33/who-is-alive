@@ -138,6 +138,20 @@ export class S3Client {
     if (!r.ok) throw new Error(`s3 put ${key}: HTTP ${r.status} ${(await r.text()).slice(0, 200)}`);
   }
 
+  /** Положить байты (маленькие файлы: загадки). */
+  async putBytes(key: string, body: Buffer, mime: string, cacheControl = 'no-store'): Promise<void> {
+    const r = await this.request('PUT', key, { body, headers: { 'content-type': mime, 'cache-control': cacheControl } });
+    if (!r.ok) throw new Error(`s3 put ${key}: HTTP ${r.status} ${(await r.text()).slice(0, 200)}`);
+  }
+
+  /** Прочитать объект целиком; null — его нет. */
+  async get(key: string): Promise<Buffer | null> {
+    const r = await this.request('GET', key);
+    if (r.status === 404) return null;
+    if (!r.ok) throw new Error(`s3 get ${key}: HTTP ${r.status}`);
+    return Buffer.from(await r.arrayBuffer());
+  }
+
   /** Есть ли объект. */
   async has(key: string): Promise<boolean> {
     const r = await this.request('HEAD', key);

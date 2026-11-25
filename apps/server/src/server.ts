@@ -5,6 +5,8 @@ import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { CLIP_MIME, ClipStore } from './clips';
 import type { FilmService } from './film';
+import { PUZZLE_CODE, PuzzleStore } from './puzzles';
+import { join } from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { WebSocketServer } from 'ws';
 import type { WebSocket } from 'ws';
@@ -54,6 +56,8 @@ export interface GameServerOptions {
   clips?: ClipStore;
   /** «Фильм матча» (film.ts); нет — фильм монтирует телефон. */
   film?: FilmService;
+  /** Загадки из фильма (/v1/puzzles); нет — в подпапке клипов. */
+  puzzles?: PuzzleStore;
   /**
    * Бот изнутри (туннель на сервер бота: http://127.0.0.1:9090): фильм матча комнаты по приглашению
    * из Telegram уходит туда — бот заменит им карточку в чате. Нет — не сообщаем.
@@ -102,6 +106,8 @@ const EVENTS_PER_IP_MIN = 600;
 const ERRORS_PER_IP_MIN = 30;
 // на сервере бота все запросы телефонов приходят через Москву (один адрес) — лимит с запасом
 const BOT_PER_IP_MIN = 600;
+/** Загадка: открыть и тапнуть — на зрителя десяток запросов. */
+const PUZZLE_PER_IP_MIN = 120;
 /** Лобби без действий — закрыть; комната старше — закрыть; без единого игрока на связи — закрыть. */
 const LOBBY_IDLE_MS = 30 * 60_000;
 const ROOM_MAX_AGE_MS = 6 * 3600_000;
@@ -152,6 +158,8 @@ export class GameServer {
   private readonly eventsRate = new RateWindow(EVENTS_PER_IP_MIN, 60_000);
   private readonly errorsRate = new RateWindow(ERRORS_PER_IP_MIN, 60_000);
   private readonly botRate = new RateWindow(BOT_PER_IP_MIN, 60_000);
+  private readonly puzzleRate = new RateWindow(PUZZLE_PER_IP_MIN, 60_000);
+  readonly puzzles: PuzzleStore;
   readonly store: Store;
   private readonly emptySince = new Map<Room, number>();
   /** Коды комнат нагрузочного прогона (создатель пришёл с LOAD_KEY). */
@@ -167,6 +175,7 @@ export class GameServer {
   constructor(private readonly o: GameServerOptions) {
     this.auth = new Auth(o.authSecret);
     this.clips = o.clips ?? new ClipStore(undefined, () => this.now());
+    this.puzzles = o.puzzles ?? new PuzzleStore(join(this.clips.dir, 'puzzles'), () => this.now());
     this.instance = o.instance ?? 'blue';
     this.log = o.log ?? jsonLogger();
     this.now = o.now ?? Date.now;
@@ -304,6 +313,7 @@ export class GameServer {
       if (p === '/v1/flags' && req.method === 'GET') return this.reply(res, 200, { video: this.video.on });
       if (p === '/v1/errors' && req.method === 'POST') return this.clientError(req, res);
       if (p.startsWith('/v1/clips')) return this.clipRoute(req, res, p);
+      if (p.startsWith('/v1/puzzles/')) return await this.puzzleRoute(req, res, p);
       if (p.startsWith('/tg/')) {
         if (!this.o.bot) return this.reply(res, 503, { error: 'no_bot' });
         // вебхук Telegram — без лимита (его проверяет секретный заголовок), остальное — по адресу
@@ -362,6 +372,7 @@ export class GameServer {
       speed: this.speed,
       // нагрузочный прогон: фильм матча не монтируем (ffmpeg исказил бы замер и занял бы процессор)
       film: load ? undefined : this.o.film,
+      puzzles: load ? undefined : this.puzzles,
       videoOn: () => this.video.on,
       onFilm: (r, f) => this.filmToChat(r, f),
         onCard: (r, c) => this.cardToChat(r, c),
@@ -444,6 +455,7 @@ export class GameServer {
         log: this.log,
         speed: this.speed,
         film: this.o.film,
+        puzzles: this.puzzles,
         videoOn: () => this.video.on,
         onFilm: (r, f) => this.filmToChat(r, f),
         onCard: (r, c) => this.cardToChat(r, c),
@@ -630,7 +642,7 @@ export class GameServer {
   private filmToChat(room: Room, f: RoomFilm): void {
     const base = this.o.botInternal;
     if (!base || !room.invite) return;
-    const body: FilmNotice = { invite: room.invite, id: f.id, code: room.code, winners: f.winners, draw: f.draw, awards: f.awards };
+    const body: FilmNotice = { invite: room.invite, id: f.id, code: room.code, winners: f.winners, draw: f.draw, awards: f.awards, ...(f.puzzle ? { puzzle: f.puzzle } : {}) };
     void fetch(`${base}/internal/tg/film`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -773,6 +785,40 @@ export class GameServer {
         return void res.end();
       }
       return this.sendFile(req, res, { path, mime: CLIP_MIME[f[2]], name: `massovka-${f[1].slice(0, 6)}.${f[2]}` });
+    }
+    return this.reply(res, 404, { error: 'not_found' });
+  }
+
+  /**
+   * Загадка из фильма (puzzles.ts): GET — что видит зритель (без ответа), POST …/tap — проверить тап.
+   * Итог зрителя (с какого телефона, нашёл ли) пишется в базу один раз — для доли нашедших.
+   */
+  private async puzzleRoute(req: IncomingMessage, res: ServerResponse, p: string): Promise<void> {
+    if (!this.puzzleRate.take(this.ip(req), this.now())) return this.reply(res, 429, { error: 'rate_limited' });
+    const m = /^\/v1\/puzzles\/([A-Za-z0-9]{5})(\/tap)?$/.exec(p);
+    const code = m?.[1].toUpperCase() ?? '';
+    if (!m || !PUZZLE_CODE.test(code)) return this.reply(res, 404, { error: 'not_found' });
+    if (!m[2] && req.method === 'GET') {
+      const doc = await this.puzzles.get(code);
+      if (!doc) return this.reply(res, 404, { error: 'no_puzzle' });
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'public, max-age=3600' });
+      return void res.end(JSON.stringify({ code, lang: doc.lang, puzzle: doc.pub }));
+    }
+    if (m[2] && req.method === 'POST') {
+      const b = (await readJson(req, 1024)) as { eid?: unknown; n?: unknown; d?: unknown } | null;
+      const r = await this.puzzles.tap(code, Number(b?.eid), Number(b?.n));
+      if (!r) return this.reply(res, 404, { error: 'no_puzzle' });
+      const out = r.res;
+      if (out.status === 200 && out.body.done) {
+        const device = typeof b?.d === 'string' && /^[A-Za-z0-9-]{8,64}$/.test(b.d) ? b.d : null;
+        try {
+          if (device) await this.store.savePuzzleResult({ code, device, found: out.body.hit, tries: Number(b?.n) });
+          out.body.stats = await this.store.puzzleStats(code);
+        } catch (e) {
+          this.log('warn', 'puzzle_stats', { err: String(e).slice(0, 200) });
+        }
+      }
+      return this.reply(res, out.status, out.body);
     }
     return this.reply(res, 404, { error: 'not_found' });
   }
