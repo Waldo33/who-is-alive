@@ -55,6 +55,7 @@ import { isThemeLoaded, loadTheme, lookCount, preloadThemes, themeLook, themePac
 import type { Look } from './themes';
 import { haptic, inviteLink, setClosingConfirmation } from '../lib/telegram';
 import { canvas, px as ppx } from './pixels';
+import { clearErrorScene, setErrorScene } from '../lib/crumbs';
 
 /** Постоянные кнопки «автопилот» и «эмоция» в нижней панели (выключены — не пользовались). */
 const HUD_EXTRAS = false;
@@ -445,7 +446,10 @@ export class GameScene extends Phaser.Scene {
     this.events.once('shutdown', () => {
       this.sim.dispose();
       setClosingConfirmation(false);
+      clearErrorScene();
     });
+    // где игрок — в отчёты об ошибках (lib/errors.ts)
+    setErrorScene({ players: players.length, spectator: this.init0.spectator ? 1 : null, tutorial: this.init0.tutorial ? 1 : null });
     this.tut = this.init0.tutorial && this.sim instanceof LocalSession ? new Tutorial(this.sim, this.t.tutorial, this.init0.tutorial.onDone) : null;
     if (this.tut) {
       // обучению нужно знать, что нажал игрок (жест, обвинение), — до того, как это попадёт в симуляцию
@@ -1265,6 +1269,7 @@ export class GameScene extends Phaser.Scene {
       this.audio.setTwist(false);
       this.next25 = 0;
       void loadTheme(n.theme);
+      setErrorScene({ theme: THEME_RULES[n.theme]?.id ?? n.theme, round: n.round, mod: n.mod || null });
       this.applyTheme();
         this.replay = null;
       // клип выбывшего, который уже монтируется или готов, не теряем: кнопка вернётся на итогах следующего дубля
@@ -1277,6 +1282,7 @@ export class GameScene extends Phaser.Scene {
         this.track('match_start', { players: this.sim.players.length, ai: this.sim.players.filter((p) => p.ai).length, level: this.cfg.strictCrowd ? 'hard' : this.cfg.kidsMode ? 'easy' : 'normal', kids: this.cfg.kidsMode, strict: this.cfg.strictCrowd, rounds: this.cfg.maxRounds, roundSec: this.cfg.roundSec });
       }
     } else if (n.t === 'phase') {
+      setErrorScene({ phase: n.phase });
       // начало матча — звуковой логотип игры, дальше — обычный отсчёт
       if (n.phase === 'countdown') this.audio.play(this.sim.round === 1 ? 'logo' : 'count');
       if (n.phase !== 'match_end') this.triumphShown = false;

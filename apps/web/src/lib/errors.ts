@@ -1,14 +1,20 @@
 /**
- * Ошибки JS с телефонов → свой сервер (`POST /v1/errors`) → журнал → VictoriaLogs и Grafana,
- * счётчик — для тревоги сторожа после выкладки (docs/infra-plan.md › этап 0).
+ * Ошибки JS с телефонов → свой сервер (`POST /v1/errors`) → трекер ошибок (apps/server/src/errors.ts):
+ * группы в базе, стек по source maps, новые — в чат тревог; заодно журнал → VictoriaLogs и Grafana,
+ * счётчик — для тревоги сторожа после выкладки (docs/architecture.md › 7).
  *
- * - Ловит `error` (исключения, в том числе из игрового цикла Phaser) и `unhandledrejection`.
+ * - Ловит `error` (исключения, в том числе из игрового цикла Phaser и непойманные ошибки React)
+ *   и `unhandledrejection`; пойманное вручную — `reportError(e, 'где')`.
+ * - С ошибкой уходит контекст: платформа (ОС, браузер, Telegram, PWA, язык), экран и комната, тема,
+ *   фаза и дубль (`setErrorScene` из сцены), последние шаги (lib/crumbs.ts). Без имён, id и IP; из ссылок
+ *   вычищаются параметры и фрагмент (там tgWebAppData с данными игрока из Telegram).
  * - Не больше 10 разных ошибок за заход, повтор той же — не шлёт. «Script error.» без подробностей
  *   (чужой скрипт) и шум браузеров отбрасываем: по ним ничего не починить.
  * - Включено там же, где аналитика (`trackingEnabled`): не на localhost, не с `?dev`, не в автономном HTML.
  * - Сам репортёр никогда не бросает и не мешает игре.
  */
-import { trackingEnabled, inAppBrowser } from './analytics';
+import { errorContext, trackingEnabled, inAppBrowser } from './analytics';
+import { crumbs, errorScene } from './crumbs';
 import { GAME_API } from './env';
 import { inTelegram } from './telegram';
 
@@ -22,8 +28,8 @@ const seen = new Set<string>();
 export interface ClientErrorBody {
   /** сообщение */
   m: string;
-  /** вид: error | rejection */
-  k: 'error' | 'rejection';
+  /** вид: error | rejection | caught */
+  k: 'error' | 'rejection' | 'caught';
   /** файл:строка:столбец */
   f?: string;
   s?: string;
@@ -34,6 +40,15 @@ export interface ClientErrorBody {
   ua: string;
   /** встроенный браузер: telegram, instagram… */
   a?: string;
+  /** контекст: os, br, app, pwa, lang, mode, room, theme, phase, round… */
+  c?: Record<string, string>;
+  /** последние шаги */
+  bc?: string[];
+}
+
+/** Ссылки без параметров и фрагмента: в них бывают данные игрока (tgWebAppData) и метки приглашений. */
+export function scrubUrls(s: string): string {
+  return s.replace(/(\bhttps?:\/\/[^\s?#()'"]*)[?#][^\s()'"]*/g, '$1').replace(/tgWebApp\w*=[^\s&'"]*/g, 'tgWebApp…');
 }
 
 function describe(reason: unknown): { m: string; s?: string } {
@@ -47,22 +62,31 @@ function describe(reason: unknown): { m: string; s?: string } {
 }
 
 /** Тело запроса; null — не слать (шум, повтор, лимит). Отдельно от отправки — для тестов. */
-export function errorBody(kind: 'error' | 'rejection', reason: unknown, where?: string): ClientErrorBody | null {
-  const { m, s } = describe(reason);
+export function errorBody(kind: ClientErrorBody['k'], reason: unknown, where?: string): ClientErrorBody | null {
+  const d = describe(reason);
+  const m = scrubUrls(d.m);
   if (!m || NOISE.some((re) => re.test(m))) return null;
   const key = `${kind}|${m}|${where ?? ''}`;
   if (seen.has(key) || seen.size >= MAX_PER_PAGE) return null;
   seen.add(key);
   const ua = typeof navigator === 'undefined' ? '' : navigator.userAgent;
+  let c: Record<string, string> | undefined;
+  try {
+    c = { ...errorContext(), ...errorScene() };
+  } catch {
+    c = undefined;
+  }
   return {
     m: m.slice(0, 300),
     k: kind,
-    f: where,
-    s: s?.slice(0, 2000),
+    f: where ? scrubUrls(where).slice(0, 200) : undefined,
+    s: d.s ? scrubUrls(d.s).slice(0, 4000) : undefined,
     p: typeof location === 'undefined' ? '' : location.pathname.replace(/^\/r\/[A-Za-z]{4}/, '/r/'),
     b: BUILD,
     ua: ua.slice(0, 200),
     a: (inTelegram() ? 'telegram' : inAppBrowser(ua)) ?? undefined,
+    c,
+    bc: crumbs(),
   };
 }
 
@@ -76,6 +100,17 @@ function send(body: ClientErrorBody): void {
     }).catch(() => undefined);
   } catch {
     /* нет сети — не страшно */
+  }
+}
+
+/** Сообщить о пойманной ошибке (игра продолжается): `reportError(e, 'clip')`. */
+export function reportError(e: unknown, where?: string): void {
+  try {
+    if (typeof window === 'undefined' || !trackingEnabled()) return;
+    const b = errorBody('caught', e, where);
+    if (b) send(b);
+  } catch {
+    /* репортёр не ломает игру */
   }
 }
 

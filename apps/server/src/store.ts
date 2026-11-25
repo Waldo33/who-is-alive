@@ -1,4 +1,5 @@
 import pg from 'pg';
+import type { ErrorRow } from './errors';
 import type { Logger } from './log';
 
 /**
@@ -19,6 +20,10 @@ export interface Store {
   /** Инлайн-карточка «Собрать комнату», отправленная в чат: метка приглашения → id сообщения (для фильма матча). */
   saveTgCard(card: TgCard): Promise<void>;
   tgCard(tag: string): Promise<TgCard | null>;
+  /** Трекер ошибок (errors.ts): прибавить случаи к группам. Ответ — отпечатки новых групп и вернувшихся после недели тишины. */
+  saveErrors(rows: ErrorRow[]): Promise<string[]>;
+  /** Уборка: группы и дни старше 90 суток. */
+  cleanupErrors(): Promise<void>;
   ping(): Promise<boolean>;
   close(): Promise<void>;
 }
@@ -74,7 +79,33 @@ const MIGRATIONS: string[] = [
      lang text not null,
      created_at timestamptz not null default now()
    )`,
+  // трекер ошибок (errors.ts): группа — отпечаток; sample — последний случай (без личного), tags — разбивка
+  // по платформе, теме, фазе; reopened_at — вернулась после недели тишины (сторож шлёт тревогу)
+  `create table if not exists error_groups (
+     fp text primary key,
+     source text not null,
+     title text not null,
+     culprit text not null default '',
+     count bigint not null default 0,
+     first_seen timestamptz not null default now(),
+     last_seen timestamptz not null default now(),
+     reopened_at timestamptz,
+     first_build text not null default '',
+     last_build text not null default '',
+     tags jsonb not null default '{}'::jsonb,
+     sample jsonb not null default '{}'::jsonb
+   )`,
+  `create index if not exists error_groups_last_idx on error_groups (last_seen)`,
+  `create table if not exists error_daily (
+     day date not null,
+     fp text not null,
+     count integer not null default 0,
+     primary key (day, fp)
+   )`,
 ];
+
+/** Неделя тишины — и группа считается вернувшейся (снова тревога). */
+const ERROR_QUIET = '7 days';
 
 export class PgStore implements Store {
   private readonly pool: pg.Pool;
@@ -133,6 +164,47 @@ export class PgStore implements Store {
     return x ? { tag: x.tag, inlineId: x.inline_id, lang: x.lang === 'en' ? 'en' : 'ru' } : null;
   }
 
+  async saveErrors(rows: ErrorRow[]): Promise<string[]> {
+    const fresh: string[] = [];
+    for (const r of rows) {
+      // xmax = 0 — строка только что вставлена; reopened — была тишина больше недели
+      const res = await this.pool.query(
+        `insert into error_groups as g (fp, source, title, culprit, count, first_build, last_build, tags, sample)
+         values ($1, $2, $3, $4, $5, $6, $6, $7::jsonb, $8::jsonb)
+         on conflict (fp) do update set
+           count = g.count + excluded.count,
+           last_seen = now(),
+           last_build = case when excluded.last_build <> '' then excluded.last_build else g.last_build end,
+           title = excluded.title,
+           sample = excluded.sample,
+           reopened_at = case when g.last_seen < now() - interval '${ERROR_QUIET}' then now() else g.reopened_at end,
+           tags = (select coalesce(jsonb_object_agg(k, coalesce((g.tags->>k)::bigint, 0) + coalesce((excluded.tags->>k)::bigint, 0)), '{}'::jsonb)
+                   from (select jsonb_object_keys(g.tags || excluded.tags) as k limit 80) t)
+         returning (xmax = 0) as inserted, coalesce(reopened_at = now(), false) as reopened`,
+        [r.fp, r.source, r.title, r.culprit, r.count, r.build, JSON.stringify(r.tags), JSON.stringify(r.sample)],
+      );
+      const x = res.rows[0];
+      if (x?.inserted || x?.reopened) fresh.push(r.fp);
+    }
+    if (rows.length) {
+      const vals: unknown[] = [];
+      const ph = rows.map((r, i) => {
+        vals.push(r.fp, r.count);
+        return `(current_date, $${i * 2 + 1}, $${i * 2 + 2})`;
+      });
+      await this.pool.query(
+        `insert into error_daily as d (day, fp, count) values ${ph.join(', ')} on conflict (day, fp) do update set count = d.count + excluded.count`,
+        vals,
+      );
+    }
+    return fresh;
+  }
+
+  async cleanupErrors(): Promise<void> {
+    await this.pool.query(`DELETE FROM error_groups WHERE last_seen < now() - interval '90 days'`);
+    await this.pool.query(`DELETE FROM error_daily WHERE day < current_date - 90`);
+  }
+
   async ping(): Promise<boolean> {
     try {
       await this.pool.query('select 1');
@@ -179,6 +251,30 @@ export class MemoryStore implements Store {
   async tgCard(tag: string): Promise<TgCard | null> {
     return this.cards.get(tag) ?? null;
   }
+
+  errors = new Map<string, ErrorRow & { firstSeen: number; lastSeen: number }>();
+
+  async saveErrors(rows: ErrorRow[]): Promise<string[]> {
+    const fresh: string[] = [];
+    const now = Date.now();
+    for (const r of rows) {
+      const g = this.errors.get(r.fp);
+      if (!g) {
+        this.errors.set(r.fp, { ...r, tags: { ...r.tags }, firstSeen: now, lastSeen: now });
+        fresh.push(r.fp);
+        continue;
+      }
+      if (now - g.lastSeen > 7 * 86_400_000) fresh.push(r.fp);
+      g.count += r.count;
+      g.lastSeen = now;
+      g.sample = r.sample;
+      for (const [k, v] of Object.entries(r.tags)) g.tags[k] = (g.tags[k] ?? 0) + v;
+    }
+    if (this.errors.size > 2000) this.errors.delete(this.errors.keys().next().value!);
+    return fresh;
+  }
+
+  async cleanupErrors(): Promise<void> {}
 
   async ping(): Promise<boolean> {
     return true;
