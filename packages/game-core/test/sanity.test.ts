@@ -271,6 +271,21 @@ describe('рассудок («Купальская ночь»)', () => {
     expect(hidden).toBe(true);
     expect(back).toBe(true); // Леший ушёл — вернулись
   });
+  it('за неправильный жест вырезает только Леший: уровень «сложно» в этой теме не режет', () => {
+    const sim = new MatchSim(makeConfig({ fixedTheme: KUPALA, strictCrowd: true, endWhenLastAlive: false }), players, 5);
+    toPlay(sim);
+    const warn = () => (sim as unknown as { leshyWarn: number }).leshyWarn;
+    let missed = 0;
+    // до первого прихода Лешего никто не отвечает на команды — и никого не вырезают
+    for (let i = 0; i < 20 * 120 && warn() < 0; i++) {
+      for (const p of sim.pr) p.sanity = 100;
+      const c = sim.world.crowd;
+      if (c && sim.world.time === c.windowEnd) missed++;
+      sim.tick();
+    }
+    expect(missed).toBeGreaterThan(0);
+    expect(sim.pr.every((p) => p.alive)).toBe(true);
+  });
   it('приходы Лешего: несколько за ночь, ложных двух подряд нет, первый настоящий не раньше 24-й секунды', () => {
     let falses = 0;
     for (let r = 1; r <= 40; r++) {

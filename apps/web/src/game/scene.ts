@@ -1080,7 +1080,7 @@ export class GameScene extends Phaser.Scene {
         if (ev.target === myEid) {
           // «Жёсткий дубль»: вырезал режиссёр — сразу после окна команды, без удара
           const c = this.sim.world.crowd;
-          const byDirector = !this.byLeshy(ev) && (roundMod(this.sim.mod) === 'hard' || this.cfg.strictCrowd) && !!c && !c.vote && ev.at > c.windowEnd && ev.at < c.windowEnd + 2000;
+          const byDirector = !this.byLeshy(ev) && !hasSanity(this.sim.theme) && (roundMod(this.sim.mod) === 'hard' || this.cfg.strictCrowd) && !!c && !c.vote && ev.at > c.windowEnd && ev.at < c.windowEnd + 2000;
           // «Купальская ночь»: рассудок кончился — сгинул в тумане (удар без нападавшего, как у режиссёра)
           const leshy = this.byLeshy(ev);
           const byMadness = !byDirector && !leshy && hasSanity(this.sim.theme) && ev.attacker === undefined && this.lastSanity <= 2;

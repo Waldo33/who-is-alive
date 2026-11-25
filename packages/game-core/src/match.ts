@@ -552,7 +552,8 @@ export class MatchSim {
     const cfg = this.cfg;
     // Леший: из не замерших вовремя забирает одного — ближайшего к себе (дети — только подсвечены)
     const leshy = c.warnAt === this.leshyWarn && !cfg.kidsMode;
-    const hard = !c.vote && (roundMod(this.mod) === 'hard' || cfg.strictCrowd);
+    // «Купальская ночь»: за жест вырезает только Леший — уровень «сложно» и «Жёсткий дубль» здесь не режут
+    const hard = !c.vote && !hasSanity(this.theme) && (roundMod(this.mod) === 'hard' || cfg.strictCrowd);
     // Леший идёт к самому виноватому: кто не замер сейчас или накопил leshyDoomSins провинностей (тому и
     // замереть не поможет). Больше провинностей — раньше; поровну — ближайший к нему.
     // На охоте (глубокая ночь, sanity.ts › LESHY_HUNT_SEC) замереть не спасает: забирает ближайшего.
