@@ -72,6 +72,18 @@ if [ -n "$prev" ] && [ -d "$prev/apps/web/.next/static" ] && [ "$prev" != "$rel"
   done | wc -l)
   say "статика прошлой версии для открытых вкладок: $carried файлов"
 fi
+# карты исходников этой версии — трекеру ошибок игрового сервера (apps/server/src/errors.ts, SOURCEMAPS_DIR):
+# закрытая от сети папка, читать может служба игры; храним 15 последних версий (старые вкладки живут сутками)
+if [ -s "$D/maps.tar.gz" ]; then
+  M=/var/lib/massovka-sourcemaps
+  install -d -m 755 "$M"
+  install -d -m 755 "$M/${SHA:0:7}.part"
+  tar -xzf "$D/maps.tar.gz" -C "$M/${SHA:0:7}.part" --no-same-owner
+  chmod -R a+rX "$M/${SHA:0:7}.part"
+  rm -rf "${M:?}/${SHA:0:7}" && mv "$M/${SHA:0:7}.part" "$M/${SHA:0:7}"
+  ls -1dt "$M"/*/ 2>/dev/null | tail -n +16 | xargs -r rm -rf
+  say "карты исходников: $(find "$M/${SHA:0:7}" -name '*.map' | wc -l) файлов"
+fi
 install -d /opt/massovka/web/color
 ln -sfn "$rel" "/opt/massovka/web/color/$new"
 ln -sfn "$rel" /opt/massovka/web/current

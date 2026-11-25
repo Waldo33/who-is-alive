@@ -1,4 +1,5 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { errFields } from './log';
 import type { Logger } from './log';
 import type { Store } from './store';
 
@@ -12,6 +13,7 @@ import type { Store } from './store';
  *   POST /hook    — обновления от Telegram: /start и инлайн-запросы «@бот …»;
  *   POST /daily   — результат «Кастинга дня» из Mini App (подписанный initData) → рейтинг этого чата;
  *   POST /board   — рейтинг «Кастинга дня» в чате;
+ *   POST /film    — (только изнутри, /internal/tg/film) фильм матча готов — заменить им карточку «Собрать комнату»;
  *   POST /prepare — карточка «поделиться» для WebApp.shareMessage (комната, кастинг, приглашение,
  *                   клип — видео лежит на игровом сервере в Москве, `clips.ts`, сюда приходит только id).
  *
@@ -35,12 +37,16 @@ export interface BotOptions {
   fetchImpl?: typeof fetch;
 }
 
+/** Канал игры в Telegram (новости, ролики). */
+const CHANNEL = 'https://t.me/benobody_app';
+
 const T = {
   ru: {
     start: 'Массовка — пиксельная игра для компании: спрячься в толпе ботов и вычисли друзей раньше, чем они тебя.',
     startCasting: ' А каждый день — «Кастинг дня»: найди актёра в массовке.',
     play: '▶ Играть',
     friends: '👥 С друзьями',
+    channel: '📣 Канал игры',
     daily: '🎬 Кастинг дня',
     inviteTitle: 'Позвать в «Массовку»',
     inviteDesc: 'Карточка с кнопкой: друзья откроют игру прямо в Telegram',
@@ -59,12 +65,18 @@ const T = {
     clipTitle: 'Лучший момент дубля',
     solve: '🎬 На кастинг',
     openApp: 'Открыть игру',
+    filmText: '🎬 Фильм матча · комната {code}\n{result}\nЕщё дубль? Жми кнопку — та же комната.',
+    filmWin: 'Победа: {names}',
+    filmDraw: 'Ничья: {names}',
+    filmAgain: '🎬 Ещё дубль',
+    filmWatch: '▶ Смотреть фильм',
   },
   en: {
     start: 'Be Nobody is a pixel party game: hide in a crowd of bots and spot your friends before they spot you.',
     startCasting: ' Plus a daily casting: spot the actor among the extras.',
     play: '▶ Play',
     friends: '👥 With friends',
+    channel: '📣 Game channel',
     daily: '🎬 Daily casting',
     inviteTitle: 'Invite to Be Nobody',
     inviteDesc: 'A card with a button: friends open the game right in Telegram',
@@ -83,6 +95,11 @@ const T = {
     clipTitle: 'Best moment of the take',
     solve: '🎬 Join the casting',
     openApp: 'Open the game',
+    filmText: '🎬 Match film · room {code}\n{result}\nAnother take? Tap the button — same room.',
+    filmWin: 'Winner: {names}',
+    filmDraw: 'Draw: {names}',
+    filmAgain: '🎬 Another take',
+    filmWatch: '▶ Watch the film',
   },
 };
 type Lang = keyof typeof T;
@@ -104,6 +121,18 @@ export function dailyNow(now = Date.now()): number {
 interface Update {
   message?: { chat: { id: number; type: string }; text?: string; from?: { language_code?: string } };
   inline_query?: { id: string; query: string; from: { language_code?: string } };
+  /** Карточку выбрали и отправили в чат (нужна «обратная связь» инлайн-режима в BotFather: /setinlinefeedback). */
+  chosen_inline_result?: { result_id: string; inline_message_id?: string; from: { language_code?: string } };
+}
+
+/** Фильм матча из комнаты по приглашению (игровой сервер → /internal/tg/film). */
+export interface FilmNotice {
+  invite: string;
+  /** id ролика в хранилище клипов (clips.ts). */
+  id: string;
+  code: string;
+  winners: string[];
+  draw: boolean;
 }
 
 export interface InitData {
@@ -117,6 +146,7 @@ export interface BotReply {
 }
 
 const CLIP_ID = /^[0-9a-f]{20}$/;
+const INVITE_TAG = /^[A-Za-z0-9]{12}$/;
 
 interface PrepareBody {
   initData?: string;
@@ -210,8 +240,9 @@ export class Bot {
         try {
           if (u?.message?.text?.startsWith('/start')) await this.onStart(u.message);
           else if (u?.inline_query) await this.onInline(u.inline_query);
+          else if (u?.chosen_inline_result) await this.onChosen(u.chosen_inline_result);
         } catch (e) {
-          this.o.log('error', 'tg_hook', { err: String(e) });
+          this.o.log('error', 'tg_hook', errFields(e));
         }
         return { status: 200, body: { ok: true } };
       }
@@ -219,14 +250,14 @@ export class Bot {
       if (method === 'POST' && (path === '/daily' || path === '/board')) return await this.onDaily(body as { initData?: string; n?: number; tries?: number; won?: boolean }, path === '/daily');
       return { status: 404, body: { error: 'not_found' } };
     } catch (e) {
-      this.o.log('error', 'tg_error', { path, err: String(e) });
+      this.o.log('error', 'tg_error', { path, ...errFields(e) });
       return { status: 500, body: { error: 'server' } };
     }
   }
 
   /** Вебхук на этот сервер и профиль бота на двух языках. */
   async setup(): Promise<void> {
-    await this.api('setWebhook', { url: this.hookUrl, secret_token: this.hookSecret, allowed_updates: ['message', 'inline_query'], drop_pending_updates: false });
+    await this.api('setWebhook', { url: this.hookUrl, secret_token: this.hookSecret, allowed_updates: ['message', 'inline_query', 'chosen_inline_result'], drop_pending_updates: false });
     const P = {
       ru: {
         description:
@@ -285,12 +316,15 @@ export class Bot {
     // кнопка web_app — только в личке; в группах — прямая ссылка Mini App
     const priv = msg.chat.type === 'private';
     const web = (text: string, p: string) => ({ text, web_app: { url: `${this.o.site}${p}${p.includes('?') ? '&' : '?'}src=tg` } });
+    // канал игры — новости и ролики; кнопка ведёт в канал, игру не загораживает
+    const channel = [{ text: t.channel, url: CHANNEL }];
     const rows = priv
-      ? [[web(t.play, path)], ...(room ? [] : [[web(t.friends, '/?create=1')]]), ...(this.casting ? [[web(t.daily, '/daily')]] : [])]
+      ? [[web(t.play, path)], ...(room ? [] : [[web(t.friends, '/?create=1')]]), ...(this.casting ? [[web(t.daily, '/daily')]] : []), channel]
       : [
           [{ text: t.play, url: await this.link(room ? param : 'play') }],
           ...(room ? [] : [[{ text: t.friends, url: await this.link('friends') }]]),
           ...(this.casting ? [[{ text: t.daily, url: await this.link('daily') }]] : []),
+          channel,
         ];
     await this.api('sendMessage', {
       chat_id: msg.chat.id,
@@ -356,6 +390,53 @@ export class Bot {
       is_personal: true,
       button: { text: t.openApp, web_app: { url: `${this.o.site}/?src=tg` } },
     });
+  }
+
+  /**
+   * Карточку «Собрать комнату» отправили в чат: запомнить её inline_message_id по метке — в конце матча
+   * бот заменит карточку фильмом (в чат, где бота нет, писать нельзя, а своё инлайн-сообщение править можно).
+   */
+  private async onChosen(c: NonNullable<Update['chosen_inline_result']>): Promise<void> {
+    const m = /^lobby-([A-Za-z0-9]{12})$/.exec(c.result_id);
+    if (!m || !c.inline_message_id) return;
+    await this.o.store.saveTgCard({ tag: m[1], inlineId: c.inline_message_id, lang: langOf(c.from.language_code) });
+    this.o.log('info', 'tg_card_sent', {});
+  }
+
+  /**
+   * Фильм матча готов: карточка приглашения превращается в видео с итогом и кнопкой «Ещё дубль»
+   * (та же метка — та же комната). Каждый следующий матч этой комнаты заменяет видео на новое.
+   * Telegram не смог взять видео — хотя бы текст с итогом и ссылкой на ролик.
+   */
+  async film(n: FilmNotice): Promise<BotReply> {
+    if (!INVITE_TAG.test(n.invite ?? '') || !CLIP_ID.test(n.id ?? '') || !/^[A-Z]{4}$/.test(n.code ?? '')) return { status: 400, body: { error: 'bad_film' } };
+    if (!this.o.clipBase) return { status: 503, body: { error: 'no_clips' } };
+    const card = await this.o.store.tgCard(n.invite);
+    if (!card) return { status: 200, body: { sent: false } };
+    const t = T[card.lang];
+    const names = (Array.isArray(n.winners) ? n.winners : []).filter((x) => typeof x === 'string' && x.trim()).slice(0, 4).map((x) => x.trim().slice(0, 24));
+    const result = names.length ? fmt(n.draw ? t.filmDraw : t.filmWin, { names: names.join(', ') }) : '';
+    const caption = fmt(t.filmText, { code: n.code, result }).replace('\n\n', '\n');
+    const video = `${this.o.clipBase}/v1/clips/${n.id}.mp4`;
+    const again = { text: t.filmAgain, url: await this.link(`g_${n.invite}`) };
+    try {
+      await this.api('editMessageMedia', {
+        inline_message_id: card.inlineId,
+        media: { type: 'video', media: video, caption, supports_streaming: true },
+        reply_markup: { inline_keyboard: [[again]] },
+      });
+      this.o.log('info', 'tg_film_sent', { room: n.code });
+      return { status: 200, body: { sent: true } };
+    } catch (e) {
+      this.o.log('warn', 'tg_film_media', { room: n.code, err: String(e) });
+    }
+    await this.api('editMessageText', {
+      inline_message_id: card.inlineId,
+      text: caption,
+      reply_markup: { inline_keyboard: [[{ text: t.filmWatch, url: video }], [again]] },
+    });
+    this.o.log('info', 'tg_film_sent', { room: n.code, text: true });
+    return { status: 200, body: { sent: true, text: true } };
   }
 
   /**

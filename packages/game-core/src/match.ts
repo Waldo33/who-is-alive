@@ -10,9 +10,10 @@ import type { ActKind, CrowdKind, Dir, EmoteKind, EntitySpawn, WorldEvent } from
 import { NavGrid } from './nav';
 import { Rng } from './rng';
 import { LESHY_HUNT_SEC, fireLevel, leshySpot, leshyVisits, nightLevel, playLenSec, sanityDrain } from './sanity';
-import { ROTATION_THEMES, THEME_COUNT, THEME_RULES, hasSanity, killerExposed, themeRules, twistEmote } from './themes';
+import { ROTATION_THEMES, THEME_COUNT, THEME_RULES, canFight, fightAttacks, hasBoss, hasSanity, killerExposed, themeRules, twistEmote } from './themes';
 import { ROUND_MODS, roundMod } from './mods';
 import { World } from './world';
+import { BOSS_SPEED_MUL, bossDoor, bossLooking, bossWatching, inBossCone, pathInBossCone } from './boss';
 
 /** «Купальская ночь» — тема-финал при матч-боле (nightFinale). */
 const NIGHT_THEME = THEME_RULES.findIndex((r) => r.id === 'kupala');
@@ -69,6 +70,8 @@ export interface PlayerRound {
   crowdAnswered: number;
   /** warnAt прихода Лешего, при котором игрок шевельнулся, пока тот смотрел (leshySees). */
   leshyMoved: number;
+  /** Выговоров от шефа за дубль (офис): каждый — минус cfg.bossPenalty ударов на подвал. */
+  reprimands: number;
   /** Нажал во время стоп-кадра: команда выполнится в этот момент вместе с толпой. */
   crowdQueued: { kind: CrowdKind; at: number } | null;
   /** Какой жест выбрал на последнюю команду (для «Жёсткого дубля» и «Толпа решает»). */
@@ -231,6 +234,16 @@ export class MatchSim {
   private nextTwistAt = Infinity;
   private lastTwistAt = -Infinity;
   private twistLeft = 0;
+  /** Тема-драка: запас ударов на дубль уже выдан (первое включение изнанки). */
+  private fightArmed = false;
+  /** Шеф в офисе (boss.ts): своё зерно — обход не сдвигает остальной матч. */
+  private bossRng: Rng | null = null;
+  /** Раньше этого времени шеф ничего нового не начинает. */
+  private bossNextAt = 0;
+  /** Следующий шаг обхода — взгляд (иначе — пройтись). */
+  private bossLookNext = false;
+  /** Кого шеф уже поймал за этот взгляд. */
+  private bossCaught = new Set<number>();
   plannedPlayEnd = 0;
   playEnd = 0;
   endReason: RoundSummary['endReason'] = 'time';
@@ -387,7 +400,8 @@ export class MatchSim {
       pid: p.pid,
       eid: playerEids[i],
       alive: true,
-      attacksLeft: roundMod(this.mod) === 'onehit' ? 1 : this.cfg.attacksPerRound,
+      // в теме-драке (офис) ударов нет до первого подвала — там выдаётся запас на весь дубль
+      attacksLeft: fightAttacks(this.theme) ? 0 : roundMod(this.mod) === 'onehit' ? 1 : this.cfg.attacksPerRound,
       stars: 0,
       stunUntil: 0,
       autopilot: false,
@@ -399,6 +413,7 @@ export class MatchSim {
       accusedAsGhost: false,
       crowdAnswered: -1,
       leshyMoved: -1,
+      reprimands: 0,
       crowdQueued: null,
       crowdPick: null,
       crowdLate: false,
@@ -435,7 +450,8 @@ export class MatchSim {
     if (this.round <= 1 || !this.cfg.roundMods || !this.rng.chance(this.cfg.roundModChance)) return;
     // «Купальская ночь» — свой режим: условий съёмки в ней нет (случайность берём всё равно — ход матча тот же)
     if (hasSanity(this.theme)) return;
-    const pool = ROUND_MODS.map((_, i) => i).filter((i) => i > 0 && i !== prev);
+    // «Один удар» в офисе не к месту: там удары и так выдаёт только подвал
+    const pool = ROUND_MODS.map((_, i) => i).filter((i) => i > 0 && i !== prev && !(fightAttacks(this.theme) && ROUND_MODS[i] === 'onehit'));
     this.mod = this.rng.pick(pool);
   }
 
@@ -509,6 +525,16 @@ export class MatchSim {
     // изнанка темы: расписание на дубль (зерно — общее, поэтому повтор совпадает)
     const tw = themeRules(this.theme).twist;
     this.twistLeft = tw ? tw.max : 0;
+    this.fightArmed = false;
+    // шеф: выходит на «Мотор!», обход — через секунду-другую
+    this.bossRng = hasBoss(this.theme) ? new Rng(this.rng.fork()) : null;
+    this.bossCaught.clear();
+    this.bossLookNext = false;
+    if (this.bossRng) {
+      const p0 = this.bossRng.pick(this.arena.interest);
+      this.emit({ t: 'boss', act: 'in', x: p0.x, y: p0.y, at: this.world.time });
+      this.bossNextAt = this.playStart + this.bossRng.range(800, 2000);
+    }
     this.lastTwistAt = -Infinity;
     this.nextTwistAt = tw ? this.playStart + this.rng.range(tw.firstSec[0], tw.firstSec[1]) * 1000 : Infinity;
   }
@@ -539,9 +565,21 @@ export class MatchSim {
       this.nextTwistAt = Infinity;
       return;
     }
+    // офис: подвал начинается, только когда шеф дошёл до двери (bossTick ведёт его туда заранее)
+    if (on && this.bossRng && !this.bossAtDoor()) return;
     this.emit({ t: 'twist', on, at: t });
+    if (this.bossRng) {
+      if (on) this.emit({ t: 'boss', act: 'out', at: t });
+      else this.bossBack(t);
+    }
     this.lastTwistAt = t;
     if (on) this.twistLeft--;
+    // подвал: драться можно — запас ударов на весь дубль выдаётся один раз (и вырезанным — не важно, они не бьют)
+    const fight = fightAttacks(this.theme);
+    if (on && fight && !this.fightArmed) {
+      this.fightArmed = true;
+      for (const p of this.pr) p.attacksLeft = Math.max(0, fight - p.reprimands * this.cfg.bossPenalty);
+    }
     const [a, b] = on ? tw.onSec : tw.gapSec;
     this.nextTwistAt = t + this.rng.range(a, b) * 1000;
   }
@@ -760,6 +798,125 @@ export class MatchSim {
     return n;
   }
 
+  // ───────────── шеф в офисе (boss.ts) ─────────────
+
+  private bossAtDoor(): boolean {
+    const b = this.world.boss;
+    const d = bossDoor(this.arena.width);
+    return !!b && !b.out && b.pi >= b.path.length && Math.hypot(b.x - d.x, b.y - d.y) <= 4;
+  }
+
+  /** Шеф вернулся из-за двери — и сразу смотрит в офис: кто ещё дерётся, тот попался. */
+  private bossBack(t: number): void {
+    const d = bossDoor(this.arena.width);
+    this.emit({ t: 'boss', act: 'in', x: d.x, y: d.y, at: t });
+    this.bossLookNext = true;
+    this.bossNextAt = t + 300;
+  }
+
+  /**
+   * Обход шефа: прошёлся — посмотрел — прошёлся. Пока смотрит, шевельнувшийся в конусе получает
+   * выговор. Перед подвалом идёт к двери (с запасом по времени), из-за двери возвращает twistTick.
+   */
+  private bossTick(t: number): void {
+    const b = this.world.boss;
+    const rng = this.bossRng;
+    if (!b || !rng || b.out) return;
+    const cfg = this.cfg;
+    if (bossWatching(b, t) && !this.world.isFrozen(t)) {
+      for (const e of this.world.entities) {
+        // шагнул за последний шаг мира (флаг moving после стоп-кадра бывает несвежим; испуг и жесты — не в счёт)
+        const stepped = !e.act && Math.hypot(e.x - e.px, e.y - e.py) > 0.01;
+        if (!e.alive || !stepped || this.bossCaught.has(e.eid) || !inBossCone(b, b.look.dir, e.x, e.y)) continue;
+        // живому игроку — запас на задержку сети: он мог замереть у себя чуть раньше, чем это дошло
+        const p = this.pr.find((q) => q.eid === e.eid && q.alive && !q.autopilot);
+        if (p && t < b.look.from + 250) continue;
+        this.bossCatch(e.eid, t);
+      }
+    }
+    if (bossLooking(b, t) || b.pi < b.path.length || t < this.bossNextAt) return;
+    // перед подвалом — к двери, заранее (подвал дождётся, пока он дойдёт)
+    const door = bossDoor(this.arena.width);
+    const leaving = this.twistLeft > 0 && !this.zoneStarted && this.nextTwistAt < Infinity;
+    const far = Math.hypot(door.x - b.x, door.y - b.y);
+    if (leaving && t + (far * 1.5 * 1000) / (cfg.entitySpeed * BOSS_SPEED_MUL) + 1500 >= this.nextTwistAt) {
+      if (far > 4) this.bossWalk(door.x, door.y, t);
+      this.bossNextAt = t + 500;
+      return;
+    }
+    if (this.bossLookNext) {
+      this.bossLook(t);
+      this.bossLookNext = false;
+      return;
+    }
+    // пройтись к точке интереса (не к той, где стоит)
+    // недалеко: обход — короткими переходами, взглядов за дубль побольше
+    const pts = this.arena.interest.filter((q) => Math.hypot(q.x - b.x, q.y - b.y) > 24 && Math.hypot(q.x - b.x, q.y - b.y) < 80);
+    const q = rng.pick(pts.length ? pts : this.arena.interest);
+    this.bossWalk(q.x + rng.range(-6, 6), q.y + rng.range(-4, 4), t);
+    this.bossLookNext = true;
+    this.bossNextAt = t + 200;
+  }
+
+  private bossWalk(x: number, y: number, t: number): void {
+    const b = this.world.boss!;
+    const nav = this.nav;
+    const goal = nav.nearestWalkable(nav.cellAt(x, y), null);
+    if (goal < 0) return;
+    const path = nav.findPath(nav.cellAt(b.x, b.y), goal, null);
+    if (path && path.length) this.emit({ t: 'boss', act: 'walk', path, at: t });
+  }
+
+  /** Посмотреть туда, где больше народу; боты в конусе «заработались» — замирают (почти все). */
+  private bossLook(t: number): void {
+    const b = this.world.boss!;
+    const rng = this.bossRng!;
+    const cfg = this.cfg;
+    const alive = this.world.alive();
+    const dirs: Dir[] = rng.shuffle([0, 1, 2, 3] as Dir[]);
+    let dir = dirs[0];
+    let best = -1;
+    for (const d of dirs) {
+      const n = alive.filter((e) => inBossCone(b, d, e.x, e.y)).length;
+      if (n > best) {
+        best = n;
+        dir = d;
+      }
+    }
+    const warn = cfg.kidsMode ? cfg.kidsBossWarnMs : cfg.bossWarnMs;
+    const from = t + warn;
+    const until = from + cfg.bossLookMs;
+    this.emit({ t: 'boss', act: 'look', dir, from, until, at: t });
+    // взгляд виден ботам уже в этом шаге (событие мир применит в конце шага): иначе кто-то успеет зашагать в конус
+    b.look = { dir, from, until };
+    this.bossCaught.clear();
+    this.bossNextAt = until + rng.range(cfg.bossRestMs[0], cfg.bossRestMs[1]);
+    for (const e of alive) {
+      // в конусе стоит или через него пройдёт по своему пути
+      const nav = this.nav;
+      const seen = pathInBossCone(b, dir, e.x, e.y, e.path.slice(e.pi).map((c) => ({ x: nav.cx(c), y: nav.cy(c) })));
+      if (!seen || this.pr.some((p) => p.eid === e.eid && !p.autopilot)) continue;
+      // зазевавшийся бот так и идёт — попадётся, как живой
+      if (rng.chance(cfg.bossBotSlip)) continue;
+      if (e.pi < e.path.length) this.emit({ t: 'stop', eid: e.eid, at: t + Math.round(rng.range(150, warn - 100)) });
+      this.bots.interrupt(e.eid, until);
+    }
+  }
+
+  private bossCatch(eid: number, t: number): void {
+    const cfg = this.cfg;
+    this.bossCaught.add(eid);
+    this.emit({ t: 'boss', act: 'catch', eid, at: t });
+    this.emit({ t: 'mark', eid, until: t + cfg.bossMarkSec * 1000, at: t });
+    const p = this.pr.find((q) => q.eid === eid && q.alive);
+    if (p) {
+      p.reprimands++;
+      if (this.fightArmed) p.attacksLeft = Math.max(0, p.attacksLeft - cfg.bossPenalty);
+    }
+    // пойманный бот дальше не затевает новых прогулок (событий для него не шлём — иначе отличался бы от живого)
+    if (!p || p.autopilot) this.bots.interrupt(eid, t + 1200);
+  }
+
   private emit(ev: WorldEvent): void {
     this.world.push(ev);
   }
@@ -767,6 +924,7 @@ export class MatchSim {
   private playTick(): void {
     const t = this.world.time;
     const cfg = this.cfg;
+    this.bossTick(t);
     this.twistTick(t);
 
     // «Море волнуется»; перед «Толпа решает» толпа заранее «разогревается» жестом большинства
@@ -1104,7 +1262,10 @@ export class MatchSim {
     this.playEnd = this.world.time;
     for (const e of this.world.alive()) this.world.push({ t: 'stop', eid: e.eid, at: this.world.time });
     // свет обратно: разоблачение — в обычном облике темы
-    if (this.world.twist) this.emit({ t: 'twist', on: false, at: this.world.time });
+    if (this.world.twist) {
+      this.emit({ t: 'twist', on: false, at: this.world.time });
+      if (this.bossRng) this.bossBack(this.world.time);
+    }
     this.world.step(); // применить остановку
     // живые тоже угадывают: короткий стоп-кадр «Кто ещё живой?» (в «Купальской ночи» — нет: там свой финал)
     if (!hasSanity(this.theme) && this.pr.length >= 2 && this.pr.some((p) => p.alive)) {
@@ -1475,6 +1636,11 @@ export class MatchSim {
     const t = this.world.time;
     if (target < 0) {
       this.hitKiki(p, target, ax, ay);
+      return;
+    }
+    // офис: в обычном облике не дерутся (клиент сам не шлёт; старой вкладке — «Не сейчас»)
+    if (!canFight(this.theme, this.world.twist)) {
+      this.notices.push({ t: 'denied', pid: p.pid, reason: 'not_now' });
       return;
     }
     if (p.attacksLeft <= 0) {

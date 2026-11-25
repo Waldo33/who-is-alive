@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Собрать состояние Terraform из живого Timeweb (состояние нигде не хранится, docs/terraform.md › «Без состояния»).
 # Нужен discovered.auto.tfvars.json от discover.py и terraform init.
-#  1. каждый сервер из servers.tf, который уже есть в Timeweb, — terraform import по id;
+#  1. каждый сервер из servers.tf и бакет из storage.tf, которые уже есть в Timeweb, — terraform import по id;
 #  2. в состояние дописывается os_id из ответа Timeweb (os[0].id). Иначе провайдер не меняет тариф
 #     («server should have one of os_id or image_id»), а если указать os_id в конфигурации, он шлёт
 #     PATCH {"os_id": …} — это ПЕРЕУСТАНОВКА системы. С os_id в состоянии PATCH идёт только с preset_id
@@ -15,6 +15,13 @@ while read -r key id; do
   echo "подхватываю $key: id=$id"
   terraform import -no-color "twc_server.this[\"$key\"]" "$id" | grep -v -i 'root_pass\|vnc_pass' | grep -i 'import' || true
 done <<< "$keys"
+
+# бакет S3 для видео (storage.tf) — если уже куплен
+bucket=$(echo 'lookup(var.existing_buckets, local.media_bucket, "")' | terraform console | tr -d '"')
+if [ -n "$bucket" ]; then
+  echo "подхватываю бакет ${bucket}"
+  terraform import -no-color twc_s3_bucket.media "$bucket" | grep -i 'import' || true
+fi
 
 terraform state pull > /tmp/tfstate.json
 python3 - <<'PY'

@@ -192,7 +192,7 @@
           ansible.builtin.copy:
             src: "{{ playbook_dir }}/../grafana/{{ item }}"
             dest: "/opt/massovka/grafana-dashboards/{{ item }}"
-          loop: [product.json, tech.json]
+          loop: [product.json, tech.json, errors.json]
 
         - name: Служба Grafana
           ansible.builtin.copy:

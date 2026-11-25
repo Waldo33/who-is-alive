@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { jsonLogger } from './log';
+import { ErrorTracker } from './errors';
 import type { LogLevel } from './log';
 import { Bot } from './bot';
 import { spawnSync } from 'node:child_process';
@@ -7,6 +8,7 @@ import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ClipStore } from './clips';
+import { S3Client, s3FromEnv } from './s3';
 import { FilmService } from './film';
 import { MatchRecordings } from './recordings';
 import { GameServer } from './server';
@@ -22,11 +24,14 @@ import { VideoSwitch } from './video-switch';
  *   MAX_ROOMS — потолок комнат под память машины (~1,5 МБ на комнату, считает setup.sh; иначе 2000),
  *   REGION (msk | nl), GEOIP_DB — база стран для замера доступности, EVENTS_UPSTREAM — куда пересылать аналитику.
  *   LOAD_KEY — ключ нагрузочного прогона (load-test.yml), секрет рождается на сервере,
+ *   BOT_INTERNAL — бот изнутри (http://127.0.0.1:9090): фильм матча комнаты из Telegram-карточки уходит ему,
  *   PEER_HTTP + PEER_WS_URL — соседний экземпляр (синий ↔ зелёный): к нему переезжают комнаты при выкладке
  *   (POST /internal/drain изнутри машины), после drain процесс завершается сам.
+ *   SOURCEMAPS_DIR — карты сборок сайта для трекера ошибок (/var/lib/massovka-sourcemaps, кладёт web-deploy).
+ *   S3_BUCKET, S3_ACCESS_KEY, S3_SECRET_KEY (+ S3_ENDPOINT, S3_REGION) — копия клипов, фильмов и записей матчей в S3 (s3.ts).
  */
 const env = process.env;
-const log = jsonLogger((env.LOG_LEVEL as LogLevel) || 'info');
+let log = jsonLogger((env.LOG_LEVEL as LogLevel) || 'info');
 const prod = env.NODE_ENV === 'production';
 let secret = env.AUTH_SIGNING_KEY ?? '';
 if (!secret) {
@@ -51,6 +56,29 @@ if (env.DATABASE_URL) {
   }
 } else log('warn', 'DATABASE_URL не задан — аналитика в памяти');
 
+// трекер ошибок (errors.ts): телефоны, сервер, бот, монтаж. Без базы (сервер бота) — группы уходят игровому
+// серверу по туннелю (тот же адрес, что у аналитики); всё уровня error из журнала — тоже в трекер
+const errors = new ErrorTracker({
+  store,
+  log,
+  mapsDir: env.SOURCEMAPS_DIR || '/var/lib/massovka-sourcemaps',
+  upstream: store instanceof MemoryStore && env.EVENTS_UPSTREAM ? env.EVENTS_UPSTREAM : undefined,
+  host: env.REGION || undefined,
+});
+log = errors.wrap(log);
+process.on('uncaughtException', (e) => {
+  // систему не держим в непонятном состоянии: записать и выйти (systemd перезапустит)
+  log('error', 'crash', { err: String(e).slice(0, 600), stack: e instanceof Error ? e.stack : undefined });
+  const t = setTimeout(() => process.exit(1), 3000);
+  void errors.flush().finally(() => {
+    clearTimeout(t);
+    process.exit(1);
+  });
+});
+process.on('unhandledRejection', (e) => {
+  log('error', 'unhandled_rejection', { err: String(e).slice(0, 600), stack: e instanceof Error ? e.stack : undefined });
+});
+
 // Telegram-бот: ключ — в секретах сервера (/etc/massovka/secrets.env), без ключа бота нет
 const bot = env.TELEGRAM_BOT_TOKEN
   ? new Bot({
@@ -67,8 +95,23 @@ const bot = env.TELEGRAM_BOT_TOKEN
   : undefined;
 if (!bot) log('warn', 'TELEGRAM_BOT_TOKEN не задан — бота нет');
 
+// S3 для видео (s3.ts, бакет — infra/terraform/storage.tf; ключи — /etc/massovka/s3.env от выкладки). Нет — всё на диске
+const s3cfg = s3FromEnv(env);
+const s3 = s3cfg ? new S3Client(s3cfg) : undefined;
+if (s3) {
+  // срок хранения и CORS ставим при каждом старте: дёшево и не зависит от того, кто создал бакет
+  void s3
+    .putLifecycle([
+      { prefix: 'clips/', days: 2 },
+      { prefix: 'matches/', days: 2 },
+    ])
+    .then(() => s3.putCors())
+    .then(() => log('info', 's3_ready', { bucket: s3cfg?.bucket }))
+    .catch((e: unknown) => log('warn', 's3_rules_failed', { err: String(e).slice(0, 300) }));
+} else log('info', 's3_off');
+
 // клипы для Telegram и фильмы матча: systemd StateDirectory=massovka-clips (/var/lib/massovka-clips)
-const clips = new ClipStore(env.CLIP_DIR || env.STATE_DIRECTORY || undefined);
+const clips = new ClipStore(env.CLIP_DIR || env.STATE_DIRECTORY || undefined, undefined, s3 ? { s3, log } : undefined);
 
 // «Фильм матча» монтирует сервер, если есть ffmpeg и шрифты (иначе — телефон, как раньше); FILM=off — выключить
 const ffmpeg = env.FFMPEG || 'ffmpeg';
@@ -83,7 +126,7 @@ else if (spawnSync(ffmpeg, ['-version'], { stdio: 'ignore' }).status !== 0) log(
 else if (!existsSync(join(fonts, 'press-start-2p-cyrillic-400-normal.woff'))) log('warn', 'film_no_fonts', { fonts });
 else {
   // записи матчей (для перемонтажа фильма в других вариантах) — в подпапке клипов, 2 суток; MATCH_RECORDINGS=off — не писать
-  const recordings = env.MATCH_RECORDINGS === 'off' ? undefined : new MatchRecordings(join(clips.dir, 'matches'));
+  const recordings = env.MATCH_RECORDINGS === 'off' ? undefined : new MatchRecordings(join(clips.dir, 'matches'), undefined, s3 ? { s3, log } : undefined);
   film = new FilmService({ store: clips, log, fonts, ffmpeg, recordings, enabled: () => video.on, site: (env.SITE_URL || 'https://benobody.app').replace(/^https?:\/\//, '').replace(/\/$/, '') });
   log('info', 'film_ready');
 }
@@ -109,6 +152,9 @@ const server = new GameServer({
   clips,
   film,
   video,
+  // фильм матча — в чат Telegram, откуда позвали (бот на другом сервере, туннель: http://127.0.0.1:9090)
+  botInternal: env.BOT_INTERNAL || undefined,
+  errors,
 });
 
 const port = await server.listen(Number(env.PORT) || 8080);
@@ -122,6 +168,7 @@ async function stop(sig: string): Promise<void> {
   // выкладка не останавливает старый экземпляр, а переводит его в drain (docs/infra-plan.md › этап 1);
   // SIGTERM — остановка руками или перезагрузка машины: идущие комнаты закрываются
   await server.close();
+  await errors.close();
   await store.close();
   process.exit(0);
 }

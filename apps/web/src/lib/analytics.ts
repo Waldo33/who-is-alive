@@ -18,6 +18,7 @@
  * ложится в `kto:outbox` (до 60 событий) и уходит при первой удачной отправке — с `late_s`, на сколько
  * секунд опоздала. Так видно и тех, кто не достал до сервера (lib/netprobe.ts шлёт и в Европу).
  */
+import { crumb } from './crumbs';
 import { GAME_API } from './env';
 import { inTelegram } from './telegram';
 
@@ -235,6 +236,7 @@ function bind(): void {
 
 /** Записать событие. name — латиница в нижнем регистре и `_` (до 40 знаков), props — плоские значения. */
 export function track(name: string, props: Props = {}): void {
+  crumb(name);
   if (!trackingEnabled()) return;
   try {
     bind();
@@ -265,7 +267,23 @@ export function trackNow(apiBase: string, name: string, props: Props = {}): void
 
 /** Контекст экрана: комната, режим, режиссёр ли. Подмешивается в события до следующего вызова. */
 export function setTrackContext(next: typeof ctx): void {
+  if (next.room !== ctx.room || next.mode !== ctx.mode) crumb(`screen:${next.mode ?? '-'}${next.room ? ' ' + next.room : ''}`);
   ctx = { ...next };
+}
+
+/** Контекст для отчёта об ошибке (lib/errors.ts): платформа захода и экран — без устройства и сессии. */
+export function errorContext(): Record<string, string> {
+  const out: Record<string, string> = {};
+  try {
+    const b = baseProps();
+    for (const k of ['os', 'br', 'app', 'pwa', 'lang'] as const) if (b[k] != null) out[k] = String(b[k]);
+  } catch {
+    /* без контекста — тоже отчёт */
+  }
+  if (ctx.mode) out.mode = ctx.mode;
+  if (ctx.room) out.room = ctx.room;
+  if (ctx.host != null) out.director = String(ctx.host);
+  return out;
 }
 
 /** Вид отправленного: клип (видео), карточка (картинка) или текст. Для метки `?src=`. */

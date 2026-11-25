@@ -366,6 +366,8 @@ jobs:
           # получают одно и то же, отдельного секрета не нужно
           ( umask 077; python3 -c 'import hmac,hashlib,os;print("PGRO_PASSWORD="+hmac.new(os.environ["TWC_TOKEN"].encode(),b"massovka-pgro-v1",hashlib.sha256).hexdigest()[:40])' > deploy/pgro.env )
           if [ "$ROLE" = infra ] && [ -n "$GRAFANA_PASSWORD" ]; then ( umask 077; printf '%s' "$GRAFANA_PASSWORD" > deploy/grafana_admin ); fi
+          # ключи S3 для клипов и фильмов — игре в Европе, из API Timeweb по TWC_TOKEN (бакета нет — файла нет)
+          if [ "$SITE" = eu ]; then python3 infra/game/s3-env.py deploy/s3.env || echo "::warning::S3: ключи не получены — клипы на диске"; fi
           # бот тревог (alerts.env) кладёт Ansible — шагом выше
           # открытый ключ туннеля сервера бота — Москве (вход только для проброса порта)
           if [ "$ROLE" = game ] && [ -n "$BOT_IP" ]; then

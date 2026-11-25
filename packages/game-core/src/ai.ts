@@ -1,6 +1,9 @@
 import type { AiAgent, MatchSim } from './match';
 import type { CrowdKind, WorldEvent } from './events';
 import { Rng } from './rng';
+import { aiLevel } from './config';
+import { canFight } from './themes';
+import { bossLooking, pathInBossCone } from './boss';
 
 export interface AiPersona {
   /** Шанс опоздать на «Море волнуется». */
@@ -34,6 +37,10 @@ export class AiPlayer implements AiAgent {
   private attackAt = 0;
   private accuseAt = 0;
   private kikiAt = 0;
+  /** Взгляд шефа, который ИИ уже заметил: когда замрёт и не зазевался ли. */
+  private bossSeen = -1;
+  private bossReactAt = 0;
+  private bossSlip = false;
   private persona: AiPersona;
   private bound = false;
 
@@ -66,6 +73,8 @@ export class AiPlayer implements AiAgent {
     if (ev.t === 'star_taken') this.bump(ev.eid, 7);
     else if (ev.t === 'hit' && ev.attacker !== undefined) this.bump(ev.attacker, 9);
     else if (ev.t === 'remove') this.suspicion.delete(ev.eid);
+    // шеф поймал шевельнувшегося — ботов тоже ловит, но живые попадаются чаще
+    else if (ev.t === 'boss' && ev.act === 'catch') this.bump(ev.eid, 5);
     else if (ev.t === 'act' && (ev.kind === 'freeze' || ev.kind === 'jump' || ev.kind === 'dance')) {
       const c = sim.world.crowd;
       if (c && ev.at > c.resumeAt + 320 && ev.at < c.windowEnd + 500) this.bump(ev.eid, 3);
@@ -127,17 +136,41 @@ export class AiPlayer implements AiAgent {
       this.freezeChecked = c.warnAt;
       for (const o of w.alive()) if (o.moving && o.act === null) this.bump(o.eid, 3);
     }
+    // шеф смотрит: в его конусе не шевелиться (заметил с задержкой, а иногда и зазевался)
+    const b = w.boss;
+    if (bossLooking(b, t)) {
+      if (this.bossSeen !== b.look.from) {
+        this.bossSeen = b.look.from;
+        this.bossReactAt = t + this.rng.range(150, 650);
+        this.bossSlip = this.rng.chance(0.12);
+      }
+      const rest = e.path.slice(e.pi).map((c) => ({ x: w.nav.cx(c), y: w.nav.cy(c) }));
+      if (!this.bossSlip && t >= this.bossReactAt && pathInBossCone(b, b.look.dir, e.x, e.y, rest)) {
+        if (e.pi < e.path.length) sim.intent(this.pid, { k: 'stop' });
+        this.walking = false;
+        this.pauseUntil = Math.max(this.pauseUntil, b.look.until + 200);
+        return;
+      }
+    }
     if (e.act && t < e.actEnd) return;
     if (t < me.stunUntil) return;
 
     // свои кикиморы: рядом — отбиваться, поодаль — бежать от них
     if (this.kikimora(sim, me, e.x, e.y, t)) return;
 
-    // охота
-    if (me.attacksLeft > 0) {
-      const sus = this.topSuspect(sim, sim.cfg.attackRange - 1);
-      if (sus !== null && (this.suspicion.get(sus) ?? 0) >= 6) {
-        if (!this.attackAt) this.attackAt = t + this.rng.range(150, 700);
+    // охота: в разогреве (первые секунды дубля) не бьёт — живой игрок успевает осмотреться;
+    // чем ниже сложность, тем дольше разогрев, медленнее реакция и больше нужно улик
+    const cfg = sim.cfg;
+    const lv = aiLevel(cfg);
+    const need = cfg.aiSuspectMin[lv];
+    const warm = t < sim.playStart + cfg.aiWarmupSec[lv] * 1000;
+    // в офисе не дерутся — только в подвале (themes.ts › fight)
+    const armed = me.attacksLeft > 0 && canFight(sim.theme, w.twist);
+    if (armed && !warm) {
+      const sus = this.topSuspect(sim, cfg.attackRange - 1);
+      if (sus !== null && (this.suspicion.get(sus) ?? 0) >= need) {
+        const [r0, r1] = cfg.aiReactMs[lv];
+        if (!this.attackAt) this.attackAt = t + this.rng.range(r0, r1);
         if (t >= this.attackAt) {
           sim.intent(this.pid, { k: 'attack', eid: sus });
           this.attackAt = 0;
@@ -147,8 +180,8 @@ export class AiPlayer implements AiAgent {
       }
       this.attackAt = 0;
       // изредка — удар наугад (рождает «Параноиков»)
-      if (this.rng.chance(0.0015 * this.persona.aggression)) {
-        const near = w.alive().filter((o) => o.eid !== this.eid && Math.hypot(o.x - e.x, o.y - e.y) < sim.cfg.attackRange - 1);
+      if (this.rng.chance(0.0015 * this.persona.aggression * cfg.aiRandomHitMul[lv])) {
+        const near = w.alive().filter((o) => o.eid !== this.eid && Math.hypot(o.x - e.x, o.y - e.y) < cfg.attackRange - 1);
         if (near.length) {
           sim.intent(this.pid, { k: 'attack', eid: this.rng.pick(near).eid });
           return;
@@ -167,7 +200,7 @@ export class AiPlayer implements AiAgent {
 
     // выбрать цель: подозреваемый, звезда или прогулка «как бот»
     const hunt = this.topSuspect(sim, 70);
-    if (hunt !== null && me.attacksLeft > 0 && (this.suspicion.get(hunt) ?? 0) >= 6 && this.rng.chance(this.persona.aggression)) {
+    if (hunt !== null && !warm && armed && (this.suspicion.get(hunt) ?? 0) >= need && this.rng.chance(this.persona.aggression)) {
       const h = w.get(hunt)!;
       this.go(sim, h.x + this.rng.range(-5, 5), h.y + this.rng.range(-4, 4));
       return;

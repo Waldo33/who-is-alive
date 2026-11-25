@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AiPlayer, MatchSim, hasSanity, makeConfig, roundMod } from '../src';
+import { AiPlayer, MatchSim, bossDoor, bossWatching, hasSanity, inBossCone, makeConfig, roundMod } from '../src';
 import type { GameConfig } from '../src';
 import type { CrowdKind, WorldEvent } from '../src';
 
@@ -327,5 +327,118 @@ describe('Напряжение: новые механики', () => {
     // «Лёгкая» (kidsMode) не прячет замах: кровь выключает только «Без насилия» на устройстве
     expect(hitOf(true, true).attacker).toBeDefined();
     expect(hitOf(true, false).attacker).toBeUndefined();
+  });
+
+  it('офис: до подвала бить нельзя, в подвале — 10 ударов на весь дубль, второй подвал не пополняет', () => {
+    const sim = new MatchSim(makeConfig({ fixedTheme: 4 }), players, 93);
+    runUntil(sim, () => sim.phase === 'play');
+    sim.tick();
+    expect(sim.world.twist).toBe(false);
+    const a = sim.playerRound('a')!;
+    const b = sim.playerRound('b')!;
+    expect(a.attacksLeft).toBe(0);
+    const near = () => {
+      const ea = sim.world.get(a.eid)!;
+      const eb = sim.world.get(b.eid)!;
+      eb.x = ea.x + 5;
+      eb.y = ea.y;
+    };
+    near();
+    sim.notices.length = 0;
+    sim.intent('a', { k: 'attack', eid: b.eid });
+    sim.tick();
+    expect(b.alive).toBe(true);
+    expect(sim.notices.some((n) => n.t === 'denied' && n.reason === 'not_now')).toBe(true);
+    // ждём подвал (расписание изнанки — из зерна)
+    runUntil(sim, () => sim.world.twist);
+    expect(sim.world.twist).toBe(true);
+    expect(a.attacksLeft).toBe(10);
+    expect(b.attacksLeft).toBe(10);
+    a.attacksLeft = 4;
+    runUntil(sim, () => !sim.world.twist || sim.phase !== 'play');
+    // снова офис: удар не проходит, запас не тратится
+    if (sim.phase === 'play') {
+      near();
+      sim.intent('a', { k: 'attack', eid: b.eid });
+      sim.tick();
+      expect(b.alive).toBe(true);
+      expect(a.attacksLeft).toBe(4);
+      runUntil(sim, () => sim.world.twist || sim.phase !== 'play');
+      if (sim.world.twist) expect(a.attacksLeft).toBe(4);
+    }
+  });
+
+  it('офис: ИИ-игроки не бьют вне подвала, а в подвале дерутся', () => {
+    let calm = 0;
+    let fights = 0;
+    for (let seed = 0; seed < 6; seed++) {
+      const sim = new MatchSim(makeConfig({ fixedTheme: 4 }), players, 700 + seed);
+      for (const p of players) sim.addAgent(new AiPlayer(p.pid, 700 + seed));
+      // удары игроков — по уведомлениям 'attack' (вырезанные толпой и т. п. — тоже 'hit', но не удар)
+      for (let i = 0; i < 20 * 60 * 12 && sim.phase !== 'match_end'; i++) {
+        // изнанка выключается событием, которое мир применяет в конце шага: смотрим на облик до шага
+        const twist = sim.world.twist;
+        sim.tick();
+        for (const n of sim.notices) {
+          if (n.t !== 'attack') continue;
+          if (twist) fights++;
+          else calm++;
+        }
+        sim.notices.length = 0;
+      }
+    }
+    expect(calm).toBe(0);
+    expect(fights).toBeGreaterThan(0);
+  });
+
+  it('шеф: подвал начинается, когда он у двери, в подвале его нет, вернулся — офис', () => {
+    const sim = new MatchSim(makeConfig({ fixedTheme: 4 }), players, 95);
+    runUntil(sim, () => sim.phase === 'play');
+    sim.tick();
+    sim.tick();
+    expect(sim.world.boss).not.toBeNull();
+    expect(sim.world.boss!.out).toBe(false);
+    const door = bossDoor(sim.arena.width);
+    runUntil(sim, () => sim.world.twist);
+    const b = sim.world.boss!;
+    expect(b.out).toBe(true);
+    expect(Math.hypot(b.x - door.x, b.y - door.y)).toBeLessThanOrEqual(4);
+    runUntil(sim, () => !sim.world.twist || sim.phase !== 'play');
+    if (sim.phase === 'play') {
+      sim.tick();
+      expect(sim.world.boss!.out).toBe(false);
+    }
+  });
+
+  it('шеф: шевельнулся в конусе — выговор (метка у всех) и минус 2 удара на подвал', () => {
+    const sim = new MatchSim(makeConfig({ fixedTheme: 4 }), players, 96);
+    runUntil(sim, () => sim.phase === 'play');
+    runUntil(sim, () => bossWatching(sim.world.boss, sim.world.time + 50));
+    const b = sim.world.boss!;
+    expect(sim.world.twist).toBe(false);
+    const a = sim.playerRound('a')!;
+    const ea = sim.world.get(a.eid)!;
+    // поставить игрока в конус и заставить идти поперёк взгляда
+    const d = b.look!.dir;
+    const along = 20;
+    ea.x = b.x + (d === 3 ? along : d === 2 ? -along : 0);
+    ea.y = b.y + (d === 0 ? along : d === 1 ? -along : 0);
+    expect(inBossCone(b, d, ea.x, ea.y)).toBe(true);
+    const marks: number[] = [];
+    sim.world.listeners.push((ev) => ev.t === 'mark' && marks.push(ev.eid));
+    sim.intent('a', { k: 'move', x: Math.round(ea.x + (d < 2 ? 6 : 0)), y: Math.round(ea.y + (d < 2 ? 0 : 6)) });
+    for (let i = 0; i < 12; i++) sim.tick();
+    expect(a.reprimands).toBe(1);
+    expect(marks).toContain(a.eid);
+    runUntil(sim, () => sim.world.twist);
+    expect(a.attacksLeft).toBe(10 - 2 * a.reprimands);
+    expect(sim.playerRound('b')!.attacksLeft).toBe(10 - 2 * sim.playerRound('b')!.reprimands);
+  });
+
+  it('шеф: в других темах его нет', () => {
+    const sim = new MatchSim(makeConfig({ fixedTheme: 0 }), players, 97);
+    runUntil(sim, () => sim.phase === 'play');
+    for (let i = 0; i < 200; i++) sim.tick();
+    expect(sim.world.boss).toBeNull();
   });
 });

@@ -108,13 +108,53 @@ tech=[
  ts_vm("Ошибки JS на телефонах (за 10 минут; тревога — больше 30)",[('sum(increase(game_client_errors_total{server="msk"}[10m]))','ошибки')],grid(0,36,10,10),
        desc="lib/errors.ts на сайте: исключения и непойманные обещания, не больше 10 разных за заход. Скачок после выкладки — откатывать"),
  {"id":nid(),"type":"logs","title":"Ошибки JS на телефонах (последние)","gridPos":grid(10,36,14,10),"datasource":VL,
-  "description":"msg — текст, at — файл:строка, build — версия сайта, ua — браузер, path — страница",
+  "description":"error — текст, at — место в коде (по картам исходников), fp — группа в панели «Массовка — ошибки», build — версия сайта, ua — браузер, path — страница",
   "targets":[{"datasource":VL,"refId":"A","expr":'_msg:client_error',"queryType":"instant"}],
   "options":{"showTime":True,"wrapLogMessage":True,"sortOrder":"Descending","enableLogDetails":True}},
  {"id":nid(),"type":"logs","title":"Ошибки в логах обоих серверов","gridPos":grid(0,46,24,12),"datasource":VL,
   "targets":[{"datasource":VL,"refId":"A","expr":'(level:error OR level:warn OR _msg:~"(?i)error|fail") -_SYSTEMD_UNIT:"massovka-watch.service" -_msg:client_error',"queryType":"instant"}],
   "options":{"showTime":True,"wrapLogMessage":True,"sortOrder":"Descending","enableLogDetails":True}},
 ]
+pid[0]=0
+# трекер ошибок (apps/server/src/errors.ts): группы в error_groups, случаи по дням в error_daily
+SRC="case g.source when 'web' then 'телефоны' when 'server' then 'сервер' when 'bot' then 'бот' when 'film' then 'монтаж' else g.source end"
+FP_LINK=[{"title":"Подробно","url":"/grafana/d/massovka-errors/?var-fp=${__data.fields.fp}&${__url_time_range}"}]
+def link_fp(p):
+    p["fieldConfig"]["overrides"].append({"matcher":{"id":"byName","options":"fp"},"properties":[{"id":"links","value":FP_LINK}]})
+    p["fieldConfig"]["overrides"].append({"matcher":{"id":"byName","options":"ошибка"},"properties":[{"id":"links","value":FP_LINK},{"id":"custom.width","value":520}]})
+    return p
+errors=[
+ stat("Новых ошибок",f"select count(*) from error_groups where $__timeFilter(first_seen)",grid(0,0,6,4),desc="Групп, впервые встреченных в выбранный период: про каждую сторож написал в чат тревог"),
+ stat("Случаев",f"select coalesce(sum(d.count),0) from error_daily d where $__timeFilter(d.day::timestamptz)",grid(6,0,6,4),desc="С телефона одна и та же ошибка считается один раз за заход"),
+ stat("Групп было",f"select count(*) from error_groups where $__timeFilter(last_seen)",grid(12,0,6,4)),
+ stat("Вернулись после недели тишины",f"select count(*) from error_groups where $__timeFilter(reopened_at)",grid(18,0,6,4)),
+ ts_sql("Случаи по дням",f"""select d.day::timestamptz as time, {SRC} as metric, sum(d.count) as value
+ from error_daily d join error_groups g using (fp) where $__timeFilter(d.day::timestamptz) group by 1, 2 order by 1""",grid(0,4,24,7),stack=True),
+ link_fp(table("Ошибки (новые сверху; нажмите — подробности ниже)",f"""select {SRC} as откуда, g.title as ошибка, g.culprit as где, g.count as всего,
+ coalesce((select sum(d.count) from error_daily d where d.fp = g.fp and $__timeFilter(d.day::timestamptz)), 0) as "за период",
+ g.first_seen as впервые, g.last_seen as "в последний раз", g.last_build as версия,
+ (select string_agg(k || ' ' || v, ', ' order by v::bigint desc) from (select k, v from jsonb_each_text(g.tags) as t(k, v) order by v::bigint desc limit 4) x) as "чаще всего",
+ g.fp
+ from error_groups g where $__timeFilter(g.last_seen) order by g.first_seen desc limit 200""",grid(0,11,24,12),
+  desc="Группа — одна и та же ошибка в одном месте кода (без строк и версий). «Где» — файл › функция по картам исходников. «Чаще всего» — платформа, тема, фаза")),
+ table("Подробно: последний случай выбранной ошибки",f"""select k as поле, v as значение from (
+  select 1 o, 'ошибка' k, g.title v from error_groups g where g.fp = '$fp'
+  union all select 2, 'где', g.culprit from error_groups g where g.fp = '$fp'
+  union all select 3, 'контекст', (select string_agg(key || ': ' || value, ' · ') from jsonb_each_text(g.sample->'ctx')) from error_groups g where g.fp = '$fp'
+  union all select 4, 'шаги перед ошибкой', (select string_agg(x, '  →  ') from jsonb_array_elements_text(g.sample->'crumbs') x) from error_groups g where g.fp = '$fp'
+  union all select 5, 'стек', g.sample->>'stack' from error_groups g where g.fp = '$fp'
+  union all select 6, 'разбивка', (select string_agg(key || ' ' || value, ', ' order by value::bigint desc) from jsonb_each_text(g.tags)) from error_groups g where g.fp = '$fp'
+  union all select 7, 'версии', g.first_build || ' → ' || g.last_build from error_groups g where g.fp = '$fp'
+ ) r order by o""",grid(0,23,24,14),desc="Выберите ошибку в таблице выше (или вставьте fp в поле сверху)"),
+ {"id":nid(),"type":"logs","title":"Журнал: эта ошибка с телефонов","gridPos":grid(0,37,24,8),"datasource":VL,
+  "targets":[{"datasource":VL,"refId":"A","expr":'_msg:client_error fp:"$fp"',"queryType":"instant"}],
+  "options":{"showTime":True,"wrapLogMessage":True,"sortOrder":"Descending","enableLogDetails":True}},
+]
+for p in errors:
+    if p["type"]=="table": p["options"]["cellHeight"]="sm"
+errors[6]["fieldConfig"]["defaults"]["custom"]={"cellOptions":{"type":"auto","wrapText":True}}
+open('infra/grafana/errors.json','w').write(json.dumps(dash("massovka-errors","Массовка — ошибки",errors,frm="now-7d",
+  extra={"templating":{"list":[{"type":"textbox","name":"fp","label":"Ошибка (fp)","query":"","current":{"text":"","value":""}}]}}),ensure_ascii=False,indent=1))
 open('infra/grafana/product.json','w').write(json.dumps(dash("massovka-product","Массовка — игроки и матчи",product),ensure_ascii=False,indent=1))
 open('infra/grafana/tech.json','w').write(json.dumps(dash("massovka-servers","Массовка — серверы",tech,frm="now-24h",extra={"refresh":"1m"}),ensure_ascii=False,indent=1))
-print('ok', len(product), len(tech))
+print('ok', len(product), len(tech), len(errors))

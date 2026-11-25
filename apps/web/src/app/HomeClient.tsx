@@ -13,7 +13,7 @@ import type { TopBar as Bar } from '@/ui/topbar';
 import { playerName } from '@/lib/name';
 import { track } from '@/lib/analytics';
 import { featureOn } from '@/lib/features';
-import { telegramStartTarget } from '@/lib/telegram';
+import { inTelegram, telegramStartTarget, tgLink } from '@/lib/telegram';
 import { Garland, Snow, useNewYear } from '@/ui/Festive';
 import { shareContent, withLang } from '@/lib/share';
 import { AuthError } from '@/lib/game-server';
@@ -31,6 +31,8 @@ export default function HomeClient() {
   const [code, setCode] = useState('');
   const [toast, setToast] = useState('');
   const [newbie, setNewbie] = useState(false);
+  // на сайте (не внутри Telegram) — кнопка «Играть в Telegram»: там приглашения и клипы удобнее
+  const [web, setWeb] = useState(false);
   // кастинг дня: номер и пройден ли сегодня (localStorage — как на /daily)
   const [daily, setDaily] = useState({ on: false, n: 0, done: false });
   useEffect(() => {
@@ -64,6 +66,7 @@ export default function HomeClient() {
     // «Пробный дубль» — по желанию ссылкой под кнопками (обучение пропускали 7 из 9, 20–22.11)
     const first = !tutorialDone();
     setNewbie(first);
+    setWeb(!inTelegram());
     track('page_view', first ? { page: 'home', first: true } : { page: 'home' });
     getAudio().setMusic('menu');
     // «С друзьями» в конце матча с ИИ: сразу создать комнату и позвать
@@ -152,6 +155,11 @@ export default function HomeClient() {
             </span>
             <span className="daily-tile-sub">{daily.done ? t.start.dailyDone : t.daily.task}</span>
           </Link>
+        )}
+        {web && (
+          <a className="btn tg" href={tgLink('play') ?? 'https://t.me/be_nobody_bot'} onClick={() => track('tg_tap', { what: 'play' })}>
+            {t.start.playTelegram}
+          </a>
         )}
       </div>
       {newbie && (

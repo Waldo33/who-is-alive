@@ -65,6 +65,16 @@ export const DEFAULT_CONFIG = {
   startleSec: 0.5,
   startleStepPx: 4,
 
+  // ИИ-соперники (песочница, «Играть с ботами», подмена ушедших): по уровню сложности [лёгкая, обычная, жёсткая].
+  // Разогрев — первые секунды дубля ИИ не бьёт и не идёт на подозреваемых: игрок успевает осмотреться.
+  aiWarmupSec: [15, 10, 6] as [number, number, number],
+  // реакция: от решения «это живой» до удара, мс
+  aiReactMs: [[1000, 2200], [500, 1300], [250, 800]] as [[number, number], [number, number], [number, number]],
+  // столько подозрения нужно, чтобы бить (звезда +7, удар на глазах +9, опоздал к жесту +3)
+  aiSuspectMin: [11, 7, 6] as [number, number, number],
+  // множитель случайных ударов наугад
+  aiRandomHitMul: [0.3, 0.8, 1] as [number, number, number],
+
   // «Море волнуется»
   crowdCmdIntervalSec: [10, 15] as [number, number],
   // нарастание: к началу сужения интервал сжимается до этого (линейно по ходу дубля)
@@ -155,6 +165,16 @@ export const DEFAULT_CONFIG = {
   // «Перепуг»: бот вздрагивает и убегает от пустоты — ложный след для охотников (эпизодов в минуту на бота к глухой ночи)
   botPanicPerMin: 0.12,
 
+  // шеф в офисе (boss.ts): поворот перед взглядом (успеть замереть), сколько смотрит, пауза после;
+  // выговор — минус ударов на подвал и метка на виду; доля ботов, что не успевают «заработаться»
+  bossWarnMs: 900,
+  kidsBossWarnMs: 1400,
+  bossLookMs: 2200,
+  bossRestMs: [400, 1400] as [number, number],
+  bossPenalty: 2,
+  bossMarkSec: 2,
+  bossBotSlip: 0.1,
+
   // сужение
   zoneStartBeforeEndSec: 20,
   zoneShrinkSec: 15,
@@ -187,6 +207,11 @@ export const TICK_MS = 50; // 20 Гц, фиксированный шаг сим�
 
 export function crowdPauseMs(cfg: GameConfig): number {
   return cfg.kidsMode ? cfg.kidsPauseMs : cfg.crowdPauseMs;
+}
+
+/** Уровень сложности матча для ИИ: 0 — лёгкая (детский режим), 1 — обычная, 2 — жёсткая (жёсткие съёмки). */
+export function aiLevel(cfg: GameConfig): 0 | 1 | 2 {
+  return cfg.strictCrowd ? 2 : cfg.kidsMode ? 0 : 1;
 }
 
 export function revealMs(cfg: GameConfig): number {

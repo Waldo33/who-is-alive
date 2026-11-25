@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { hasSanity } from '@kto/game-core';
 import type { ServerMsg } from '@kto/net';
 import { MsgBudget, RateWindow } from '../src/limits';
 import { silentLogger } from '../src/log';
@@ -111,10 +112,16 @@ describe('комната', () => {
 
   it('новичок по ссылке посреди матча занимает место ИИ: очки и персонаж — от места', () => {
     const now = 1_000_000;
-    const room = new Room({ code: 'ABCD', directorId: 'a', directorName: 'A', settings: { roundSec: 60, maxRounds: 3, kidsMode: false, aiFill: true }, lang: 'ru', now: () => now, log: silentLogger });
-    const pa = fakePeer();
-    room.join('a', 'A', pa);
-    expect(room.start('a')).toBeNull();
+    // первая тема матча случайна (зерно комнаты); «Купальская ночь» — матч в один дубль, а тесту нужен второй:
+    // такую комнату пересоздаём
+    let room: Room;
+    for (;;) {
+      room = new Room({ code: 'ABCD', directorId: 'a', directorName: 'A', settings: { roundSec: 60, maxRounds: 3, kidsMode: false, aiFill: true }, lang: 'ru', now: () => now, log: silentLogger });
+      room.join('a', 'A', fakePeer());
+      expect(room.start('a')).toBeNull();
+      if (!hasSanity(room.runner!.host.sim.theme)) break;
+      room.close('test');
+    }
     const h = room.runner!.host;
     expect(h.aiSeats().length).toBe(3);
     for (let i = 0; i < 100; i++) room.runner!.step();
@@ -261,7 +268,11 @@ describe('фильм матча в комнате', () => {
       log: silentLogger,
       speed: 50,
       film: film as unknown as import('../src/film').FilmService,
+      onFilm: (r, f) => toChat.push({ code: r.code, ...f }),
     });
+    // комнату собрала карточка из Telegram — готовый фильм уйдёт и в тот чат
+    const toChat: { code: string; id: string; winners: string[]; draw: boolean }[] = [];
+    room.invite = 'AbCd1234xyz9';
     const [pa, pb] = [fakePeer(), fakePeer()];
     room.join('a', 'A', pa);
     room.join('b', 'B', pb);
@@ -286,6 +297,8 @@ describe('фильм матча в комнате', () => {
       const f = p.got.filter((m) => m.t === 'film');
       expect(f.at(-1)).toEqual({ t: 'film', state: 'ready', id: 'f'.repeat(20), ext: 'mp4', thumb: true });
     }
+    const names = room.runner!.host.match!.winners.map((pid) => ({ a: 'A', b: 'B' })[pid]);
+    expect(toChat).toEqual([{ code: 'FILM', id: 'f'.repeat(20), winners: names, draw: names.length > 1 }]);
   });
 });
 

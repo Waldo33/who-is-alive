@@ -12,13 +12,14 @@ import { ClientMsg, DEFAULT_WIRE_SETTINGS, ROOM_CODE_ALPHABET, RoomSettingsSchem
 import type { ServerMsg, WireError } from '@kto/net';
 import { Auth } from './auth';
 import { Counter, MsgBudget, RateWindow } from './limits';
-import { jsonLogger } from './log';
+import type { ErrorTracker } from './errors';
+import { errFields, jsonLogger } from './log';
 import type { Logger } from './log';
-import type { Bot } from './bot';
+import type { Bot, FilmNotice } from './bot';
 import { Room } from './room';
 import { MemoryStore, parseEvents } from './store';
 import type { Store } from './store';
-import type { Peer, RoomSnapshot } from './room';
+import type { Peer, RoomFilm, RoomSnapshot } from './room';
 import type { Geo } from './geo';
 import { VideoSwitch } from './video-switch';
 
@@ -53,6 +54,11 @@ export interface GameServerOptions {
   clips?: ClipStore;
   /** «Фильм матча» (film.ts); нет — фильм монтирует телефон. */
   film?: FilmService;
+  /**
+   * Бот изнутри (туннель на сервер бота: http://127.0.0.1:9090): фильм матча комнаты по приглашению
+   * из Telegram уходит туда — бот заменит им карточку в чате. Нет — не сообщаем.
+   */
+  botInternal?: string;
   /** Аварийный выключатель видео (video-switch.ts); нет — видео всегда включено. */
   video?: VideoSwitch;
   /** Страна по адресу для замера доступности (geo.ts); нет — неизвестна. */
@@ -78,6 +84,8 @@ export interface GameServerOptions {
    * события от тех, кто не достал до Москвы, и пересылает их в Москву по туннелю.
    */
   eventsUpstream?: string;
+  /** Трекер ошибок (errors.ts): ошибки с телефонов и от соседа без базы. Нет — только журнал. */
+  errors?: ErrorTracker;
 }
 
 /** Лимиты (docs/server-migration.md › 3.3). */
@@ -321,7 +329,7 @@ export class GameServer {
       }
       return this.reply(res, 404, { error: 'not_found' });
     } catch (e) {
-      this.log('error', 'http_error', { path: url.pathname, err: String(e) });
+      this.log('error', 'http_error', { path: url.pathname, ...errFields(e) });
       return this.reply(res, 500, { error: 'internal' });
     }
   }
@@ -355,6 +363,7 @@ export class GameServer {
       // нагрузочный прогон: фильм матча не монтируем (ffmpeg исказил бы замер и занял бы процессор)
       film: load ? undefined : this.o.film,
       videoOn: () => this.video.on,
+      onFilm: (r, f) => this.filmToChat(r, f),
     });
     this.rooms.set(code, room);
     if (load) this.loadRooms.add(code);
@@ -397,7 +406,18 @@ export class GameServer {
     const e = parseClientError(await readJson(req, 8192));
     if (!e) return this.reply(res, 400, { error: 'bad_error' });
     this.stats.clientErrors++;
-    this.log('warn', 'client_error', e);
+    // в журнал — без стека и шагов (они в базе трекера), с отпечатком группы: по нему ищется в VictoriaLogs
+    const row = this.o.errors?.capture({
+      source: 'web',
+      kind: e.kind,
+      message: e.msg,
+      stack: e.stack,
+      at: e.at,
+      build: e.build,
+      ctx: { ...e.ctx, path: e.path ?? '', app: e.app ?? e.ctx.app ?? '', ua: e.ua ?? '' },
+      crumbs: e.crumbs,
+    });
+    this.log('warn', 'client_error', { error: e.msg, kind: e.kind, at: row?.culprit || e.at, build: e.build, path: e.path, app: e.app, ua: e.ua, fp: row?.fp });
     return this.reply(res, 204);
   }
 
@@ -424,6 +444,7 @@ export class GameServer {
         speed: this.speed,
         film: this.o.film,
         videoOn: () => this.video.on,
+        onFilm: (r, f) => this.filmToChat(r, f),
         restore: snap,
       });
       this.rooms.set(snap.code, room);
@@ -433,6 +454,18 @@ export class GameServer {
       if (typeof snap.emptyMs === 'number' && snap.emptyMs >= 0) this.emptySince.set(room, this.now() - Math.min(snap.emptyMs, EMPTY_CLOSE_MS));
       this.log('info', 'room_imported', { room: snap.code, members: snap.members.length, ...(snap.load ? { load: true } : {}) });
       return this.reply(res, 204);
+    }
+    if (p === '/internal/tg/film' && req.method === 'POST') {
+      // сервер бота: игровой сервер (по туннелю) сообщает, что фильм комнаты по приглашению готов
+      if (!this.o.bot) return this.reply(res, 503, { error: 'no_bot' });
+      const r = await this.o.bot.film(((await readJson(req, 4096)) ?? {}) as FilmNotice);
+      return this.reply(res, r.status, r.body);
+    }
+    // группы ошибок от сервера бота (Нидерланды, без своей базы) — по туннелю
+    if (p === '/internal/errors' && req.method === 'POST') {
+      if (!this.o.errors) return this.reply(res, 503, { error: 'no_tracker' });
+      const n = this.o.errors.ingest(await readJson(req, 262_144));
+      return this.reply(res, 200, { ok: true, n });
     }
     if (p === '/internal/drain' && req.method === 'POST') {
       // переезд на другой сервер (Москва → Европа): сосед — из тела запроса, а не соседний цвет
@@ -585,6 +618,24 @@ export class GameServer {
   }
 
   /** Запрос изнутри машины (сосед-экземпляр, сосед по туннелю), не снаружи: внешним Caddy ставит адрес клиента. */
+  /** Фильм матча готов, а комната собрана карточкой из Telegram — отдать боту (он заменит карточку видео). */
+  private filmToChat(room: Room, f: RoomFilm): void {
+    const base = this.o.botInternal;
+    if (!base || !room.invite) return;
+    const body: FilmNotice = { invite: room.invite, id: f.id, code: room.code, winners: f.winners, draw: f.draw };
+    void fetch(`${base}/internal/tg/film`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(20_000),
+    })
+      .then(async (r) => {
+        const j = (await r.json().catch(() => null)) as { sent?: boolean } | null;
+        this.log(r.ok ? 'info' : 'warn', 'film_to_chat', { room: room.code, status: r.status, sent: !!j?.sent });
+      })
+      .catch((e) => this.log('warn', 'film_to_chat', { room: room.code, err: String(e) }));
+  }
+
   private internal(req: IncomingMessage): boolean {
     const loop = (x: string) => x === '127.0.0.1' || x === '::1' || x === '::ffff:127.0.0.1';
     if (!loop(req.socket.remoteAddress ?? '')) return false;
@@ -629,12 +680,18 @@ export class GameServer {
       `game_connections{instance="${this.instance}"} ${this.conns.size}`,
       `game_matches_total{instance="${this.instance}"} ${this.stats.matches}`,
       `game_client_errors_total{instance="${this.instance}"} ${this.stats.clientErrors}`,
+      `game_errors_captured_total{instance="${this.instance}"} ${this.o.errors?.stats.captured ?? 0}`,
+      `game_error_groups_new_total{instance="${this.instance}"} ${this.o.errors?.stats.groupsNew ?? 0}`,
       `game_step_ms_p99{instance="${this.instance}"} ${p99.toFixed(3)}`,
       `game_draining{instance="${this.instance}"} ${this.draining ? 1 : 0}`,
     ];
     // место под клипы для Telegram: тревога сторожа на 80% лимита (пора S3), график в Grafana
     const c = await this.clips.usage();
     lines.push(`game_clips_bytes ${c.bytes}`, `game_clips_count ${c.count}`, `game_clips_limit_bytes ${c.limit}`);
+    if (this.clips.hasRemote) {
+      const r = this.clips.remoteStats;
+      lines.push(`game_clips_s3_uploaded_total ${r.uploaded}`, `game_clips_s3_failed_total ${r.failed}`, `game_clips_s3_redirects_total ${r.redirects}`);
+    }
     // фильм матча: сколько смонтировано, неудач, очередь, время последнего (тревога, если монтаж встал)
     const f = this.o.film;
     if (f) lines.push(`game_films_total ${f.made}`, `game_films_failed_total ${f.failed}`, `game_film_queue ${f.queued}`, `game_film_last_ms ${f.lastMs}`,
@@ -683,7 +740,13 @@ export class GameServer {
     const f = /^\/v1\/clips\/([0-9a-f]{20})\.(mp4|webm|jpg)$/.exec(p);
     if (f && (req.method === 'GET' || req.method === 'HEAD')) {
       const path = await this.clips.file(f[1], f[2]);
-      if (!path) return this.reply(res, 404, { error: 'no_clip' });
+      if (!path) {
+        // на диске уже нет (папка переполнилась, клип снят соседней машиной) — копия в S3, если есть
+        const url = await this.clips.remoteUrl(f[1], f[2]);
+        if (!url) return this.reply(res, 404, { error: 'no_clip' });
+        res.writeHead(302, { location: url, 'access-control-allow-origin': '*', 'cache-control': 'no-store' });
+        return void res.end();
+      }
       return this.sendFile(req, res, { path, mime: CLIP_MIME[f[2]], name: `massovka-${f[1].slice(0, 6)}.${f[2]}` });
     }
     return this.reply(res, 404, { error: 'not_found' });
@@ -755,7 +818,7 @@ export class GameServer {
       }
       const parsed = ClientMsg.safeParse(raw);
       if (!parsed.success) return this.fail(peer, 'bad_message');
-      void this.onClientMsg(ws, st, peer, parsed.data).catch((e) => this.log('error', 'ws_error', { err: String(e) }));
+      void this.onClientMsg(ws, st, peer, parsed.data).catch((e) => this.log('error', 'ws_error', errFields(e)));
     });
     ws.on('close', () => {
       clearTimeout(helloTimer);
@@ -860,7 +923,22 @@ async function readJson(req: IncomingMessage, limit = 8192): Promise<unknown> {
 }
 
 /** Поля ошибки с телефона: только строки, обрезанные; лишнее отбрасываем. */
-export function parseClientError(raw: unknown): Record<string, string> | null {
+export interface ClientError {
+  msg: string;
+  kind?: string;
+  at?: string;
+  stack?: string;
+  path?: string;
+  build?: string;
+  ua?: string;
+  app?: string;
+  /** контекст: тема, комната, фаза, платформа (короткие строки) */
+  ctx: Record<string, string>;
+  /** шаги перед ошибкой */
+  crumbs: string[];
+}
+
+export function parseClientError(raw: unknown): ClientError | null {
   if (!raw || typeof raw !== 'object') return null;
   const o = raw as Record<string, unknown>;
   const str = (v: unknown, max: number): string | undefined =>
@@ -872,14 +950,21 @@ export function parseClientError(raw: unknown): Record<string, string> | null {
     msg,
     kind: str(o.k, 16),
     at: str(o.f, 200),
-    stack: str(o.s, 2000),
+    stack: str(o.s, 4000),
     path: str(o.p, 80),
     build: str(o.b, 16),
     ua: str(o.ua, 200),
     app: str(o.a, 16),
   };
   for (const k of Object.keys(out)) if (out[k] === undefined) delete out[k];
-  return out as Record<string, string>;
+  const ctx: Record<string, string> = {};
+  if (o.c && typeof o.c === 'object' && !Array.isArray(o.c))
+    for (const [k, v] of Object.entries(o.c as Record<string, unknown>).slice(0, 16)) {
+      if (!/^[a-z]\w{0,15}$/i.test(k)) continue;
+      if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') ctx[k] = String(v).slice(0, 60);
+    }
+  const crumbs = Array.isArray(o.bc) ? o.bc.slice(-12).filter((x): x is string => typeof x === 'string').map((x) => x.slice(0, 80)) : [];
+  return { ...(out as Omit<ClientError, 'ctx' | 'crumbs' | 'msg'>), msg, ctx, crumbs };
 }
 
 /** Для логов: id игрока не пишем в открытом виде. */

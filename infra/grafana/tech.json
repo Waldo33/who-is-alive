@@ -700,7 +700,7 @@
     "type": "victoriametrics-logs-datasource",
     "uid": "vl"
    },
-   "description": "msg — текст, at — файл:строка, build — версия сайта, ua — браузер, path — страница",
+   "description": "error — текст, at — место в коде (по картам исходников), fp — группа в панели «Массовка — ошибки», build — версия сайта, ua — браузер, path — страница",
    "targets": [
     {
      "datasource": {

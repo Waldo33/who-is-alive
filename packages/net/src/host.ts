@@ -244,6 +244,8 @@ export class HostSession implements ClientSession {
       players: [...this.sim.players],
       cfg: this.cfgOverrides,
       hostId: this.sim.hostPid,
+      ...(this.sim.summary ? { summary: this.sim.summary, awards: this.sim.roundAwards } : {}),
+      ...(this.sim.match ? { match: this.sim.match } : {}),
     });
     this.lastMe.delete(pid);
   }

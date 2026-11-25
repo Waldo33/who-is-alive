@@ -25,6 +25,15 @@ import {
   fireLevel,
   LAG_GRACE_MS,
   bountyLeader,
+  canFight,
+  fightAttacks,
+  bossDoor,
+  bossLooking,
+  bossWatching,
+  inBossCone,
+  BOSS_RANGE,
+  BOSS_SPREAD,
+  WALK_TOP,
 } from '@kto/game-core';
 import type { AwardId, ClientSession, CrowdKind, Dict, Entity, GameConfig, Lang, Moment, Notice, RoundSummary, ThemeText, World, WorldEvent } from '@kto/game-core';
 import { resultCardFile } from './card';
@@ -53,6 +62,7 @@ import { isThemeLoaded, loadTheme, lookCount, preloadThemes, themeLook, themePac
 import type { Look } from './themes';
 import { haptic, inviteLink, setClosingConfirmation } from '../lib/telegram';
 import { canvas, px as ppx } from './pixels';
+import { clearErrorScene, setErrorScene } from '../lib/crumbs';
 
 /** Постоянные кнопки «автопилот» и «эмоция» в нижней панели (выключены — не пользовались). */
 const HUD_EXTRAS = false;
@@ -196,6 +206,14 @@ export class GameScene extends Phaser.Scene {
   private cfg!: GameConfig;
   private audio!: Audio;
   private views: EntityView[] = [];
+  /** Шеф в офисе (game-core › boss.ts): фигура, тень, конус взгляда и дверь, подписи «Выговор!» над пойманными. */
+  private bossSpr: Phaser.GameObjects.Image | null = null;
+  private bossShadow: Phaser.GameObjects.Image | null = null;
+  private bossG: Phaser.GameObjects.Graphics | null = null;
+  private bossNotes: { eid: number; at: number; txt: Phaser.GameObjects.BitmapText }[] = [];
+  /** Взгляд шефа, на который уже прозвучало «Кхм» (from), и показана ли за матч подсказка «замри». */
+  private bossAhemFor = -1;
+  private bossTipShown = false;
   private starSprites = new Map<number, Phaser.GameObjects.Image>();
   private hedges: Phaser.GameObjects.TileSprite[] = [];
   private props: { spr: Phaser.GameObjects.Image; kind: string }[] = [];
@@ -443,7 +461,10 @@ export class GameScene extends Phaser.Scene {
     this.events.once('shutdown', () => {
       this.sim.dispose();
       setClosingConfirmation(false);
+      clearErrorScene();
     });
+    // где игрок — в отчёты об ошибках (lib/errors.ts)
+    setErrorScene({ players: players.length, spectator: this.init0.spectator ? 1 : null, tutorial: this.init0.tutorial ? 1 : null });
     this.tut = this.init0.tutorial && this.sim instanceof LocalSession ? new Tutorial(this.sim, this.t.tutorial, this.init0.tutorial.onDone) : null;
     if (this.tut) {
       // обучению нужно знать, что нажал игрок (жест, обвинение), — до того, как это попадёт в симуляцию
@@ -483,6 +504,10 @@ export class GameScene extends Phaser.Scene {
         poof: this.add.image(0, 0, 'poof', 0).setVisible(false),
       });
     }
+    this.bossG = this.add.graphics().setDepth(2);
+    this.bossShadow = this.add.image(0, 0, 'shadow').setOrigin(0.5, 0.5).setVisible(false);
+    this.bossSpr = this.add.image(0, 0, 'ch0_0', 0).setOrigin(6 / CH_W, 1).setVisible(false);
+    this.bossNotes = [];
     // свой персонаж (только у себя): кольцо под ногами, стрелка над головой, контур — цветом игрока
     const myColor = hexToInt(PLAYER_COLORS[this.sim.info(this.sim.selfPid)?.color ?? 0]);
     this.myColor = myColor;
@@ -739,6 +764,8 @@ export class GameScene extends Phaser.Scene {
     for (let i = 0; i < this.cfg.attacksPerRound; i++) {
       this.hudIcons.push(this.add.image(40 + i * 11, 7, 'hud', 0).setOrigin(0, 0).setDepth(1100));
     }
+    // счётчик ударов темы-драки (в офисе — до 10 ударов на подвал): рядом с первым кулаком
+    this.hud.atkNum = this.txt(52, 7, '0', 'mist').setDepth(1100).setVisible(false);
     // свои звёзды — ячейками до цели дубля: цель «3 звезды» видна без слов
     for (let i = 0; i < this.cfg.starsToWin; i++) {
       this.hudStars.push(this.add.image(74 + i * 9, 7, 'hud', 3).setOrigin(0, 0).setDepth(1100));
@@ -1042,6 +1069,13 @@ export class GameScene extends Phaser.Scene {
   }
 
   private doAttack(eid: number): void {
+    // офис: до подвала не дерутся — даже не замахиваемся (сервер всё равно откажет)
+    if (!canFight(this.sim.theme, this.sim.world.twist)) {
+      this.audio.play('denied');
+      haptic('error');
+      this.showToast(this.t.game.noFight, 1000);
+      return;
+    }
     this.lastAttackAt = this.sim.world.time;
     this.lastAttackEid = eid;
     // мгновенный отклик: замах, свист и искры у цели. Итог (поф или оглушение) — от хоста
@@ -1167,6 +1201,9 @@ export class GameScene extends Phaser.Scene {
         this.audio.play('hedge');
         this.showToast(this.t.game.hedge, 1800);
         break;
+      case 'boss':
+        this.onBossEvent(ev, myEid);
+        break;
       case 'twist': {
         // изнанка темы: свет мигает, офис → подвал (и обратно); песня темы — громче.
         // Плавная тема (закат): без мигания, музыка — со следующего такта, облик — на пике сумерек
@@ -1234,7 +1271,17 @@ export class GameScene extends Phaser.Scene {
 
   private handleNotices(): void {
     const list = this.sim.drainNotices();
-    for (const n of list) this.onNotice(n);
+    for (const n of list) {
+      // сбой на одном уведомлении не должен терять остальные (экран застревал на старой фазе);
+      // ошибку — в журнал отдельно, как и прежде
+      try {
+        this.onNotice(n);
+      } catch (e) {
+        setTimeout(() => {
+          throw e;
+        });
+      }
+    }
   }
 
   private onNotice(n: Notice): void {
@@ -1244,6 +1291,7 @@ export class GameScene extends Phaser.Scene {
       this.audio.setTwist(false);
       this.next25 = 0;
       void loadTheme(n.theme);
+      setErrorScene({ theme: THEME_RULES[n.theme]?.id ?? n.theme, round: n.round, mod: n.mod || null });
       this.applyTheme();
         this.replay = null;
       // клип выбывшего, который уже монтируется или готов, не теряем: кнопка вернётся на итогах следующего дубля
@@ -1256,6 +1304,7 @@ export class GameScene extends Phaser.Scene {
         this.track('match_start', { players: this.sim.players.length, ai: this.sim.players.filter((p) => p.ai).length, level: this.cfg.strictCrowd ? 'hard' : this.cfg.kidsMode ? 'easy' : 'normal', kids: this.cfg.kidsMode, strict: this.cfg.strictCrowd, rounds: this.cfg.maxRounds, roundSec: this.cfg.roundSec });
       }
     } else if (n.t === 'phase') {
+      setErrorScene({ phase: n.phase });
       // начало матча — звуковой логотип игры, дальше — обычный отсчёт
       if (n.phase === 'countdown') this.audio.play(this.sim.round === 1 ? 'logo' : 'count');
       if (n.phase !== 'match_end') this.triumphShown = false;
@@ -1282,20 +1331,23 @@ export class GameScene extends Phaser.Scene {
       if (n.phase === 'reveal') {
         this.revealStartNow = this.sim.now;
         this.finalSoundsPlayed = false;
-        const s = this.sim.summary!;
-        this.replay = makeReplay(this.sim.world, s.replayFrom, this.sim.world.time);
-        this.setReplayKills();
-        this.buildReplayWarp(s);
-        this.trails.clear();
-        this.noteMoment();
-        this.upgradeDeathClip();
-        // «смотрим отснятое»: проектор нарастает (drum), потом тихо стрекочет под повтором
-        this.audio.play('drum');
-        {
-          const c = this.cfg;
-          const ts = this.init0.timeScale ?? 1;
-          this.audio.projector((s.replayTo - s.replayFrom) / c.revealSpeed / 1000 / ts, 0.06, c.revealDrumSec / ts);
-        }
+        const s = this.sim.summary;
+        // итогов нет (вернулись посреди разоблачения к старому серверу) — без повтора, экран всё равно сменится
+        if (s) {
+          this.replay = makeReplay(this.sim.world, s.replayFrom, this.sim.world.time);
+          this.setReplayKills();
+          this.buildReplayWarp(s);
+          this.trails.clear();
+          this.noteMoment();
+          this.upgradeDeathClip();
+          // «смотрим отснятое»: проектор нарастает (drum), потом тихо стрекочет под повтором
+          this.audio.play('drum');
+          {
+            const c = this.cfg;
+            const ts = this.init0.timeScale ?? 1;
+            this.audio.projector((s.replayTo - s.replayFrom) / c.revealSpeed / 1000 / ts, 0.06, c.revealDrumSec / ts);
+          }
+        } else this.replay = null;
       }
       if (n.phase === 'results' && !this.init0.spectator) this.trackRound();
       if (n.phase === 'match_end') {
@@ -2767,6 +2819,124 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  /**
+   * Шеф в офисе: фигура в тёмном костюме, дверь в верхней стене, конус взгляда на полу — пока он
+   * поворачивается, конус бледный и мигает («Кхм!» — успей замереть), потом горит. Над пойманными
+   * — «Выговор!». Рисуется из состояния мира, поэтому шеф есть и в повторе разоблачения.
+   */
+  private renderBoss(w: World, alpha: number, mode: 'live' | 'replay' | 'final'): void {
+    const g = this.bossG;
+    const spr = this.bossSpr;
+    const sh = this.bossShadow;
+    if (!g || !spr || !sh) return;
+    g.clear();
+    const th = this.sim.theme;
+    const style = isThemeLoaded(th) ? themePack(th).boss : undefined;
+    const b = w.boss;
+    if (!b || !style) {
+      spr.setVisible(false);
+      sh.setVisible(false);
+      for (const n of this.bossNotes) n.txt.destroy();
+      this.bossNotes = [];
+      return;
+    }
+    const tex = 'boss' + th;
+    if (!this.textures.exists(tex)) this.addSheet(tex, makeCharacterSheets(style).body, CH_W, CH_H);
+    const t = w.time - TICK_MS + alpha * TICK_MS;
+    // дверь: середина верхней стены; пока шеф за ней — приоткрыта (темно внутри)
+    const door = bossDoor(this.sim.arena.width);
+    // дверь под рост шефа (он вдвое выше толпы): во всю стену, до пола
+    const dx = door.x - 10;
+    const dy = AY;
+    const dh = WALK_TOP - 1;
+    g.fillStyle(hexToInt(PAL.ink)).fillRect(dx, dy, 20, dh);
+    g.fillStyle(hexToInt(b.out ? PAL.night : PAL.umber)).fillRect(dx + 1, dy + 1, 18, dh - 1);
+    if (b.out) g.fillStyle(hexToInt(PAL.umber)).fillRect(dx + 1, dy + 1, 5, dh - 1);
+    else {
+      g.fillStyle(hexToInt(PAL.brick)).fillRect(dx + 4, dy + 3, 12, 8).fillRect(dx + 4, dy + 14, 12, 8);
+      g.fillStyle(hexToInt(PAL.yellow)).fillRect(dx + 15, dy + 12, 2, 1);
+    }
+    if (b.out) {
+      spr.setVisible(false);
+      sh.setVisible(false);
+    } else {
+      const x = Math.round(b.px + (b.x - b.px) * alpha);
+      const y = Math.round(b.py + (b.y - b.py) * alpha);
+      const sy = AY + y;
+      // конус взгляда: на полу, под толпой; бледный и мигает, пока шеф поворачивается
+      if (bossLooking(b, t)) {
+        const hot = bossWatching(b, t);
+        if (hot || Math.floor(t / 150) % 2 === 0) {
+          const col = hexToInt(hot ? PAL.yellow : PAL.sand);
+          g.fillStyle(col, hot ? 0.22 : 0.12);
+          const d = b.look.dir;
+          for (let a = 2; a <= BOSS_RANGE; a++) {
+            const half = Math.round(5 + a * BOSS_SPREAD);
+            if (d === 0 || d === 1) g.fillRect(x - half, sy + (d === 0 ? a : -a) - 2, half * 2 + 1, 1);
+            else g.fillRect(x + (d === 3 ? a : -a), sy - 2 - half, 1, half * 2 + 1);
+          }
+          // кромка — пунктиром, чтобы край читался на любом полу
+          g.fillStyle(col, hot ? 0.8 : 0.5);
+          for (let a = 4; a <= BOSS_RANGE; a += 3) {
+            const half = Math.round(5 + a * BOSS_SPREAD);
+            if (d === 0 || d === 1) {
+              const yy = sy + (d === 0 ? a : -a) - 2;
+              g.fillRect(x - half, yy, 1, 1).fillRect(x + half, yy, 1, 1);
+            } else {
+              const xx = x + (d === 3 ? a : -a);
+              g.fillRect(xx, sy - 2 - half, 1, 1).fillRect(xx, sy - 2 + half, 1, 1);
+            }
+          }
+        }
+      }
+      const pseudo = { ...b, eid: -7, act: null, actStart: 0, actEnd: 0 } as unknown as Entity;
+      const f = frameFor(pseudo, t);
+      // шеф крупнее толпы вдвое (целый масштаб — пиксели те же): видно издалека, что это не клерк
+      spr.setTexture(tex, f.frame).setScale(2).setVisible(true).setFlipX(f.flip).setPosition(x, sy + f.yoff).setDepth(sy).setAlpha(1);
+      sh.setScale(2).setVisible(true).setPosition(x, sy).setDepth(sy - 0.5);
+    }
+    // «Выговор!» над пойманными — 1,5 с, над головой, чуть всплывает
+    this.bossNotes = this.bossNotes.filter((n) => {
+      const age = w.time - n.at;
+      const e = w.get(n.eid);
+      if (age > 1500 || age < -100 || !e || mode === 'final') {
+        n.txt.destroy();
+        return false;
+      }
+      const x = Math.round(e.px + (e.x - e.px) * alpha);
+      const y = Math.round(e.py + (e.y - e.py) * alpha);
+      n.txt.setPosition(x, AY + y - CH_H - 14 - Math.min(4, Math.floor(age / 120))).setVisible(true);
+      return true;
+    });
+  }
+
+  /** Событие шефа: «Кхм» на поворот (и подсказка один раз за матч), «Выговор!» над пойманным, свой — тостом. */
+  private onBossEvent(ev: Extract<WorldEvent, { t: 'boss' }>, myEid: number | undefined): void {
+    if (ev.act === 'catch') {
+      const txt = this.txt(0, 0, this.t.game.bossCatch, 'coral').setOrigin(0.5, 0).setDepth(1450).setVisible(false);
+      this.bossNotes.push({ eid: ev.eid, at: ev.at, txt });
+      if (this.sim.phase !== 'play') return;
+      this.audio.play('bossStamp');
+      if (ev.eid === myEid) {
+        haptic('error');
+        this.showToast(tp(this.lang, this.t.game.bossCaughtMe, this.cfg.bossPenalty), 1800);
+      }
+      return;
+    }
+    if (ev.act === 'look' && this.sim.phase === 'play' && this.bossAhemFor !== ev.from) {
+      this.bossAhemFor = ev.from;
+      this.audio.play('bossAhem');
+      const me = myEid !== undefined ? this.sim.world.get(myEid) : undefined;
+      const b = this.sim.world.boss;
+      // свой персонаж в конусе — вибрация: «замри»
+      if (me?.alive && b && inBossCone(b, ev.dir, me.x, me.y)) haptic('warning');
+      if (!this.bossTipShown) {
+        this.bossTipShown = true;
+        this.showToast(this.t.game.bossLook, 1800);
+      }
+    }
+  }
+
   private frameFor(e: Entity, t: number): CharFrame {
     return frameFor(e, t, this.lookActs);
   }
@@ -2893,6 +3063,7 @@ export class GameScene extends Phaser.Scene {
       if (q) v.q.setPosition(x + 5, sy - CH_H - 2).setDepth(sy + 0.4);
     });
     if (!crownShown) this.crown.setVisible(false);
+    this.renderBoss(w, alpha, mode);
     for (let i = w.entities.length; i < this.views.length; i++) {
       const v = this.views[i];
       v.spr.setVisible(false);
@@ -3529,7 +3700,17 @@ export class GameScene extends Phaser.Scene {
     // кнопка клипа выбывшего стоит в шапке на месте ударов и звёзд — их тогда прячем
     const clip = this.buttons.find((b) => b.id === 'deathclip');
     const mine = !(clip && clip.visible() && clip.y < AY);
-    this.hudIcons.forEach((ic, i) => ic.setFrame(me && i < me.attacksLeft ? 0 : 1).setVisible(mine));
+    // тема-драка (офис → подвал): ударов до 10 — один кулак и число; в офисе кулак погашен
+    const fight = fightAttacks(sim.theme) > 0;
+    if (fight) {
+      const n = me?.attacksLeft ?? 0;
+      const lit = n > 0 && sim.world.twist;
+      this.hudIcons.forEach((ic, i) => ic.setFrame(lit ? 0 : 1).setVisible(mine && i === 0));
+      this.hud.atkNum?.setText(String(n)).setFont(lit ? 'px-sand' : 'px-mist').setVisible(mine);
+    } else {
+      this.hudIcons.forEach((ic, i) => ic.setFrame(me && i < me.attacksLeft ? 0 : 1).setVisible(mine));
+      this.hud.atkNum?.setVisible(false);
+    }
     const hk = this.hudStarKey();
     this.hudStars.forEach((ic, i) => (hk ? ic.setTexture(hk, me && i < me.stars ? 0 : 1) : ic.setTexture('hud', me && i < me.stars ? 2 : 3)).setVisible(mine));
     this.renderSanity();
@@ -3646,7 +3827,8 @@ export class GameScene extends Phaser.Scene {
         this.ovDyn.title = this.ovText(90, AY + 6, this.t.game.reveal, 'yellow');
         // слева внизу поля
         this.ovDyn.speed = this.ovText(4, AY + 248, '×2.5', 'mist', false).setVisible(false);
-        const s = sim.summary!;
+        const s = sim.summary;
+        if (!s) break;
         this.ovDyn.final = this.ovText(90, PANEL_Y + 13, '', 'sand').setVisible(false);
         this.ovDyn.caught = this.ovText(90, PANEL_Y + 20, this.t.game.caught, 'red').setVisible(false);
         // кто выбил тебя — после разоблачения уже не секрет
@@ -3660,7 +3842,8 @@ export class GameScene extends Phaser.Scene {
           this.ovDyn.killerName = this.ovText(90, PANEL_Y + 23, kInfo.name, COLOR_FONT[kInfo.color]).setVisible(false);
         }
         s.reveal.forEach((r, i) => {
-          const info = sim.info(r.pid)!;
+          const info = sim.info(r.pid);
+          if (!info) return;
           this.ovDyn['name' + i] = this.txt(0, 0, info.name, COLOR_FONT[info.color]).setVisible(false);
           this.ov(this.ovDyn['name' + i], 2100);
         });
@@ -3679,7 +3862,8 @@ export class GameScene extends Phaser.Scene {
 
   private buildResults(): void {
     const sim = this.sim;
-    const s = sim.summary!;
+    const s = sim.summary;
+    if (!s) return;
     this.ovPanel(8, AY + 8, 164, 244);
     const night = hasSanity(sim.theme) ? this.themeText()?.ends : undefined;
     // с рассудком: остался один / рассвет / туман забрал всех
@@ -3898,7 +4082,7 @@ export class GameScene extends Phaser.Scene {
         if (n < 3) this.audio.play('count');
       }
     }
-    if (phase === 'reveal' && sim.summary) {
+    if (phase === 'reveal' && sim.summary && this.ovDyn.final) {
       const s = sim.summary;
       const e = sim.now - this.revealStartNow + this.acc;
       const drum = this.cfg.revealDrumSec * 1000;
