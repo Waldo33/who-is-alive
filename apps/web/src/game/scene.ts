@@ -1,5 +1,5 @@
 import * as Phaser from 'phaser';
-import { LESHY_H, LESHY_W, leshyFrames, type LeshyKey } from './leshy-art';
+import { FACE_H, FACE_W, LESHY_H, LESHY_W, leshyFace, leshyFrames, type LeshyKey } from './leshy-art';
 import { PAL, PLAYER_COLORS, hexToInt } from '@kto/assets';
 import {
   LocalSession,
@@ -492,6 +492,7 @@ export class GameScene extends Phaser.Scene {
     // кикиморы — поверх тьмы краёв: выходят из неё
     this.addSheet('kikimora', makeKikimora(), KIKI_W, KIKI_H);
     this.addSheet('leshy', makeLeshy(), LESHY_W, LESHY_H);
+    this.addSheet('leshyFace', makeLeshyFace(), FACE_W, FACE_H);
     this.kikiG = this.add.graphics().setDepth(946);
     this.glimpse = this.add.image(0, 0, 'kikimora', 0).setOrigin(0.5, 1).setDepth(946).setTintFill(hexToInt(PAL.ink)).setVisible(false);
     // подсказки сверху поля: шаги пробного дубля и «впервые видишь» в настоящей игре
@@ -1060,7 +1061,9 @@ export class GameScene extends Phaser.Scene {
           // оружием — баннер в момент удара, с кровью на экране и сотрясением (weaponImpact)
           const lk = this.kills.find((k) => k.k.eid === ev.target && !k.hit);
           if (lk) lk.mine = { sub };
-          // Леший: сперва видно, как он бросается и бьёт тебя, потом — «вырезан»
+          // Леший: сперва видно, как он бросается и бьёт тебя, потом — его морда во весь экран
+          // (скример; в детском режиме — без него), потом «вырезан»
+          else if (leshy && !this.cfg.kidsMode) this.time.delayedCall(380, () => this.leshyScreamer(() => this.showDeath(sub)));
           else if (leshy) this.time.delayedCall(900, () => this.showDeath(sub));
           else this.showDeath(sub);
           if (ev.result === 'player' && myEid !== undefined) this.offerDeathClip(myEid, ev.at, ev.attacker);
@@ -1451,6 +1454,40 @@ export class GameScene extends Phaser.Scene {
   }
 
   /** Крупно и сразу понятно: тебя выбили, теперь ты призрак. */
+  /**
+   * Скример «Тебя забрал Леший»: морда рывком на весь экран — сперва ближе (×1), через миг вплотную (×2)
+   * с распахнутой пастью и разгоревшимися глазами, дрожит; визг. Потом резкая темнота, на ней «вырезан».
+   * Без мигания: один рывок и один обрыв. Звук громкий — игрок уже вырезан, ничего не выдаёт.
+   */
+  private leshyScreamer(then: () => void): void {
+    const W = 180;
+    const H = 320;
+    const dark = this.add.rectangle(0, 0, W, H, hexToInt(PAL.ink), 0.82).setOrigin(0, 0).setDepth(1800);
+    const face = this.add.sprite(W / 2, Math.round(H * 0.46), 'leshyFace', 0).setDepth(1801);
+    this.audio.play('scream');
+    haptic('heavy');
+    navigator.vibrate?.([220, 40, 320]);
+    this.cameras.main.shake(700, 0.03);
+    const base = { x: face.x, y: face.y };
+    this.time.delayedCall(110, () => face.setFrame(1).setScale(2));
+    const jitter = this.tweens.addCounter({
+      from: 0,
+      to: 1,
+      duration: 760,
+      onUpdate: () => face.setPosition(base.x + Math.round((Math.random() - 0.5) * 6), base.y + Math.round((Math.random() - 0.5) * 6)),
+    });
+    this.time.delayedCall(760, () => {
+      jitter.stop();
+      face.destroy();
+      // резкая темнота, «вырезан» проступает на ней, темнота медленно уходит
+      dark.setFillStyle(hexToInt(PAL.ink), 1).setDepth(1680);
+      this.time.delayedCall(320, () => {
+        then();
+        this.tweens.add({ targets: dark, alpha: 0, delay: 500, duration: 900, onComplete: () => dark.destroy() });
+      });
+    });
+  }
+
   private showDeath(subText?: string, bloody = false): void {
     this.clearDeath();
     if (bloody) this.bloodyScreen();
@@ -4073,6 +4110,22 @@ function makeLeshy(): HTMLCanvasElement {
   frames.forEach((rows, f) =>
     rows.forEach((r, y) => {
       for (let x = 0; x < r.length; x++) if (r[x] !== '.') ppx(g, f * LESHY_W + x, y, col[r[x] as LeshyKey]);
+    }),
+  );
+  return c;
+}
+
+/** Морда Лешего для скримера — кадры из leshy-art.ts › leshyFace. */
+function makeLeshyFace(): HTMLCanvasElement {
+  const col: Record<LeshyKey, string> = {
+    o: PAL.ink, n: PAL.night, u: PAL.umber, p: PAL.plum, b: PAL.brick, d: PAL.deep, P: PAL.pine, f: PAL.forest,
+    k: PAL.dusk, s: PAL.slate, m: PAL.mist, y: PAL.yellow, w: PAL.white, a: PAL.amber,
+  };
+  const frames = leshyFace();
+  const { c, g } = canvas(FACE_W * frames.length, FACE_H);
+  frames.forEach((rows, f) =>
+    rows.forEach((r, y) => {
+      for (let x = 0; x < r.length; x++) if (r[x] !== '.') ppx(g, f * FACE_W + x, y, col[r[x] as LeshyKey]);
     }),
   );
   return c;

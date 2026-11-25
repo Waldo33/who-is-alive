@@ -5,14 +5,14 @@
 export type Sfx =
   | 'step' | 'hitPlayer' | 'hitBot' | 'poof' | 'starTake' | 'starSpawn' | 'crowd' | 'tick'
   | 'click' | 'ready' | 'accuseRight' | 'accuseWrong' | 'fanfare' | 'sad' | 'hedge' | 'pigeon' | 'drum' | 'denied' | 'count' | 'swing' | 'flicker' | 'dusk' | 'siren' | 'whack' | 'clang' | 'stab' | 'knockedOut'
-  | 'hitOther' | 'cut' | 'clap' | 'logo' | 'wrap' | 'unmask' | 'rewind' | 'leshyStep' | 'leshyBreath' | 'leshyStinger' | 'leshyTake' | 'leshyCall' | 'snap' | 'whisper';
+  | 'hitOther' | 'cut' | 'clap' | 'logo' | 'wrap' | 'unmask' | 'rewind' | 'leshyStep' | 'leshyBreath' | 'leshyStinger' | 'leshyTake' | 'leshyCall' | 'snap' | 'whisper' | 'scream';
 
 /**
  * Приоритет эффекта (звуковой гайд, план звука): P1 — меняет решение игрока, обязан пробиться
  * через музыку (на динамике телефона −30…−33 дБ, музыку глушит на 9 дБ на 0,6 с); P2 — событие
  * на поле (−35…−39 дБ, глушит на 4 дБ); остальное — фон. Уровни проверяет `pnpm --filter web sound-check`.
  */
-export const P1: ReadonlySet<Sfx> = new Set<Sfx>(['hitPlayer', 'hitBot', 'starTake', 'crowd', 'ready', 'knockedOut', 'cut', 'drum', 'accuseRight', 'accuseWrong', 'unmask', 'wrap', 'logo', 'leshyStinger', 'leshyTake']);
+export const P1: ReadonlySet<Sfx> = new Set<Sfx>(['hitPlayer', 'hitBot', 'starTake', 'crowd', 'ready', 'knockedOut', 'cut', 'drum', 'accuseRight', 'accuseWrong', 'unmask', 'wrap', 'logo', 'leshyStinger', 'leshyTake', 'scream']);
 export const P2: ReadonlySet<Sfx> = new Set<Sfx>(['hitOther', 'whack', 'clang', 'stab', 'starSpawn', 'flicker', 'dusk', 'leshyBreath']);
 
 /**
@@ -22,7 +22,7 @@ export const P2: ReadonlySet<Sfx> = new Set<Sfx>(['hitOther', 'whack', 'clang', 
 const VARY: ReadonlySet<Sfx> = new Set<Sfx>(['step', 'hitPlayer', 'hitOther', 'hitBot', 'poof', 'starSpawn', 'tick', 'click', 'hedge', 'pigeon', 'whack', 'clang', 'stab', 'swing', 'unmask']);
 
 /** Детский режим: без оружия, звона в ушах и пилы — удары «поф» и бумажный хлопок. */
-const KIDS: Partial<Record<Sfx, Sfx>> = { whack: 'hitOther', clang: 'hitOther', stab: 'hitOther', knockedOut: 'cut', siren: 'starSpawn' };
+const KIDS: Partial<Record<Sfx, Sfx>> = { whack: 'hitOther', clang: 'hitOther', stab: 'hitOther', knockedOut: 'cut', siren: 'starSpawn', scream: 'cut' };
 
 export class Synth {
   /** Сдвиг высоты и громкости текущего эффекта (вариации). */
@@ -165,6 +165,19 @@ export class Synth {
         }
         this.formant(920, 300, 0.7, 0.22, 0.05, 0.12, [900, 1300, 2600], 9);
         this.tone('square', 160, 40, 0.5, 0.4, 0.05);
+        break;
+      // скример: морда Лешего во весь экран — удар, хор визгливых голосов вразнобой (малые секунды,
+      // быстрая дрожь), рваный треск сверху и провал вниз в конце. Слышит только вырезанный — и соседи.
+      case 'scream':
+        this.noise(0.05, 0.9, 3600);
+        this.tone('square', 220, 55, 0.35, 0.45);
+        this.noise(0.12, 0.7, 1300, 0.01);
+        for (const [f, v] of [[1180, 0.12], [1250, 0.1], [1660, 0.07], [940, 0.09]] as const) {
+          this.formant(f, f * 0.6, 0.85, v, 0.02, 0.02, [f, f * 2, 3000], 13);
+        }
+        this.swell(0.8, 0.36, 2800, 0.02, 0.05);
+        this.swell(0.7, 0.25, 5200, 0.05, 0.05);
+        this.tone('sawtooth', 600, 120, 0.7, 0.18, 0.15);
         break;
       // «Ау-у…» из леса: Леший зовёт голосом заблудившегося и сам себе вторит эхом
       case 'leshyCall':

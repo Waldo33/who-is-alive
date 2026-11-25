@@ -234,3 +234,187 @@ function frame(f: number): string[] {
   for (const [x, y] of outl) g[y][x] = 'o';
   return g.map((r) => r.map((k) => k ?? '.').join(''));
 }
+
+/**
+ * Морда Лешего во весь экран — скример «Тебя забрал Леший». Череп из бересты вплотную: тяжёлое надбровье,
+ * провалы глазниц с горящими углями, вытянутая пасть со щепками-зубами, у висков — основания рогов, по
+ * краям — борода-лишайник. Кадр 0 — пасть приоткрыта, 1 — распахнута и глаза разгорелись. Показывается ×2.
+ */
+export const FACE_W = 90;
+export const FACE_H = 110;
+
+export function leshyFace(): string[][] {
+  return [face(0), face(1)];
+}
+
+function face(open: number): string[] {
+  const W = FACE_W;
+  const H = FACE_H;
+  const g: (LeshyKey | null)[][] = Array.from({ length: H }, () => Array<LeshyKey | null>(W).fill(null));
+  const put = (x: number, y: number, k: LeshyKey): void => {
+    x = Math.round(x);
+    y = Math.round(y);
+    if (x >= 0 && y >= 0 && x < W && y < H) g[y][x] = k;
+  };
+  const cx = 45;
+  const at = (x: number, y: number): LeshyKey | null => g[Math.round(y)]?.[Math.round(x)] ?? null;
+  // полуширина черепа по строкам: лоб, скулы, впалые щёки, челюсть уходит вниз вместе с пастью
+  const jawEnd = open ? 104 : 92;
+  const half = (y: number): number => {
+    if (y < 6) return 0;
+    if (y < 30) return Math.round(22 + Math.sqrt((y - 6) / 24) * 12); // купол лба
+    if (y < 50) return 34 + (y > 42 && y < 48 ? 2 : 0); // скулы
+    if (y < 60) return Math.round(34 - (y - 50) * 0.9); // впадины щёк
+    const k = (y - 60) / (jawEnd - 60);
+    return Math.max(0, Math.round(25 - k * 13 - (k > 0.85 ? (k - 0.85) * 60 : 0)));
+  };
+
+  // ── рога-ветви от висков: толстые у основания, ветвятся и уходят за край кадра ──
+  const branch = (x: number, y: number, ang: number, len: number, w: number, depth: number, seed: number): void => {
+    let px = x;
+    let py = y;
+    for (let i = 0; i < len; i++) {
+      px += Math.cos(ang + Math.sin(i * 0.6 + seed) * 0.2);
+      py += Math.sin(ang + Math.sin(i * 0.6 + seed) * 0.2);
+      const ww = Math.max(1, Math.round(w * (1 - i / (len * 1.6))));
+      for (let d = 0; d < ww; d++) put(px + d * 0.7, py + d * 0.7, d === 0 ? 'u' : d === ww - 1 ? 'o' : 'p');
+    }
+    if (depth > 0) {
+      branch(px, py, ang - 0.6, Math.round(len * 0.6), Math.max(1, w - 1), depth - 1, seed + 1.7);
+      branch(px, py, ang + 0.55, Math.round(len * 0.55), Math.max(1, w - 1), depth - 1, seed + 2.9);
+    } else {
+      for (let j = 1; j < 4 + (seed % 3); j++) put(px, py + j, j > 2 ? 'd' : 'f'); // мох с концов
+    }
+  };
+  for (const side of [-1, 1]) {
+    branch(cx + side * 22, 14, -Math.PI / 2 + side * 0.95, 14, 4, 2, side > 0 ? 1 : 5);
+    branch(cx + side * 14, 9, -Math.PI / 2 + side * 0.45, 10, 3, 1, side > 0 ? 3 : 8);
+  }
+
+  // ── череп: береста — бледная, свет слева, тень справа, чёрные чёрточки ──
+  for (let y = 6; y < jawEnd; y++) {
+    const hw = half(y);
+    for (let x = cx - hw; x <= cx + hw; x++) {
+      const rx = (x - cx) / Math.max(1, hw);
+      let c: LeshyKey = 's';
+      if (rx > 0.72) c = 'k';
+      else if (rx < -0.55 && y < 56) c = 'm';
+      if (rx > 0.9) c = 'n';
+      // берестяные чёрточки: короткие горизонтальные штрихи
+      const band = Math.floor(y / 3);
+      if (h2(Math.floor(x / 5) + band * 7, band) < 0.16 && y % 3 === 0) c = 'n';
+      put(x, y, c);
+    }
+  }
+  // трещины по лбу и щекам
+  const crack = (x: number, y: number, dx: number, n: number, seed: number): void => {
+    for (let i = 0; i < n; i++) {
+      put(x, y, 'o');
+      y += 1;
+      x += h2(seed, i) < 0.5 ? dx : 0;
+    }
+  };
+  crack(cx - 6, 7, -1, 14, 1);
+  crack(cx + 9, 9, 1, 10, 2);
+  crack(cx - 26, 46, -1, 12, 3);
+  crack(cx + 24, 50, 1, 9, 4);
+  // мох пятнами на висках и под скулами
+  for (let k = 0; k < 40; k++) {
+    const side = k % 2 ? 1 : -1;
+    const x = cx + side * (26 + Math.floor(h2(k, 5) * 9));
+    const y = 18 + Math.floor(h2(5, k) * 40);
+    if (g[y]?.[x]) put(x, y, h2(k, 8) < 0.5 ? 'P' : 'f');
+  }
+
+  // ── надбровье: тяжёлый козырёк, под ним глазницы ──
+  for (const side of [-1, 1]) {
+    const ex = cx + side * 15;
+    const ey = 38;
+    for (let x = ex - 13; x <= ex + 13; x++) {
+      const t = Math.abs(x - ex) / 13;
+      const y = Math.round(ey - 11 + t * t * 5 + (side * (x - ex) < 0 ? 2 : 0));
+      put(x, y, 'k');
+      put(x, y + 1, 'o');
+    }
+    // глазница — провал
+    for (let y = ey - 9; y <= ey + 9; y++)
+      for (let x = ex - 12; x <= ex + 12; x++) {
+        const d = Math.hypot((x - ex) / 11, (y - ey) / 8.5);
+        if (d < 1) put(x, y, d > 0.86 ? 'n' : 'o');
+      }
+    // уголь в глубине: жёлтое ядро, белая сердцевина, янтарный ореол решёткой
+    const r = open ? 4.2 : 3.2;
+    const px = ex + side * -1;
+    const py = ey + 1;
+    for (let y = py - 7; y <= py + 7; y++)
+      for (let x = px - 7; x <= px + 7; x++) {
+        const d = Math.hypot(x - px, (y - py) * 1.2);
+        if (d < r * 0.45) put(x, y, 'w');
+        else if (d < r) put(x, y, 'y');
+        else if (d < r + 1.4) put(x, y, 'a');
+        else if (d < r + 4 && (x + y) % 2 === 0 && g[y]?.[x] === 'o') put(x, y, 'b');
+      }
+  }
+  // переносица и нос-провал
+  for (let y = 44; y < 54; y++) {
+    const w = y < 48 ? 1 : 2 + (y > 50 ? 1 : 0);
+    for (let x = cx - w; x <= cx + w - 1; x++) put(x, y, 'o');
+  }
+  put(cx - 3, 52, 'k');
+  put(cx + 3, 52, 'k');
+
+  // ── пасть: вытянутая чёрная дыра до подбородка, щепки-зубы по краям ──
+  const mTop = 58;
+  const mBot = open ? 99 : 80;
+  const mw = open ? 15 : 12;
+  for (let y = mTop; y <= mBot; y++) {
+    const k = (y - mTop) / (mBot - mTop);
+    const hw = Math.round(mw * Math.pow(Math.sin(Math.min(1, k * 0.9 + 0.1) * Math.PI), 0.55) + 1);
+    for (let x = cx - hw; x <= cx + hw; x++) put(x, y, Math.abs(x - cx) >= hw - 1 || y === mTop ? 'n' : 'o');
+  }
+  // зубы: от края пасти внутрь, разной длины и кривые
+  for (let x = cx - mw + 2; x <= cx + mw - 2; x += 2 + (x % 3 === 0 ? 1 : 0)) {
+    let top = mTop;
+    while (top < mBot && at(x, top) !== 'o' && at(x, top) !== 'n') top++;
+    let bot = mBot;
+    while (bot > mTop && at(x, bot) !== 'o' && at(x, bot) !== 'n') bot--;
+    const room = bot - top;
+    if (room < 4) continue;
+    const lenT = Math.min(room / 2 - 1, 3 + Math.floor(h2(x, 11) * (open ? 7 : 4)));
+    const lenB = Math.min(room / 2 - 1, 2 + Math.floor(h2(x, 13) * (open ? 5 : 3)));
+    for (let j = 0; j < lenT; j++) put(x + (j > lenT * 0.6 && h2(x, 3) < 0.4 ? 1 : 0), top + j, j < lenT - 1 ? 'm' : 'w');
+    for (let j = 0; j < lenB; j++) put(x, bot - j, j < lenB - 1 ? 's' : 'm');
+  }
+  // из глазниц по щекам — тёмные потёки смолы
+  for (const side of [-1, 1]) {
+    for (let k = 0; k < 3; k++) {
+      const x0 = cx + side * (9 + k * 5);
+      const len = 6 + Math.floor(h2(k, side + 5) * 12);
+      for (let j = 0; j < len; j++) if (at(x0, 47 + j) && at(x0, 47 + j) !== 'o') put(x0, 47 + j, j < len - 2 ? 'n' : 'k');
+    }
+  }
+
+  // ── борода-лишайник по краям челюсти, свисает за низ кадра ──
+  for (let i = 0; i < 16; i++) {
+    const side = i % 2 ? 1 : -1;
+    const x0 = cx + side * (14 + Math.floor(i / 2) * 2);
+    const y0 = 62 + Math.floor(i / 2) * 2;
+    const len = 18 + Math.floor(h2(i, 21) * 22);
+    for (let y = 0; y < len; y++) {
+      const x = x0 + Math.round(Math.sin(y * 0.3 + i) * 1);
+      if (g[y0 + y]?.[x] && g[y0 + y][x] !== 'P' && g[y0 + y][x] !== 'f' && g[y0 + y][x] !== 'd') continue;
+      put(x, y0 + y, y > len - 4 ? 'd' : (i + y) % 3 === 0 ? 'f' : 'P');
+    }
+  }
+
+  // ── контур чернилами ──
+  const outl: [number, number][] = [];
+  for (let y = 0; y < H; y++)
+    for (let x = 0; x < W; x++) {
+      if (g[y][x]) continue;
+      const n = (x > 0 && g[y][x - 1]) || (x < W - 1 && g[y][x + 1]) || (y > 0 && g[y - 1][x]) || (y < H - 1 && g[y + 1][x]);
+      if (n) outl.push([x, y]);
+    }
+  for (const [x, y] of outl) g[y][x] = 'o';
+  return g.map((r) => r.map((k) => k ?? '.').join(''));
+}
