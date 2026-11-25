@@ -1,0 +1,64 @@
+# Настройка машин из кода (infra/ansible, docs/ansible.md).
+#   PR и push в main с правкой infra/ansible — сухой прогон против живых серверов (--check --diff):
+#   ничего не меняется, в логе — чем роль расходится с машиной. Цель — «changed=0» на проде.
+#   Применить — вручную: Actions › infra-ansible › Run workflow, apply = true.
+name: infra-ansible
+
+on:
+  pull_request:
+    paths:
+      - 'infra/ansible/**'
+      - '.github/workflows/infra-ansible.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'infra/ansible/**'
+      - '.github/workflows/infra-ansible.yml'
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: 'Применить (иначе только сухой прогон)'
+        type: boolean
+        default: false
+
+concurrency:
+  # своя группа: общая с game-deploy отменяла бы ожидающую выкладку (там «ждать может только одна»)
+  group: infra-ansible
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  ansible:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: infra/ansible
+        shell: bash -eo pipefail {0}
+    env:
+      TWC_TOKEN: ${{ secrets.TWC_TOKEN }}
+      ANSIBLE_FORCE_COLOR: '0'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ansible
+        run: |
+          python3 -m venv /tmp/py
+          /tmp/py/bin/pip install -q ansible-core==2.17.7 cryptography
+
+      - name: Инвентарь из Timeweb (и SSH-ключ выкладки)
+        run: /tmp/py/bin/python inventory.py
+
+      - name: Проверка синтаксиса
+        run: /tmp/py/bin/ansible-playbook --syntax-check site.yml
+
+      - name: Сухой прогон против живых серверов
+        run: |
+          /tmp/py/bin/ansible-playbook site.yml --check --diff | tee /tmp/check.log
+          { echo '### Ansible: сухой прогон'; echo '```'; sed -n '/PLAY RECAP/,$p' /tmp/check.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Применить
+        if: github.event_name == 'workflow_dispatch' && inputs.apply && github.ref == 'refs/heads/main'
+        run: /tmp/py/bin/ansible-playbook site.yml --diff

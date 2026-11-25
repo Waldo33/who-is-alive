@@ -1,0 +1,6 @@
+[Unit]
+Description=Массовка: сторож (сайт, игра, бот, туннель)
+[Service]
+Type=oneshot
+ExecStart=/opt/massovka/bin/watch.sh
+TimeoutStartSec=170

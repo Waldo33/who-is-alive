@@ -36,7 +36,15 @@ const Name = z.string().max(40);
 
 /** Клиент → сервер. */
 export const ClientMsg = z.discriminatedUnion('t', [
-  z.object({ t: z.literal('hello'), v: z.number().int(), token: z.string().max(2000), code: z.string().max(8), name: Name }),
+  z.object({
+    t: z.literal('hello'),
+    v: z.number().int(),
+    token: z.string().max(2000),
+    code: z.string().max(8),
+    name: Name,
+    /** Язык и «без крови» для клипа выбывшего: сервер заготовит его до нажатия. Старые клиенты не шлют. */
+    clip: z.object({ lang: z.enum(['ru', 'en']), mild: z.boolean() }).optional(),
+  }),
   z.object({ t: z.literal('ready'), on: z.boolean() }),
   z.object({ t: z.literal('rename'), name: Name }),
   z.object({ t: z.literal('settings'), settings: RoomSettingsSchema }),
@@ -49,6 +57,11 @@ export const ClientMsg = z.discriminatedUnion('t', [
   z.object({ t: z.literal('g'), m: z.unknown() }),
   /** Часы сервера (оркестр из телефонов): c — время клиента, вернётся в ответе. */
   z.object({ t: z.literal('clock'), c: z.number() }),
+  /**
+   * Клип выбывшего смонтировать на сервере (шлём, только если в welcome есть caps 'clip').
+   * n — номер запроса (вернётся в ответе), round — дубль; кого подсветить, сервер решает сам.
+   */
+  z.object({ t: z.literal('clip'), n: z.number().int(), round: z.number().int(), lang: z.enum(['ru', 'en']), mild: z.boolean() }),
 ]);
 export type ClientMsg = z.infer<typeof ClientMsg>;
 
@@ -80,13 +93,16 @@ export type WireError =
   | 'not_director'
   | 'not_now'
   | 'not_enough_players'
+  /** В лобби не все подключённые игроки нажали «Готов» (режиссёр — не в счёт). */
+  | 'not_ready'
   | 'rate_limited'
   | 'server_busy';
 
 /** Сервер → клиент. */
 export type ServerMsg =
   /** spectator — пришёл посреди матча: смотрит общий канал, место займёт после матча (`join`). */
-  | { t: 'welcome'; selfId: string; room: WireRoom; spectator?: boolean }
+  /** caps — что умеет этот сервер сверх базового протокола ('clip' — монтирует клип выбывшего). */
+  | { t: 'welcome'; selfId: string; room: WireRoom; spectator?: boolean; caps?: string[] }
   | { t: 'room'; room: WireRoom }
   | { t: 'error'; code: WireError; fatal?: boolean }
   | { t: 'kicked' }
@@ -110,10 +126,24 @@ export type ServerMsg =
   | { t: 'film'; state: 'none' }
   | { t: 'film'; state: 'making' }
   | { t: 'film'; state: 'ready'; id: string; ext: 'mp4'; thumb: boolean }
-  | { t: 'film'; state: 'failed' };
+  | { t: 'film'; state: 'failed' }
+  /**
+   * Клип выбывшего (ответ на `clip` с тем же n): making — в очереди, eta — мс до готовности;
+   * ready — файл в /v1/clips/<id>.<ext>; failed — не вышло или очередь длинная: телефон монтирует сам.
+   */
+  | { t: 'clip'; n: number; state: 'making'; eta: number }
+  | { t: 'clip'; n: number; state: 'ready'; id: string; ext: 'mp4'; thumb: boolean }
+  | { t: 'clip'; n: number; state: 'failed' }
+  /**
+   * Переключатели сервера — сразу после welcome и при каждой смене. video: false — аварийно выключено
+   * всё видео (клипы и фильм): кнопки спрятать, на телефоне тоже не монтировать. Старые клиенты пропускают.
+   */
+  | { t: 'flags'; video: boolean };
 
 /** Состояние фильма матча у клиента. */
 export type WireFilm = Extract<ServerMsg, { t: 'film' }>;
+/** Ответ сервера про клип выбывшего. */
+export type WireClip = Extract<ServerMsg, { t: 'clip' }>;
 
 /** Буквы кода комнаты (как в Supabase: без похожих I, L, O). */
 export const ROOM_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ';

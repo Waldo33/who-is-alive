@@ -1,0 +1,9 @@
+[Unit]
+Description=Массовка: копия базы игры (через туннель)
+[Service]
+Type=oneshot
+User=postgres
+EnvironmentFile=/etc/massovka/pgro-backup.env
+ExecStart=/opt/massovka/bin/msk-backup.sh
+Restart=on-failure
+RestartSec=10min

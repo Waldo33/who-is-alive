@@ -25,6 +25,7 @@ import { inTelegram, telegramReady, telegramShare, telegramShareCard, tgLink } f
 import { download, shareContent, withLang } from '@/lib/share';
 import { Room, SPECTATE_DELAY_MS } from '@/net/room';
 import { GAME_API } from '@/lib/env';
+import { serverClipFile } from '@/lib/clips';
 import type { RemoteSession } from '@kto/net';
 import type { Audio as GameAudio, RoundMusic } from '@/game/audio';
 import type { RunningGame } from '@/game/boot';
@@ -264,6 +265,13 @@ function GameView({
         // «Ещё дубль» у режиссёра: вошли новые игроки (досмотрели как зрители) — новый матч с ними
         onRematch: () => room.rematchWithNewcomers(),
         onSave: (file: File) => download(file),
+        // клип выбывшего монтирует игровой сервер (Rust); не умеет или занят — пишет телефон
+        deathClip: spectator
+          ? undefined
+          : async (round, mild, onEta) => {
+              const c = await room.link?.deathClip(round, lang, mild, onEta);
+              return c ? serverClipFile(c, 'kto-tut-zhivoy.mp4') : null;
+            },
         onSettings: () => settingsRef.current(),
         // «Фильм матча» монтирует игровой сервер: состояние приходит по той же связи (ServerLink.film)
         film: spectator
@@ -336,7 +344,10 @@ export function Lobby({
   const isHost = state.hostId === state.selfId;
   const online = state.members.filter((m) => m.online);
   // с ИИ-актёрами свободные места займут они — начать можно и одному
-  const canStart = isHost && online.length >= room.minHumans();
+  const enough = online.length >= room.minHumans();
+  // «Мотор!» — только когда все подключённые игроки нажали «Готов» (режиссёр — не в счёт); сервер проверяет так же
+  const allReady = online.every((m) => m.userId === state.hostId || m.ready);
+  const canStart = isHost && enough && allReady;
   // язык отправителя в ссылке — для превью в мессенджере (t меняется вместе с языком)
   const url = useMemo(() => (typeof window === 'undefined' ? '' : withLang(`${window.location.origin}/r/${state.code}`, 'invite')), [state.code, t]);
   // у QR своя метка: так видно, сколько друзей зашло с экрана рядом, а сколько — по ссылке в чате
@@ -391,7 +402,7 @@ export function Lobby({
 
   const slots = [0, 1, 2, 3].map((i) => state.members[i]);
   // главная внизу: пока звать некого, кроме себя, — «Позвать в массовку»; потом «Мотор!», а «Позвать» — в шапку
-  const inviteFirst = isHost && !canStart;
+  const inviteFirst = isHost && !enough;
   const [sheet, setSheet] = useState(false);
   const orchFlag = useMemo(() => featureOn('orchestra'), []);
   const [bigQr, setBigQr] = useState(false);
@@ -507,13 +518,17 @@ export function Lobby({
               {t.lobby.invite}
             </button>
           ) : (
-            <button className="btn" onClick={() => {
+            <>
+            <button className="btn" disabled={!canStart} onClick={() => {
+                if (!canStart) return;
                 onGesture();
                 track('lobby_start', { members: state.members.length, online: online.length, level: levelOf(st), kids: !!st.kidsMode, strict: !!st.strictCrowd, aiFill: !!st.aiFill });
                 void room.startMatch();
               }}>
               {t.lobby.start}
             </button>
+            {!allReady && <p className="muted">{t.lobby.waitReady}</p>}
+            </>
           )
         ) : (
           <>

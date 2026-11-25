@@ -49,12 +49,12 @@ export const ru = {
     ninja: { title: 'Каскадёр', text: 'удар из засады' as string | Plural },
     paranoid: {
       title: 'Параноик',
-      text: { one: '{n} удар по боту', few: '{n} удара по ботам', many: '{n} ударов по ботам', other: '{n} удара по ботам' } as string | Plural,
+      text: { one: '{n} удар мимо', few: '{n} удара мимо', many: '{n} ударов мимо', other: '{n} удара мимо' } as string | Plural,
     },
     botlike: { title: 'Чистая массовка', text: 'вне подозрений' as string | Plural },
     greedy: { title: 'Звёздная болезнь', text: 'звёзд: {n}' as string | Plural },
     kamikaze: { title: 'Вырезан первым', text: 'выбыл за {n} с' as string | Plural },
-    clairvoyant: { title: 'Голос за кадром', text: 'угадал из-за кадра' as string | Plural },
+    clairvoyant: { title: 'Голос за кадром', text: 'угадал за кадром' as string | Plural },
     topHunter: { title: 'Кастинг-директор', text: 'вырезал: {n}' as string | Plural },
   },
   names: {
@@ -320,6 +320,8 @@ export const ru = {
     start: 'Мотор!',
     needTwo: 'Нужно хотя бы 2 игрока',
     waitHost: 'Ждём команду «Мотор!»',
+    /** Под неактивной «Мотор!» у режиссёра: кто-то из игроков ещё не нажал «Готов». */
+    waitReady: 'Ждём, пока все нажмут «Готов»',
     /** Строка со значком динамика: беззвучный режим iPhone игра не видит — просим включить звук заранее. */
     soundHint: 'Включи звук — в игре сигналы',
     soundOffHint: 'Звуки выключены: шестерёнка',
@@ -409,10 +411,12 @@ export const ru = {
     making: 'Монтируем клип… {n}%',
     ready: 'Клип готов!',
     send: 'Отправить',
+    // на маленькой кнопке клипа в шапке (65 пикс. — до 7 знаков)
+    sendShort: 'Отправь',
     save: 'Сохранить',
     story: 'В сторис',
-    // клип грузится на сервер для Telegram: на маленькой кнопке (≤ 9) и на широкой/экране монтажа
-    preparing: 'Готовлю…',
+    // клип грузится на сервер для Telegram: на маленькой кнопке (≤ 7) и на широкой/экране монтажа
+    preparing: 'Ждём…',
     preparingLong: 'Готовлю видео…',
     close: 'Закрыть',
     failed: 'Клип не получился',

@@ -64,3 +64,20 @@ export function shareableClip(file: Blob, thumb?: Promise<Blob | null>): Promise
   }
   return p;
 }
+
+/**
+ * Клип, который смонтировал сам игровой сервер (клип выбывшего): он уже в хранилище — загружать
+ * с телефона не нужно. Скачать файл (для системного «Поделиться») и запомнить его ссылку.
+ */
+export async function serverClipFile(c: { id: string; ext: string; thumb: boolean }, name: string): Promise<File | null> {
+  const url = `${GAME_API}/v1/clips/${c.id}.${c.ext}`;
+  try {
+    const r = await fetch(url);
+    if (!r.ok) return null;
+    const file = new File([await r.blob()], name, { type: 'video/mp4' });
+    pending.set(file, Promise.resolve({ id: c.id, ext: c.ext, url, thumb: c.thumb }));
+    return file;
+  } catch {
+    return null;
+  }
+}

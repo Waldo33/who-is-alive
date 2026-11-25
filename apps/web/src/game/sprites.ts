@@ -1,5 +1,5 @@
 import { PAL } from '@kto/assets';
-import type { ArenaDef } from '@kto/game-core';
+import type { ArenaDef, AwardId } from '@kto/game-core';
 import { canvas, dither, ellipse, grid, outlineOf, px } from './pixels';
 import type { Ctx } from './pixels';
 import { BASE_MAP } from './themes/base';
@@ -346,6 +346,147 @@ export function makeIcons(): { canvas: HTMLCanvasElement; names: string[] } {
     grid(g, i * 8, 0, rows, map);
   });
   return { canvas: c, names };
+}
+
+/**
+ * Иконки наград 12×12 — по одной на награду (порядок = `AWARD_ICON_IDS`): цветные, в стиле площадки.
+ * Рисуются ×2 в тёмном окошке (night), поэтому крупные тёмные части — steel, а не dusk/ink.
+ * Буквы: o ink, w white, m mist, s slate, d steel, n dusk, y yellow, a amber, r red, R wine,
+ * c cyan, b blue, g green, p peach.
+ */
+export const AWARD_ICON = 12;
+const AWARD_ICONS: Record<AwardId, string[]> = {
+  // «Слепые соседи»: двое в тёмных очках бок о бок
+  blindNeighbors: [
+    '............',
+    '..ooo..ooo..',
+    '.oppppoppppo',
+    '.oppppoppppo',
+    'oooooooooooo',
+    'oonnoooonnoo',
+    '.oppppoppppo',
+    '.oppppoppppo',
+    '..oppo..oppo',
+    '..oaao..obbo',
+    '.oaaaaoobbbb',
+    '.oaaaaoobbbb',
+  ],
+  // «Каскадёр»: маска с повязкой — удар из засады
+  ninja: [
+    '............',
+    '...oooooo...',
+    '..oddddddo..',
+    '.oddddddddo.',
+    'orrrrrrrrrro',
+    'oRRRRRRRRRRo',
+    '.oppppppppo.',
+    '.opowppowpo.',
+    '.oddddddddor',
+    '.oddddddddoR',
+    '..oddddddor.',
+    '...oooooo...',
+  ],
+  // «Параноик»: вытаращенный глаз с красными прожилками
+  paranoid: [
+    '............',
+    '...oooooo...',
+    '..owwwwwwo..',
+    '.owwrooowwo.',
+    '.owwoccowwo.',
+    'owwwoccowwwo',
+    '.owwoooowwo.',
+    '.owwwwwwrwo.',
+    '..owwwwwwo..',
+    '...oooooo...',
+    '............',
+    '............',
+  ],
+  // «Чистая массовка»: серый статист вне подозрений и зелёная галочка
+  botlike: [
+    '....oooo....',
+    '...ossmmo...',
+    '...osmmmo...',
+    '...osmmmo...',
+    '....osmo....',
+    '..oossmmoo..',
+    '.osssmmmmmo.',
+    '.ossmmmmmmo.',
+    '.osmmmmmmgo.',
+    '.osmmmmmgwgo',
+    '.osmmmmgwgo.',
+    '..oooooogo..',
+  ],
+  // «Звёздная болезнь»: звезда в тёмных очках
+  greedy: [
+    '.....oo.....',
+    '....oyyo....',
+    '...oyyyyo...',
+    'oooyyyyyyooo',
+    'oyyyyyyyyyyo',
+    '.oonnoonnoo.',
+    '..onnyynno..',
+    '..oyyyyyyo..',
+    '.oyyyooyyyo.',
+    '.oyyo..oyyo.',
+    'oyyo....oyyo',
+    'ooo......ooo',
+  ],
+  // «Вырезан первым»: монтажные ножницы
+  kamikaze: [
+    '.o........o.',
+    'owo......owo',
+    'omwo....owmo',
+    '.omwo..owmo.',
+    '..omwoowmo..',
+    '...omyymo...',
+    '....oyyo....',
+    '...oroorо...',
+    '..orrooorro.',
+    '.or..oor..ro',
+    '.or..oor..ro',
+    '..oro..oro..',
+  ],
+  // «Голос за кадром»: студийный микрофон
+  clairvoyant: [
+    '....oooo....',
+    '...ommmmo...',
+    '...omdmdo...',
+    '...ommmmo...',
+    '...omdmdo...',
+    '.s.ommmmo.s.',
+    '.s..oooo..s.',
+    '..s......s..',
+    '...ssssss...',
+    '.....ss.....',
+    '....osso....',
+    '...oooooo...',
+  ],
+  // «Кастинг-директор»: хлопушка
+  topHunter: [
+    '.oooooooooo.',
+    'owwoowwoowwo',
+    'oowwoowwoowo',
+    '.oooooooooo.',
+    'oooooooooooo',
+    'oddddddddddo',
+    'odwwwddwwwdo',
+    'oddddddddddo',
+    'odwwdddwwwdo',
+    'oddddddddddo',
+    'oooooooooooo',
+    '............',
+  ],
+};
+export const AWARD_ICON_IDS = Object.keys(AWARD_ICONS) as AwardId[];
+
+export function makeAwardIcons(): { canvas: HTMLCanvasElement; names: AwardId[] } {
+  const map: Record<string, string> = {
+    o: PAL.ink, w: PAL.white, m: PAL.mist, s: PAL.slate, d: PAL.steel, n: PAL.dusk, y: PAL.yellow, a: PAL.amber,
+    r: PAL.red, R: PAL.wine, c: PAL.cyan, b: PAL.blue, g: PAL.green, p: PAL.peach,
+  };
+  const { c, g } = canvas(AWARD_ICON_IDS.length * AWARD_ICON, AWARD_ICON);
+  AWARD_ICON_IDS.forEach((id, i) => grid(g, i * AWARD_ICON, 0, AWARD_ICONS[id], map));
+  return { canvas: c, names: AWARD_ICON_IDS };
 }
 
 const PIGEON_FRAMES = [

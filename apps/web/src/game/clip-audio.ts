@@ -80,6 +80,9 @@ export function clipMix(ctx: BaseAudioContext, out: AudioNode, noiseBuf: AudioBu
   const music = new Music(ctx, duck, noiseBuf);
   music.manual = !!opts.manual;
   const synth = new Synth(ctx, sfxBus, noiseBuf);
+  // после затухания (конец клипа, титры фильма) музыка не возвращается: ни приглушение под
+  // важный звук, ни тишина перед ударом больше не трогают её громкость
+  let faded = false;
   return {
     // клип начинается сразу с темы песни и с напряжением, а не с тихого вступления
     start: (theme, twist) => {
@@ -91,7 +94,7 @@ export function clipMix(ctx: BaseAudioContext, out: AudioNode, noiseBuf: AudioBu
     resume: () => music.resume(),
     play: (name, step = 0) => {
       // важное (P1, sfx.ts) пробивается через музыку
-      if (P1.has(name)) {
+      if (P1.has(name) && !faded) {
         const t = ctx.currentTime;
         duck.gain.cancelScheduledValues(t);
         duck.gain.setValueAtTime(0.4, t);
@@ -105,12 +108,14 @@ export function clipMix(ctx: BaseAudioContext, out: AudioNode, noiseBuf: AudioBu
     },
     // уходит музыка, а не всё: подпись-логотип в конце звучит поверх
     fadeOut: (sec) => {
+      faded = true;
       const t = ctx.currentTime;
       duck.gain.cancelScheduledValues(t);
       duck.gain.setValueAtTime(duck.gain.value, t);
       duck.gain.linearRampToValueAtTime(0.0001, t + sec);
     },
     hush: (sec) => {
+      if (faded) return;
       const t = ctx.currentTime;
       duck.gain.cancelScheduledValues(t);
       duck.gain.setValueAtTime(duck.gain.value, t);

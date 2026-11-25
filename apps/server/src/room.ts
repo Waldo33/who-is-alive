@@ -4,6 +4,7 @@ import { DEFAULT_WIRE_SETTINGS, HostSession } from '@kto/net';
 import type { Channel, PresenceMember, RoomMsg, ServerMsg, Transport, WireError, WireRoom, WireRoomSettings } from '@kto/net';
 import type { Logger } from './log';
 import type { FilmDone, FilmService } from './film';
+import { deathClipJob } from './death-clip';
 // только тип: код монтажа живёт в отдельном процессе (film-worker.ts) и в основную сборку не попадает
 import type { FilmTake } from '../../web/src/game/film';
 
@@ -52,6 +53,8 @@ export interface RoomOptions {
   onEmpty?: (room: Room) => void;
   /** «Фильм матча» (film.ts): нет — фильм монтирует телефон. */
   film?: FilmService;
+  /** Видео не выключено аварийно (video-switch.ts). */
+  videoOn?: () => boolean;
   /** Комната переехала с соседнего экземпляра сервера (выкладка без обрыва): состав и настройки — оттуда. */
   restore?: RoomSnapshot;
 }
@@ -121,6 +124,14 @@ export class MatchRunner {
   private armed = false;
   /** Снят последний дубль матча (разоблачение): итоги уже известны — можно монтировать фильм. */
   onLastTake: ((takes: FilmTake[]) => void) | null = null;
+  /**
+   * Живого игрока выбили, и прошло 1,5 с (столько клип показывает после удара): можно заготовить
+   * его клип — кнопка «Клип» у него появится только через 3,4 с после удара.
+   */
+  onKnockout: ((pid: string, eid: number, round: number) => void) | null = null;
+  private koLog: unknown[] | null = null;
+  private koSeen = 0;
+  private koDue: { pid: string; eid: number; round: number; due: number }[] = [];
 
   constructor(
     room: Room,
@@ -152,6 +163,7 @@ export class MatchRunner {
     this.host.tick();
     this.host.drainNotices();
     this.noteTake();
+    this.noteKnockouts();
     this.steps++;
     const dt = performance.now() - t0;
     if (this.stepMs.length >= 600) this.stepMs.shift();
@@ -171,6 +183,31 @@ export class MatchRunner {
       arena: h.arena,
     });
     if (h.sim.lastRound) this.onLastTake?.(this.flushTakes());
+  }
+
+  /** Удары по живым игрокам (не ИИ) — через 1,5 с игрового времени после удара в onKnockout. */
+  private noteKnockouts(): void {
+    if (!this.onKnockout) return;
+    const h = this.host;
+    const w = h.world;
+    // новый дубль — новый журнал
+    if (w.log !== this.koLog) {
+      this.koLog = w.log;
+      this.koSeen = 0;
+      this.koDue = [];
+    }
+    for (; this.koSeen < w.log.length; this.koSeen++) {
+      const e = w.log[this.koSeen];
+      if (e.t !== 'hit' || e.result !== 'player') continue;
+      const p = this.players.find((x) => !x.ai && h.sim.playerRound(x.pid)?.eid === e.target);
+      if (p) this.koDue.push({ pid: p.pid, eid: e.target, round: h.round, due: e.at + 1500 });
+    }
+    // дубль кончился раньше — на разоблачении телефон сам попросит полный клип (с тем, кто выбил)
+    const over = !!h.summary && h.summary.round === h.round;
+    while (this.koDue.length && (over || w.time >= this.koDue[0].due)) {
+      const k = this.koDue.shift()!;
+      if (!over && k.round === h.round) this.onKnockout(k.pid, k.eid, k.round);
+    }
   }
 
   /** Дубли сыгранного матча (и начать копить заново — к реваншу). */
@@ -272,7 +309,7 @@ export class Room {
       this.members.set(userId, m);
     }
     this.lastActive = now;
-    this.sendTo(userId, { t: 'welcome', selfId: userId, room: this.view() });
+    this.sendTo(userId, { t: 'welcome', selfId: userId, room: this.view(), ...(this.o.film && (this.o.videoOn?.() ?? true) ? { caps: ['clip'] } : {}) });
     this.broadcastRoom();
     return null;
   }
@@ -413,6 +450,9 @@ export class Room {
     if (this.status === 'playing' && this.runner?.host.phase !== 'match_end') return 'not_now';
     const humans = this.onlineMembers().map((m) => ({ pid: m.userId, name: m.name, color: m.color }));
     if (humans.length < this.minHumans()) return 'not_enough_players';
+    // из лобби — только когда все подключённые нажали «Готов»; «Ещё дубль» с экрана итогов — без этого
+    const rematch = this.runner?.host.phase === 'match_end';
+    if (!rematch && this.onlineMembers().some((m) => m.userId !== this.directorId && !m.ready)) return 'not_ready';
     const players = [...humans, ...this.aiFill(humans)];
     const cfg: Partial<GameConfig> = {
       roundSec: this.settings.roundSec,
@@ -434,6 +474,9 @@ export class Room {
     this.film = null;
     this.broadcastText(JSON.stringify({ t: 'film', state: 'none' } satisfies ServerMsg));
     runner.onLastTake = (takes) => this.startFilm(runner, takes);
+    runner.onKnockout = (pid, eid, round) => this.preclip(pid, eid, round);
+    // процесс монтажа — заранее: первый клип выбывшего не ждёт его запуска
+    if (this.videoOn()) this.o.film?.warm();
     this.lastActive = this.now();
     this.log('info', 'match_start', { room: this.code, humans: humans.length, ai: players.length - humans.length });
     return null;
@@ -450,6 +493,81 @@ export class Room {
       color,
       ai: true,
     }));
+  }
+
+  /** Клипы выбывших в этом дубле: игрок → сколько просил (ранний и полный — не больше двух). */
+  private clipAsks = new Map<string, number>();
+  private clipRound = -1;
+  /** Язык и «без крови» у игрока (из hello или прошлой просьбы) — чтобы заготовить его клип заранее. */
+  private clipPrefs = new Map<string, { lang: 'ru' | 'en'; mild: boolean }>();
+  /** Заготовленные клипы выбывших этого дубля (до нажатия «Клип»). */
+  private preclips = new Map<string, { round: number; lang: 'ru' | 'en'; mild: boolean; p: Promise<FilmDone | null>; done?: FilmDone | null }>();
+
+  private videoOn(): boolean {
+    return this.o.videoOn?.() ?? true;
+  }
+
+  setClipPrefs(userId: string, p: { lang: 'ru' | 'en'; mild: boolean }): void {
+    this.clipPrefs.set(userId, { lang: p.lang, mild: p.mild });
+  }
+
+  private newClipRound(round: number): void {
+    if (this.clipRound === round) return;
+    this.clipRound = round;
+    this.clipAsks.clear();
+    this.preclips.clear();
+  }
+
+  /** Игрока выбили: смонтировать его клип, пока он не попросил (монтаж свободен — иначе нет). */
+  private preclip(pid: string, eid: number, round: number): void {
+    const film = this.o.film;
+    const h = this.runner?.host;
+    if (!film || !h || !this.videoOn() || !this.members.get(pid)?.peer) return;
+    this.newClipRound(round);
+    const pr = this.clipPrefs.get(pid) ?? { lang: this.lang, mild: false };
+    const job = deathClipJob(h, pid, eid, { lang: pr.lang, noGore: pr.mild });
+    if (!job || job.known) return;
+    const p = film.preclip(job);
+    if (!p) return;
+    const e: { round: number; lang: 'ru' | 'en'; mild: boolean; p: Promise<FilmDone | null>; done?: FilmDone | null } = { round, ...pr, p };
+    this.preclips.set(pid, e);
+    void p.then((d) => (e.done = d));
+  }
+
+  /**
+   * Клип выбывшего — смонтировать на сервере (Rust, film.ts). Кого подсветить, решает сервер:
+   * героем всегда будет сам просящий (deathClipJob). Ответ — `clip` с тем же n.
+   * Заготовленный (preclip) с тем же языком — отдаём его: готов сразу или раньше нового.
+   */
+  clip(userId: string, m: { n: number; round: number; lang: 'ru' | 'en'; mild: boolean }): void {
+    const film = this.o.film;
+    const r = this.runner;
+    const fail = () => this.sendTo(userId, { t: 'clip', n: m.n, state: 'failed' });
+    const h = r?.host;
+    const eid = h?.sim.playerRound(userId)?.eid;
+    if (!film || !h || eid === undefined || h.round !== m.round) return fail();
+    this.newClipRound(h.round);
+    this.setClipPrefs(userId, m);
+    const asks = this.clipAsks.get(userId) ?? 0;
+    if (asks >= 2) return fail();
+    const job = deathClipJob(h, userId, eid, { lang: m.lang, noGore: m.mild });
+    if (!job) return fail();
+    this.clipAsks.set(userId, asks + 1);
+    const send = (done: FilmDone | null) => {
+      if (this.closed) return;
+      this.sendTo(userId, done ? { t: 'clip', n: m.n, state: 'ready', id: done.id, ext: done.ext, thumb: done.thumb } : { t: 'clip', n: m.n, state: 'failed' });
+    };
+    const pre = this.preclips.get(userId);
+    if (pre && !job.known && pre.lang === m.lang && pre.mild === m.mild && pre.done !== null) {
+      this.preclips.delete(userId);
+      if (pre.done) return send(pre.done);
+      this.sendTo(userId, { t: 'clip', n: m.n, state: 'making', eta: film.etaOf(pre.p) });
+      void pre.p.then(send);
+      return;
+    }
+    const p = film.clip(job, (eta) => this.sendTo(userId, { t: 'clip', n: m.n, state: 'making', eta }));
+    if (!p) return fail();
+    void p.then(send);
   }
 
   /** Игровое сообщение от игрока — безголовому хосту. «Ещё дубль» с новым составом — новый матч. */

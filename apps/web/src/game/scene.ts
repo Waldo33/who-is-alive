@@ -29,6 +29,7 @@ import { mildOn } from '../ui/topbar';
 import { SWING_HIT, aim, armed, armsOf, bodyPose, drawAir, drawFloor, killsFromLog, makeKill, weaponSfx } from './gore';
 import type { ArmColors } from './gore';
 import type { Kill, Px } from './gore';
+import { syncVideoSwitch, videoOff } from './video-switch';
 import { clipSupported, clipViaTelegram, openClipOverlay, openFilmOverlay, preloadClipForTelegram, recordClipInBackground, shareClipInTelegram } from './clip-ui';
 import type { FilmFeed } from './clip-ui';
 import { FilmScene, filmInput } from './film';
@@ -41,7 +42,7 @@ import type { FontColor } from './font';
 import { registerFonts } from './font';
 import {
   CH_H, CH_W, F, OL_H, OL_W,
-  makeArenaBackground, makeArrow, makeGear, makeHudIcons, makeCharacterSheets, makeHedge, makeIconSheet, makeIcons, makeMark, makePigeon,
+  makeArenaBackground, makeArrow, makeGear, makeHudIcons, makeCharacterSheets, makeHedge, makeIconSheet, makeIcons, makeAwardIcons, AWARD_ICON, AWARD_ICON_IDS, makeMark, makePigeon,
   makePoof, makeProp, makeRing, makeShadow, makeStar, makeStarFlash, makeStunStars, makeVignette,
 } from './sprites';
 import { isThemeLoaded, loadTheme, lookCount, preloadThemes, themeLook, themePack, variantOf } from './themes';
@@ -56,6 +57,11 @@ const CROWD_KINDS: CrowdKind[] = ['freeze', 'jump', 'dance'];
 /** Половина заката/рассвета: столько сгущаются сумерки, столько же проступает новый облик. */
 const DUSK_HALF_MS = 1400;
 const PANEL_Y = 284;
+/** Момент триумфа победителя матча (2,8 с было мало — владелец, ноябрь 2026) и когда его можно пропустить тапом. */
+const TRIUMPH_MS = 5000;
+const TRIUMPH_SKIP_MS = 1500;
+/** Кнопка клипа выбывшего в дубле — в шапке, между разделителями (x 37 и 105) на месте ударов и звёзд. */
+const CLIP_HUD: [number, number, number, number] = [39, 3, 65, 18];
 const ME = 'me';
 const COLOR_FONT: FontColor[] = ['red', 'blue', 'yellow', 'green'];
 
@@ -95,6 +101,11 @@ export interface SceneInit {
   spectator?: { delaySec: number; watching: () => boolean };
   /** Режиссёр жмёт «Ещё дубль»: true — комната сама начала новый матч (пришли новые игроки). */
   onRematch?: () => boolean;
+  /**
+   * Клип выбывшего монтирует игровой сервер (комната): файл или null — тогда клип пишет телефон.
+   * onEta — сколько мс ждать (для прогресса на кнопке).
+   */
+  deathClip?: (round: number, mild: boolean, onEta: (ms: number) => void) => Promise<File | null>;
 }
 
 interface EntityView {
@@ -365,6 +376,8 @@ export class GameScene extends Phaser.Scene {
 
   init(data: SceneInit): void {
     this.init0 = data;
+    // аварийный выключатель видео: спросить сервер (в комнате о смене скажет связь)
+    void syncVideoSwitch();
     this.lang = data.lang ?? 'ru';
     this.t = DICTS[this.lang];
     this.audio = data.audio;
@@ -608,6 +621,7 @@ export class GameScene extends Phaser.Scene {
     const icons = makeIcons();
     this.iconNames = icons.names;
     this.addSheet('icons', icons.canvas, 8, 8);
+    this.addSheet('awards', makeAwardIcons().canvas, AWARD_ICON, AWARD_ICON);
   }
 
   /**
@@ -1748,18 +1762,23 @@ export class GameScene extends Phaser.Scene {
 
   // ───────────── клип выбывшего ─────────────
 
-  /** Кнопка в углу поля: появляется после баннера выбывания (анимацию не трогаем). */
+  /**
+   * Кнопка клипа выбывшего: появляется после баннера выбывания (анимацию не трогаем). В дубле — в шапке
+   * на месте своих ударов и звёзд (вырезанному они уже ни к чему), чтобы не закрывать поле: за кадром
+   * по нему тапают, ставя «?» (раньше кнопка стояла в правом нижнем углу поля и мешала).
+   */
   private buildDeathClipButton(): void {
+    const [x, y, w, h] = CLIP_HUD;
     const b: Button = {
       id: 'deathclip',
-      x: 96,
-      y: PANEL_Y - 26,
-      w: 80,
-      h: 22,
+      x,
+      y,
+      w,
+      h,
       label: this.t.clip.deathBtn,
       accent: PAL.amber,
       keep: true,
-      // в игре — в углу поля, на итогах — во всю ширину нижней панели (кнопки итогов выше)
+      // в игре — в шапке, на итогах — во всю ширину нижней панели (кнопки итогов выше)
       visible: () => {
         const ph = this.sim.phase;
         const dc = this.deathClip;
@@ -1810,10 +1829,10 @@ export class GameScene extends Phaser.Scene {
   }
 
   private placeDeathClipButton(b: Button, wide: boolean): void {
-    const [x, y, w, h] = wide ? [3, PANEL_Y + 3, 174, 30] : [96, PANEL_Y - 26, 80, 22];
+    const [x, y, w, h] = wide ? [3, PANEL_Y + 3, 174, 30] : CLIP_HUD;
     if (b.x === x && b.y === y) return;
-    // маленькая кнопка над панелью: рисунок 22 px высотой, палец ловим на 30
-    Object.assign(b, { x, y, w, h, hit: wide ? undefined : [x, PANEL_Y - 30, w, 30] });
+    // маленькая кнопка в шапке: рисунок 18 px высотой, палец ловим на всю высоту шапки (в поле не заходит)
+    Object.assign(b, { x, y, w, h, hit: wide ? undefined : [x - 2, 0, w + 4, AY - 1] });
     const text = this.btnObjs.get('deathclip')?.text;
     if (text) text.y = y + Math.floor(h / 2) - 5;
     this.updateDeathClipLabel();
@@ -1833,7 +1852,7 @@ export class GameScene extends Phaser.Scene {
           ? wide ? fmt(c.making, { n: Math.round(dc.progress * 100) }) : `${Math.round(dc.progress * 100)}%`
           : dc.sharing
             ? wide ? c.preparingLong : c.preparing
-            : c.send;
+            : wide ? c.send : c.sendShort;
     // origin 0.5: центр по кнопке, целый пиксель для нечётной ширины
     text.setText(label);
     text.x = b.x + b.w / 2 - (text.width % 2) / 2;
@@ -1896,7 +1915,7 @@ export class GameScene extends Phaser.Scene {
       : [{ eid: dc.eid, name: me.name, color: me.color }];
     const rec = recordRound(w, { round: this.sim.round, theme: this.sim.theme, players: known ? s!.reveal : [], playEnd: to, kills: s?.kills });
     const moment: Moment = { from, to, score: 0, kind: 'knockout', at: dc.at, victim: dc.eid, attacker: dc.killer, selfRole: 'victim' };
-    void recordClipInBackground(
+    const local = () => recordClipInBackground(
       {
         rec,
         moment,
@@ -1915,7 +1934,16 @@ export class GameScene extends Phaser.Scene {
         dc.progress = p;
         this.updateDeathClipLabel();
       },
-    ).then((file) => {
+    );
+    // сначала — сервер (Rust, ~3–6 с вместо записи в реальном времени); не вышло — пишет телефон, как раньше
+    const server = this.init0.deathClip;
+    const job = server
+      ? this.serverDeathClip(dc, server).then((f) => {
+          this.track('clip_made', { kind: 'death', via: f ? 'server' : 'phone' });
+          return f ?? (this.deathClip === dc && !videoOff() ? local() : null);
+        })
+      : local();
+    void job.then((file) => {
       if (this.deathClip !== dc) return;
       if (!file) {
         this.deathClip = null;
@@ -1930,6 +1958,32 @@ export class GameScene extends Phaser.Scene {
       this.updateDeathClipLabel();
       this.audio.play('starTake');
     });
+  }
+
+  /** Клип выбывшего с сервера: прогресс на кнопке — по обещанному сервером времени. */
+  private async serverDeathClip(dc: DeathClip, ask: NonNullable<SceneInit['deathClip']>): Promise<File | null> {
+    let t0 = 0;
+    let eta = 0;
+    const timer = this.time.addEvent({
+      delay: 200,
+      loop: true,
+      callback: () => {
+        if (!eta || this.deathClip !== dc) return;
+        dc.progress = Math.min(0.95, (performance.now() - t0) / eta);
+        this.updateDeathClipLabel();
+      },
+    });
+    try {
+      return await ask(dc.round, mildOn(), (ms) => {
+        t0 = performance.now();
+        // плюс скачивание готового файла
+        eta = ms + 1500;
+      });
+    } catch {
+      return null;
+    } finally {
+      timer.remove();
+    }
   }
 
   /** Иконка команды толпы: своя у облика темы или общая (рука, прыжок, танец). */
@@ -2691,9 +2745,8 @@ export class GameScene extends Phaser.Scene {
     this.updateOverlay(delta);
     this.syncUiCamera();
     if (this.toast.visible && performance.now() > this.toastUntil) this.toast.setVisible(false);
-    // подсказка внизу поля — выше кнопки клипа, если та видна; под ней тёмная подложка
-    const clipBtn = this.buttons.find((b) => b.id === 'deathclip');
-    const ty = (clipBtn && clipBtn.visible() && this.sim.phase !== 'results') || this.tut?.waitTap ? PANEL_Y - 40 : PANEL_Y - 14;
+    // подсказка внизу поля (в обучении — выше «дальше»); под ней тёмная подложка
+    const ty = this.tut?.waitTap ? PANEL_Y - 40 : PANEL_Y - 14;
     if (this.toast.y !== ty) this.toast.y = ty;
     const pg = this.plateG;
     pg.clear();
@@ -3314,9 +3367,12 @@ export class GameScene extends Phaser.Scene {
     this.hud.timer.setFont(hurry ? 'px-coral' : 'px-sand').setVisible(!hurry || left % 1000 > 350);
     // «Дубль N» вместо таймера — между дублями; разделитель после времени тогда не нужен
     const me = this.me();
-    this.hudIcons.forEach((ic, i) => ic.setFrame(me && i < me.attacksLeft ? 0 : 1));
+    // кнопка клипа выбывшего стоит в шапке на месте ударов и звёзд — их тогда прячем
+    const clip = this.buttons.find((b) => b.id === 'deathclip');
+    const mine = !(clip && clip.visible() && clip.y < AY);
+    this.hudIcons.forEach((ic, i) => ic.setFrame(me && i < me.attacksLeft ? 0 : 1).setVisible(mine));
     const hk = this.hudStarKey();
-    this.hudStars.forEach((ic, i) => (hk ? ic.setTexture(hk, me && i < me.stars ? 0 : 1) : ic.setTexture('hud', me && i < me.stars ? 2 : 3)));
+    this.hudStars.forEach((ic, i) => (hk ? ic.setTexture(hk, me && i < me.stars ? 0 : 1) : ic.setTexture('hud', me && i < me.stars ? 2 : 3)).setVisible(mine));
     this.renderSanity();
     const spec = this.init0.spectator;
     if (spec && this.specL2) {
@@ -3411,7 +3467,7 @@ export class GameScene extends Phaser.Scene {
       case 'reveal': {
         this.ovPlate(AY + 2, 16);
         this.ovDyn.title = this.ovText(90, AY + 6, this.t.game.reveal, 'yellow');
-        // слева внизу: справа там кнопка клипа
+        // слева внизу поля
         this.ovDyn.speed = this.ovText(4, AY + 248, '×2.5', 'mist', false).setVisible(false);
         const s = sim.summary!;
         this.ovDyn.final = this.ovText(90, PANEL_Y + 13, '', 'sand').setVisible(false);
@@ -3474,7 +3530,7 @@ export class GameScene extends Phaser.Scene {
       const total = this.ovText(0, y, String(sim.scores[p.pid]), 'sand', false);
       total.x = 171 - total.width;
     });
-    s.awards.forEach((a, i) => this.awardCard(16, AY + 112 + i * 42, a.id, a.pids, a.value));
+    s.awards.forEach((a, i) => this.awardCard(AY + 112 + i * 42, a.id, a.pids, a.value));
     if (!s.awards.length) this.ovText(90, AY + 130, this.t.game.noAwards, 'mist');
     // Одна главная кнопка: следующий дубль. Он начнётся сам — отсчёт идёт заливкой кнопки (у всех);
     // ускорить может только режиссёр (хост), у остальных та же кнопка — неактивной плашкой с секундами.
@@ -3544,20 +3600,32 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  private awardCard(x: number, y: number, id: AwardId, pids: string[], value: number): void {
+  /**
+   * Плашка награды во всю ширину ряда кнопок (x = 9…171): главное — крупная иконка ×2 в тёмном окошке
+   * в янтарной рамке слева, текст справа — спокойный: название песочным, имя белым, пояснение приглушённым (по 16 знаков).
+   */
+  private awardCard(y: number, id: AwardId, pids: string[], value: number): void {
+    const x = 9;
+    const W = 162;
     const def = this.t.awards[id];
     const fit = (t: string, n: number) => (t.length > n ? t.slice(0, n - 1) + '…' : t);
     const names = pids.map((pid) => this.sim.info(pid)?.name ?? '?');
     const g = this.add.graphics();
-    g.fillStyle(hexToInt(PAL.ink)).fillRect(x, y, 148, 40);
-    g.fillStyle(hexToInt(PAL.grape)).fillRect(x + 1, y + 1, 146, 38);
-    g.fillStyle(hexToInt(PAL.orchid)).fillRect(x + 1, y + 1, 146, 1);
+    g.fillStyle(hexToInt(PAL.ink)).fillRect(x, y, W, 40);
+    g.fillStyle(hexToInt(PAL.grape)).fillRect(x + 1, y + 1, W - 2, 38);
+    g.fillStyle(hexToInt(PAL.orchid)).fillRect(x + 1, y + 1, W - 2, 1);
+    // окошко иконки как медаль: тёмное, в янтарной рамке — иконка не сливается с фиолетовым
+    g.fillStyle(hexToInt(PAL.ink)).fillRect(x + 2, y + 6, 28, 28);
+    g.fillStyle(hexToInt(PAL.amber)).fillRect(x + 3, y + 7, 26, 26);
+    g.fillStyle(hexToInt(PAL.night)).fillRect(x + 4, y + 8, 24, 24);
     this.ov(g, 2010);
-    this.ov(this.add.image(x + 9, y + 9, 'icons', this.icon('crown')).setOrigin(0.5), 2100);
-    this.ovText(x + 17, y + 4, fit(def.title, 16), 'yellow', false);
+    const frame = Math.max(0, AWARD_ICON_IDS.indexOf(id));
+    this.ov(this.add.image(x + 4, y + 8, 'awards', frame).setOrigin(0).setScale(2), 2100);
+    const tx = x + 31;
+    this.ovText(tx, y + 4, fit(def.title, 16), 'sand', false);
     const who = names.length > 1 ? names.map((n) => n.split(' ')[0]).join(this.t.game.and) : names[0];
-    this.ovText(x + 4, y + 15, fit(who, 18), 'white', false);
-    this.ovText(x + 4, y + 26, fit(tp(this.lang, def.text, value), 18), 'mist', false);
+    this.ovText(tx, y + 15, fit(who, 16), 'white', false);
+    this.ovText(tx, y + 26, fit(tp(this.lang, def.text, value), 16), 'mist', false);
   }
 
   private buildMatchEnd(): void {
@@ -3586,7 +3654,7 @@ export class GameScene extends Phaser.Scene {
       const total = this.ovText(0, y, String(m.scores[p.pid]), 'sand', false);
       total.x = 166 - total.width;
     });
-    m.awards.forEach((a, i) => this.awardCard(16, AY + 124 + i * 42, a.id, a.pids, a.value));
+    m.awards.forEach((a, i) => this.awardCard(AY + 124 + i * 42, a.id, a.pids, a.value));
     // Одна главная: «Ещё раз» у режиссёра. Матч с ИИ — вторая «С друзьями» (настоящая комната),
     // в комнате — «Поделиться» иконкой; у остальных — «Поделиться» второй кнопкой во всю ширину.
     if (this.init0.spectator) {
@@ -3609,7 +3677,7 @@ export class GameScene extends Phaser.Scene {
     } else this.addRow(AY + 214, [{ id: 'share2', kind: 'secondary', icon: 'share', label: this.t.game.share, flex: true, release: true, onTap: () => this.share() }]);
     // клип — третьей, тихой кнопкой с кадром плёнки в нижней панели. Открывается касанием: отпускание
     // у нижнего края экрана браузер может забрать себе (Chrome на iPhone); отправка — кнопкой в окне клипа
-    if ((this.takes.length || this.init0.film?.current()) && !this.init0.spectator) {
+    if ((this.takes.length || this.init0.film?.current()) && !this.init0.spectator && !videoOff()) {
       this.addRow(PANEL_Y + 3, [{ id: 'clip', kind: 'secondary', icon: 'film', label: this.t.clip.film, flex: true, onTap: () => this.openFilm() }]);
       const b = this.buttons.find((x) => x.id === 'clip');
       if (b) Object.assign(b, { x: 3, w: 174 });
@@ -3754,7 +3822,8 @@ export class GameScene extends Phaser.Scene {
 
   /**
    * Момент триумфа победителя матча: поле темнеет, его персонаж — крупно в луче света, с короной,
-   * пляшет; имя его цветом, фанфары и конфетти. Через 2,8 с (или по касанию) — итоги матча.
+   * пляшет; имя его цветом, фанфары и конфетти. Через 5 с — итоги матча; касанием можно пропустить,
+   * но не раньше чем через 1,5 с (случайный тап, доигрывавший дубль, не съедает момент).
    */
   private showTriumph(done: () => void): void {
     const sim = this.sim;
@@ -3806,8 +3875,10 @@ export class GameScene extends Phaser.Scene {
       dance.remove();
       if (this.sim.phase === 'match_end') done();
     };
-    this.time.delayedCall(2800, finish);
-    this.input.once('pointerup', finish);
+    this.time.delayedCall(TRIUMPH_MS, finish);
+    this.time.delayedCall(TRIUMPH_SKIP_MS, () => {
+      if (!finished) this.input.once('pointerup', finish);
+    });
   }
 
   private spawnConfetti(): void {
@@ -3903,7 +3974,8 @@ export class GameScene extends Phaser.Scene {
           self: this.sim.selfPid,
         })
       : null;
-    if (!inp) {
+    // видео выключено аварийно — и на телефоне не монтируем
+    if (!inp || videoOff()) {
       this.showToast(this.t.clip.failed, 2500);
       return;
     }

@@ -28,6 +28,10 @@ export class NavGrid {
               b = true;
               break;
             }
+            if (p.cover && rectContains(p.cover, x, y)) {
+              b = true;
+              break;
+            }
           }
         }
         this.blocked[r * this.cols + c] = b ? 1 : 0;

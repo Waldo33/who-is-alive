@@ -7,3 +7,4 @@ coverage
 .vercel
 *.tsbuildinfo
 .live-e2e.mjs
+__pycache__/

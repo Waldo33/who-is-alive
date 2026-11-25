@@ -54,6 +54,12 @@ async function until(cond: () => boolean, ms = 5000, what = 'условие'): P
   }
 }
 
+/** Все, кроме режиссёра, жмут «Готов»; ждём, пока режиссёр это увидит (без этого сервер не стартует). */
+async function readyUp(director: ServerLink, others: ServerLink[]): Promise<void> {
+  for (const l of others) l.setReady(true);
+  await until(() => (director.room?.members.filter((m) => m.ready).length ?? 0) >= others.length, 3000, 'все «Готов»');
+}
+
 describe('игровой сервер: вход и HTTP', () => {
   it('анонимный токен, создание комнаты, превью; чужой токен — отказ', async () => {
     const { http } = await boot();
@@ -296,6 +302,10 @@ describe('игровой сервер: лобби', () => {
     lb.onError((e) => berrs.push(e));
     lb.start();
     await until(() => berrs.includes('not_director'), 3000, 'не режиссёр');
+    // B ещё не нажал «Готов» — рано
+    la.start();
+    await until(() => errs.includes('not_ready'), 3000, 'не все готовы');
+    await readyUp(la, [lb]);
     la.start();
     await until(() => la.room?.status === 'playing', 3000, 'матч начался');
     const lc = link(ws, c, code, 'C');
@@ -342,6 +352,7 @@ describe('игровой сервер: матч', () => {
         if (ch === 'private') privLog.push({ to: users[i].userId, m: m as { t: string } });
       }),
     );
+    await readyUp(ls[0], ls.slice(1));
     ls[0].start();
     await until(() => sessions.every(Boolean), 3000, 'сессии созданы');
     const gs = sessions as RemoteSession[];
@@ -442,6 +453,7 @@ describe('игровой сервер: матч', () => {
     la.onMessage((ch, m) => {
       if (ch === 'room' && (m as RoomMsg).t === 'match_start') starts.push(m as RoomMsg);
     });
+    await readyUp(la, [lb]);
     la.start();
     await until(() => starts.length === 1, 3000, 'старт');
     const room = srv.rooms.get(code)!;
@@ -465,6 +477,7 @@ describe('игровой сервер: матч', () => {
     const lb = link(ws, b, code, 'B');
     await la.connect();
     await lb.connect();
+    await readyUp(la, [lb]);
     la.start();
     const room = srv.rooms.get(code)!;
     await until(() => room.runner?.host.phase === 'play', 5000, 'дубль');
@@ -514,3 +527,100 @@ describe('игровой сервер: адрес WebSocket по входу', ()
   });
 });
 
+
+describe('игровой сервер: клип выбывшего', () => {
+  it('по WebSocket: caps clip, выбитый получает готовый клип по ссылке; без монтажа — null сразу', async () => {
+    const { spawnSync } = await import('node:child_process');
+    if (spawnSync('ffmpeg', ['-version'], { stdio: 'ignore' }).status !== 0) return;
+    const { mkdtempSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const { ClipStore } = await import('../src/clips');
+    const { FilmService } = await import('../src/film');
+    const dir = mkdtempSync(join(tmpdir(), 'clip-ws-'));
+    try {
+      const store = new ClipStore(dir);
+      const film = new FilmService({ store, site: 'benobody.app', fonts: join(__dirname, '../../web/assets/og'), log: () => {} });
+      const srv = new GameServer({ authSecret: SECRET, log: silentLogger, film, clips: store });
+      servers.push(srv);
+      const port = await srv.listen(0, '127.0.0.1');
+      const http = `http://127.0.0.1:${port}`;
+      const ws = `ws://127.0.0.1:${port}/i/blue/ws`;
+      const [a, b] = await Promise.all([anon(http), anon(http)]);
+      const { code } = await create(http, a.token, { name: 'A', settings: { roundSec: 60, maxRounds: 3, kidsMode: false, aiFill: false } });
+      const [la, lb] = [link(ws, a, code, 'A'), link(ws, b, code, 'B')];
+      await la.connect();
+      await lb.connect();
+      expect(lb.caps).toEqual(['clip']);
+      await readyUp(la, [lb]);
+      la.start();
+      const room = srv.rooms.get(code)!;
+      await until(() => room.runner?.host.phase === 'play', 15_000, 'дубль начался');
+      const h = room.runner!.host;
+      const eb = h.sim.playerRound(b.userId)!.eid;
+      const A = h.world.get(h.sim.playerRound(a.userId)!.eid)!;
+      const B = h.world.get(eb)!;
+      await new Promise((r) => setTimeout(r, 1500));
+      A.x = B.x + 4;
+      A.y = B.y;
+      h.sim.intent(a.userId, { k: 'attack', eid: eb });
+      await until(() => !h.sim.playerRound(b.userId)!.alive, 2000, 'b выбит');
+      await new Promise((r) => setTimeout(r, 1700));
+      let eta = 0;
+      const c = await lb.deathClip(h.round, 'ru', false, (ms) => (eta = ms));
+      expect(eta).toBeGreaterThan(0);
+      expect(c).not.toBeNull();
+      const r = await fetch(`${http}/v1/clips/${c!.id}.${c!.ext}`);
+      expect(r.status).toBe(200);
+      expect((await r.arrayBuffer()).byteLength).toBeGreaterThan(100_000);
+      // живой просит — отказ (сервер сам решает, чей клип)
+      expect(await la.deathClip(h.round, 'ru', false)).toBeNull();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+    // сервер без монтажа: caps нет — телефон пишет сам, не спрашивая
+    const { http, ws } = await boot();
+    const u = await anon(http);
+    const { code } = await create(http, u.token);
+    const l = link(ws, u, code, 'U');
+    await l.connect();
+    expect(l.caps).toEqual([]);
+    expect(await l.deathClip(1, 'ru', false)).toBeNull();
+  }, 120_000);
+});
+
+describe('игровой сервер: аварийный выключатель видео', () => {
+  it('файл video-off — телефоны узнают сразу (flags и /v1/flags), клипа на сервере нет; убрали — вернулось', async () => {
+    const { mkdtempSync, rmSync, writeFileSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const { VideoSwitch } = await import('../src/video-switch');
+    const dir = mkdtempSync(join(tmpdir(), 'video-'));
+    const file = join(dir, 'video-off');
+    try {
+      const srv = new GameServer({ authSecret: SECRET, log: silentLogger, video: new VideoSwitch(file, 0) });
+      servers.push(srv);
+      const port = await srv.listen(0, '127.0.0.1');
+      const http = `http://127.0.0.1:${port}`;
+      const ws = `ws://127.0.0.1:${port}/i/blue/ws`;
+      expect(await (await fetch(`${http}/v1/flags`)).json()).toEqual({ video: true });
+      const u = await anon(http);
+      const { code } = await create(http, u.token);
+      const l = link(ws, u, code, 'U');
+      const seen: boolean[] = [];
+      l.onFlags((f) => seen.push(f.video));
+      await l.connect();
+      await until(() => seen.length > 0, 2000, 'flags после входа');
+      expect(l.video).toBe(true);
+      writeFileSync(file, 'x');
+      await until(() => l.video === false, 3000, 'видео выключено');
+      expect(await (await fetch(`${http}/v1/flags`)).json()).toEqual({ video: false });
+      expect(await l.deathClip(1, 'ru', false)).toBeNull();
+      rmSync(file);
+      await until(() => l.video === true, 3000, 'видео вернулось');
+      expect(seen).toEqual([true, false, true]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

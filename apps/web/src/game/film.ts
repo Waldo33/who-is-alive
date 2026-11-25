@@ -16,7 +16,7 @@ import { CH_H, CH_W, F, OL_H, OL_W } from './sprites';
  *     стоп-кадр; конец куска — «ирис» сужается на герое
  *   → «а ещё в этом матче»: хлопушка «Дубль N», ирис раскрывается, момент коротко (счёт до → после)
  *   → финал-сюжет (story.ts): «Камбэк матча», «Фотофиниш», «Дуэль матча», «Гроза площадки», «Невидимка»,
- *     «Без шансов» или просто «Звезда фильма» — заголовок, доказательство (график очков, дуэль, толпа под
+ *     «Без шансов» или просто «Звезда фильма» — заголовок, доказательство (пьедестал, дуэль, толпа под
  *     прожектором…), корона победителю, вызов зрителю под сюжет + QR и адрес
  *   → титры как в кино: «В главной роли», роли-награды, «Соперник», «Массовка — 28 ботов», окошко
  *     «Неудачные дубли».
@@ -31,7 +31,13 @@ const SAFE_L = 6;
 const SAFE_R = 156;
 const REWIND_MS = 500;
 export const FINALE_MS = 4600;
-export const CREDITS_MS = 4000;
+export const CREDITS_MS = 3200;
+/**
+ * Момент триумфа победителя — последним кадром фильма, как в игре после последнего дубля (scene.ts ›
+ * showTriumph): поле темнеет, победитель крупно пляшет в луче с короной, имя его цветом, фанфары,
+ * конфетти; музыка уходит к концу. Просьба владельца (ноябрь 2026): «момент триумфа в конце».
+ */
+export const TRIUMPH_MS = 2600;
 /** Ирис: сужение в конце куска и раскрытие после хлопушки. */
 const IRIS_CLOSE_MS = 380;
 const IRIS_OPEN_MS = 320;
@@ -108,13 +114,21 @@ export interface FilmInput {
   self?: number;
   /** Сюжет матча для финала; нет — «Звезда фильма». */
   story?: FilmStory;
+  /**
+   * Как показать очки в финале (камбэк, фотофиниш, отрыв, «Звезда фильма»): пьедестал (по умолчанию,
+   * выбор владельца 24.11.2026), прежний график-гонка, табло или забег по дорожкам.
+   */
+  finale?: FinaleStyle;
 }
+
+export type FinaleStyle = 'chart' | 'board' | 'race' | 'podium';
 
 type Piece =
   | { kind: 'scene'; scene: ClipPlayerScene; dur: number }
   | { kind: 'rewind'; dur: number }
   | { kind: 'finale'; dur: number }
-  | { kind: 'credits'; dur: number };
+  | { kind: 'credits'; dur: number }
+  | { kind: 'triumph'; dur: number };
 
 const smooth = (p: number) => {
   const x = Math.max(0, Math.min(1, p));
@@ -150,7 +164,8 @@ export class FilmScene {
     this.pieces.push(scenePiece(new ClipPlayerScene({ ...base, ...h, mode: 'feature', keepMusic: true })));
     // остальные моменты — коротко, по порядку дублей; не влезают в FILM_CAP_MS — уходят самые слабые
     let extra = inp.rounds.filter((r) => r !== h).map((r) => ({ r, scene: new ClipPlayerScene({ ...base, ...r, mode: 'segment', keepMusic: true }) }));
-    const fixed = this.pieces.reduce((a, p) => a + p.dur, 0) + FINALE_MS + CREDITS_MS;
+    const triumph = inp.winner && !inp.tooAlive ? TRIUMPH_MS : 0;
+    const fixed = this.pieces.reduce((a, p) => a + p.dur, 0) + FINALE_MS + CREDITS_MS + triumph;
     while (extra.length && fixed + extra.reduce((a, x) => a + x.scene.duration, 0) > FILM_CAP_MS) {
       const weakest = extra.reduce((a, x) => (x.r.moment.score < a.r.moment.score ? x : a));
       extra = extra.filter((x) => x !== weakest);
@@ -158,6 +173,7 @@ export class FilmScene {
     for (const x of extra) this.pieces.push(scenePiece(x.scene));
     this.pieces.push({ kind: 'finale', dur: FINALE_MS });
     this.pieces.push({ kind: 'credits', dur: CREDITS_MS });
+    if (triumph) this.pieces.push({ kind: 'triumph', dur: triumph });
     this.bloops = (inp.bloopers ?? []).slice(0, 2).map((b) => new ClipPlayerScene({ ...base, ...b, mode: 'blooper', keepMusic: true }));
     this.duration = this.pieces.reduce((a, p) => a + p.dur, 0);
   }
@@ -233,7 +249,18 @@ export class FilmScene {
       this.drawFinale(local);
       return this.c;
     }
-    this.cue('credits', () => this.sound?.fadeOut(Math.max(0.3, (this.duration - ms) / 1000)));
+    if (p.kind === 'triumph') {
+      this.cue('triumph', () => {
+        this.sound?.play('fanfare');
+        // музыка уходит к концу фильма; фанфары и «Снято!» звучат поверх
+        this.sound?.fadeOut(Math.max(0.3, (this.duration - ms) / 1000));
+      });
+      this.drawTriumph(local);
+      this.sound?.pump();
+      return this.c;
+    }
+    // без триумфа (ничья, «слишком заметные») музыка уходит на титрах
+    if (i === this.pieces.length - 1) this.cue('credits', () => this.sound?.fadeOut(Math.max(0.3, (this.duration - ms) / 1000)));
     this.drawCredits(local);
     this.sound?.pump();
     return this.c;
@@ -358,8 +385,14 @@ export class FilmScene {
     if (fact) text(g, typed(fact, 520), cx, 63, PAL.mist, font, { outline: null, maxWidth: W + 4 });
     // сцена-доказательство
     const art = getArt(this.inp.hook.arena);
-    // «Звезда фильма» без яркого сюжета — тоже с доказательством: гонка очков по дублям
-    if (story && (kind === 'comeback' || kind === 'photo' || kind === 'runaway' || (kind === 'star' && story.lines[0]?.pts.length > 2))) this.drawChart(ms, story);
+    // «Звезда фильма» без яркого сюжета — тоже с доказательством: очки по дублям
+    if (story && (kind === 'comeback' || kind === 'photo' || kind === 'runaway' || (kind === 'star' && story.lines[0]?.pts.length > 2))) {
+      const style = this.inp.finale ?? 'podium';
+      if (style === 'board') this.drawBoard(ms, story);
+      else if (style === 'race') this.drawRace(ms, story, art);
+      else if (style === 'podium') this.drawPodium(ms, art);
+      else this.drawChart(ms, story);
+    }
     else if (story && kind === 'duel') this.drawDuel(ms, story, art);
     else if (story && kind === 'hunter') this.drawHunter(ms, story, art);
     else if (story && kind === 'ghost') this.drawGhost(ms, story, art);
@@ -418,6 +451,100 @@ export class FilmScene {
 
   private dance(ms: number, phase = 0): number {
     return F.DANCE + (Math.floor((ms + phase) / 160) % 4);
+  }
+
+  /**
+   * «Табло дублей»: строка на игрока — имя на полоске очков и число справа. Дубль за дублем
+   * («Дубль 1, 2, 3…» сверху) полоски растут, а строки меняются местами при обгоне — видно,
+   * кто вёл и кто кого догнал. Полоска лидера доходит до флажка финиша; герой — в жёлтой рамке.
+   * Камбэк — красное «−N» у героя в дубль, когда он был ниже всех; фотофиниш — скобка между первыми двумя.
+   */
+  private drawBoard(ms: number, s: FilmStory): void {
+    const g = this.g;
+    const t = this.inp.t;
+    const font = this.inp.font;
+    const n = s.lines[0].pts.length - 1;
+    if (n < 1) return;
+    const names = new Map(this.inp.cast.map((c) => [c.color, c.name]));
+    const maxP = Math.max(1, ...s.lines.flatMap((l) => l.pts));
+    const X0 = SAFE_L + 2;
+    const X1 = SAFE_R - 16;
+    const Y0 = 88;
+    const ROW = 15;
+    const BAR = 11;
+    // шаги табло: по дублю, всё табло — до короны
+    const start = 700;
+    const step = Math.max(450, Math.min(900, (CROWN_AT - 150 - start) / n));
+    const k = Math.max(0, Math.min(n, (ms - start) / step));
+    const i = Math.min(n - 1, Math.floor(k));
+    const e = smooth((k - i) * 1.6);
+    const cur = ms < start ? 0 : Math.min(n, i + 1);
+    // счётчик дублей с ударом на каждый шаг
+    if (ms >= start) {
+      this.cue(`board${cur}`, () => this.sound?.play('count'));
+      text(g, fmt(t.clip.round, { n: cur }), (SAFE_L + SAFE_R) / 2, 76, PAL.mist, font, { outline: null });
+    }
+    // места до и после текущего шага: больше очков — выше, при равенстве — герой, потом итог матча
+    const fin = (l: FilmStory['lines'][number]) => l.pts[n];
+    const rank = (j: number) => {
+      const order = [...s.lines].sort((a, b) => b.pts[j] - a.pts[j] || (b.color === s.hero.color ? 1 : 0) - (a.color === s.hero.color ? 1 : 0) || fin(b) - fin(a) || a.color - b.color);
+      return new Map(order.map((l, r) => [l.color, r]));
+    };
+    const from = rank(ms < start ? 0 : i);
+    const to = rank(ms < start ? 0 : i + 1);
+    // флажок финиша
+    g.fillStyle = PAL.slate;
+    for (let y = Y0 - 2; y < Y0 + s.lines.length * ROW - 2; y += 3) g.fillRect(X1 + 1, y, 1, 2);
+    g.fillRect(X1 + 1, Y0 - 9, 1, 7);
+    for (let q = 0; q < 8; q++) {
+      g.fillStyle = (q + Math.floor(q / 4)) % 2 ? PAL.ink : PAL.white;
+      g.fillRect(X1 + 2 + (q % 4) * 2, Y0 - 9 + Math.floor(q / 4) * 2, 2, 2);
+    }
+    const rows = s.lines.map((l) => {
+      const ra = from.get(l.color)!;
+      const rb = to.get(l.color)!;
+      const y = Math.round(Y0 + (ra + (rb - ra) * e) * ROW);
+      const a = ms < start ? 0 : l.pts[i];
+      const b = ms < start ? 0 : l.pts[i + 1];
+      const v = a + (b - a) * e;
+      return { l, y, v, shown: e > 0.5 ? b : a, hero: l.color === s.hero.color };
+    });
+    // герой рисуется последним — поверх обгоняемых
+    rows.sort((a, b) => Number(a.hero) - Number(b.hero));
+    let heroTip = { x: X0, y: Y0 };
+    for (const r of rows) {
+      const w = Math.max(2, Math.round(((X1 - X0) * r.v) / maxP));
+      g.fillStyle = PAL.night;
+      g.fillRect(X0, r.y, X1 - X0, BAR);
+      g.fillStyle = PLAYER_COLORS[r.l.color];
+      g.fillRect(X0, r.y, w, BAR);
+      if (r.hero) {
+        g.fillStyle = PAL.yellow;
+        g.fillRect(X0 - 1, r.y - 1, X1 - X0 + 2, 1);
+        g.fillRect(X0 - 1, r.y + BAR, X1 - X0 + 2, 1);
+        g.fillRect(X0 - 1, r.y, 1, BAR);
+        g.fillRect(X1, r.y, 1, BAR);
+        heroTip = { x: X0 + w, y: r.y };
+      }
+      text(g, names.get(r.l.color) ?? '', X0 + 2, r.y + 2, PAL.white, font, { align: 'left', maxWidth: X1 - X0 - 4 });
+      text(g, String(r.shown), SAFE_R, r.y + 2, r.hero ? PAL.yellow : PAL.white, font, { align: 'right', outline: null });
+    }
+    // камбэк: «−N» у героя, пока табло стоит на его худшем дубле
+    if (s.kind === 'comeback' && s.lowRound !== undefined && cur === s.lowRound && ms >= start) {
+      const hr = rows.find((r) => r.hero)!;
+      text(g, `-${s.value}`, Math.min(X1 - 14, heroTip.x + 3), hr.y + 2, PAL.red, font, { align: 'left' });
+    }
+    // фотофиниш: скобка между героем и соперником на финише
+    if (s.kind === 'photo' && s.rival && k >= n) {
+      const ya = rows.find((r) => r.hero)!.y;
+      const yb = rows.find((r) => r.l.color === s.rival!.color)?.y ?? ya;
+      const x = SAFE_R + 3;
+      g.fillStyle = PAL.yellow;
+      g.fillRect(x, Math.min(ya, yb) + 5, 1, Math.abs(yb - ya) + 1);
+      g.fillRect(x - 2, ya + 5, 2, 1);
+      g.fillRect(x - 2, yb + 5, 2, 1);
+    }
+    if (k >= n) this.crown(ms, Math.min(X1 - 6, heroTip.x - 6), heroTip.y + 1, getArt(this.inp.hook.arena));
   }
 
   /**
@@ -487,6 +614,100 @@ export class FilmScene {
       g.fillRect(x - 2, ya, 2, 1);
       g.fillRect(x - 2, yb, 2, 1);
     }
+  }
+
+
+  /**
+   * «Забег к финишу»: дорожка на игрока (победитель — сверху), имя у старта, очки — у флажка.
+   * Каждый дубль — рывок: человечек бежит вперёд на свои очки; лидер добегает до флажка.
+   */
+  private drawRace(ms: number, s: FilmStory, art: ReturnType<typeof getArt>): void {
+    const g = this.g;
+    const t = this.inp.t;
+    const font = this.inp.font;
+    const n = s.lines[0].pts.length - 1;
+    if (n < 1) return;
+    const names = new Map(this.inp.cast.map((c) => [c.color, c.name]));
+    const maxP = Math.max(1, ...s.lines.flatMap((l) => l.pts));
+    const X0 = SAFE_L + 8;
+    const X1 = SAFE_R - 18;
+    const Y0 = 84;
+    const LANE = 18;
+    const start = 700;
+    const step = Math.max(450, Math.min(900, (CROWN_AT - 150 - start) / n));
+    const k = Math.max(0, Math.min(n, (ms - start) / step));
+    const i = Math.min(n - 1, Math.floor(k));
+    const e = smooth((k - i) * 1.4);
+    const cur = ms < start ? 0 : Math.min(n, i + 1);
+    if (ms >= start) {
+      this.cue(`race${cur}`, () => this.sound?.play('count'));
+      text(g, fmt(t.clip.round, { n: cur }), (SAFE_L + SAFE_R) / 2, 74, PAL.mist, font, { outline: null });
+    }
+    const lanes = [...s.lines].sort((a, b) => b.pts[n] - a.pts[n] || (b.color === s.hero.color ? 1 : 0) - (a.color === s.hero.color ? 1 : 0) || a.color - b.color);
+    // финишная черта — шашечки во всю высоту дорожек
+    for (let y = Y0; y < Y0 + lanes.length * LANE; y += 2) {
+      g.fillStyle = (y / 2) % 2 ? PAL.white : PAL.ink;
+      g.fillRect(X1 + 6, y, 2, 2);
+      g.fillStyle = (y / 2) % 2 ? PAL.ink : PAL.white;
+      g.fillRect(X1 + 8, y, 2, 2);
+    }
+    lanes.forEach((l, li) => {
+      const floor = Y0 + li * LANE + LANE - 2;
+      const isHero = l.color === s.hero.color;
+      // дорожка
+      g.fillStyle = PAL.night;
+      g.fillRect(X0 - 6, floor - 1, X1 - X0 + 12, 2);
+      text(g, names.get(l.color) ?? '', X0 - 4, floor - 13, PLAYER_COLORS[l.color], font, { align: 'left', maxWidth: X1 - X0 });
+      const a = ms < start ? 0 : l.pts[i];
+      const b = ms < start ? 0 : l.pts[i + 1];
+      const v = a + (b - a) * e;
+      const x = X0 + ((X1 - X0) * v) / maxP;
+      const moving = ms >= start && k < n && b !== a && e > 0 && e < 1;
+      const done = k >= n && l.pts[n] === maxP;
+      const fr = done ? this.dance(ms, li * 90) : moving ? F.S + 2 + (Math.floor(ms / 90) % 4) : F.S;
+      this.figure(art, li, x, floor, 1, fr, l.color);
+      text(g, String(e > 0.5 || k >= n ? b : a), SAFE_R, floor - 9, isHero ? PAL.yellow : PAL.white, font, { align: 'right', outline: null });
+      if (isHero && k >= n) this.crown(ms, Math.round(x), floor - CH_H - 1, art);
+    });
+  }
+
+  /**
+   * «Пьедестал»: ступени 2-1-3 поднимаются по очереди (третье место — первым), на них спрыгивают
+   * человечки в цветах игроков, очки — на ступенях; сверху — места списком «1 Имя», в цвете игрока
+   * (длинное имя не налезает на соседей). Корону заменяет сама верхняя ступень и танец победителя.
+   */
+  private drawPodium(ms: number, art: ReturnType<typeof getArt>): void {
+    const g = this.g;
+    const font = this.inp.font;
+    const cast = this.inp.cast.slice(0, 3);
+    const cx = (SAFE_L + SAFE_R) / 2;
+    const base = 154;
+    const W = 44;
+    // место → x центра ступени, высота, когда встаёт
+    const spot = [
+      { x: cx, h: 22, at: 1500 },
+      { x: cx - W - 2, h: 16, at: 1100 },
+      { x: cx + W + 2, h: 10, at: 700 },
+    ];
+    cast.forEach((c, i) => {
+      const sp = spot[i];
+      if (ms < sp.at) return;
+      const rise = smooth((ms - sp.at) / 260);
+      const h = Math.round(sp.h * rise);
+      g.fillStyle = PAL.night;
+      g.fillRect(Math.round(sp.x - W / 2), base - h, W, h);
+      g.fillStyle = PLAYER_COLORS[c.color];
+      g.fillRect(Math.round(sp.x - W / 2), base - h, W, 2);
+      // место в списке сверху
+      const ly = 71 + i * 9;
+      text(g, String(i + 1), SAFE_L + 2, ly, i === 0 ? PAL.yellow : PAL.mist, font, { align: 'left', outline: null });
+      text(g, c.name, SAFE_L + 14, ly, PLAYER_COLORS[c.color], font, { align: 'left', maxWidth: SAFE_R - SAFE_L - 14 });
+      if (rise < 1) return;
+      this.cue(`pod${i}`, () => this.sound?.play('count'));
+      text(g, String(c.points), sp.x, base - sp.h + 3, i === 0 ? PAL.yellow : PAL.white, font, { outline: null });
+      const drop = Math.max(0, 12 - Math.floor((ms - sp.at - 260) / 20));
+      this.figure(art, i, sp.x, base - sp.h - drop, 2, i === 0 && ms >= CROWN_AT ? this.dance(ms) : F.D, c.color);
+    });
   }
 
   /** Дуэль: двое в стойке в двух лучах, счёт дуэли между ними; герой бьёт — соперник исчезает. */
@@ -591,6 +812,34 @@ export class FilmScene {
     this.crown(ms, cx, floor - CH_H * 3 - 2, art);
   }
 
+  /** Момент триумфа: победитель ×4 пляшет в луче, корона, имя его цветом, конфетти. */
+  private drawTriumph(ms: number): void {
+    const win = this.inp.winner;
+    if (!win) return;
+    const g = this.g;
+    const art = getArt(this.inp.hook.arena);
+    const cx = (SAFE_L + SAFE_R) / 2;
+    const W = SAFE_R - SAFE_L;
+    this.backdrop(0.9);
+    // вход: первые 200 мс поле темнеет из титров — фигура поднимается снизу
+    const rise = Math.round((1 - smooth(ms / 260)) * 30);
+    const floor = 168 + rise;
+    this.beam(cx, floor, 30);
+    const hop = Math.floor(ms / 160) % 2 ? -3 : 0;
+    this.figure(art, 0, cx, floor + hop, 4, this.dance(ms), win.color);
+    // корона уже на голове (упала в финале) — подпрыгивает вместе с ним
+    const at = art.icons.names.indexOf('crown');
+    if (at >= 0) {
+      g.save();
+      g.scale(3, 3);
+      frame(g, art.icons.canvas, 8, 8, at, Math.round(cx / 3) - 4, Math.round((floor + hop - CH_H * 4 - 3) / 3) - 8);
+      g.restore();
+    }
+    text(g, this.inp.t.game.winner.replace(/:$/, ''), cx, 44, PAL.yellow, this.inp.font, { size: 2, maxWidth: W });
+    text(g, win.name, cx, 182 + rise, PLAYER_COLORS[win.color], this.inp.font, { size: 2, maxWidth: W });
+    this.confetti(ms + 800);
+  }
+
   /** Луч прожектора сверху и пятно света на полу. */
   private beam(x: number, floor: number, half: number): void {
     const g = this.g;
@@ -672,7 +921,9 @@ export class FilmScene {
       if (ms >= start) {
         if (!this.bloopSound.has(i)) {
           this.bloopSound.add(i);
-          sc.sound = this.sound;
+          // неудачный дубль в титрах — только эффекты: его части не трогают музыку фильма
+          // (раньше тишина перед ударом и возобновление обрывали затухание и возвращали песню)
+          sc.sound = this.sound ? sfxOnly(this.sound) : null;
         }
         sc.draw(Math.min(ms - start, sc.duration));
       } else sc.draw(0);
@@ -690,6 +941,12 @@ export class FilmScene {
     }
     text(g, this.inp.site, cx, 200, PAL.cyan, font, { outline: null });
   }
+}
+
+/** Звук без управления музыкой: только эффекты и планирование. */
+function sfxOnly(s: ClipSoundCore): ClipSoundCore {
+  const no = () => {};
+  return { ...s, start: no, setTwist: no, pause: no, resume: no, intensity: no, level: no, fadeOut: no, hush: no, stop: no, play: (n, k) => s.play(n, k), pump: () => s.pump() };
 }
 
 function scenePiece(scene: ClipPlayerScene): Piece {

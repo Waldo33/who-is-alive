@@ -2,7 +2,7 @@ import { PAL, PLAYER_COLORS } from '@kto/assets';
 import { tp } from '@kto/game-core';
 import type { ArenaDef, AwardCard, Dict, Lang, PlayerInfo } from '@kto/game-core';
 import { fitSize, frame, getArt, scaledCanvas, text } from './art';
-import { CH_H, CH_W, F, OL_H, OL_W } from './sprites';
+import { AWARD_ICON, CH_H, CH_W, F, OL_H, OL_W } from './sprites';
 
 /**
  * Карточка результата матча 1080×1350 (4:5 — так её не обрезают ленты соцсетей):
@@ -90,12 +90,25 @@ export function drawResultCard(inp: CardInput): HTMLCanvasElement {
     g.fillRect(x + 1, y + 1, LW - 18, 31);
     g.fillStyle = PAL.orchid;
     g.fillRect(x + 1, y + 1, LW - 18, 1);
-    frame(g, art.icons.canvas, 8, 8, Math.max(0, crown), x + 4, y + 4);
-    text(g, fit(def.title, 18), x + 15, y + 4, PAL.yellow, font, { align: 'left', outline: null });
+    // крупная иконка ×2 в тёмном окошке с янтарной рамкой слева, текст справа — спокойнее иконки
+    g.fillStyle = PAL.ink;
+    g.fillRect(x + 2, y + 2, 28, 28);
+    g.fillStyle = PAL.amber;
+    g.fillRect(x + 3, y + 3, 26, 26);
+    g.fillStyle = PAL.night;
+    g.fillRect(x + 4, y + 4, 24, 24);
+    g.save();
+    g.translate(x + 4, y + 4);
+    g.scale(2, 2);
+    frame(g, art.awards.canvas, AWARD_ICON, AWARD_ICON, Math.max(0, art.awards.names.indexOf(a.id)), 0, 0);
+    g.restore();
+    const tx = x + 32;
+    const tw = LW - 16 - 32 - 2;
+    text(g, fit(def.title, 16), tx, y + 4, PAL.sand, font, { align: 'left', outline: null, maxWidth: tw });
     const who = a.pids.map((pid) => byColor(pid)?.name ?? '?');
     const whoS = who.length > 1 ? who.map((n) => n.split(' ')[0]).join(t.game.and) : who[0];
-    text(g, whoS, x + 4, y + 14, PAL.white, font, { align: 'left', outline: null, maxWidth: LW - 24 });
-    text(g, fit(tp(inp.lang, def.text, a.value), 20), x + 4, y + 23, PAL.mist, font, { align: 'left', outline: null });
+    text(g, whoS, tx, y + 14, PAL.white, font, { align: 'left', outline: null, maxWidth: tw });
+    text(g, fit(tp(inp.lang, def.text, a.value), 16), tx, y + 23, PAL.mist, font, { align: 'left', outline: null, maxWidth: tw });
   });
 
   text(g, t.card.cta, LW / 2, LH - 22, PAL.white, font, { outline: null });
