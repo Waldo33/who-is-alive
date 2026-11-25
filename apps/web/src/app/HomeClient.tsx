@@ -21,8 +21,6 @@ import { createRoom } from '@/net/room';
 
 const CROWD = Array.from({ length: 11 }, (_, i) => i);
 const CODE_RE = /^[ABCDEFGHJKMNPQRSTUVWXYZ]{4}$/;
-/** Канал игры в Telegram (новости, ролики). */
-const TG_CHANNEL = 'https://t.me/benobody_app';
 
 export default function HomeClient() {
   const router = useRouter();
@@ -164,11 +162,6 @@ export default function HomeClient() {
           </a>
         )}
       </div>
-      {web && (
-        <a className="link tg-channel" href={TG_CHANNEL} target="_blank" rel="noopener" onClick={() => track('tg_tap', { what: 'channel' })}>
-          {t.start.tgChannel}
-        </a>
-      )}
       {newbie && (
         <Link className="link" href={`/learn?next=${encodeURIComponent('/sandbox?go')}`} onClick={() => track('learn_tap', { from: 'home' })}>
           {t.start.learnFirst}

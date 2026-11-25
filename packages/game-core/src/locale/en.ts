@@ -87,7 +87,6 @@ export const en: Dict = {
     quickPlay: 'Play',
     withFriends: 'With friends',
     playTelegram: 'Play in Telegram',
-    tgChannel: 'Game channel on Telegram',
     learnFirst: 'How to play — a practice take',
     dailyDone: 'Done · new one tomorrow',
     newYear: 'Happy holidays! The New Year “Office Party” is on',

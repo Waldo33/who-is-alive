@@ -130,7 +130,6 @@ export const ru = {
     quickPlay: 'Играть',
     withFriends: 'С друзьями',
     playTelegram: 'Играть в Telegram',
-    tgChannel: 'Канал игры в Telegram',
     learnFirst: 'Как играть — пробный дубль',
     dailyDone: 'Пройден · новый завтра',
     /** Главная в новогодний сезон: строка под слоганом. */
