@@ -34,8 +34,8 @@ describe('i18n', () => {
         g.soundOffHint, g.soundOn, g.soundOff, g.outSub, g.outHint, g.ghost, g.ghostHint, g.hedge, ...Object.values(g.denied),
         ...Object.values(g.crowd), g.crowdVote, g.crowdGhost, g.voteMajority, g.voteMinority, g.spotted, g.spottedMe, g.clapHint, g.clapDone, g.cutByCrowd, g.modTitle,
         ...Object.values(t.mods).flatMap((m) => [m.name, m.desc]), g.withCrowd, g.late, g.watchLate, g.findYourself,
-        g.spectator, g.spectatorLive, g.spectatorWait, g.spectatorDelay.replace('{n}', '10'), g.reveal, g.revealReplay, g.revealFinal, g.guessed, g.missed, g.caught, g.killedBy, g.noAccuse,
-        tp(lang, g.resultsTitle, 5), ...Object.values(g.endReason), g.starsBurned, g.noAwards, tp(lang, g.nextIn, 10), fmt(g.nextTake, { n: 12, s: 10 }), fmt(g.toWin, { n: 12 }),
+        g.spectator, g.spectatorLive, g.spectatorWait, g.spectatorDelay.replace('{n}', '10'), g.reveal, g.revealReplay, g.revealFinal, g.guessed, g.missed, fmt(g.caught, { n: 3 }), g.accuseTitle, g.accuseHint, g.killedBy, g.noAccuse,
+        tp(lang, g.resultsTitle, 5), ...Object.values(g.endReason), g.noAwards, tp(lang, g.nextIn, 10), fmt(g.nextTake, { n: 12, s: 10 }), fmt(g.toWin, { n: 12 }),
         g.youWon, g.winner, g.tooAlive, g.withFriends, tp(lang, g.roundTheme, 5, { theme: t.themes.reduce((a, b) => (a.length > b.length ? a : b)) }),
         ...Object.values(t.themeText).flatMap((x) =>
           Object.values(x ?? {}).flatMap((v) => (typeof v === 'string' ? [v] : (Object.values(v ?? {}) as string[]))),

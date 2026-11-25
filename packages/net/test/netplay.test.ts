@@ -116,7 +116,7 @@ describe('сетевая игра', () => {
       seenPhases.add(rig.guests[0].phase);
     }
     const g = rig.guests[0];
-    expect([...seenPhases].sort()).toEqual(['countdown', 'match_end', 'play', 'results', 'reveal'].sort());
+    expect([...seenPhases].sort()).toEqual(['accuse', 'countdown', 'match_end', 'play', 'results', 'reveal'].sort());
     expect(g.match).not.toBeNull();
     expect(g.scores).toEqual(rig.host.scores);
     expect(g.match!.winners).toEqual(rig.host.match!.winners);

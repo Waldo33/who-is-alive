@@ -92,6 +92,14 @@ export class AiPlayer implements AiAgent {
       }
       return;
     }
+    // живой ИИ в стоп-кадре «Кто ещё живой?» — подумал и ставит метку на самого подозрительного
+    if (sim.phase === 'accuse' && me.alive) {
+      if (me.accused === null && this.rng.chance(0.04)) {
+        const target = this.topSuspect(sim, Infinity) ?? this.randomOther(sim);
+        if (target !== null) sim.intent(this.pid, { k: 'accuse', eid: target });
+      }
+      return;
+    }
     if (sim.phase !== 'play' || !me.alive) return;
     const e = w.get(this.eid);
     if (!e || !e.alive) return;

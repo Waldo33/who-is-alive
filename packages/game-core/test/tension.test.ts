@@ -39,7 +39,7 @@ describe('Напряжение: новые механики', () => {
     expect(second).toBeGreaterThanOrEqual(sim.cfg.starRespawnSec * 1000 - 100);
   });
 
-  it('три звезды, но собравшего вычислили — +2 за звёзды сгорают; не вычислили — остаются', () => {
+  it('три звезды не сгорают, даже если собравшего вычислили: у него крадут очко', () => {
     const play = (caught: boolean) => {
       const sim = new MatchSim(makeConfig({ roundMods: false }), players.slice(0, 3), 42);
       runUntil(sim, () => sim.phase === 'play');
@@ -66,9 +66,10 @@ describe('Напряжение: новые механики', () => {
       return sim.summary!.points['a'];
     };
     expect(play(false).stars).toBe(2);
-    const burned = play(true);
-    expect(burned.stars).toBe(0);
-    expect(burned.survive).toBe(0);
+    const caught = play(true);
+    expect(caught.stars).toBe(2);
+    expect(caught.survive).toBe(1);
+    expect(caught.stolen).toBe(-1);
   });
 
   it('статисты тоже берут звёзды — подбор звезды не доказывает, что это игрок', () => {

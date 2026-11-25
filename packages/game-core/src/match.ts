@@ -108,6 +108,8 @@ export interface PointsLine {
   survive: number;
   stars: number;
   accuse: number;
+  /** Сколько очков украли угадавшие тебя (≤ 0). Старые записи — без поля. */
+  stolen?: number;
   total: number;
 }
 
@@ -293,7 +295,8 @@ export class MatchSim {
         this.playTick();
         break;
       case 'accuse':
-        // отдельного экрана обвинения больше нет (обвиняют вырезанные по ходу дубля); фаза — для старых версий
+        // «Кто ещё живой?»: мир стоит, живые ставят свою метку (вырезанные свою уже поставили по ходу дубля)
+        for (const a of this.agents) a.update(this);
         if (this.now >= this.phaseEndsAt) this.finishRound();
         break;
       case 'reveal':
@@ -1021,13 +1024,16 @@ export class MatchSim {
     // свет обратно: разоблачение — в обычном облике темы
     if (this.world.twist) this.emit({ t: 'twist', on: false, at: this.world.time });
     this.world.step(); // применить остановку
-    this.finishRound();
+    // живые тоже угадывают: короткий стоп-кадр «Кто ещё живой?» (в «Купальской ночи» — нет: там свой финал)
+    if (!hasSanity(this.theme) && this.pr.length >= 2 && this.pr.some((p) => p.alive)) {
+      this.setPhase('accuse', (this.cfg.kidsMode ? this.cfg.kidsAccuseSec : this.cfg.accuseSec) * 1000);
+    } else this.finishRound();
   }
 
   private finishRound(): void {
     const cfg = this.cfg;
     const pts: Record<string, PointsLine> = {};
-    for (const p of this.pr) pts[p.pid] = { kill: p.kills * cfg.points.kill, survive: 0, stars: 0, accuse: 0, total: 0 };
+    for (const p of this.pr) pts[p.pid] = { kill: p.kills * cfg.points.kill, survive: 0, stars: 0, accuse: 0, stolen: 0, total: 0 };
     const aliveEids = new Set(this.pr.filter((p) => p.alive).map((p) => p.eid));
     // с рассудком: дубль выигрывает последний выживший — один живой; все сгинули — кто продержался дольше;
     // плёнка кончилась при нескольких живых — у кого голова яснее
@@ -1040,21 +1046,28 @@ export class MatchSim {
       if (p.accused === null) continue;
       const correct = aliveEids.has(p.accused);
       accusations.push({ pid: p.pid, eid: p.accused, correct });
-      accusedCount.set(p.accused, (accusedCount.get(p.accused) ?? 0) + 1);
-      if (correct) this.addScore(p.pid, cfg.points.accuse, 'accuse', pts);
+      if (correct) accusedCount.set(p.accused, (accusedCount.get(p.accused) ?? 0) + 1);
     }
+    // выжил и три звезды — засчитываются всегда, ничего не сгорает
     for (const p of this.pr) {
-      // выжил, но тебя вычислили — очко за выживание пропадает (обвинитель своё +1 уже получил)
-      if (p.alive && !accusedCount.get(p.eid)) this.addScore(p.pid, cfg.points.survive, 'survive', pts);
-      // три звезды, но тебя вычислили — звёзды сгорели: иначе бег по звёздам в открытую выгоднее всего
-      if (this.starWinner === p.pid && (hasSanity(this.theme) || !accusedCount.get(p.eid))) this.addScore(p.pid, cfg.points.stars, 'stars', pts);
+      if (p.alive) this.addScore(p.pid, cfg.points.survive, 'survive', pts);
+      if (this.starWinner === p.pid) this.addScore(p.pid, cfg.points.stars, 'stars', pts);
+    }
+    // «Кража»: угадал живого — забрал у него очко из счёта матча. Угадавшему +1 всегда,
+    // у вычисленного −1 за каждого угадавшего, но счёт не уходит ниже нуля. Отстающие догоняют лидера.
+    for (const a of accusations) {
+      if (!a.correct) continue;
+      this.addScore(a.pid, cfg.points.accuse, 'accuse', pts);
+      const victim = this.pr.find((q) => q.eid === a.eid)!;
+      const take = Math.min(cfg.points.accuse, this.scores[victim.pid]);
+      if (take > 0) this.addScore(victim.pid, -take, 'stolen', pts);
     }
     // «Купальская ночь»: место — по тому, кто продержался дольше: очко за каждого, кто сгинул раньше
     if (hasSanity(this.theme)) {
       const died = (p: PlayerRound) => p.diedAt ?? Infinity;
       for (const p of this.pr) this.addScore(p.pid, this.pr.filter((q) => died(q) < died(p)).length, 'survive', pts);
     }
-    for (const p of this.pr) pts[p.pid].total = pts[p.pid].kill + pts[p.pid].survive + pts[p.pid].stars + pts[p.pid].accuse;
+    for (const p of this.pr) pts[p.pid].total = pts[p.pid].kill + pts[p.pid].survive + pts[p.pid].stars + pts[p.pid].accuse + (pts[p.pid].stolen ?? 0);
 
     const stats: RoundStats[] = this.pr.map((p) => ({
       pid: p.pid,
@@ -1113,7 +1126,7 @@ export class MatchSim {
   private addScore(pid: string, delta: number, reason: keyof Omit<PointsLine, 'total'>, pts?: Record<string, PointsLine>): void {
     if (!delta) return;
     this.scores[pid] += delta;
-    if (pts) pts[pid][reason] += delta;
+    if (pts) pts[pid][reason] = (pts[pid][reason] ?? 0) + delta;
     this.notices.push({ t: 'score', pid, delta, reason });
   }
 
@@ -1227,8 +1240,9 @@ export class MatchSim {
       return;
     }
     if (it.k === 'accuse') {
-      // обвинение — метка вырезанного по ходу дубля: одна, можно перенести или снять (eid -1)
-      if (this.phase !== 'play' || p.alive) return;
+      // обвинение — одна метка «?»: вырезанный ставит по ходу дубля, живой — в стоп-кадре «Кто ещё живой?»;
+      // можно перенести или снять (eid -1)
+      if (this.phase === 'play' ? p.alive : this.phase !== 'accuse') return;
       if (it.eid < 0) {
         p.accused = null;
         return;
@@ -1236,7 +1250,7 @@ export class MatchSim {
       const e = this.world.get(it.eid);
       if (!e || !e.alive || it.eid === p.eid) return;
       p.accused = it.eid;
-      p.accusedAsGhost = true;
+      p.accusedAsGhost = !p.alive;
       return;
     }
     if (it.k === 'clap') {

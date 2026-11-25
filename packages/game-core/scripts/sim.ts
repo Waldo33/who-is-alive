@@ -14,7 +14,7 @@ const overrides = cfgi > 0 ? JSON.parse(process.argv[cfgi + 1]) : {};
 let rounds = 0;
 let matches = 0;
 let errors = 0;
-const tally = { time: 0, stars: 0, last_alive: 0, kills: 0, botHits: 0, awards: new Map<string, number>() };
+const tally = { time: 0, stars: 0, last_alive: 0, kills: 0, botHits: 0, stolen: 0, awards: new Map<string, number>() };
 const madness = { players: 0, lost: 0, minSum: 0, endSum: 0, alive: 0 };
 // новые механики: команды (всего / «Толпа решает» / от вырезанных), звёзды (игроки / статисты), вырезанные «Жёстким дублем»
 const mech = { crowd: 0, vote: 0, clap: 0, starP: 0, starB: 0, hardCut: 0, mods: new Map<string, number>(), deadMs: 0 };
@@ -91,6 +91,17 @@ while (rounds < target) {
       scoreSum += roundPts;
       check(Object.values(sim.scores).reduce((a, b) => a + b, 0) === scoreSum, 'сумма очков не сходится');
       check(s.awards.length <= 2, 'больше двух наград');
+      // «Кража»: метка не на себя; украдено не больше, чем угадавших; счёт не ниже нуля
+      for (const a of s.accusations) {
+        const self = s.reveal.find((r) => r.pid === a.pid)!;
+        check(self.eid !== a.eid, 'обвинил сам себя');
+        if (a.correct) tally.stolen++;
+      }
+      for (const r of s.reveal) {
+        const by = s.accusations.filter((a) => a.correct && a.eid === r.eid).length;
+        check(-(s.points[r.pid].stolen ?? 0) <= by, 'украли больше, чем угадавших');
+        check(sim.scores[r.pid] >= 0, 'счёт ниже нуля');
+      }
     }
     if (sim.phase === 'countdown' && lastRound !== sim.round) {
       lastRound = sim.round;
@@ -120,4 +131,5 @@ if (errors) {
   console.error(`Ошибок: ${errors}`);
   process.exit(1);
 }
+console.log(`Угаданных обвинений (краж) на раунд: ${(tally.stolen / rounds).toFixed(2)}`);
 console.log('Инварианты соблюдены ✓');

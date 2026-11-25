@@ -989,10 +989,11 @@ export class GameScene extends Phaser.Scene {
     const sim = this.sim;
     const me = this.me();
     if (!me) return;
-    if (sim.phase !== 'play') return;
+    if (sim.phase !== 'play' && sim.phase !== 'accuse') return;
     const w = sim.world;
     const mine = w.get(me.eid)!;
-    if (!me.alive) {
+    // метка «?»: вырезанный ставит по ходу дубля, все — в стоп-кадре «Кто ещё живой?» в конце
+    if (!me.alive || sim.phase === 'accuse') {
       const c = this.candidates(x, y)[0];
       if (c) {
         // метка «?» вырезанного — его обвинение: одна, тап по другому переносит, по тому же — снимает
@@ -1218,13 +1219,14 @@ export class GameScene extends Phaser.Scene {
       alive: !!me?.alive,
       // кто вырезал: режиссёр за пропущенную команду («Жёсткий дубль») — сигнал не услышали
       out: me?.alive ? 'none' : (this.outBy ?? 'player'),
-      // обвиняют только вырезанные: живому — na
-      accused: acc ? (acc.correct ? 'right' : 'wrong') : me?.alive ? 'na' : 'none',
+      // угадывают все (живые — в стоп-кадре в конце); в «Купальской ночи» живому — na
+      accused: acc ? (acc.correct ? 'right' : 'wrong') : me?.alive && hasSanity(this.sim.theme) ? 'na' : 'none',
       caught: !!me && s.accusations.some((a) => a.eid === me.eid),
       kill: pts?.kill ?? 0,
       survive: pts?.survive ?? 0,
       stars: pts?.stars ?? 0,
       accuse: pts?.accuse ?? 0,
+      stolen: pts?.stolen ?? 0,
       awards: s.awards.length,
     });
   }
@@ -2727,7 +2729,7 @@ export class GameScene extends Phaser.Scene {
 
     this.tut?.update();
     this.renderCoach();
-    this.dim.setVisible(phase === 'accuse');
+    this.dim.setVisible(false);
     // в обучении подсказку «за кадром» даёт сам шаг сверху, а внизу слева — «Пропустить»
     const ghost = phase === 'play' && !!this.me() && !this.me()!.alive && !this.tut;
     for (const o of this.ghostUi) (o as Phaser.GameObjects.Image).setVisible(ghost);
@@ -2882,7 +2884,7 @@ export class GameScene extends Phaser.Scene {
       const marked = e.markUntil > t;
       v.mark.setVisible(marked);
       if (marked) v.mark.setPosition(x, sy - CH_H - 4 - (Math.floor(t / 150) % 2)).setDepth(sy + 0.4);
-      const q = mode === 'live' && phase === 'play' && me?.accused === e.eid;
+      const q = mode === 'live' && (phase === 'play' || phase === 'accuse') && me?.accused === e.eid;
       v.q.setVisible(q);
       if (q) v.q.setPosition(x + 5, sy - CH_H - 2).setDepth(sy + 0.4);
     });
@@ -3614,6 +3616,13 @@ export class GameScene extends Phaser.Scene {
         }
         break;
       }
+      case 'accuse': {
+        // «Кто ещё живой?»: мир стоит, все ставят метку «?» — угадал живого, украл у него очко
+        this.ovPlate(AY + 2, 28);
+        this.ovText(90, AY + 6, this.t.game.accuseTitle, 'yellow');
+        this.ovText(90, AY + 18, this.t.game.accuseHint, 'white');
+        break;
+      }
       case 'reveal': {
         this.ovPlate(AY + 2, 16);
         this.ovDyn.title = this.ovText(90, AY + 6, this.t.game.reveal, 'yellow');
@@ -3654,13 +3663,10 @@ export class GameScene extends Phaser.Scene {
     const sim = this.sim;
     const s = sim.summary!;
     this.ovPanel(8, AY + 8, 164, 244);
-    // три звезды, но собравшего вычислили — его звёзды сгорели (MatchSim.finishRound)
-    const winner = s.starWinner ? s.reveal.find((r) => r.pid === s.starWinner) : undefined;
     const night = hasSanity(sim.theme) ? this.themeText()?.ends : undefined;
-    const burned = !night && !!winner && s.accusations.some((a) => a.correct && a.eid === winner.eid);
     // с рассудком: остался один / рассвет / туман забрал всех
     const left = s.reveal.filter((r) => r.alive).length;
-    const reason = night ? (left === 1 ? night.last : left ? night.dawn : night.none) : burned ? this.t.game.starsBurned : this.t.game.endReason[s.endReason];
+    const reason = night ? (left === 1 ? night.last : left ? night.dawn : night.none) : this.t.game.endReason[s.endReason];
     this.ovText(90, AY + 14, tp(this.lang, this.t.game.resultsTitle, s.round), 'yellow');
     this.ovText(90, AY + 25, reason, 'mist');
     const order = [...sim.players].sort((a, b) => sim.scores[b.pid] - sim.scores[a.pid]);
@@ -3679,7 +3685,8 @@ export class GameScene extends Phaser.Scene {
       g.fillStyle(hexToInt(PLAYER_COLORS[p.color])).fillRect(10, y + 2, 5, 5);
       this.ov(g, 2010);
       this.ovText(18, y, p.name.slice(0, 14), p.pid === this.sim.selfPid ? 'yellow' : 'white', false);
-      this.ovText(136, y, pts.total ? `+${pts.total}` : '0', pts.total ? 'green' : 'mist', false);
+      // у вычисленного могли украсть больше, чем он набрал за дубль — тогда минус
+      this.ovText(136, y, pts.total > 0 ? `+${pts.total}` : String(pts.total), pts.total > 0 ? 'green' : pts.total < 0 ? 'red' : 'mist', false);
       const total = this.ovText(0, y, String(sim.scores[p.pid]), 'sand', false);
       total.x = 171 - total.width;
     });
@@ -3906,12 +3913,14 @@ export class GameScene extends Phaser.Scene {
         }
         const mine = s.accusations.find((a) => a.pid === this.sim.selfPid);
         const meR = s.reveal.find((r) => r.pid === this.sim.selfPid);
-        // обвиняют только вырезанные — живому строку про обвинение не показываем
-        const verdict = mine ? (mine.correct ? this.t.game.guessed : this.t.game.missed) : meR && !meR.alive ? this.t.game.noAccuse : '';
+        // угадывают все: вырезанные — по ходу дубля, живые — в конце (в «Купальской ночи» живые — нет)
+        const verdict = mine ? (mine.correct ? this.t.game.guessed : this.t.game.missed) : meR && (!meR.alive || !hasSanity(this.sim.theme)) ? this.t.game.noAccuse : '';
         this.ovDyn.final?.setText(verdict).setVisible(true);
         this.ovDyn.final.x = Math.round(90 - this.ovDyn.final.width / 2);
         // тебя вычислили: вторая строка, первая поднимается
-        const caught = !!meR?.alive && s.accusations.some((a) => a.eid === meR.eid);
+        const caughtBy = meR?.alive ? s.accusations.filter((a) => a.correct && a.eid === meR.eid).length : 0;
+        const caught = caughtBy > 0;
+        if (caught) this.ovDyn.caught?.setText(fmt(this.t.game.caught, { n: caughtBy })).setX(Math.round(90 - this.ovDyn.caught.width / 2));
         this.ovDyn.caught?.setVisible(caught);
         this.ovDyn.killedBy?.setVisible(!caught);
         this.ovDyn.killerName?.setVisible(!caught);
