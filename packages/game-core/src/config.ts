@@ -167,13 +167,21 @@ export const DEFAULT_CONFIG = {
 
   // шеф в офисе (boss.ts): поворот перед взглядом (успеть замереть), сколько смотрит, пауза после;
   // выговор — минус ударов на подвал и метка на виду; доля ботов, что не успевают «заработаться»
-  bossWarnMs: 900,
-  kidsBossWarnMs: 1400,
-  bossLookMs: 2200,
-  bossRestMs: [400, 1400] as [number, number],
+  // «Пустой костюм» (решение владельца): «Кхм» — секунда на замереть, взгляд 2 с, не чаще раза в 6 с;
+  // иногда постоит у кого-то за спиной, иногда ткнёт рукавом без выговора (ложная тревога);
+  // второй выговор за дубль обнуляет удары подвала
+  bossWarnMs: 1000,
+  kidsBossWarnMs: 1500,
+  bossLookMs: 2000,
+  bossRestMs: [3000, 4000] as [number, number],
+  bossStayLook: 0.4, // после взгляда — посмотреть ещё раз с места, не уходя
+  bossLingerChance: 0.3,
+  bossLingerMs: 2000,
+  bossFalseAlarm: 0.35,
+  bossZeroAt: 2,
   bossPenalty: 2,
   bossMarkSec: 2,
-  bossBotSlip: 0.1,
+  bossBotSlip: 0.07,
 
   // сужение
   zoneStartBeforeEndSec: 20,

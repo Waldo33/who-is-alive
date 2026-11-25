@@ -6,7 +6,7 @@ export type Sfx =
   | 'step' | 'hitPlayer' | 'hitBot' | 'poof' | 'starTake' | 'starSpawn' | 'crowd' | 'tick'
   | 'click' | 'ready' | 'accuseRight' | 'accuseWrong' | 'fanfare' | 'sad' | 'hedge' | 'pigeon' | 'drum' | 'denied' | 'count' | 'swing' | 'flicker' | 'dusk' | 'siren' | 'whack' | 'clang' | 'stab' | 'knockedOut'
   | 'hitOther' | 'cut' | 'clap' | 'logo' | 'wrap' | 'unmask' | 'rewind' | 'leshyStep' | 'leshyBreath' | 'leshyStinger' | 'leshyTake' | 'leshyCall' | 'snap' | 'whisper' | 'scream' | 'fern'
-  | 'bossAhem' | 'bossStamp' | 'bossStep' | 'bossStare' | 'doorCreak' | 'doorShut';
+  | 'bossAhem' | 'bossStamp' | 'bossStare' | 'doorCreak' | 'doorShut' | 'doorLock' | 'clockTick';
 
 /**
  * Приоритет эффекта (звуковой гайд, план звука): P1 — меняет решение игрока, обязан пробиться
@@ -14,13 +14,13 @@ export type Sfx =
  * на поле (−35…−39 дБ, глушит на 4 дБ); остальное — фон. Уровни проверяет `pnpm --filter web sound-check`.
  */
 export const P1: ReadonlySet<Sfx> = new Set<Sfx>(['hitPlayer', 'hitBot', 'starTake', 'crowd', 'ready', 'knockedOut', 'cut', 'drum', 'accuseRight', 'accuseWrong', 'unmask', 'wrap', 'logo', 'leshyStinger', 'leshyTake', 'scream', 'fern', 'bossAhem']);
-export const P2: ReadonlySet<Sfx> = new Set<Sfx>(['hitOther', 'whack', 'clang', 'stab', 'starSpawn', 'flicker', 'dusk', 'leshyBreath', 'bossStamp', 'bossStare', 'doorCreak', 'doorShut']);
+export const P2: ReadonlySet<Sfx> = new Set<Sfx>(['hitOther', 'whack', 'clang', 'stab', 'starSpawn', 'flicker', 'dusk', 'leshyBreath', 'bossStamp', 'bossStare', 'doorCreak', 'doorShut', 'doorLock']);
 
 /**
  * Частые звуки: каждый раз чуть другие (±30 центов, ±1,5 дБ), чтобы за три матча не стать
  * «пулемётом». Сигналы (команда, старт, логотип) не меняются — их узнают по звуку.
  */
-const VARY: ReadonlySet<Sfx> = new Set<Sfx>(['step', 'hitPlayer', 'hitOther', 'hitBot', 'poof', 'starSpawn', 'tick', 'click', 'hedge', 'pigeon', 'whack', 'clang', 'stab', 'swing', 'unmask', 'bossStep']);
+const VARY: ReadonlySet<Sfx> = new Set<Sfx>(['step', 'hitPlayer', 'hitOther', 'hitBot', 'poof', 'starSpawn', 'tick', 'click', 'hedge', 'pigeon', 'whack', 'clang', 'stab', 'swing', 'unmask', 'clockTick']);
 
 /** Детский режим: без оружия, звона в ушах и пилы — удары «поф» и бумажный хлопок. */
 const KIDS: Partial<Record<Sfx, Sfx>> = { whack: 'hitOther', clang: 'hitOther', stab: 'hitOther', knockedOut: 'cut', siren: 'starSpawn', scream: 'cut' };
@@ -130,12 +130,19 @@ export class Synth {
         this.swell(2.8, 0.05, 3400, 0.3, 0.5);
         this.tone('sine', 1975, 1865, 2.6, 0.018, 0.5);
         break;
-      // шаг шефа: тяжёлый каблук дорогого ботинка по полу офиса — глухо и мерно
-      case 'bossStep':
-        this.tone('sine', 120, 55, 0.14, 0.12);
-        this.noise(0.06, 1, 900);
-        this.tone('square', 300, 150, 0.05, 0.1);
-        this.noise(0.02, 0.8, 2600, 0.008);
+      // часы на стене офиса, пока шеф здесь: сухое «тик» и чуть ниже «так» (step — чёт/нечет)
+      case 'clockTick': {
+        const f = step % 2 ? 1900 : 2500;
+        this.noise(0.012, 0.9, f);
+        this.tone('square', f / 2, f / 2.4, 0.018, 0.08);
+        break;
+      }
+      // замок кабинета: металлический щелчок в тишине — сейчас выйдет
+      case 'doorLock':
+        this.noise(0.015, 1, 3200);
+        this.tone('square', 1500, 900, 0.03, 0.3);
+        this.noise(0.02, 0.8, 2000, 0.06);
+        this.tone('square', 900, 600, 0.04, 0.25, 0.06);
         break;
       // дверь кабинета: долгий скрип петель (щелчки, разгоняющиеся по высоте) и второй, короче
       case 'doorCreak':

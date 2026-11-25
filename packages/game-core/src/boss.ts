@@ -41,6 +41,15 @@ export interface BossState {
   out: boolean;
   /** Когда шеф последний раз вошёл или вышел в дверь — для анимации двери (в старых записях нет). */
   door?: number;
+  /** Когда шеф собирается вернуться из кабинета (полоска под дверью мигает заранее). */
+  back?: number;
+  /** На кого и когда шеф последний раз указал рукавом (выговор или ложная тревога). */
+  point?: { eid: number; at: number };
+}
+
+/** Второй выговор за дубль обнуляет удары подвала; до того каждый — минус `penalty`. */
+export function bossFightLeft(left: number, reprimands: number, penalty: number, zeroAt: number): number {
+  return reprimands >= zeroAt ? 0 : Math.max(0, left - penalty);
 }
 
 /** Дальность взгляда шефа и ширина конуса (на дальнем краю — в стороны на `along * BOSS_SPREAD`). */

@@ -175,6 +175,8 @@ export class World {
       b.py = b.y;
       b.moving = false;
       if (!b.out && !frozen && b.pi < b.path.length) this.advance(b, this.speed * BOSS_SPEED_MUL * dt);
+      // пиджак разворачивается к началу взгляда (воротник — раньше: это уже рисование)
+      if (b.look && this.time >= b.look.from) b.dir = b.look.dir;
     }
     this.time += TICK_MS;
   }
@@ -300,11 +302,13 @@ export class World {
     } else if (ev.act === 'look') {
       b.path = [];
       b.pi = 0;
-      b.dir = ev.dir;
       b.look = { dir: ev.dir, from: ev.from, until: ev.until };
+    } else if (ev.act === 'catch' || ev.act === 'point') {
+      b.point = { eid: ev.eid, at: ev.at };
     } else if (ev.act === 'out') {
       b.out = true;
       b.door = ev.at;
+      b.back = ev.back;
       b.path = [];
       b.pi = 0;
       b.look = null;
@@ -348,7 +352,7 @@ export class World {
       zone: this.zone ? { ...this.zone } : null,
       crowd: this.crowd ? { ...this.crowd } : null,
       twist: this.twist,
-      boss: this.boss ? { ...this.boss, path: this.boss.path.slice(), look: this.boss.look ? { ...this.boss.look } : null } : null,
+      boss: this.boss ? { ...this.boss, path: this.boss.path.slice(), look: this.boss.look ? { ...this.boss.look } : null, point: this.boss.point ? { ...this.boss.point } : undefined } : null,
       pending: this.pending.slice(),
     };
   }
@@ -361,7 +365,7 @@ export class World {
     this.zone = s.zone ? { ...s.zone } : null;
     this.crowd = s.crowd ? { ...s.crowd } : null;
     this.twist = !!s.twist;
-    this.boss = s.boss ? { ...s.boss, path: s.boss.path.slice(), look: s.boss.look ? { ...s.boss.look } : null } : null;
+    this.boss = s.boss ? { ...s.boss, path: s.boss.path.slice(), look: s.boss.look ? { ...s.boss.look } : null, point: s.boss.point ? { ...s.boss.point } : undefined } : null;
     this.pending = s.pending.slice();
   }
 }

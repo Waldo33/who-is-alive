@@ -47,6 +47,10 @@ export const ru = {
     description: 'Пиксельная игра для компании: спрячься в толпе ботов и вычисли друзей раньше, чем они тебя.',
   },
   awards: {
+    reprimand: {
+      title: 'Выговор от шефа',
+      text: { one: '{n} выговор', few: '{n} выговора', many: '{n} выговоров', other: '{n} выговора' } as string | Plural,
+    },
     blindNeighbors: { title: 'Слепые соседи', text: '{n} с рядом!' as string | Plural },
     ninja: { title: 'Каскадёр', text: 'удар из засады' as string | Plural },
     paranoid: {

@@ -74,7 +74,7 @@ export const THEME_RULES: readonly ThemeRules[] = [
   { id: 'cosmonauts' },
   {
     id: 'office',
-    twist: { firstSec: [14, 26], onSec: [14, 20], gapSec: [10, 16], max: 2, emoteMul: 3, fight: 10, boss: true },
+    twist: { firstSec: [16, 22], onSec: [14, 17], gapSec: [16, 19], max: 2, emoteMul: 3, fight: 10, boss: true },
   },
   {
     // день на пляже → ночь в масках: ночь подольше, закат — плавный (облик в клиенте)
