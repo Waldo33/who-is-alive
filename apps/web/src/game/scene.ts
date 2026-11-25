@@ -288,10 +288,12 @@ export class GameScene extends Phaser.Scene {
   private uiSet = new Set<Phaser.GameObjects.GameObject>();
   private crowdG!: Phaser.GameObjects.Graphics;
   private grayFx: Phaser.FX.ColorMatrix | null = null;
-  private wasBw = false;
+  private wasBw = 0;
   /** «Купальская ночь»: в этом дубле успела наступить ночь (иначе итоги — обычные, цветные). */
   private nightFell = false;
   private nightRound = -1;
+  /** Часы дубля на последнем кадре игры: по ним костёр в повторе и в итогах горит так, как горел тогда. */
+  private endPlaySec = 0;
   /** Идёт триумф «Купальской ночи»: цветок цветной, остальное нарисовано серым (фильтр снят). */
   private fernOn = false;
   private freezeVeil!: Phaser.GameObjects.Rectangle;
@@ -354,6 +356,17 @@ export class GameScene extends Phaser.Scene {
   /** Повтор: кто бил → его удары (он замахивается). */
   private replayBy = new Map<number, Kill[]>();
   private replayT: number | null = null;
+  /**
+   * «Купальская ночь»: повтор — плёнка с той ночи. Время повтора неравномерное (узлы [стена, мир], мс от
+   * начала повтора / мировое): у каждой смерти замедление и стоп-кадр, остальное быстрее; длина та же.
+   */
+  private replayWarp: [number, number][] = [];
+  private replayHold = false;
+  private replayOn = false;
+  /** Удары Лешего в журнале дубля: warnAt его «Тсс!» → где и когда забрал. */
+  private replayLeshy = new Map<number, { x: number; y: number; at: number }>();
+  private replayDeaths: { at: number; leshy: boolean }[] = [];
+  private replayDeathIdx = 0;
   private pxCache = new Map<string, number>();
   private noPoof = new Set<number>();
   /** Переодевание при смене облика (ThemePack.dressUp): когда началось и в какую сторону. */
@@ -1266,6 +1279,7 @@ export class GameScene extends Phaser.Scene {
         const s = this.sim.summary!;
         this.replay = makeReplay(this.sim.world, s.replayFrom, this.sim.world.time);
         this.setReplayKills();
+        this.buildReplayWarp(s);
         this.trails.clear();
         this.noteMoment();
         this.upgradeDeathClip();
@@ -2061,12 +2075,19 @@ export class GameScene extends Phaser.Scene {
     if (after) {
       // после дубля ночь не уходит: в повторе — светлее (надо разглядеть, кто что делал), в итогах — темно,
       // а из-за деревьев смотрят глаза
+      // «Купальская ночь» с наступившей ночью: повтор — плёнка с той ночи, Леший приходит и в нём
+      const film = ph === 'reveal' && this.replayOn && !!this.replay && this.replayWarp.length > 2;
       const rt = this.nightVeil.setVisible(true);
       rt.clear();
-      rt.draw('nightveil', 0, 0, ph === 'reveal' ? 0.3 : 0.55);
+      rt.draw('nightveil', 0, 0, film && this.nightFell ? 0.6 : ph === 'reveal' ? 0.3 : 0.55);
       this.forestEyes(1);
-      this.giant?.setVisible(false);
-      this.giantShadow?.setVisible(false);
+      if (film) {
+        this.renderGiant(this.replay!, true);
+        if (this.nightFell) this.renderFilm();
+      } else {
+        this.giant?.setVisible(false);
+        this.giantShadow?.setVisible(false);
+      }
       return;
     }
     const sec = this.playSec();
@@ -2245,8 +2266,7 @@ export class GameScene extends Phaser.Scene {
    * озирается (голова влево, вправо) и уходит. До этого, пока слышны шаги, из-за деревьев смотрят его
    * глаза — всё ниже и ближе. Видят все одно и то же: время общее.
    */
-  private renderGiant(): void {
-    const w = this.sim.world;
+  private renderGiant(w: World = this.sim.world, replay = false): void {
     const c = w.crowd;
     const L = this.leshy;
     // глаза в лесу, пока он идёт: всё ниже и ярче
@@ -2255,7 +2275,9 @@ export class GameScene extends Phaser.Scene {
       this.forestEyes(Math.max(0, Math.min(1, (this.playSec() - (L.sec - lead)) / lead)));
     }
     const end = c ? (c.watchUntil ?? c.windowEnd + LAG_GRACE_MS) + 2600 : 0;
-    const on = hasSanity(this.sim.theme) && this.sim.phase === 'play' && !!c && c.warnAt === L.warn && w.time >= c.showAt && w.time < end;
+    const on = replay
+      ? this.sim.phase === 'reveal' && !!c && this.isLeshyCrowd(c) && w.time >= c.showAt && w.time < end
+      : hasSanity(this.sim.theme) && this.sim.phase === 'play' && !!c && c.warnAt === L.warn && w.time >= c.showAt && w.time < end;
     if (!on || !c) {
       this.giant?.setVisible(false);
       this.giantShadow?.setVisible(false);
@@ -2284,7 +2306,9 @@ export class GameScene extends Phaser.Scene {
     let frame: number;
     let walking = false;
     let flipX = dir < 0;
-    const st = this.giantStrike;
+    // в повторе удар берём из журнала: с той секунды, когда он случился
+    const rs = replay ? this.replayLeshy.get(c.warnAt) : undefined;
+    const st = replay ? (rs && w.time >= rs.at ? rs : null) : this.giantStrike;
     const leaveAt = Math.max(judge + 500, st ? st.at - c.showAt + 900 : 0);
     if (wt < 1600) {
       // выходит из-за края поля
@@ -2957,6 +2981,114 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  /** Стоп-кадр Лешего: его «Тсс!» — длинный стоп-кадр (или с watchUntil, где он ещё и смотрит). */
+  private isLeshyCrowd(c: { kind: CrowdKind; vote?: boolean; showAt: number; resumeAt: number; watchUntil?: number }): boolean {
+    return hasSanity(this.sim.theme) && !c.vote && c.kind === 'freeze' && (c.watchUntil !== undefined || c.resumeAt - c.showAt >= this.cfg.leshyPauseMs - TICK_MS);
+  }
+
+  /**
+   * «Купальская ночь»: повтор как найденная плёнка. Из журнала — смерти (и чьи — Лешего), из них — время
+   * повтора: перед каждой смертью замедление, в момент удара — стоп-кадр, между ними — быстрее; общая длина
+   * та же, что у обычного повтора (её задаёт ядро).
+   */
+  private buildReplayWarp(s: RoundSummary): void {
+    const cfg = this.cfg;
+    const from = s.replayFrom;
+    const to = s.replayTo;
+    const dur = (to - from) / cfg.revealSpeed;
+    this.replayWarp = [];
+    this.replayLeshy.clear();
+    this.replayDeaths = [];
+    this.replayDeathIdx = 0;
+    if (!hasSanity(this.sim.theme)) return;
+    let lc: Extract<WorldEvent, { t: 'crowd' }> | null = null;
+    for (const ev of this.sim.world.log) {
+      if (ev.t === 'crowd') lc = this.isLeshyCrowd(ev) ? ev : null;
+      if (ev.t !== 'hit' || ev.result !== 'player') continue;
+      const leshy = !!lc && ev.attacker === undefined && ev.at > lc.windowEnd && ev.at <= (lc.watchUntil ?? lc.windowEnd + LAG_GRACE_MS) + 1000;
+      if (leshy) this.replayLeshy.set(lc!.at, { x: ev.x, y: ev.y, at: ev.at });
+      if (ev.at >= from && ev.at <= to) this.replayDeaths.push({ at: ev.at, leshy });
+    }
+    // у каждой смерти — повтор в живую скорость (обычный повтор вдвое с лишним быстрее); близкие — одним куском
+    const slows: { a: number; b: number; hold: number }[] = [];
+    for (const d of this.replayDeaths) {
+      const a = Math.max(from, d.at - 800);
+      const b = Math.min(to, d.at + 300);
+      const last = slows[slows.length - 1];
+      if (last && a <= last.b + 600) last.b = Math.max(last.b, b);
+      else slows.push({ a, b, hold: Math.min(to, d.at + 100) });
+    }
+    const SLOW = 1; // мировых мс на мс экрана
+    const len = () => slows.reduce((n, x) => n + (x.b - x.a), 0);
+    // не влезает — замедляем только последние смерти
+    while (slows.length && len() / SLOW > dur * 0.6) slows.shift();
+    if (!slows.length) return;
+    const slowLen = len();
+    let holdMs = Math.min(500, (dur * 0.75 - slowLen / SLOW) / slows.length);
+    if (holdMs < 250) holdMs = 0;
+    const wallSlow = slowLen / SLOW + holdMs * slows.length;
+    const v = (to - from - slowLen) / (dur - wallSlow);
+    const k: [number, number][] = [[0, from]];
+    let wall = 0;
+    let world = from;
+    const go = (w2: number, speed: number) => {
+      wall += (w2 - world) / speed;
+      world = w2;
+      k.push([wall, world]);
+    };
+    for (const x of slows) {
+      if (x.a > world) go(x.a, v);
+      go(x.hold, SLOW);
+      if (holdMs) {
+        wall += holdMs;
+        k.push([wall, world]);
+      }
+      go(x.b, SLOW);
+    }
+    if (to > world) go(to, v);
+    this.replayWarp = k;
+  }
+
+  /** Мировое время повтора через wall мс от его начала (replayWarp); попутно — идёт ли стоп-кадр. */
+  private replayAt(wall: number): number {
+    const k = this.replayWarp;
+    this.replayHold = false;
+    for (let i = 1; i < k.length; i++) {
+      const [w0, t0] = k[i - 1];
+      const [w1, t1] = k[i];
+      if (wall <= w1) {
+        if (t1 === t0) this.replayHold = true;
+        return w1 > w0 ? t0 + ((t1 - t0) * (wall - w0)) / (w1 - w0) : t1;
+      }
+    }
+    return k[k.length - 1][1];
+  }
+
+  /** Найденная плёнка: зерно, царапины, тёмные края, мигающая точка записи; в стоп-кадре смерти края темнее. */
+  private renderFilm(): void {
+    const g = this.torchG;
+    const now = performance.now();
+    for (let i = 0; i < 80; i++) {
+      const x = Math.floor(Math.random() * 180);
+      const y = AY + Math.floor(Math.random() * 260);
+      g.fillStyle(hexToInt(i % 3 ? PAL.ink : PAL.steel), 0.4).fillRect(x, y, 1, 1);
+    }
+    // царапина держится несколько кадров и чуть ползёт
+    const slot = Math.floor(now / 350);
+    if ((slot * 7919) % 5 < 2) {
+      const x = ((slot * 2654435761) >>> 0) % 176 + 2 + (Math.floor(now / 90) % 2);
+      g.fillStyle(hexToInt(PAL.sand), 0.25).fillRect(x, AY, 1, 260);
+    }
+    const edge = this.replayHold ? 0.6 : 0.35;
+    g.fillStyle(hexToInt(PAL.ink), edge);
+    g.fillRect(0, AY, 180, 10).fillRect(0, AY + 250, 180, 10).fillRect(0, AY + 10, 8, 240).fillRect(172, AY + 10, 8, 240);
+    if (this.replayHold) {
+      g.fillStyle(hexToInt(PAL.ink), 0.3);
+      g.fillRect(0, AY + 10, 180, 18).fillRect(0, AY + 232, 180, 18).fillRect(8, AY + 28, 16, 204).fillRect(156, AY + 28, 16, 204);
+    }
+    if (Math.floor(now / 600) % 2 === 0) g.fillStyle(hexToInt(PAL.red)).fillRect(168, AY + 14, 3, 3);
+  }
+
   private renderReveal(alpha: number): void {
     const s = this.sim.summary;
     if (!s) return;
@@ -2973,8 +3105,13 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     this.cameras.main.setScroll(0, 0);
+    this.replayOn = false;
     if (e < drum + replayDur) {
-      const target = s.replayFrom + (e - drum) * cfg.revealSpeed;
+      const warp = this.replayWarp.length > 2;
+      const target = warp ? this.replayAt(e - drum) : s.replayFrom + (e - drum) * cfg.revealSpeed;
+      this.replayOn = true;
+      // плёнка: кадр изредка дёргается на пиксель
+      if (warp && this.nightFell && Math.random() < 0.05) this.cameras.main.setScroll(0, Math.random() < 0.5 ? -1 : 1);
       while (this.replay.time < target && this.replay.time < this.sim.world.time) {
         this.replay.step();
         for (const r of s.reveal) {
@@ -2985,6 +3122,21 @@ export class GameScene extends Phaser.Scene {
           const last = tr[tr.length - 1];
           if (!last || Math.hypot(last.x - en.x, last.y - en.y) >= 2) tr.push({ x: Math.round(en.x), y: Math.round(en.y) });
         }
+      }
+      if (warp) {
+        // смерть в повторе — снова слышно: Леший забрал / вырезан
+        const d = this.replayDeaths[this.replayDeathIdx];
+        if (d && this.replay.time >= d.at) {
+          this.replayDeathIdx++;
+          this.audio.play(d.leshy ? 'leshyTake' : 'cut');
+          this.cameras.main.shake(d.leshy ? 450 : 250, d.leshy ? 0.014 : 0.008);
+          haptic('heavy');
+        }
+        const rt = Math.min(this.replay.time, Math.max(this.replay.time - TICK_MS, target));
+        const a = (rt - (this.replay.time - TICK_MS)) / TICK_MS;
+        this.replayT = rt;
+        this.renderWorld(this.replay, a, 'replay', colors);
+        return;
       }
       this.replayT = this.replay.time - TICK_MS + alpha * TICK_MS;
       this.renderWorld(this.replay, alpha, 'replay', colors);
@@ -3015,9 +3167,11 @@ export class GameScene extends Phaser.Scene {
    */
   private fireBase(): number {
     const ph = this.sim.phase;
-    if (!hasSanity(this.sim.theme) || (ph !== 'play' && ph !== 'countdown')) return 0;
+    if (!hasSanity(this.sim.theme) || (ph !== 'play' && ph !== 'countdown' && !this.dreadAfter())) return 0;
     const out = this.cfg.sanityFireOutSec;
-    const sec = this.playSec();
+    // после дубля — каким был под конец, в повторе — каким был в ту секунду
+    const s = this.sim.summary;
+    const sec = this.dreadAfter() ? this.endPlaySec - (ph === 'reveal' && this.replayOn && this.replayT !== null && s ? (s.replayTo - this.replayT) / 1000 : 0) : this.playSec();
     let lvl = sec < out * 0.36 ? 3 : sec < out * 0.68 ? 2 : sec < out ? 1 : 0;
     // на стыке сил огонь то вспыхивает, то никнет
     const edge = [out * 0.36, out * 0.68, out].find((e) => sec > e - 3 && sec < e);
@@ -3209,12 +3363,17 @@ export class GameScene extends Phaser.Scene {
       this.nightRound = this.sim.round;
       this.nightFell = false;
     }
-    if (playing && hasSanity(this.sim.theme) && nightLevel(this.cfg, this.playSec()) >= 1) this.nightFell = true;
-    const bw = hasSanity(this.sim.theme) && this.nightFell && (this.sim.phase === 'results' || this.sim.phase === 'match_end') && !this.fernOn;
+    if (playing && hasSanity(this.sim.theme)) {
+      this.endPlaySec = this.playSec();
+      if (nightLevel(this.cfg, this.endPlaySec) >= 1) this.nightFell = true;
+    }
+    // повтор той ночи — выцветшая плёнка (цвета игроков ещё различимы), итоги — уже чёрно-белые
+    const ph = this.sim.phase;
+    const bw = hasSanity(this.sim.theme) && this.nightFell && !this.fernOn ? (ph === 'results' || ph === 'match_end' ? 1 : ph === 'reveal' ? 0.6 : 0) : 0;
     if (bw !== this.wasBw) {
       this.wasBw = bw;
       if (this.grayFx) {
-        if (bw) this.grayFx.grayscale(1);
+        if (bw) this.grayFx.grayscale(bw);
         else this.grayFx.reset();
       }
     }
@@ -3753,7 +3912,8 @@ export class GameScene extends Phaser.Scene {
       const replayDur = (s.replayTo - s.replayFrom) / this.cfg.revealSpeed;
       const inReplay = e >= drum && e < drum + replayDur;
       const final = e >= drum + replayDur;
-      this.ovDyn.speed?.setVisible(inReplay);
+      // у плёнки той ночи скорость плавает (замедление у смертей) — «×2.5» не пишем
+      this.ovDyn.speed?.setVisible(inReplay && this.replayWarp.length <= 2);
       if (inReplay) this.ovDyn.title?.setText(this.t.game.revealReplay);
       if (final) {
         this.ovDyn.title?.setText(this.t.game.revealFinal);
