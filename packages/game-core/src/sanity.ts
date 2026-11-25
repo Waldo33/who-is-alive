@@ -32,12 +32,18 @@ export function nightLevel(cfg: GameConfig, sec: number): number {
 }
 
 /**
- * Длина дубля по плану, с. В теме с рассудком таймера нет: ночь идёт, пока в живых не останется один,
+ * Длина дубля по плану, с. В теме с рассудком таймера нет: ночь идёт, пока не сгинут все,
  * `nightMaxSec` — только потолок на всякий случай (тогда к концу сужается изгородь).
  */
 export function playLenSec(cfg: GameConfig, theme: number): number {
   return hasSanity(theme) ? cfg.nightMaxSec : cfg.roundSec;
 }
+
+/**
+ * С этой секунды ночи — охота: Леший приходит каждые 14–18 с и забирает ближайшего, даже замершего.
+ * Ночь кончается, только когда сгинут все; так у самого стойкого она кончится не позже ~3,5 минут.
+ */
+export const LESHY_HUNT_SEC = 140;
 
 /** Один приход Лешего: на какой секунде «часов дубля» шаги ближе всего; real — выйдет ли он на поляну. */
 export interface LeshyVisit {
@@ -62,12 +68,14 @@ function ih(a: number, b: number): number {
 export function leshyVisits(round: number): LeshyVisit[] {
   const out: LeshyVisit[] = [];
   let sec = 24 + Math.floor(ih(round, 1) * 8);
-  for (let i = 0; i < 8 && sec < 175; i++) {
+  // ночь идёт до последнего (никто не выживает): приходы до самого потолка, к глухой ночи — чаще,
+  // а с охоты (LESHY_HUNT_SEC) ложных уже нет
+  for (let i = 0; i < 24 && sec < 295; i++) {
     const r = ih(round, 10 + i);
     // первый — чаще ложный, дальше — чаще настоящий; две ложные подряд не бывает
-    const real = i === 0 ? r < 0.35 : out[i - 1].real ? r < 0.55 : true;
+    const real = sec >= LESHY_HUNT_SEC || (i === 0 ? r < 0.35 : out[i - 1].real ? r < 0.55 : true);
     out.push({ sec, real });
-    sec += Math.max(26, 34 - i * 2) + Math.floor(ih(round, 30 + i) * 8);
+    sec += (sec >= LESHY_HUNT_SEC ? 14 : Math.max(22, 34 - i * 2)) + Math.floor(ih(round, 30 + i) * (sec >= LESHY_HUNT_SEC ? 5 : 8));
   }
   return out;
 }

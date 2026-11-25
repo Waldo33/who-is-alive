@@ -9,7 +9,7 @@ import type { ActKind, CrowdKind, Dir, EmoteKind, EntitySpawn, WorldEvent } from
 
 import { NavGrid } from './nav';
 import { Rng } from './rng';
-import { fireLevel, leshySpot, leshyVisits, nightLevel, playLenSec, sanityDrain } from './sanity';
+import { LESHY_HUNT_SEC, fireLevel, leshySpot, leshyVisits, nightLevel, playLenSec, sanityDrain } from './sanity';
 import { ROTATION_THEMES, THEME_COUNT, hasSanity, killerExposed, themeRules, twistEmote } from './themes';
 import { ROUND_MODS, roundMod } from './mods';
 import { World } from './world';
@@ -555,13 +555,15 @@ export class MatchSim {
     const hard = !c.vote && (roundMod(this.mod) === 'hard' || cfg.strictCrowd);
     // Леший идёт к самому виноватому: кто не замер сейчас или накопил leshyDoomSins провинностей (тому и
     // замереть не поможет). Больше провинностей — раньше; поровну — ближайший к нему.
+    // На охоте (глубокая ночь, sanity.ts › LESHY_HUNT_SEC) замереть не спасает: забирает ближайшего.
     let prey: PlayerRound | null = null;
     if (leshy) {
       const spot = leshySpot(c.warnAt, this.arena.width);
+      const hunt = this.playClock(c.warnAt) >= LESHY_HUNT_SEC * 1000;
       let best = -Infinity;
       for (const p of this.pr) {
         const froze = p.crowdAnswered === c.warnAt && p.crowdPick === c.kind;
-        if (!p.alive || (froze && p.sins < cfg.leshyDoomSins)) continue;
+        if (!p.alive || (froze && p.sins < cfg.leshyDoomSins && !hunt)) continue;
         const e = this.world.get(p.eid)!;
         const score = (froze ? p.sins : p.sins + 1) * 1000 - Math.hypot(e.x - spot.x, e.y - spot.y);
         if (score > best) [best, prey] = [score, p];
@@ -811,7 +813,8 @@ export class MatchSim {
     this.recordPositions();
 
     const aliveCount = this.pr.filter((p) => p.alive).length;
-    const lastAlive = cfg.endWhenLastAlive && this.players.length >= 2 && aliveCount <= 1;
+    // «Купальская ночь» — до последнего: ночь кончается, только когда сгинули все
+    const lastAlive = cfg.endWhenLastAlive && this.players.length >= 2 && aliveCount <= (hasSanity(this.theme) ? 0 : 1);
     if (lastAlive && this.endReason === 'time') this.endReason = 'last_alive';
     if (this.starWinner || lastAlive || this.world.time >= this.plannedPlayEnd) this.endPlay();
   }
@@ -1025,6 +1028,11 @@ export class MatchSim {
       // три звезды, но тебя вычислили — звёзды сгорели: иначе бег по звёздам в открытую выгоднее всего
       if (this.starWinner === p.pid && (hasSanity(this.theme) || !accusedCount.get(p.eid))) this.addScore(p.pid, cfg.points.stars, 'stars', pts);
     }
+    // «Купальская ночь»: место — по тому, кто продержался дольше: очко за каждого, кто сгинул раньше
+    if (hasSanity(this.theme)) {
+      const died = (p: PlayerRound) => p.diedAt ?? Infinity;
+      for (const p of this.pr) this.addScore(p.pid, this.pr.filter((q) => died(q) < died(p)).length, 'survive', pts);
+    }
     for (const p of this.pr) pts[p.pid].total = pts[p.pid].kill + pts[p.pid].survive + pts[p.pid].stars + pts[p.pid].accuse;
 
     const stats: RoundStats[] = this.pr.map((p) => ({
@@ -1094,7 +1102,8 @@ export class MatchSim {
    */
   get lastRound(): boolean {
     const top = Math.max(...Object.values(this.scores));
-    return top >= this.cfg.scoreToWin || this.round >= this.cfg.maxRounds;
+    // «Купальская ночь» — матч в одну ночь: до смерти всех, без повторов между дублями
+    return top >= this.cfg.scoreToWin || this.round >= this.cfg.maxRounds || hasSanity(this.theme);
   }
 
   /** Итоги матча по уже начисленным очкам — те же, что будут на match_end. */

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MatchSim, ROTATION_THEMES, THEME_RULES, leshySec, leshySpot, leshyVisits, makeConfig, sanityStage } from '../src';
+import { LESHY_HUNT_SEC, MatchSim, ROTATION_THEMES, THEME_RULES, leshySec, leshySpot, leshyVisits, makeConfig, sanityStage } from '../src';
 import type { WorldEvent } from '../src';
 
 const players = ['a', 'b'].map((pid, i) => ({ pid, name: pid, color: i }));
@@ -149,7 +149,7 @@ describe('рассудок («Купальская ночь»)', () => {
     expect(p.kiki.length).toBe(0);
   });
 
-  it('побеждает последний выживший, три цветка дубль не кончают', () => {
+  it('ночь до последнего: кончается, когда сгинули все; побеждает продержавшийся дольше, матч в одну ночь', () => {
     const cfg = makeConfig({ fixedTheme: KUPALA });
     const sim = new MatchSim(cfg, players, 7);
     toPlay(sim);
@@ -162,20 +162,28 @@ describe('рассудок («Купальская ночь»)', () => {
     }
     expect(a.stars).toBe(3);
     expect(sim.phase).toBe('play');
-    // у b рассудок кончился — a остался один и забирает бонус победителя
+    // у b рассудок кончился — a остался один, но ночь идёт дальше
     b.sanity = 0.01;
+    for (let i = 0; i < 20 * 5; i++) sim.tick();
+    expect(b.alive).toBe(false);
+    expect(sim.phase).toBe('play');
+    // сгинул и a — ночь кончилась, a продержался дольше: бонус победителя и очко за b
+    a.sanity = 0.01;
     for (let i = 0; i < 20 * 30 && sim.phase === 'play'; i++) sim.tick();
     for (let i = 0; i < 20 * 30 && !sim.summary; i++) sim.tick();
     expect(sim.summary?.starWinner).toBe('a');
     expect(sim.summary?.points.a.stars).toBe(cfg.points.stars);
+    expect(sim.summary?.points.a.survive).toBe(1);
     expect(sim.summary?.points.b.stars).toBe(0);
+    expect(sim.summary?.points.b.survive).toBe(0);
+    expect(sim.lastRound).toBe(true);
   });
 
   it('факел: рассудок растёт, кикимора не подходит ближе света; «Факел!» вовремя зажигает его', () => {
     const cfg = makeConfig({ fixedTheme: KUPALA, endWhenLastAlive: false });
     const sim = new MatchSim(cfg, players, 21);
     toPlay(sim);
-    for (let i = 0; i < 20 * 120 && 180 - sim.timeLeft() / 1000 < leshySec(sim.round) + 10; i++) {
+    for (let i = 0; i < 20 * 120 && sim.cfg.nightMaxSec - sim.timeLeft() / 1000 < leshySec(sim.round) + 10; i++) {
       // глухая ночь, Леший уже прошёл, костёр прогорел; на «Тсс!» Лешего замираем
       sim.pr[0].sanity = 100;
       const c = sim.world.crowd;
@@ -253,7 +261,7 @@ describe('рассудок («Купальская ночь»)', () => {
       if (c && !c.vote && sim.world.time >= c.showAt + 100 && p.crowdAnswered !== c.warnAt) sim.intent('a', { k: 'crowd', kind: c.kind });
       sim.tick();
       const left = sim.timeLeft() / 1000;
-      const clockSec = 180 - left;
+      const clockSec = sim.cfg.nightMaxSec - left;
       if (clockSec > leshySec(sim.round) - 6 && clockSec < leshySec(sim.round) - 2) {
         expect(p.kiki.length).toBe(0);
         hidden = true;
@@ -269,9 +277,12 @@ describe('рассудок («Купальская ночь»)', () => {
       const v = leshyVisits(r);
       expect(v).toEqual(leshyVisits(r));
       expect(v.length).toBeGreaterThanOrEqual(3);
+      expect(v[v.length - 1].sec).toBeGreaterThan(250); // охота до самого потолка ночи
       expect(v[0].sec).toBeGreaterThanOrEqual(24);
       for (let i = 1; i < v.length; i++) {
-        expect(v[i].sec - v[i - 1].sec).toBeGreaterThanOrEqual(26);
+        // до охоты — не чаще раза в 22 с, на охоте — раз в 14–18 с и без ложных
+        expect(v[i].sec - v[i - 1].sec).toBeGreaterThanOrEqual(v[i - 1].sec >= LESHY_HUNT_SEC ? 14 : 22);
+        if (v[i].sec >= LESHY_HUNT_SEC) expect(v[i].real).toBe(true);
         expect(!v[i].real && !v[i - 1].real).toBe(false);
       }
       falses += v.filter((x) => !x.real).length;
