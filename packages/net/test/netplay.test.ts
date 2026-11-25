@@ -279,6 +279,28 @@ describe('сетевая игра', () => {
     expect(rig.privLog.filter((m) => (m.msg as { t: string }).t === 'atk').every((m) => m.to === 'g1')).toBe(true);
   });
 
+  it('свой удар ночью в Майами — с бьющим, как у хоста: иначе вместо замаха оружием рисуется «поф»', () => {
+    const miami = THEME_RULES.findIndex((r) => r.id === 'miami');
+    const rig = makeRig([120, 250], 0, 8, { fixedTheme: miami });
+    const g = rig.guests[0];
+    for (let i = 0; i < 20 * 70 && !(g.phase === 'play' && g.world.time > 3000); i++) rig.step();
+    const me = g.me()!;
+    const fast = (g as unknown as { fastHit(t: number, r: 'player' | 'bot', at: number): void }).fastHit.bind(g);
+    const others = g.world.alive().filter((e) => e.eid !== me.eid);
+    const pending = () => (g.world as unknown as { pending: { t: string; target?: number; attacker?: number }[] }).pending;
+    const hitOf = (eid: number) => pending().find((ev) => ev.t === 'hit' && ev.target === eid);
+    // день: удар по живому — тайна (у себя тоже, как у хоста), по статисту — бьющий раскрыт
+    g.world.twist = false;
+    fast(others[0].eid, 'player', g.world.time + 500);
+    fast(others[1].eid, 'bot', g.world.time + 500);
+    expect(hitOf(others[0].eid)!.attacker).toBeUndefined();
+    expect(hitOf(others[1].eid)!.attacker).toBe(me.eid);
+    // ночь: замах виден всем — и самому бьющему
+    g.world.twist = true;
+    fast(others[2].eid, 'player', g.world.time + 500);
+    expect(hitOf(others[2].eid)!.attacker).toBe(me.eid);
+  });
+
   it('новые механики по сети: условия съёмки доходят до гостей, «Хлопушка» вырезанного гостя тайно загадывает жест', () => {
     const rig = makeRig([60, 140], 0, 8);
     const rng = new Rng(8);
