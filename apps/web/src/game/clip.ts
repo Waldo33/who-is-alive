@@ -686,7 +686,7 @@ export class ClipPlayerScene {
       const bp = sc.pose;
       if (bp) {
         if (!bw.out && bw.look && bossLooking(bw, t)) drawBossCone(px, bw.look, bp.x, bp.y, t, { x0: 0, y0: 0, w: W, h: H }, BOSS_RANGE, BOSS_SPREAD, false);
-        const vy = Math.max(bp.y, BOSS_H - 2);
+        const vy = Math.max(bp.y, BOSS_H + 1);
         if (!bp.ghost) drawBossShadow(px, bp.x, vy, bp.alpha);
         bossSheet ??= makeBossSheet();
         const sheet = bossSheet;
