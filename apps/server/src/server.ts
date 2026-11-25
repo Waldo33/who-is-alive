@@ -14,11 +14,11 @@ import { Auth } from './auth';
 import { Counter, MsgBudget, RateWindow } from './limits';
 import { jsonLogger } from './log';
 import type { Logger } from './log';
-import type { Bot } from './bot';
+import type { Bot, FilmNotice } from './bot';
 import { Room } from './room';
 import { MemoryStore, parseEvents } from './store';
 import type { Store } from './store';
-import type { Peer, RoomSnapshot } from './room';
+import type { Peer, RoomFilm, RoomSnapshot } from './room';
 import type { Geo } from './geo';
 import { VideoSwitch } from './video-switch';
 
@@ -53,6 +53,11 @@ export interface GameServerOptions {
   clips?: ClipStore;
   /** «Фильм матча» (film.ts); нет — фильм монтирует телефон. */
   film?: FilmService;
+  /**
+   * Бот изнутри (туннель на сервер бота: http://127.0.0.1:9090): фильм матча комнаты по приглашению
+   * из Telegram уходит туда — бот заменит им карточку в чате. Нет — не сообщаем.
+   */
+  botInternal?: string;
   /** Аварийный выключатель видео (video-switch.ts); нет — видео всегда включено. */
   video?: VideoSwitch;
   /** Страна по адресу для замера доступности (geo.ts); нет — неизвестна. */
@@ -355,6 +360,7 @@ export class GameServer {
       // нагрузочный прогон: фильм матча не монтируем (ffmpeg исказил бы замер и занял бы процессор)
       film: load ? undefined : this.o.film,
       videoOn: () => this.video.on,
+      onFilm: (r, f) => this.filmToChat(r, f),
     });
     this.rooms.set(code, room);
     if (load) this.loadRooms.add(code);
@@ -424,6 +430,7 @@ export class GameServer {
         speed: this.speed,
         film: this.o.film,
         videoOn: () => this.video.on,
+        onFilm: (r, f) => this.filmToChat(r, f),
         restore: snap,
       });
       this.rooms.set(snap.code, room);
@@ -433,6 +440,12 @@ export class GameServer {
       if (typeof snap.emptyMs === 'number' && snap.emptyMs >= 0) this.emptySince.set(room, this.now() - Math.min(snap.emptyMs, EMPTY_CLOSE_MS));
       this.log('info', 'room_imported', { room: snap.code, members: snap.members.length, ...(snap.load ? { load: true } : {}) });
       return this.reply(res, 204);
+    }
+    if (p === '/internal/tg/film' && req.method === 'POST') {
+      // сервер бота: игровой сервер (по туннелю) сообщает, что фильм комнаты по приглашению готов
+      if (!this.o.bot) return this.reply(res, 503, { error: 'no_bot' });
+      const r = await this.o.bot.film(((await readJson(req, 4096)) ?? {}) as FilmNotice);
+      return this.reply(res, r.status, r.body);
     }
     if (p === '/internal/drain' && req.method === 'POST') {
       // переезд на другой сервер (Москва → Европа): сосед — из тела запроса, а не соседний цвет
@@ -585,6 +598,24 @@ export class GameServer {
   }
 
   /** Запрос изнутри машины (сосед-экземпляр, сосед по туннелю), не снаружи: внешним Caddy ставит адрес клиента. */
+  /** Фильм матча готов, а комната собрана карточкой из Telegram — отдать боту (он заменит карточку видео). */
+  private filmToChat(room: Room, f: RoomFilm): void {
+    const base = this.o.botInternal;
+    if (!base || !room.invite) return;
+    const body: FilmNotice = { invite: room.invite, id: f.id, code: room.code, winners: f.winners, draw: f.draw };
+    void fetch(`${base}/internal/tg/film`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(20_000),
+    })
+      .then(async (r) => {
+        const j = (await r.json().catch(() => null)) as { sent?: boolean } | null;
+        this.log(r.ok ? 'info' : 'warn', 'film_to_chat', { room: room.code, status: r.status, sent: !!j?.sent });
+      })
+      .catch((e) => this.log('warn', 'film_to_chat', { room: room.code, err: String(e) }));
+  }
+
   private internal(req: IncomingMessage): boolean {
     const loop = (x: string) => x === '127.0.0.1' || x === '::1' || x === '::ffff:127.0.0.1';
     if (!loop(req.socket.remoteAddress ?? '')) return false;
