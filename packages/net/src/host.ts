@@ -49,6 +49,7 @@ export class HostSession implements ClientSession {
   constructor(opts: HostOptions) {
     this.t = opts.transport;
     this.cfgOverrides = opts.cfg;
+    this.seed = opts.seed;
     this.sim = new MatchSim(makeConfig(opts.cfg), opts.players, opts.seed, opts.hostPid);
     if (opts.resume) this.sim.resumeMatch(opts.resume);
     // ИИ-актёры (добор комнаты до 4): играют здесь, у хоста, и видят только то, что видно всем
@@ -107,6 +108,62 @@ export class HostSession implements ClientSession {
   /** Сервер: режиссёр ушёл — роль у следующего. */
   setDirector(pid: string): void {
     this.sim.hostPid = pid;
+  }
+
+  /** ИИ, которые играют за ушедших игроков (по pid места): вернётся игрок — тот же ИИ ждёт следующего раза. */
+  private standIns = new Map<string, AiPlayer>();
+  private seed: number;
+
+  /** Сервер: игрок ушёл посреди матча — за его место играет ИИ (очки копятся тому же месту). */
+  botTakeover(pid: string): boolean {
+    const i = this.sim.players.findIndex((p) => p.pid === pid);
+    if (i < 0 || this.sim.players[i].ai) return false;
+    let a = this.standIns.get(pid);
+    if (!a) this.standIns.set(pid, (a = new AiPlayer(pid, (this.seed >>> 0) + 977 + i * 7919 + this.standIns.size * 31)));
+    this.sim.players[i] = { ...this.sim.players[i], ai: true };
+    this.sim.addAgent(a);
+    this.sendPlayers();
+    return true;
+  }
+
+  /** Сервер: ушедший вернулся — ИИ отдаёт ему управление. */
+  humanBack(pid: string): boolean {
+    const i = this.sim.players.findIndex((p) => p.pid === pid);
+    if (i < 0 || !this.sim.players[i].ai || !this.standIns.has(pid)) return false;
+    this.sim.removeAgent(pid);
+    const { ai: _ai, ...rest } = this.sim.players[i];
+    void _ai;
+    this.sim.players[i] = rest;
+    this.sendPlayers();
+    return true;
+  }
+
+  /**
+   * Сервер: новый игрок занимает место ИИ посреди матча. Сущность, очки и история — от места;
+   * выбит ли персонаж в этом дубле — тоже (тогда новичок до конца дубля за кадром).
+   */
+  takeSeat(oldPid: string, info: PlayerInfo): boolean {
+    const p = this.sim.info(oldPid);
+    if (!p?.ai) return false;
+    if (!this.sim.replacePlayer(oldPid, { pid: info.pid, name: info.name, color: p.color })) return false;
+    this.standIns.delete(oldPid);
+    for (const m of [this.lastMe, this.lastKm, this.lastKmN, this.lastMeAt]) m.delete(oldPid);
+    this.sendPlayers();
+    return true;
+  }
+
+  /** Места, которые сейчас ведёт ИИ (и добранные режиссёром, и за ушедших). */
+  aiSeats(): string[] {
+    return this.sim.players.filter((p) => p.ai).map((p) => p.pid);
+  }
+
+  /** Ведёт ли ИИ место ушедшего игрока (а не добранное режиссёром). */
+  isStandIn(pid: string): boolean {
+    return this.standIns.has(pid) && !!this.sim.info(pid)?.ai;
+  }
+
+  private sendPlayers(): void {
+    this.send({ t: 'players', players: this.sim.players.map((p) => ({ ...p })) });
   }
 
   dispose(): void {

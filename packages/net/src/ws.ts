@@ -15,6 +15,8 @@ export interface ServerLinkOptions {
   silenceMs?: number;
   /** Язык и «без крови» для клипа выбывшего (уходят в hello): сервер заготовит клип до нажатия. */
   clipPrefs?: () => { lang: 'ru' | 'en'; mild: boolean };
+  /** Пришли посреди матча — занять место ИИ, если оно есть (сервер решает; иначе — зритель). */
+  seat?: boolean;
 }
 
 type Listener<T> = (v: T) => void;
@@ -84,7 +86,7 @@ export class ServerLink implements Transport {
     this.lastMsgAt = Date.now();
     ws.onopen = () => {
       this.lastMsgAt = Date.now();
-      this.raw({ t: 'hello', v: WIRE_VERSION, token: this.o.token, code: this.o.code, name: this.name, ...(this.o.clipPrefs ? { clip: this.o.clipPrefs() } : {}) });
+      this.raw({ t: 'hello', v: WIRE_VERSION, token: this.o.token, code: this.o.code, name: this.name, ...(this.o.clipPrefs ? { clip: this.o.clipPrefs() } : {}), ...(this.o.seat ? { seat: true } : {}) });
     };
     ws.onmessage = (e: MessageEvent) => {
       this.lastMsgAt = Date.now();

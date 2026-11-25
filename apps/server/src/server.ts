@@ -782,7 +782,7 @@ export class GameServer {
         }
         return this.fail(peer, 'room_not_found', true, ws);
       }
-      const err = room.join(userId, m.name, peer);
+      const err = room.join(userId, m.name, peer, { seat: !!m.seat });
       if (err) return this.fail(peer, err, true, ws);
       st.userId = userId;
       st.room = room;

@@ -219,6 +219,10 @@ export class RemoteSession implements ClientSession {
       case 'match_end':
         this.match = m.match;
         break;
+      case 'players':
+        this.players = m.players;
+        for (const p of m.players) this.scores[p.pid] ??= 0;
+        break;
       default:
         break;
     }

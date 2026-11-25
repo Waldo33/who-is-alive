@@ -1,4 +1,4 @@
-import { DICTS, TICK_MS, fmt, recordRound, seasonLeadTheme } from '@kto/game-core';
+import { DICTS, TICK_MS, fmt, recordRound, renamePid, seasonLeadTheme } from '@kto/game-core';
 import type { GameConfig, PlayerInfo } from '@kto/game-core';
 import { DEFAULT_WIRE_SETTINGS, HostSession } from '@kto/net';
 import type { Channel, PresenceMember, RoomMsg, ServerMsg, Transport, WireError, WireRoom, WireRoomSettings } from '@kto/net';
@@ -29,12 +29,16 @@ export interface Member {
   peer: Peer | null;
   /** Когда соединение пропало (для освобождения места через HOLD_MS). */
   offlineSince: number;
+  /** Ушёл сам («Назад») посреди матча: его место в матче можно занять сразу, не ждать HOLD_MS. */
+  left?: boolean;
 }
 
 /** Сколько держим место за отключившимся (как пульс в Supabase): 75 с. */
 export const HOLD_MS = 75_000;
 /** Режиссёр пропал во время матча — роль у следующего через столько. */
 export const DIRECTOR_GONE_PLAYING_MS = 10_000;
+/** Игрок пропал посреди матча — за него играет ИИ через столько (вернётся — управление снова его). */
+export const BOT_AFTER_MS = 5_000;
 const SEATS = 4;
 /** Зрителей на комнату (опоздавшие к матчу смотрят трансляцию). */
 const MAX_SPECTATORS = 8;
@@ -212,6 +216,11 @@ export class MatchRunner {
     }
   }
 
+  /** Место перешло к новому игроку: в записанных дублях (для фильма) — тоже он. */
+  renameSeat(from: string, to: string): void {
+    this.takes = this.takes.map((t) => renamePid(t, from, to));
+  }
+
   /** Дубли сыгранного матча (и начать копить заново — к реваншу). */
   flushTakes(): FilmTake[] {
     const t = this.takes;
@@ -281,8 +290,14 @@ export class Room {
 
   // ───────────── вход и выход ─────────────
 
-  /** Вход по WebSocket. Возвращает код ошибки или null. */
-  join(userId: string, name: string, peer: Peer): WireError | null {
+  /** Зрители, чей клиент умеет занять место ИИ посреди матча (hello.seat). */
+  private seatable = new Map<string, string>();
+
+  /**
+   * Вход по WebSocket. Возвращает код ошибки или null.
+   * seat — клиент умеет войти в идущий матч на место ИИ (старые клиенты — только зрителями).
+   */
+  join(userId: string, name: string, peer: Peer, opts: { seat?: boolean } = {}): WireError | null {
     const now = this.now();
     let m = this.members.get(userId);
     if (m) {
@@ -290,7 +305,10 @@ export class Room {
       if (m.peer && m.peer !== peer) m.peer.close(4000, 'replaced');
       m.peer = peer;
       m.offlineSince = 0;
+      m.left = false;
       if (name.trim()) m.name = cleanName(name, m.name);
+      // вернулся посреди матча: ИИ, который играл за него, отдаёт управление
+      if (this.runner?.host.humanBack(userId)) this.log('info', 'seat_back', { room: this.code });
     } else {
       if (this.expectSpectators.delete(userId)) {
         this.spectators.set(userId, peer);
@@ -298,8 +316,16 @@ export class Room {
         return null;
       }
       if (this.status === 'playing') {
-        if (this.spectators.size >= MAX_SPECTATORS && !this.spectators.has(userId)) return 'room_playing';
+        if (opts.seat) this.seatable.set(userId, name);
+        else this.seatable.delete(userId);
+        // в матче есть свободное место ИИ — сразу на него
         const old = this.spectators.get(userId);
+        if (opts.seat && this.takeSeat(userId, name, peer)) {
+          if (old && old !== peer) old.close(4000, 'replaced');
+          this.spectators.delete(userId);
+          return null;
+        }
+        if (this.spectators.size >= MAX_SPECTATORS && !this.spectators.has(userId)) return 'room_playing';
         if (old && old !== peer) old.close(4000, 'replaced');
         this.spectators.set(userId, peer);
         peer.send(JSON.stringify({ t: 'welcome', selfId: userId, room: this.view(), spectator: true } satisfies ServerMsg));
@@ -318,10 +344,68 @@ export class Room {
     return null;
   }
 
+  /**
+   * Свободное место ИИ в идущем матче: добранное режиссёром или ушедшего игрока (ушёл сам или пропал
+   * дольше HOLD_MS — раньше место ждёт его). Сначала — где персонаж ещё жив в этом дубле.
+   * Только в отсчёт и в игру: на разоблачении и итогах у новичка не было бы итогов дубля.
+   */
+  private freeSeat(now: number): string | null {
+    const h = this.runner?.host;
+    if (!h || this.status !== 'playing' || (h.phase !== 'countdown' && h.phase !== 'play')) return null;
+    const free = h.aiSeats().filter((pid) => {
+      const m = this.members.get(pid);
+      return !m || (!m.peer && (m.left || now - m.offlineSince >= HOLD_MS));
+    });
+    return free.find((pid) => h.sim.playerRound(pid)?.alive) ?? free[0] ?? null;
+  }
+
+  /** Новый игрок занимает свободное место ИИ посреди матча (очки и персонаж — от места). */
+  private takeSeat(userId: string, name: string, peer: Peer): boolean {
+    const now = this.now();
+    const seat = this.freeSeat(now);
+    const r = this.runner;
+    if (!seat || !r) return false;
+    const color = r.host.sim.info(seat)!.color;
+    const nm = cleanName(name, 'Player');
+    if (!r.host.takeSeat(seat, { pid: userId, name: nm, color })) return false;
+    r.renameSeat(seat, userId);
+    this.members.delete(seat);
+    this.members.set(userId, { userId, name: nm, color, joinedAt: now, ready: false, peer, offlineSince: 0 });
+    if (!this.members.has(this.directorId)) this.passDirector();
+    this.lastActive = now;
+    this.log('info', 'seat_taken', { room: this.code, ai: seat.startsWith('ai-') });
+    this.sendTo(userId, { t: 'welcome', selfId: userId, room: this.view(), ...(this.o.film && this.videoOn() ? { caps: ['clip'] } : {}) });
+    this.broadcastRoom();
+    return true;
+  }
+
+  /** Зрители, которые умеют войти в матч, — на освободившиеся места ИИ. */
+  private seatSpectators(): void {
+    for (const [userId, peer] of [...this.spectators]) {
+      if (!this.seatable.has(userId)) continue;
+      if (!this.freeSeat(this.now())) return;
+      this.spectators.delete(userId);
+      if (!this.takeSeat(userId, this.seatable.get(userId) ?? '', peer)) this.spectators.set(userId, peer);
+    }
+  }
+
+  /** Игроки матча, которых нет на связи дольше BOT_AFTER_MS (или ушли сами), — за них играет ИИ. */
+  private standIns(now: number): void {
+    const r = this.runner;
+    if (!r || this.status !== 'playing' || r.host.phase === 'match_end') return;
+    for (const p of r.players) {
+      if (p.ai) continue;
+      const m = this.members.get(p.pid);
+      if (m?.peer || (m && !m.left && now - m.offlineSince < BOT_AFTER_MS)) continue;
+      if (r.host.botTakeover(p.pid)) this.log('info', 'seat_bot', { room: this.code, left: !!m?.left });
+    }
+  }
+
   /** Соединение оборвалось: место держится HOLD_MS. */
   disconnected(userId: string, peer: Peer): void {
     if (this.spectators.get(userId) === peer) {
       this.spectators.delete(userId);
+      this.seatable.delete(userId);
       return;
     }
     const m = this.members.get(userId);
@@ -336,13 +420,18 @@ export class Room {
   /** Явный уход (кнопка «Назад»): место освобождается сразу. */
   leave(userId: string): void {
     this.spectators.delete(userId);
+    this.seatable.delete(userId);
     const m = this.members.get(userId);
     if (!m) return;
-    // во время матча место за игроком остаётся до конца матча (его персонаж уже на поле)
+    // во время матча персонаж игрока остаётся на поле до конца матча: за него сразу играет ИИ,
+    // а место может занять новый игрок по ссылке
     if (this.status === 'playing' && this.runner?.players.some((p) => p.pid === userId)) {
       m.peer = null;
       m.offlineSince = this.now();
       m.ready = false;
+      m.left = true;
+      this.standIns(this.now());
+      this.seatSpectators();
     } else {
       this.members.delete(userId);
     }
@@ -365,6 +454,10 @@ export class Room {
     const now = this.now();
     const before = this.members.size;
     if (this.status === 'lobby') this.purgeOffline(now);
+    if (this.status === 'playing') {
+      this.standIns(now);
+      this.seatSpectators();
+    }
     const d = this.members.get(this.directorId);
     const dOnline = !!d?.peer;
     if (dOnline) this.directorGoneSince = 0;

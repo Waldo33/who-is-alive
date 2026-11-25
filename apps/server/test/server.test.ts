@@ -527,6 +527,40 @@ describe('игровой сервер: матч', () => {
   }, 90_000);
 });
 
+describe('игровой сервер: место ИИ посреди матча', () => {
+  it('новичок по ссылке садится на место ИИ и играет по снимку; ушёл — снова ИИ', async () => {
+    const { http, ws, srv } = await boot(4);
+    const [a, c] = await Promise.all([anon(http), anon(http)]);
+    const { code } = await create(http, a.token, { name: 'A' });
+    const la = link(ws, a, code, 'A');
+    await la.connect();
+    la.start();
+    const room = srv.rooms.get(code)!;
+    await until(() => room.runner?.host.phase === 'play', 8000, 'дубль');
+    const names: string[][] = [];
+    la.onMessage((_ch, m) => {
+      const x = m as { t: string; players?: { name: string }[] };
+      if (x.t === 'players') names.push(x.players!.map((p) => p.name));
+    });
+    const lc = new ServerLink({ url: ws, token: c.token, selfId: c.userId, code, name: 'Вася', silenceMs: 60_000, seat: true });
+    links.push(lc);
+    const r = await lc.connect();
+    expect(lc.spectator).toBe(false);
+    expect(r.status).toBe('playing');
+    expect(r.members.map((m) => m.userId)).toContain(c.userId);
+    const s = new RemoteSession({ transport: lc, selfPid: c.userId, hostPid: r.directorId, players: [], cfg: {}, resync: true });
+    try {
+      await until(() => !!s.info(c.userId) && !!s.me(), 3000, 'снимок с местом');
+      expect(s.info(c.userId)!.name).toBe('Вася');
+      await until(() => names.some((n) => n.includes('Вася')), 3000, 'остальным — новый состав');
+      lc.leave();
+      await until(() => !!room.runner?.host.sim.info(c.userId)?.ai, 3000, 'ИИ вместо ушедшего');
+    } finally {
+      s.dispose();
+    }
+  }, 30_000);
+});
+
 describe('игровой сервер: адрес WebSocket по входу', () => {
   it('свой вход из списка — wss://<тот же хост>, чужой — основной адрес', async () => {
     const srv = new GameServer({ authSecret: SECRET, log: silentLogger, publicWsBase: 'wss://api.example', publicWsHosts: ['api.example', '1-2-3-4.sslip.io'] });
