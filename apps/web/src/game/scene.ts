@@ -1466,22 +1466,42 @@ export class GameScene extends Phaser.Scene {
   /** Крупно и сразу понятно: тебя выбили, теперь ты призрак. */
   /**
    * Скример «Тебя забрал Леший» — по отметкам звука `scream` (sfx.ts). Вздрагивают от скачка из тишины:
-   * после удара Лешего у себя ни звука (музыка оборвана, лес молчит) 0,7–1,1 с, мир медленно гаснет; потом
-   * удар картинки и звука в один кадр — морда с перелётом (×3 → ×2), пасть ходит рывками, морда дрожит и
+   * после удара Лешего у себя ни звука (музыка оборвана, лес молчит), мир медленно гаснет (три варианта
+   * ожидания — ниже); потом удар картинки и звука в один кадр — морда с перелётом (×3 → ×2), пасть ходит рывками, морда дрожит и
    * рвётся полосами; бросок вплотную и обрыв в темноту, где ещё тлеют глаза; сердце и «вырезан».
    * Без мигания: свет только гаснет. Звук громкий — игрок уже вырезан, ничего не выдаёт.
    */
   private leshyScreamer(then: () => void): void {
     const W = 180;
     const H = 320;
-    // мёртвая тишина 0,7–1,1 с (каждый раз по-разному — не угадать), мир медленно гаснет; потом удар
-    const HIT = 700 + Math.round(Math.random() * 400);
+    // Каждый раз по-разному, чтобы не привыкнуть: в лоб — мёртвая тишина 0,7–1,1 с, мир гаснет, удар;
+    // ложное облегчение — погасло, тьма начинает отступать (обошлось?) — и тогда удар; из-за края — в тишине
+    // слева медленно заглядывает пол-морды с одним глазом, замирает — и бросается.
+    const r = Math.random();
+    const kind = r < 0.4 ? 'direct' : r < 0.7 ? 'relief' : 'peek';
+    const HIT = kind === 'direct' ? 700 + Math.round(Math.random() * 400) : kind === 'relief' ? 1700 + Math.round(Math.random() * 500) : 1500 + Math.round(Math.random() * 300);
     const LUNGE = HIT + 690;
     const CUT = HIT + 800;
     const dark = this.add.rectangle(0, 0, W, H, hexToInt(PAL.ink), 1).setOrigin(0, 0).setDepth(1800).setAlpha(0);
-    this.tweens.add({ targets: dark, alpha: 0.88, delay: 150, duration: HIT - 250, ease: 'Sine.easeIn' });
+    const fadeMs = kind === 'relief' ? 750 : HIT - 250;
+    this.tweens.add({ targets: dark, alpha: 0.88, delay: 150, duration: fadeMs, ease: 'Sine.easeIn' });
+    // ложное облегчение: тьма отступает, будто пронесло
+    if (kind === 'relief') this.tweens.add({ targets: dark, alpha: 0.45, delay: 1100, duration: HIT - 1100, ease: 'Sine.easeOut' });
     const cx = W / 2;
     const cy = Math.round(H * 0.46);
+    if (kind === 'peek') {
+      // из-за левого края: видно пол-морды и правый глаз; ползёт по пикселю, на миг замирает
+      const peek = this.add.sprite(-110, cy - 20, 'leshyFace', 0).setScale(2).setDepth(1801);
+      this.tweens.add({
+        targets: peek,
+        x: -22,
+        delay: 300,
+        duration: HIT - 650,
+        ease: 'Sine.easeOut',
+        onUpdate: () => peek.setX(Math.round(peek.x)),
+      });
+      this.time.delayedCall(HIT, () => peek.destroy());
+    }
     // где глаза морды на экране при масштабе sc (в кадре морды — FACE_EYES)
     const eyesAt = (sc: number) => FACE_EYES.map(([x, y]) => [cx + (x - FACE_W / 2) * sc, cy + (y - FACE_H / 2) * sc] as const);
     // морда — тремя полосами (глаза, пасть, челюсть): дрожат каждая по-своему, будто картинку рвёт
@@ -2142,7 +2162,7 @@ export class GameScene extends Phaser.Scene {
     this.dreadAt = now + (8000 - 4000 * night) + Math.random() * (8000 - 3000 * night);
     const L = this.leshy.stage;
     if (ph === 'play' && (L === 'near' || L === 'over' || L === 'leave')) return;
-    if (this.time.now - this.screamerAt < 4000) return;
+    if (this.time.now - this.screamerAt < 6000) return;
     const r = Math.random();
     if (r < 0.2 * night) this.audio.play('leshyCall');
     else if (r < 0.2 * night + 0.25 + 0.35 * night) {
@@ -2232,7 +2252,7 @@ export class GameScene extends Phaser.Scene {
     if (walking && frame !== this.giantFrame && (frame === 0 || frame === 2)) {
       const fx = x + (frame === 0 ? -5 : 5) * (dir < 0 ? -1 : 1);
       for (let i = 0; i < 6; i++) this.giantDust.push({ x: fx, y: feet, dx: (i - 2.5) * 0.9, t0: now });
-      if (this.time.now - this.screamerAt > 3000) this.audio.play('leshyStep', 7);
+      if (this.time.now - this.screamerAt > 4000) this.audio.play('leshyStep', 7);
       this.cameras.main.shake(90, 0.004);
     }
     this.giantFrame = frame;
@@ -2624,7 +2644,7 @@ export class GameScene extends Phaser.Scene {
     }
     const alpha = Math.min(1, this.acc / TICK_MS);
     const phase = this.sim.phase;
-    if (this.musicResumeAt && this.sim.world.time >= this.musicResumeAt && phase === 'play' && this.time.now - this.screamerAt > 4500) {
+    if (this.musicResumeAt && this.sim.world.time >= this.musicResumeAt && phase === 'play' && this.time.now - this.screamerAt > 6500) {
       this.musicResumeAt = 0;
       this.audio.resumeMusic();
     }
