@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { jsonLogger } from './log';
+import { ErrorTracker } from './errors';
 import type { LogLevel } from './log';
 import { Bot } from './bot';
 import { spawnSync } from 'node:child_process';
@@ -25,9 +26,10 @@ import { VideoSwitch } from './video-switch';
  *   BOT_INTERNAL — бот изнутри (http://127.0.0.1:9090): фильм матча комнаты из Telegram-карточки уходит ему,
  *   PEER_HTTP + PEER_WS_URL — соседний экземпляр (синий ↔ зелёный): к нему переезжают комнаты при выкладке
  *   (POST /internal/drain изнутри машины), после drain процесс завершается сам.
+ *   SOURCEMAPS_DIR — карты сборок сайта для трекера ошибок (/var/lib/massovka-sourcemaps, кладёт web-deploy).
  */
 const env = process.env;
-const log = jsonLogger((env.LOG_LEVEL as LogLevel) || 'info');
+let log = jsonLogger((env.LOG_LEVEL as LogLevel) || 'info');
 const prod = env.NODE_ENV === 'production';
 let secret = env.AUTH_SIGNING_KEY ?? '';
 if (!secret) {
@@ -51,6 +53,29 @@ if (env.DATABASE_URL) {
     log('error', 'db_unavailable', { err: String(e) });
   }
 } else log('warn', 'DATABASE_URL не задан — аналитика в памяти');
+
+// трекер ошибок (errors.ts): телефоны, сервер, бот, монтаж. Без базы (сервер бота) — группы уходят игровому
+// серверу по туннелю (тот же адрес, что у аналитики); всё уровня error из журнала — тоже в трекер
+const errors = new ErrorTracker({
+  store,
+  log,
+  mapsDir: env.SOURCEMAPS_DIR || '/var/lib/massovka-sourcemaps',
+  upstream: store instanceof MemoryStore && env.EVENTS_UPSTREAM ? env.EVENTS_UPSTREAM : undefined,
+  host: env.REGION || undefined,
+});
+log = errors.wrap(log);
+process.on('uncaughtException', (e) => {
+  // систему не держим в непонятном состоянии: записать и выйти (systemd перезапустит)
+  log('error', 'crash', { err: String(e).slice(0, 600), stack: e instanceof Error ? e.stack : undefined });
+  const t = setTimeout(() => process.exit(1), 3000);
+  void errors.flush().finally(() => {
+    clearTimeout(t);
+    process.exit(1);
+  });
+});
+process.on('unhandledRejection', (e) => {
+  log('error', 'unhandled_rejection', { err: String(e).slice(0, 600), stack: e instanceof Error ? e.stack : undefined });
+});
 
 // Telegram-бот: ключ — в секретах сервера (/etc/massovka/secrets.env), без ключа бота нет
 const bot = env.TELEGRAM_BOT_TOKEN
@@ -112,6 +137,7 @@ const server = new GameServer({
   video,
   // фильм матча — в чат Telegram, откуда позвали (бот на другом сервере, туннель: http://127.0.0.1:9090)
   botInternal: env.BOT_INTERNAL || undefined,
+  errors,
 });
 
 const port = await server.listen(Number(env.PORT) || 8080);
@@ -125,6 +151,7 @@ async function stop(sig: string): Promise<void> {
   // выкладка не останавливает старый экземпляр, а переводит его в drain (docs/infra-plan.md › этап 1);
   // SIGTERM — остановка руками или перезагрузка машины: идущие комнаты закрываются
   await server.close();
+  await errors.close();
   await store.close();
   process.exit(0);
 }

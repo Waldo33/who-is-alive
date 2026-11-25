@@ -1,0 +1,431 @@
+{
+ "uid": "massovka-errors",
+ "title": "Массовка — ошибки",
+ "tags": [
+  "massovka"
+ ],
+ "timezone": "browser",
+ "schemaVersion": 39,
+ "version": 1,
+ "editable": false,
+ "time": {
+  "from": "now-7d",
+  "to": "now"
+ },
+ "refresh": "",
+ "panels": [
+  {
+   "id": 1,
+   "type": "stat",
+   "title": "Новых ошибок",
+   "description": "Групп, впервые встреченных в выбранный период: про каждую сторож написал в чат тревог",
+   "gridPos": {
+    "x": 0,
+    "y": 0,
+    "w": 6,
+    "h": 4
+   },
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "pg"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "pg"
+     },
+     "refId": "A",
+     "rawQuery": true,
+     "editorMode": "code",
+     "format": "table",
+     "rawSql": "select count(*) from error_groups where $__timeFilter(first_seen)"
+    }
+   ],
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "colorMode": "none",
+    "graphMode": "none",
+    "textMode": "value"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "none",
+     "decimals": 0
+    },
+    "overrides": []
+   }
+  },
+  {
+   "id": 2,
+   "type": "stat",
+   "title": "Случаев",
+   "description": "С телефона одна и та же ошибка считается один раз за заход",
+   "gridPos": {
+    "x": 6,
+    "y": 0,
+    "w": 6,
+    "h": 4
+   },
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "pg"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "pg"
+     },
+     "refId": "A",
+     "rawQuery": true,
+     "editorMode": "code",
+     "format": "table",
+     "rawSql": "select coalesce(sum(d.count),0) from error_daily d where $__timeFilter(d.day::timestamptz)"
+    }
+   ],
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "colorMode": "none",
+    "graphMode": "none",
+    "textMode": "value"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "none",
+     "decimals": 0
+    },
+    "overrides": []
+   }
+  },
+  {
+   "id": 3,
+   "type": "stat",
+   "title": "Групп было",
+   "description": "",
+   "gridPos": {
+    "x": 12,
+    "y": 0,
+    "w": 6,
+    "h": 4
+   },
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "pg"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "pg"
+     },
+     "refId": "A",
+     "rawQuery": true,
+     "editorMode": "code",
+     "format": "table",
+     "rawSql": "select count(*) from error_groups where $__timeFilter(last_seen)"
+    }
+   ],
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "colorMode": "none",
+    "graphMode": "none",
+    "textMode": "value"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "none",
+     "decimals": 0
+    },
+    "overrides": []
+   }
+  },
+  {
+   "id": 4,
+   "type": "stat",
+   "title": "Вернулись после недели тишины",
+   "description": "",
+   "gridPos": {
+    "x": 18,
+    "y": 0,
+    "w": 6,
+    "h": 4
+   },
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "pg"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "pg"
+     },
+     "refId": "A",
+     "rawQuery": true,
+     "editorMode": "code",
+     "format": "table",
+     "rawSql": "select count(*) from error_groups where $__timeFilter(reopened_at)"
+    }
+   ],
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "colorMode": "none",
+    "graphMode": "none",
+    "textMode": "value"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "none",
+     "decimals": 0
+    },
+    "overrides": []
+   }
+  },
+  {
+   "id": 5,
+   "type": "timeseries",
+   "title": "Случаи по дням",
+   "description": "",
+   "gridPos": {
+    "x": 0,
+    "y": 4,
+    "w": 24,
+    "h": 7
+   },
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "pg"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "pg"
+     },
+     "refId": "A",
+     "rawQuery": true,
+     "editorMode": "code",
+     "format": "time_series",
+     "rawSql": "select d.day::timestamptz as time, case g.source when 'web' then 'телефоны' when 'server' then 'сервер' when 'bot' then 'бот' when 'film' then 'монтаж' else g.source end as metric, sum(d.count) as value\n from error_daily d join error_groups g using (fp) where $__timeFilter(d.day::timestamptz) group by 1, 2 order by 1"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "bars",
+      "fillOpacity": 60,
+      "barAlignment": 0,
+      "stacking": {
+       "mode": "normal"
+      }
+     },
+     "decimals": 0
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   }
+  },
+  {
+   "id": 6,
+   "type": "table",
+   "title": "Ошибки (новые сверху; нажмите — подробности ниже)",
+   "description": "Группа — одна и та же ошибка в одном месте кода (без строк и версий). «Где» — файл › функция по картам исходников. «Чаще всего» — платформа, тема, фаза",
+   "gridPos": {
+    "x": 0,
+    "y": 11,
+    "w": 24,
+    "h": 12
+   },
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "pg"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "pg"
+     },
+     "refId": "A",
+     "rawQuery": true,
+     "editorMode": "code",
+     "format": "table",
+     "rawSql": "select case g.source when 'web' then 'телефоны' when 'server' then 'сервер' when 'bot' then 'бот' when 'film' then 'монтаж' else g.source end as откуда, g.title as ошибка, g.culprit as где, g.count as всего,\n coalesce((select sum(d.count) from error_daily d where d.fp = g.fp and $__timeFilter(d.day::timestamptz)), 0) as \"за период\",\n g.first_seen as впервые, g.last_seen as \"в последний раз\", g.last_build as версия,\n (select string_agg(k || ' ' || v, ', ' order by v::bigint desc) from (select k, v from jsonb_each_text(g.tags) as t(k, v) order by v::bigint desc limit 4) x) as \"чаще всего\",\n g.fp\n from error_groups g where $__timeFilter(g.last_seen) order by g.first_seen desc limit 200"
+    }
+   ],
+   "options": {
+    "showHeader": true,
+    "cellHeight": "sm"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "fp"
+      },
+      "properties": [
+       {
+        "id": "links",
+        "value": [
+         {
+          "title": "Подробно",
+          "url": "/grafana/d/massovka-errors/?var-fp=${__data.fields.fp}&${__url_time_range}"
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "ошибка"
+      },
+      "properties": [
+       {
+        "id": "links",
+        "value": [
+         {
+          "title": "Подробно",
+          "url": "/grafana/d/massovka-errors/?var-fp=${__data.fields.fp}&${__url_time_range}"
+         }
+        ]
+       },
+       {
+        "id": "custom.width",
+        "value": 520
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "id": 7,
+   "type": "table",
+   "title": "Подробно: последний случай выбранной ошибки",
+   "description": "Выберите ошибку в таблице выше (или вставьте fp в поле сверху)",
+   "gridPos": {
+    "x": 0,
+    "y": 23,
+    "w": 24,
+    "h": 14
+   },
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "pg"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "pg"
+     },
+     "refId": "A",
+     "rawQuery": true,
+     "editorMode": "code",
+     "format": "table",
+     "rawSql": "select k as поле, v as значение from (\n  select 1 o, 'ошибка' k, g.title v from error_groups g where g.fp = '$fp'\n  union all select 2, 'где', g.culprit from error_groups g where g.fp = '$fp'\n  union all select 3, 'контекст', (select string_agg(key || ': ' || value, ' · ') from jsonb_each_text(g.sample->'ctx')) from error_groups g where g.fp = '$fp'\n  union all select 4, 'шаги перед ошибкой', (select string_agg(x, '  →  ') from jsonb_array_elements_text(g.sample->'crumbs') x) from error_groups g where g.fp = '$fp'\n  union all select 5, 'стек', g.sample->>'stack' from error_groups g where g.fp = '$fp'\n  union all select 6, 'разбивка', (select string_agg(key || ' ' || value, ', ' order by value::bigint desc) from jsonb_each_text(g.tags)) from error_groups g where g.fp = '$fp'\n  union all select 7, 'версии', g.first_build || ' → ' || g.last_build from error_groups g where g.fp = '$fp'\n ) r order by o"
+    }
+   ],
+   "options": {
+    "showHeader": true,
+    "cellHeight": "sm"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "cellOptions": {
+       "type": "auto",
+       "wrapText": true
+      }
+     }
+    },
+    "overrides": []
+   }
+  },
+  {
+   "id": 8,
+   "type": "logs",
+   "title": "Журнал: эта ошибка с телефонов",
+   "gridPos": {
+    "x": 0,
+    "y": 37,
+    "w": 24,
+    "h": 8
+   },
+   "datasource": {
+    "type": "victoriametrics-logs-datasource",
+    "uid": "vl"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "victoriametrics-logs-datasource",
+      "uid": "vl"
+     },
+     "refId": "A",
+     "expr": "_msg:client_error fp:\"$fp\"",
+     "queryType": "instant"
+    }
+   ],
+   "options": {
+    "showTime": true,
+    "wrapLogMessage": true,
+    "sortOrder": "Descending",
+    "enableLogDetails": true
+   }
+  }
+ ],
+ "templating": {
+  "list": [
+   {
+    "type": "textbox",
+    "name": "fp",
+    "label": "Ошибка (fp)",
+    "query": "",
+    "current": {
+     "text": "",
+     "value": ""
+    }
+   }
+  ]
+ },
+ "annotations": {
+  "list": []
+ }
+}

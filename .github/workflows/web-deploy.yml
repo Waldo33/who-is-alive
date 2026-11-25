@@ -62,9 +62,19 @@ jobs:
           # версия сайта в отчётах об ошибках с телефонов (lib/errors.ts)
           NEXT_PUBLIC_BUILD: ${{ github.sha }}
           NEXT_TELEMETRY_DISABLED: '1'
+          # карты исходников — только трекеру ошибок на сервере, не в статику (см. ниже)
+          SOURCE_MAPS: '1'
         run: |
           pnpm --filter web build
           cd apps/web
+          # карты исходников: из статики — в отдельный архив (/var/lib/massovka-sourcemaps/<версия> на сервере,
+          # читает трекер ошибок); ссылку на карту из кусков убираем — браузер не просит то, чего нет
+          mkdir -p /tmp/maps
+          (cd .next/static && find . -name '*.js.map' -print0 | xargs -0 -r cp --parents -t /tmp/maps)
+          find .next/static -name '*.js.map' -print0 | xargs -0 -r rm -f
+          find .next/static -name '*.js' -print0 | xargs -0 -r sed -i -e 's|^//# sourceMappingURL=.*\.map$||'
+          tar -czf /tmp/maps.tar.gz -C /tmp/maps .
+          echo "карт исходников: $(find /tmp/maps -name '*.map' | wc -l), $(du -sh /tmp/maps.tar.gz | cut -f1)"
           # статика и public в standalone не входят — кладём рядом с server.js
           cp -r .next/static .next/standalone/apps/web/.next/static
           cp -r public .next/standalone/apps/web/public
@@ -103,7 +113,7 @@ jobs:
           IP: ${{ steps.srv.outputs.ip }}
         run: |
           ssh $SSH_OPTS root@$IP 'rm -rf /tmp/deploy-web && mkdir -p /tmp/deploy-web'
-          scp $SSH_OPTS -q /tmp/web.tar.gz infra/game/web.sh infra/game/caddy.sh root@$IP:/tmp/deploy-web/
+          scp $SSH_OPTS -q /tmp/web.tar.gz /tmp/maps.tar.gz infra/game/web.sh infra/game/caddy.sh root@$IP:/tmp/deploy-web/
           ssh $SSH_OPTS root@$IP "SHA=${GITHUB_SHA::12} bash /tmp/deploy-web/web.sh"
 
       - name: Проверка снаружи

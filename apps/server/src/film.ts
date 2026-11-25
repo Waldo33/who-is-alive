@@ -193,7 +193,7 @@ export class FilmService {
       try {
         return { r: await this.render(kind, job, preset, native), renderer: 'rust' };
       } catch (e) {
-        this.o.log('warn', 'film_native_failed', { kind, err: String(e).slice(0, 600) });
+        this.o.log('error', 'film_native_failed', { kind, err: String(e).slice(0, 1500) });
       }
     }
     return { r: await this.render(kind, job, preset), renderer: 'skia' };

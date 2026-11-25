@@ -142,4 +142,43 @@ if systemctl is-enabled -q massovka-msk-backup.timer 2>/dev/null; then
   [ -n "$(find "/var/backups/massovka-$G" -name '*.dump' -mmin -1560 2>/dev/null | head -1)" ]
   check msk_backup $? "копия базы игры ($G) старше 26 часов"
 fi
+# трекер ошибок (apps/server/src/errors.ts): новая группа ошибок или вернувшаяся после недели тишины — сразу в чат
+# (без «5 минут подряд»). База игры — через туннель, роль только для чтения; отметка — время последней отправленной
+if [ -s /etc/massovka/pgro-backup.env ] && command -v psql >/dev/null; then
+  PGRO_PASSWORD=$(. /etc/massovka/pgro-backup.env 2>/dev/null; echo "${PGRO_PASSWORD:-}")
+  case "$G" in eu) DBP=25432 ;; *) DBP=15432 ;; esac
+  GRAF=$(sed -n 's/^root_url *= *//p' /etc/massovka-grafana/grafana.ini 2>/dev/null | head -1)
+  eq() { PGPASSWORD="$PGRO_PASSWORD" psql -h 127.0.0.1 -p "$DBP" -U grafana_ro -d massovka -XAtq -v ON_ERROR_STOP=1 "$@" 2>/dev/null; }
+  since=$(cat "$STATE/errors_since" 2>/dev/null || true)
+  if [ -z "$since" ]; then
+    # первый запуск: то, что было до сторожа, не шлём
+    now=$(echo 'select now()' | eq) && [ -n "$now" ] && echo "$now" > "$STATE/errors_since"
+  elif rows=$(eq -v since="$since" <<'SQL'
+select json_build_object('ts', ts, 'fp', fp, 'src', source, 'title', title, 'culprit', culprit, 'n', count, 'build', last_build,
+  'back', reopened_at is not null and reopened_at = ts, 'ctx', sample->'ctx')
+from (select *, greatest(first_seen, coalesce(reopened_at, first_seen)) as ts from error_groups) g
+where ts > :'since'::timestamptz order by ts limit 30
+SQL
+  ); then
+    n=0
+    while IFS= read -r r; do
+      [ -n "$r" ] || continue
+      n=$((n + 1))
+      echo "$r" | jq -r .ts > "$STATE/errors_since"
+      [ "$n" -gt 5 ] && continue
+      send "$(echo "$r" | jq -r --arg g "$GRAF" '
+        ({web: "телефоны", server: "игровой сервер", bot: "бот", film: "монтаж"}[.src] // .src) as $w
+        | (.ctx // {}) as $c
+        | ([($c.theme | select(.) | "тема " + .), ($c.phase | select(.) | "фаза " + .), ([$c.os, $c.br] | map(select(.)) | join(" ") | select(. != "")), $c.app, ($c.room | select(.) | "комната " + .), ($c.host | select(.) | "сервер " + .)]
+           | map(select(. != null and . != "")) | join(" · ")) as $where
+        | (if .back then "🐞 Ошибка вернулась" else "🐞 Новая ошибка" end) + " · " + $w + "\n"
+          + (.title | .[0:300]) + "\n"
+          + (if .culprit != "" then "📍 " + .culprit + "\n" else "" end)
+          + (if $where != "" then $where + "\n" else "" end)
+          + "случаев: \(.n)" + (if .build != "" then " · версия " + .build else "" end)
+          + (if $g != "" then "\n" + $g + "d/massovka-errors/?var-fp=" + .fp else "" end)')"
+    done <<< "$rows"
+    if [ "$n" -gt 5 ]; then send "🐞 И ещё новых ошибок: $((n - 5)) — список в Grafana: ${GRAF}d/massovka-errors/"; fi
+  fi
+fi
 exit 0
