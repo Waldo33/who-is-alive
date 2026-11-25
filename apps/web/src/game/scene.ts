@@ -288,6 +288,7 @@ export class GameScene extends Phaser.Scene {
   private uiSet = new Set<Phaser.GameObjects.GameObject>();
   private crowdG!: Phaser.GameObjects.Graphics;
   private grayFx: Phaser.FX.ColorMatrix | null = null;
+  private wasBw = false;
   private freezeVeil!: Phaser.GameObjects.Rectangle;
   private dim!: Phaser.GameObjects.Rectangle;
   private overlayPhase = '';
@@ -3195,6 +3196,15 @@ export class GameScene extends Phaser.Scene {
         else this.grayFx.reset();
       } else this.freezeVeil.setVisible(frozen);
     }
+    // «Купальская ночь»: итоги и конец матча — чёрно-белые, как старая фотография с той ночи
+    const bw = hasSanity(this.sim.theme) && (this.sim.phase === 'results' || this.sim.phase === 'match_end');
+    if (bw !== this.wasBw) {
+      this.wasBw = bw;
+      if (this.grayFx) {
+        if (bw) this.grayFx.grayscale(1);
+        else this.grayFx.reset();
+      }
+    }
     const showCrowd = playing && cr && wt >= cr.showAt && wt <= cr.windowEnd;
     this.crowdIcon.setVisible(!!showCrowd);
     this.crowdText.setVisible(!!showCrowd);
@@ -3515,8 +3525,11 @@ export class GameScene extends Phaser.Scene {
     this.ovText(90, AY + 25, reason, 'mist');
     const order = [...sim.players].sort((a, b) => sim.scores[b.pid] - sim.scores[a.pid]);
     // цель матча над столбцом счёта (своя строка, не налезает на подзаголовок): дублей будет несколько
-    const goal = this.ovText(0, AY + 36, fmt(this.t.game.toWin, { n: this.cfg.scoreToWin }), 'mist', false);
-    goal.x = 171 - goal.width;
+    // (в «Купальской ночи» матч — одна ночь, цели нет)
+    if (!night) {
+      const goal = this.ovText(0, AY + 36, fmt(this.t.game.toWin, { n: this.cfg.scoreToWin }), 'mist', false);
+      goal.x = 171 - goal.width;
+    }
     order.forEach((p, i) => {
       const y = AY + 46 + i * 16;
       const pts = s.points[p.pid];
@@ -3541,11 +3554,11 @@ export class GameScene extends Phaser.Scene {
     if (!this.init0.spectator) {
       const share: RowButton = { id: 'share', kind: 'secondary', icon: 'share', onTap: () => this.share(), release: true };
       this.addRow(AY + 214, this.amHost()
-        ? [share, { id: 'next', kind: 'primary', flex: true, label: fmt(this.t.game.next, { n }), fill, onTap: () => {
+        ? [share, { id: 'next', kind: 'primary', flex: true, label: night ? this.t.game.toFinal : fmt(this.t.game.next, { n }), fill, onTap: () => {
           this.track('next_tap', { round: sim.round });
           sim.intent({ k: 'next' });
         } }]
-        : [share, { id: 'next', kind: 'plate', flex: true, label: fmt(this.t.game.nextTake, { n, s: Math.ceil(sim.timeLeft() / 1000) }) }]);
+        : [share, { id: 'next', kind: 'plate', flex: true, label: night ? fmt(this.t.game.toFinalIn, { s: Math.ceil(sim.timeLeft() / 1000) }) : fmt(this.t.game.nextTake, { n, s: Math.ceil(sim.timeLeft() / 1000) }) }]);
     }
   }
 
@@ -3766,7 +3779,8 @@ export class GameScene extends Phaser.Scene {
     const plate = phase === 'results' ? this.buttons.find((b) => b.id === 'next' && b.kind === 'plate') : undefined;
     const pt = plate && this.btnObjs.get('next')?.text;
     if (pt) {
-      const s = fmt(this.t.game.nextTake, { n: sim.round + 1, s: Math.max(0, Math.ceil(sim.timeLeft() / 1000)) });
+      const sec = Math.max(0, Math.ceil(sim.timeLeft() / 1000));
+      const s = hasSanity(sim.theme) ? fmt(this.t.game.toFinalIn, { s: sec }) : fmt(this.t.game.nextTake, { n: sim.round + 1, s: sec });
       if (pt.text !== s) {
         pt.setText(s);
         pt.x = Math.round(plate.x + (plate.w - pt.width) / 2);

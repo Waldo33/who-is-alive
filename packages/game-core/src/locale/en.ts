@@ -144,6 +144,8 @@ export const en: Dict = {
     next: 'Take {n} »',
     nextIn: 'Next in {n}',
     nextTake: 'Take {n} · {s}s',
+    toFinal: 'Finale »',
+    toFinalIn: 'Finale · {s}s',
     toWin: 'to {n}',
     spectator: 'Spectating',
     spectatorLive: 'Match in progress',

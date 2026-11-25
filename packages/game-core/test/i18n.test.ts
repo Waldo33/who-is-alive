@@ -68,6 +68,8 @@ describe('i18n', () => {
       const btn = (s: string, icon = false) => s.length * 8 + 12 + (icon ? 20 : 0);
       expect(btn(fmt(g.next, { n: 9 })), g.next).toBeLessThanOrEqual(162 - 32);
       expect(btn(fmt(g.nextTake, { n: 9, s: 10 })), g.nextTake).toBeLessThanOrEqual(162 - 32);
+      expect(btn(g.toFinal), g.toFinal).toBeLessThanOrEqual(162 - 32);
+      expect(btn(fmt(g.toFinalIn, { s: 10 })), g.toFinalIn).toBeLessThanOrEqual(162 - 32);
       expect(btn(g.rematch) + 2 + btn(g.withFriends), `${g.rematch} + ${g.withFriends}`).toBeLessThanOrEqual(162);
       expect(btn(g.rematch), g.rematch).toBeLessThanOrEqual(162 - 32);
       expect(btn(g.share, true), g.share).toBeLessThanOrEqual(162);
