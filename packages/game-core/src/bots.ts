@@ -41,6 +41,12 @@ export function crowdActDur(cfg: GameConfig, kind: CrowdKind): number {
   return (kind === 'freeze' ? cfg.freezeSec : kind === 'jump' ? cfg.jumpSec : cfg.danceSec) * 1000;
 }
 
+/** Поза по команде, начатая в at: пока смотрит Леший (`watchUntil`), замершие стоят до его приговора. */
+export function crowdHoldDur(cfg: GameConfig, kind: CrowdKind, at: number, watchUntil?: number): number {
+  const d = crowdActDur(cfg, kind);
+  return kind === 'freeze' && watchUntil !== undefined ? Math.max(d, watchUntil - at) : d;
+}
+
 /** Разброс реакции толпы — одинаковый для ботов и вовремя нажавших игроков. */
 export function crowdJitter(rng: Rng, a: number, b: number): number {
   return Math.round(rng.range(a, b) / 50) * 50;
@@ -170,7 +176,8 @@ export class BotBrain {
       if (s.crowdKind && now >= s.crowdReactAt) {
         const kind = s.crowdKind;
         s.crowdKind = null;
-        const dur = crowdActDur(this.cfg, kind);
+        // при Лешем толпа стоит, пока он не уйдёт (иначе стоять — выдать себя)
+        const dur = crowdHoldDur(this.cfg, kind, now, this.world.crowd?.watchUntil);
         this.emit({ t: 'act', eid: s.eid, kind: CROWD_ACT[kind], dur, at: now });
         s.walking = false;
         s.pauseUntil = now + dur + this.rng.range(100, 700);

@@ -31,7 +31,7 @@ export type WorldEvent =
    * vote — «Толпа решает»: жест не называется, kind — жест большинства (часть ботов делает другой).
    */
   /** `vote` — жест не назван (угадай по толпе); `ghost` — его тайно загадал вырезанный «Хлопушкой» (вырезанные и так известны всем). */
-  | { t: 'crowd'; kind: CrowdKind; showAt: number; resumeAt: number; windowEnd: number; at: number; vote?: boolean; ghost?: boolean }
+  | { t: 'crowd'; kind: CrowdKind; showAt: number; resumeAt: number; windowEnd: number; at: number; vote?: boolean; ghost?: boolean; watchUntil?: number }
   /**
    * Прожектор режиссёра: кто-то в круге не повторил жест (игрок или зазевавшийся бот).
    * Центр смещён от ошибившегося, в круге несколько человечков — это улика, а не указатель.

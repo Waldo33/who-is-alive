@@ -1,4 +1,4 @@
-import { CROWD_ACT, NavGrid, TICK_MS, World, clampToRect, crowdActDur, emoteDur, ghostClapOpenView, makeConfig, planPath, plazaArena, twistEmote } from '@kto/game-core';
+import { CROWD_ACT, NavGrid, TICK_MS, World, clampToRect, crowdHoldDur, emoteDur, ghostClapOpenView, makeConfig, planPath, plazaArena, twistEmote } from '@kto/game-core';
 import type {
   ArenaDef,
   AwardCard,
@@ -651,7 +651,7 @@ export class RemoteSession implements ClientSession {
           const [a, b] = this.cfg.botCrowdReactMs;
           const at = this.world.time < c.resumeAt ? c.resumeAt + Math.round((a + Math.random() * (b - a)) / TICK_MS) * TICK_MS : this.stopAt(e);
           this.crowdPred = { warnAt: c.warnAt, kind: it.kind, act: true };
-          this.pushLocal({ t: 'act', eid: me!.eid, kind: CROWD_ACT[it.kind], dur: crowdActDur(this.cfg, it.kind), at });
+          this.pushLocal({ t: 'act', eid: me!.eid, kind: CROWD_ACT[it.kind], dur: crowdHoldDur(this.cfg, it.kind, at, c.watchUntil), at });
           // хост начнёт жест в тот же момент (свой персонаж в стоп-кадре поставлен вровень с хостом)
           if (this.world.time < c.resumeAt) out = { ...out, at } as Intent;
         }

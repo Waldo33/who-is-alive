@@ -52,6 +52,8 @@ export interface CrowdState {
   showAt: number;
   resumeAt: number;
   windowEnd: number;
+  /** Леший («Купальская ночь»): смотрит до этого момента — замершие держат позу, шевельнувшийся — его. */
+  watchUntil?: number;
 }
 
 export interface WorldSnapshot {
@@ -255,7 +257,7 @@ export class World {
         this.zone = { startAt: ev.startAt, endAt: ev.endAt, from: ev.from, to: ev.to };
         break;
       case 'crowd':
-        this.crowd = { kind: ev.kind, warnAt: ev.at, showAt: ev.showAt, resumeAt: ev.resumeAt, windowEnd: ev.windowEnd, ...(ev.vote ? { vote: true } : {}), ...(ev.ghost ? { ghost: true } : {}) };
+        this.crowd = { kind: ev.kind, warnAt: ev.at, showAt: ev.showAt, resumeAt: ev.resumeAt, windowEnd: ev.windowEnd, ...(ev.vote ? { vote: true } : {}), ...(ev.ghost ? { ghost: true } : {}), ...(ev.watchUntil !== undefined ? { watchUntil: ev.watchUntil } : {}) };
         break;
       case 'twist':
         this.twist = ev.on;

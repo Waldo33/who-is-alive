@@ -2,7 +2,7 @@ import type { ArenaDef, Rect } from './arena';
 import { clampToRect, plazaArena, rectContains, shrinkRect } from './arena';
 import type { AwardCard, RoundStats } from './awards';
 import { pickMatchAwards, pickRoundAwards } from './awards';
-import { BotBrain, CROWD_ACT, crowdActDur, crowdJitter, emoteDur, planPath } from './bots';
+import { BotBrain, CROWD_ACT, crowdActDur, crowdHoldDur, crowdJitter, emoteDur, planPath } from './bots';
 import type { GameConfig } from './config';
 import { TICK_MS, crowdPauseMs, revealMs } from './config';
 import type { ActKind, CrowdKind, Dir, EmoteKind, EntitySpawn, WorldEvent } from './events';
@@ -65,6 +65,8 @@ export interface PlayerRound {
   accused: number | null;
   accusedAsGhost: boolean;
   crowdAnswered: number;
+  /** warnAt прихода Лешего, при котором игрок шевельнулся, пока тот смотрел (leshySees). */
+  leshyMoved: number;
   /** Нажал во время стоп-кадра: команда выполнится в этот момент вместе с толпой. */
   crowdQueued: { kind: CrowdKind; at: number } | null;
   /** Какой жест выбрал на последнюю команду (для «Жёсткого дубля» и «Толпа решает»). */
@@ -350,6 +352,7 @@ export class MatchSim {
       accused: null,
       accusedAsGhost: false,
       crowdAnswered: -1,
+      leshyMoved: -1,
       crowdQueued: null,
       crowdPick: null,
       crowdLate: false,
@@ -424,7 +427,7 @@ export class MatchSim {
     const c = this.world.crowd;
     if (!c || t < c.showAt) return false;
     if (t <= c.windowEnd) return true;
-    if (t > c.windowEnd + crowdActDur(this.cfg, c.kind) + 1500) return false;
+    if (t > Math.max(c.windowEnd, c.watchUntil ?? 0) + crowdActDur(this.cfg, c.kind) + 1500) return false;
     const act = CROWD_ACT[c.kind];
     return this.world.entities.some((e) => e.alive && e.act === act && e.actEnd > t);
   }
@@ -500,12 +503,15 @@ export class MatchSim {
     return t >= this.lastTwistAt + quiet && !this.zoneStarted && t < this.plannedPlayEnd - this.cfg.zoneStartBeforeEndSec * 1000 - 3000;
   }
 
-  private fireCrowd(kind: CrowdKind, vote: boolean, ghost = false, pauseMs?: number): void {
+  private fireCrowd(kind: CrowdKind, vote: boolean, ghost = false, pauseMs?: number, watchMs?: number): void {
     const t = this.world.time;
     const cfg = this.cfg;
     const pause = pauseMs ?? crowdPauseMs(cfg);
     const resumeAt = t + pause;
-    this.emit({ t: 'crowd', kind, at: t, showAt: t, resumeAt, windowEnd: resumeAt + cfg.crowdLateMs, ...(vote ? { vote: true } : {}), ...(ghost ? { ghost: true } : {}) });
+    const windowEnd = resumeAt + cfg.crowdLateMs;
+    // Леший смотрит и после окна ответа: приговор — в watchUntil (judgeTick)
+    const watch = watchMs !== undefined ? { watchUntil: windowEnd + LAG_GRACE_MS + watchMs } : {};
+    this.emit({ t: 'crowd', kind, at: t, showAt: t, resumeAt, windowEnd, ...(vote ? { vote: true } : {}), ...(ghost ? { ghost: true } : {}), ...watch });
     this.nextGhost = false;
     this.crowdShowTimes.push(resumeAt);
     this.crowdCount++;
@@ -547,7 +553,7 @@ export class MatchSim {
    */
   private judgeTick(t: number): void {
     const c = this.world.crowd;
-    if (!c || (c.vote && !c.ghost) || this.hardChecked === c.warnAt || t <= c.windowEnd + LAG_GRACE_MS) return;
+    if (!c || (c.vote && !c.ghost) || this.hardChecked === c.warnAt || t <= (c.watchUntil ?? c.windowEnd + LAG_GRACE_MS)) return;
     this.hardChecked = c.warnAt;
     const cfg = this.cfg;
     // Леший: из не замерших вовремя забирает одного — ближайшего к себе (дети — только подсвечены)
@@ -563,7 +569,8 @@ export class MatchSim {
       const hunt = this.playClock(c.warnAt) >= LESHY_HUNT_SEC * 1000;
       let best = -Infinity;
       for (const p of this.pr) {
-        const froze = p.crowdAnswered === c.warnAt && p.crowdPick === c.kind;
+        // замер, но шевельнулся, пока он смотрел, — как не замерший
+        const froze = p.crowdAnswered === c.warnAt && p.crowdPick === c.kind && p.leshyMoved !== c.warnAt;
         if (!p.alive || (froze && p.sins < cfg.leshyDoomSins && !hunt)) continue;
         const e = this.world.get(p.eid)!;
         const score = (froze ? p.sins : p.sins + 1) * 1000 - Math.hypot(e.x - spot.x, e.y - spot.y);
@@ -628,7 +635,7 @@ export class MatchSim {
   private leshyHides(t: number): boolean {
     if (!hasSanity(this.theme) || this.phase !== 'play') return false;
     const cfg = this.cfg;
-    if (this.leshyWarn >= 0 && t < this.leshyWarn + cfg.leshyPauseMs + cfg.crowdLateMs + LAG_GRACE_MS + 3000) return true;
+    if (this.leshyWarn >= 0 && t < this.leshyWarn + cfg.leshyPauseMs + cfg.crowdLateMs + LAG_GRACE_MS + cfg.leshyWatchMs + 3000) return true;
     const v = leshyVisits(this.round)[this.leshyIdx];
     if (!v) return false;
     const clock = this.playClock(t);
@@ -681,7 +688,7 @@ export class MatchSim {
         if (clock >= (visit.sec + 4) * 1000) this.leshyIdx++;
       } else if (this.crowdCanStart(t)) {
         this.leshyIdx++;
-        this.fireCrowd('freeze', false, false, cfg.leshyPauseMs);
+        this.fireCrowd('freeze', false, false, cfg.leshyPauseMs, cfg.kidsMode ? undefined : cfg.leshyWatchMs);
         this.leshyWarn = t; // warnAt команды = время её запуска
       }
     }
@@ -698,7 +705,7 @@ export class MatchSim {
       if (p.crowdQueued && t >= p.crowdQueued.at) {
         const k = p.crowdQueued.kind;
         p.crowdQueued = null;
-        if (p.alive) this.emit({ t: 'act', eid: p.eid, kind: CROWD_ACT[k], dur: crowdActDur(cfg, k), at: t });
+        if (p.alive) this.emit({ t: 'act', eid: p.eid, kind: CROWD_ACT[k], dur: crowdHoldDur(cfg, k, t, this.world.crowd?.watchUntil), at: t });
       }
     }
 
@@ -1265,7 +1272,7 @@ export class MatchSim {
           const own = it.at !== undefined && it.at >= c.resumeAt + a && it.at <= c.resumeAt + b && it.at % TICK_MS === 0 ? it.at : undefined;
           p.crowdQueued = { kind: it.kind, at: Math.max(t, own ?? c.resumeAt + jitter) };
         } else {
-          this.emit({ t: 'act', eid: p.eid, kind: CROWD_ACT[it.kind], dur: crowdActDur(cfg, it.kind), at: t });
+          this.emit({ t: 'act', eid: p.eid, kind: CROWD_ACT[it.kind], dur: crowdHoldDur(cfg, it.kind, t, c.watchUntil), at: t });
         }
         return;
       }
@@ -1283,23 +1290,37 @@ export class MatchSim {
         const zone = this.world.zoneRect(t);
         const target = zone ? clampToRect(zone, it.x, it.y, 2) : { x: it.x, y: it.y };
         const path = planPath(this.world, p.eid, target.x, target.y, zone);
-        if (path && path.length) this.emit({ t: 'move', eid: p.eid, path, at: t });
+        if (path && path.length) {
+          this.leshySees(p, t);
+          this.emit({ t: 'move', eid: p.eid, path, at: t });
+        }
         return;
       }
       case 'stop':
         this.emit({ t: 'stop', eid: p.eid, at: t });
         return;
       case 'emote': {
+        this.leshySees(p, t);
         // в изнанке темы эмоция у всех одна (бой с тенью в подвале) — игрок не выделяется
         const kind: ActKind = twistEmote(this.theme, this.world.twist) ?? (it.kind && EMOTES.includes(it.kind) ? it.kind : this.rng.pick<ActKind>(EMOTES));
         this.emit({ t: 'act', eid: p.eid, kind, dur: emoteDur(kind), at: t });
         return;
       }
       case 'attack':
+        if (it.eid >= 0) this.leshySees(p, t);
         // момент мира на экране нападавшего (не раньше LAG_GRACE_MS назад)
         this.attack(p, it.eid, e.x, e.y, Math.max(t - LAG_GRACE_MS, Math.min(t, it.wt ?? t)));
         return;
     }
+  }
+
+  /**
+   * Леший смотрит (от конца стоп-кадра до приговора в watchUntil): замерший игрок, который пошёл,
+   * помахал или ударил, для него — дёрнувшийся (judgeTick › prey). Стоп-кадр сам ставит позу поверх.
+   */
+  private leshySees(p: PlayerRound, t: number): void {
+    const c = this.world.crowd;
+    if (c && c.watchUntil !== undefined && c.warnAt === this.leshyWarn && t >= c.resumeAt && t <= c.watchUntil) p.leshyMoved = c.warnAt;
   }
 
   private recordPositions(): void {

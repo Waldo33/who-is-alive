@@ -2181,7 +2181,7 @@ export class GameScene extends Phaser.Scene {
         this.stepDarkAt = now;
         L.nextAt = now + 1150 - k * 40;
       }
-    } else if (L.stage === 'over' && c && sim.world.time >= c.windowEnd + LAG_GRACE_MS + 1600) {
+    } else if (L.stage === 'over' && c && sim.world.time >= (c.watchUntil ?? c.windowEnd + LAG_GRACE_MS) + 1600) {
       L.stage = 'leave';
       L.steps = 0;
       L.nextAt = now;
@@ -2254,7 +2254,7 @@ export class GameScene extends Phaser.Scene {
       const lead = this.cfg.leshyLeadSec;
       this.forestEyes(Math.max(0, Math.min(1, (this.playSec() - (L.sec - lead)) / lead)));
     }
-    const end = c ? c.windowEnd + LAG_GRACE_MS + 2600 : 0;
+    const end = c ? (c.watchUntil ?? c.windowEnd + LAG_GRACE_MS) + 2600 : 0;
     const on = hasSanity(this.sim.theme) && this.sim.phase === 'play' && !!c && c.warnAt === L.warn && w.time >= c.showAt && w.time < end;
     if (!on || !c) {
       this.giant?.setVisible(false);
@@ -2272,9 +2272,10 @@ export class GameScene extends Phaser.Scene {
       this.giantStrike = null;
     }
     const now = performance.now();
-    // время — мировое: приговор (удар) ядро выносит в judge, сцена замахивается заранее
+    // время — мировое: приговор (удар) ядро выносит в judge (после того, как он постоял и посмотрел,
+    // watchUntil), сцена замахивается заранее
     const wt = w.time - c.showAt;
-    const judge = c.windowEnd + LAG_GRACE_MS - c.showAt;
+    const judge = (c.watchUntil ?? c.windowEnd + LAG_GRACE_MS) - c.showAt;
     const spot = leshySpot(c.warnAt, 180);
     const dir = spot.dir; // откуда выходит: 1 — слева направо
     const from = 90 - dir * 125; // из-за края поля

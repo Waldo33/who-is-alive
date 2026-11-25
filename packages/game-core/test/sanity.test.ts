@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { LESHY_HUNT_SEC, MatchSim, ROTATION_THEMES, THEME_RULES, leshySec, leshySpot, leshyVisits, makeConfig, sanityStage } from '../src';
+import { CROWD_ACT, LAG_GRACE_MS, LESHY_HUNT_SEC, MatchSim, ROTATION_THEMES, THEME_RULES, leshySec, leshySpot, leshyVisits, makeConfig, sanityStage } from '../src';
 import type { WorldEvent } from '../src';
 
 const players = ['a', 'b'].map((pid, i) => ({ pid, name: pid, color: i }));
@@ -239,7 +239,7 @@ describe('рассудок («Купальская ночь»)', () => {
         sim.tick();
       }
       expect(leshyAt).toBeGreaterThan(0);
-      for (let i = 0; i < 20 * 6; i++) {
+      for (let i = 0; i < 20 * 9; i++) {
         const c = sim.world.crowd;
         if (c && !c.vote && sim.world.time >= c.showAt + 100 && b.crowdAnswered !== c.warnAt) sim.intent('b', { k: 'crowd', kind: c.kind });
         sim.tick();
@@ -322,12 +322,55 @@ describe('рассудок («Купальская ночь»)', () => {
     const ec = sim.world.get(c.eid)!;
     [ea.x, ea.y] = [spot.x + 6, spot.y];
     [ec.x, ec.y] = [spot.x - 60, spot.y - 90];
-    for (let i = 0; i < 20 * 6; i++) {
+    for (let i = 0; i < 20 * 9; i++) {
       const cr = sim.world.crowd;
       if (cr && !cr.vote && sim.world.time >= cr.showAt + 100 && b.crowdAnswered !== cr.warnAt) sim.intent('b', { k: 'crowd', kind: cr.kind });
       sim.tick();
     }
     expect(a.alive).toBe(false);
+    expect(b.alive).toBe(true);
+    expect(c.alive).toBe(true);
+  });
+  it('замер, но шевельнулся, пока Леший смотрит, — забирает ближайшего из дёрнувшихся; стоящих не трогает', () => {
+    const three = ['a', 'b', 'c'].map((pid, i) => ({ pid, name: pid, color: i }));
+    const sim = new MatchSim(makeConfig({ fixedTheme: KUPALA, endWhenLastAlive: false }), three, 13);
+    toPlay(sim);
+    const [a, b, c] = sim.pr;
+    const warn = () => (sim as unknown as { leshyWarn: number }).leshyWarn;
+    const answer = () => {
+      const cr = sim.world.crowd;
+      if (cr && !cr.vote && sim.world.time >= cr.showAt + 100) for (const p of sim.pr) if (p.alive && p.crowdAnswered !== cr.warnAt) sim.intent(p.pid, { k: 'crowd', kind: cr.kind });
+    };
+    for (let i = 0; i < 20 * 120 && warn() < 0; i++) {
+      for (const p of sim.pr) p.sanity = 100;
+      answer();
+      sim.tick();
+    }
+    expect(warn()).toBeGreaterThan(0);
+    const spot = leshySpot(warn(), sim.arena.width);
+    // b — ближе всех к Лешему, но стоит; a и c дёрнутся, a ближе
+    const place = (eid: number, x: number, y: number) => Object.assign(sim.world.get(eid)!, { x, y });
+    place(b.eid, spot.x + 4, spot.y);
+    place(a.eid, spot.x + 30, spot.y);
+    place(c.eid, spot.x - 60, spot.y - 90);
+    const cr = sim.world.crowd!;
+    expect(cr.watchUntil).toBe(cr.windowEnd + LAG_GRACE_MS + sim.cfg.leshyWatchMs);
+    let moved = false;
+    for (let i = 0; i < 20 * 10; i++) {
+      answer();
+      if (!moved && sim.world.time >= cr.windowEnd + 300) {
+        moved = true;
+        for (const p of [a, c]) {
+          const e = sim.world.get(p.eid)!;
+          sim.intent(p.pid, { k: 'move', x: e.x + 12, y: e.y });
+        }
+      }
+      // замерший держит позу, пока Леший не ушёл
+      if (sim.world.time === cr.watchUntil! - 50) expect(sim.world.get(b.eid)!.act).toBe(CROWD_ACT.freeze);
+      sim.tick();
+    }
+    expect(a.alive).toBe(false);
+    expect(a.diedAt!).toBeGreaterThan(cr.watchUntil!);
     expect(b.alive).toBe(true);
     expect(c.alive).toBe(true);
   });
