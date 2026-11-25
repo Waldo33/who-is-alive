@@ -289,6 +289,9 @@ export class GameScene extends Phaser.Scene {
   private crowdG!: Phaser.GameObjects.Graphics;
   private grayFx: Phaser.FX.ColorMatrix | null = null;
   private wasBw = false;
+  /** «Купальская ночь»: в этом дубле успела наступить ночь (иначе итоги — обычные, цветные). */
+  private nightFell = false;
+  private nightRound = -1;
   /** Идёт триумф «Купальской ночи»: цветок цветной, остальное нарисовано серым (фильтр снят). */
   private fernOn = false;
   private freezeVeil!: Phaser.GameObjects.Rectangle;
@@ -3199,8 +3202,14 @@ export class GameScene extends Phaser.Scene {
         else this.grayFx.reset();
       } else this.freezeVeil.setVisible(frozen);
     }
-    // «Купальская ночь»: итоги и конец матча — чёрно-белые, как старая фотография с той ночи
-    const bw = hasSanity(this.sim.theme) && (this.sim.phase === 'results' || this.sim.phase === 'match_end') && !this.fernOn;
+    // «Купальская ночь»: итоги и конец матча — чёрно-белые, как старая фотография с той ночи,
+    // но только если ночь успела наступить: перебили друг друга ещё в сумерках — экран обычный
+    if (playing && this.nightRound !== this.sim.round) {
+      this.nightRound = this.sim.round;
+      this.nightFell = false;
+    }
+    if (playing && hasSanity(this.sim.theme) && nightLevel(this.cfg, this.playSec()) >= 1) this.nightFell = true;
+    const bw = hasSanity(this.sim.theme) && this.nightFell && (this.sim.phase === 'results' || this.sim.phase === 'match_end') && !this.fernOn;
     if (bw !== this.wasBw) {
       this.wasBw = bw;
       if (this.grayFx) {
