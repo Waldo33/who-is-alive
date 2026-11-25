@@ -24,6 +24,7 @@ import {
   nightCause,
   fireLevel,
   LAG_GRACE_MS,
+  bountyLeader,
 } from '@kto/game-core';
 import type { AwardId, ClientSession, CrowdKind, Dict, Entity, GameConfig, Lang, Moment, Notice, RoundSummary, ThemeText, World, WorldEvent } from '@kto/game-core';
 import { resultCardFile } from './card';
@@ -3608,11 +3609,22 @@ export class GameScene extends Phaser.Scene {
         // минимум текста (плейтесты: «много текста в начале дубля»): номер дубля с темой и, если есть,
         // условие съёмки двумя строками; «где ты» показывают круги вокруг своего персонажа
         const mod = roundMod(sim.mod);
-        this.ovPlate(AY + 122, mod !== 'none' ? 42 : 18);
+        // «Награда за голову»: имя лидера матча знают все (какой он человечек — нет)
+        const lead = bountyLeader(sim.scores);
+        const leadInfo = lead ? sim.info(lead) : undefined;
+        const by = AY + 126 + (mod !== 'none' ? 38 : 14);
+        this.ovPlate(AY + 122, (mod !== 'none' ? 42 : 18) + (leadInfo ? 24 : 0));
         this.ovText(90, AY + 126, tp(this.lang, this.t.game.roundTheme, sim.round, { theme: this.t.themes[sim.theme] }), 'mist');
         if (mod !== 'none') {
           this.ovText(90, AY + 140, this.t.mods[mod].name, 'yellow');
           this.ovText(90, AY + 152, this.t.mods[mod].desc, 'white');
+        }
+        if (leadInfo) {
+          if (lead === sim.selfPid) this.ovText(90, by + 5, this.t.game.bountyYou, 'red');
+          else {
+            this.ovText(90, by, this.t.game.bounty, 'sand');
+            this.ovText(90, by + 10, leadInfo.name.slice(0, 14), COLOR_FONT[leadInfo.color]);
+          }
         }
         break;
       }
@@ -3914,13 +3926,15 @@ export class GameScene extends Phaser.Scene {
         const mine = s.accusations.find((a) => a.pid === this.sim.selfPid);
         const meR = s.reveal.find((r) => r.pid === this.sim.selfPid);
         // угадывают все: вырезанные — по ходу дубля, живые — в конце (в «Купальской ночи» живые — нет)
-        const verdict = mine ? (mine.correct ? this.t.game.guessed : this.t.game.missed) : meR && (!meR.alive || !hasSanity(this.sim.theme)) ? this.t.game.noAccuse : '';
+        const verdict = mine ? (mine.correct ? ((s.points[this.sim.selfPid]?.bounty ?? 0) > 0 ? this.t.game.headHunted : this.t.game.guessed) : this.t.game.missed) : meR && (!meR.alive || !hasSanity(this.sim.theme)) ? this.t.game.noAccuse : '';
         this.ovDyn.final?.setText(verdict).setVisible(true);
         this.ovDyn.final.x = Math.round(90 - this.ovDyn.final.width / 2);
         // тебя вычислили: вторая строка, первая поднимается
-        const caughtBy = meR?.alive ? s.accusations.filter((a) => a.correct && a.eid === meR.eid).length : 0;
-        const caught = caughtBy > 0;
-        if (caught) this.ovDyn.caught?.setText(fmt(this.t.game.caught, { n: caughtBy })).setX(Math.round(90 - this.ovDyn.caught.width / 2));
+        // «Тебя вычислили! -N»: N — сколько очков украли (за голову лидера — по 2); в ночи погибает и вычисленный
+        const caughtBy = meR ? s.accusations.filter((a) => a.correct && a.eid === meR.eid).length : 0;
+        const lost = -(s.points[this.sim.selfPid]?.stolen ?? 0);
+        const caught = caughtBy > 0 && (!!meR?.alive || !this.ovDyn.killedBy);
+        if (caught) this.ovDyn.caught?.setText(fmt(this.t.game.caught, { n: lost || caughtBy })).setX(Math.round(90 - this.ovDyn.caught.width / 2));
         this.ovDyn.caught?.setVisible(caught);
         this.ovDyn.killedBy?.setVisible(!caught);
         this.ovDyn.killerName?.setVisible(!caught);

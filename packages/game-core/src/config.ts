@@ -161,7 +161,8 @@ export const DEFAULT_CONFIG = {
   zoneFinalAreaRatio: 0.5,
 
   // очки
-  points: { kill: 1, survive: 1, stars: 2, accuse: 1 },
+  // bounty — «Награда за голову»: столько получает выбивший или угадавший лидера и столько теряет лидер
+  points: { kill: 1, survive: 1, stars: 2, accuse: 1, bounty: 2 },
 
   // сеть
   hostTickHz: 20,
