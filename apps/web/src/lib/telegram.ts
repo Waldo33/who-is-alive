@@ -135,6 +135,12 @@ export function bootTelegram(): Promise<TgWebApp | null> {
         }
         applyInsets();
         for (const e of ['safeAreaChanged', 'contentSafeAreaChanged', 'fullscreenChanged', 'viewportChanged']) w.onEvent(e, applyInsets);
+        // свернули и развернули Mini App (Bot API 8.0): document при этом может не стать hidden,
+        // а звук на iOS глохнет — сообщаем звуку (audio.ts) событием, без зависимости от него
+        if (at('8.0')) {
+          w.onEvent('deactivated', () => window.dispatchEvent(new Event('kto:away')));
+          w.onEvent('activated', () => window.dispatchEvent(new Event('kto:back')));
+        }
         w.BackButton.onClick(() => backCb?.());
         if (backCb) w.BackButton.show();
       } catch {
