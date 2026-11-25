@@ -406,6 +406,33 @@ describe('сетевая игра', () => {
     expect(maxDiff).toBeLessThanOrEqual(1);
   });
 
+  it.each(['reveal', 'results'] as const)(
+    'перезаход посреди дубля («%s»): итоги дубля приходят со снимком, экраны итогов не остаются без данных',
+    (at) => {
+      const rig = makeRig([60, 120], 0, 9, { roundSec: 30 });
+      for (let i = 0; i < 20 * 200 && rig.host.phase !== at; i++) rig.step();
+      expect(rig.host.phase).toBe(at);
+      for (let i = 0; i < 10; i++) rig.step();
+      rig.guests[0].dispose();
+      const t = rig.hub.join({ userId: 'g1', name: 'g1', color: 1, joinedAt: 9 });
+      const fresh = new RemoteSession({ transport: t, selfPid: 'g1', hostPid: 'h', players, cfg: { roundSec: 30 }, clock: rig.now, resync: true });
+      rig.guests[0] = fresh;
+      const seen = new Set<string>();
+      for (let i = 0; i < 20 * 30; i++) {
+        rig.step();
+        for (const n of fresh.drainNotices()) {
+          if (n.t !== 'phase') continue;
+          seen.add(n.phase);
+          // сцена строит разоблачение и итоги по summary, конец матча — по match: данные обязаны быть к смене фазы
+          if (n.phase === 'reveal' || n.phase === 'results') expect(fresh.summary, n.phase).not.toBeNull();
+          if (n.phase === 'match_end') expect(fresh.match).not.toBeNull();
+        }
+      }
+      expect(seen.has(at)).toBe(true);
+      expect(fresh.phase).toBe(rig.host.phase);
+    },
+  );
+
   it.each([
     { lat: [40, 90] as [number, number], loss: 0, seed: 12 },
     { lat: [120, 350] as [number, number], loss: 0, seed: 13 },

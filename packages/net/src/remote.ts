@@ -78,6 +78,8 @@ export class RemoteSession implements ClientSession {
   private meMsg: MeMsg | null = null;
   private notices: Notice[] = [];
   private stQueue: St[] = [];
+  /** Когда последний раз просили снимок из-за пропавших итогов (не чаще раза в 3 с). */
+  private waitResyncAt = 0;
   private tl = 0;
   private tlAt = 0;
   private ppe = 0;
@@ -259,7 +261,12 @@ export class RemoteSession implements ClientSession {
         this.offsets = [];
         this.noteOffset(m.world.time);
         this.players = m.players;
-        this.stQueue.push(m.st);
+        // итоги — из снимка (вернулись посреди разоблачения или итогов); прежние смены фаз устарели
+        this.summary = m.summary ?? null;
+        if (m.awards) this.roundAwards = m.awards;
+        this.match = m.match ?? null;
+        this.stQueue = [m.st];
+        this.waitResyncAt = 0;
         this.notices.push({ t: 'round_start', round: m.round, theme: m.theme, mod: this.mod });
         break;
     }
@@ -450,8 +457,17 @@ export class RemoteSession implements ClientSession {
       // итоги и конец матча показываем только вместе с данными для них
       const dataReady = (st.phase !== 'reveal' && st.phase !== 'results') || this.summary !== null;
       const matchReady = st.phase !== 'match_end' || this.match !== null;
-      const due =
-        (dataReady && matchReady && (st.wt === undefined || this.world.time >= st.wt || !this.running)) || this.clock() - this.tlAt > 3000;
+      const late = this.clock() - this.tlAt > 3000;
+      // итогов дубля или матча нет дольше 3 с (сообщение пропало, пока не было связи) — без них экран
+      // разоблачения и итогов не построить: попросить снимок заново, а фазу пока не менять
+      if ((!dataReady || !matchReady) && late && !this.spectator) {
+        if (this.clock() - this.waitResyncAt > 3000) {
+          this.waitResyncAt = this.clock();
+          void this.t.send('host', { t: 'resync' });
+        }
+        break;
+      }
+      const due = (dataReady && matchReady && (st.wt === undefined || this.world.time >= st.wt || !this.running)) || late;
       if (!due) break;
       this.applySt(this.stQueue.shift()!);
     }

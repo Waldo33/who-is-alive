@@ -1234,7 +1234,17 @@ export class GameScene extends Phaser.Scene {
 
   private handleNotices(): void {
     const list = this.sim.drainNotices();
-    for (const n of list) this.onNotice(n);
+    for (const n of list) {
+      // сбой на одном уведомлении не должен терять остальные (экран застревал на старой фазе);
+      // ошибку — в журнал отдельно, как и прежде
+      try {
+        this.onNotice(n);
+      } catch (e) {
+        setTimeout(() => {
+          throw e;
+        });
+      }
+    }
   }
 
   private onNotice(n: Notice): void {
@@ -1282,20 +1292,23 @@ export class GameScene extends Phaser.Scene {
       if (n.phase === 'reveal') {
         this.revealStartNow = this.sim.now;
         this.finalSoundsPlayed = false;
-        const s = this.sim.summary!;
-        this.replay = makeReplay(this.sim.world, s.replayFrom, this.sim.world.time);
-        this.setReplayKills();
-        this.buildReplayWarp(s);
-        this.trails.clear();
-        this.noteMoment();
-        this.upgradeDeathClip();
-        // «смотрим отснятое»: проектор нарастает (drum), потом тихо стрекочет под повтором
-        this.audio.play('drum');
-        {
-          const c = this.cfg;
-          const ts = this.init0.timeScale ?? 1;
-          this.audio.projector((s.replayTo - s.replayFrom) / c.revealSpeed / 1000 / ts, 0.06, c.revealDrumSec / ts);
-        }
+        const s = this.sim.summary;
+        // итогов нет (вернулись посреди разоблачения к старому серверу) — без повтора, экран всё равно сменится
+        if (s) {
+          this.replay = makeReplay(this.sim.world, s.replayFrom, this.sim.world.time);
+          this.setReplayKills();
+          this.buildReplayWarp(s);
+          this.trails.clear();
+          this.noteMoment();
+          this.upgradeDeathClip();
+          // «смотрим отснятое»: проектор нарастает (drum), потом тихо стрекочет под повтором
+          this.audio.play('drum');
+          {
+            const c = this.cfg;
+            const ts = this.init0.timeScale ?? 1;
+            this.audio.projector((s.replayTo - s.replayFrom) / c.revealSpeed / 1000 / ts, 0.06, c.revealDrumSec / ts);
+          }
+        } else this.replay = null;
       }
       if (n.phase === 'results' && !this.init0.spectator) this.trackRound();
       if (n.phase === 'match_end') {
@@ -3641,7 +3654,8 @@ export class GameScene extends Phaser.Scene {
         this.ovDyn.title = this.ovText(90, AY + 6, this.t.game.reveal, 'yellow');
         // слева внизу поля
         this.ovDyn.speed = this.ovText(4, AY + 248, '×2.5', 'mist', false).setVisible(false);
-        const s = sim.summary!;
+        const s = sim.summary;
+        if (!s) break;
         this.ovDyn.final = this.ovText(90, PANEL_Y + 13, '', 'sand').setVisible(false);
         this.ovDyn.caught = this.ovText(90, PANEL_Y + 20, this.t.game.caught, 'red').setVisible(false);
         // кто выбил тебя — после разоблачения уже не секрет
@@ -3655,7 +3669,8 @@ export class GameScene extends Phaser.Scene {
           this.ovDyn.killerName = this.ovText(90, PANEL_Y + 23, kInfo.name, COLOR_FONT[kInfo.color]).setVisible(false);
         }
         s.reveal.forEach((r, i) => {
-          const info = sim.info(r.pid)!;
+          const info = sim.info(r.pid);
+          if (!info) return;
           this.ovDyn['name' + i] = this.txt(0, 0, info.name, COLOR_FONT[info.color]).setVisible(false);
           this.ov(this.ovDyn['name' + i], 2100);
         });
@@ -3674,7 +3689,8 @@ export class GameScene extends Phaser.Scene {
 
   private buildResults(): void {
     const sim = this.sim;
-    const s = sim.summary!;
+    const s = sim.summary;
+    if (!s) return;
     this.ovPanel(8, AY + 8, 164, 244);
     const night = hasSanity(sim.theme) ? this.themeText()?.ends : undefined;
     // с рассудком: остался один / рассвет / туман забрал всех
@@ -3893,7 +3909,7 @@ export class GameScene extends Phaser.Scene {
         if (n < 3) this.audio.play('count');
       }
     }
-    if (phase === 'reveal' && sim.summary) {
+    if (phase === 'reveal' && sim.summary && this.ovDyn.final) {
       const s = sim.summary;
       const e = sim.now - this.revealStartNow + this.acc;
       const drum = this.cfg.revealDrumSec * 1000;
