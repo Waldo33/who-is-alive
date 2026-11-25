@@ -78,6 +78,30 @@ describe('игровой сервер: вход и HTTP', () => {
   });
 });
 
+describe('игровой сервер: приглашение из Telegram', () => {
+  it('по одной метке все попадают в одну комнату; комната закрылась — первый создаёт новую', async () => {
+    const { srv, http } = await boot();
+    const a = await anon(http);
+    const b = await anon(http);
+    const first = await create(http, a.token, { name: 'Аня', invite: 'AbCd1234xyz9' });
+    const second = await create(http, b.token, { name: 'Боря', invite: 'AbCd1234xyz9' });
+    expect(second.code).toBe(first.code);
+    expect(srv.rooms.get(first.code)!.directorId).toBe(a.userId);
+    // другая метка и без метки — свои комнаты
+    expect((await create(http, b.token, { invite: 'Other5678abc' })).code).not.toBe(first.code);
+    expect((await create(http, b.token)).code).not.toBe(first.code);
+    // кривая метка — как без неё
+    expect((await create(http, a.token, { invite: '../x' })).code).not.toBe(first.code);
+    // метка переезжает вместе с лобби (выкладка без обрыва)
+    expect(srv.rooms.get(first.code)!.snapshot().invite).toBe('AbCd1234xyz9');
+    srv.rooms.get(first.code)!.members.clear();
+    srv.housekeeping();
+    expect(srv.rooms.has(first.code)).toBe(false);
+    const again = await create(http, b.token, { invite: 'AbCd1234xyz9' });
+    expect(srv.rooms.get(again.code)!.directorId).toBe(b.userId);
+  });
+});
+
 describe('игровой сервер: аналитика', () => {
   it('принимает пачку событий как text/plain, проверяет имена, комнату и игрока', async () => {
     const { http, srv } = await boot();

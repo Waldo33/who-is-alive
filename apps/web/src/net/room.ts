@@ -334,7 +334,7 @@ export class Room {
   }
 }
 
-/** Создать комнату и вернуть код. */
-export async function createRoom(name: string, settings: RoomSettings = DEFAULT_SETTINGS, lang = 'ru'): Promise<string> {
-  return createGameRoom(name, settings, lang);
+/** Создать комнату и вернуть код (`invite` — по карточке бота: общая комната всех нажавших). */
+export async function createRoom(name: string, settings: RoomSettings = DEFAULT_SETTINGS, lang = 'ru', invite?: string): Promise<string> {
+  return createGameRoom(name, settings, lang, invite);
 }

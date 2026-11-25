@@ -78,6 +78,8 @@ export interface RoomSnapshot {
   load?: boolean;
   /** Сколько комната уже пустая (мс): сосед продолжает отсчёт, а не начинает 10 минут заново. */
   emptyMs?: number;
+  /** Метка приглашения из Telegram: по той же карточке после переезда — в эту же комнату. */
+  invite?: string;
 }
 
 /**
@@ -244,6 +246,8 @@ export class Room {
   /** Зрители, приехавшие со снимком: войдут — снова станут зрителями, а не займут место. */
   private expectSpectators = new Set<string>();
   closed = false;
+  /** Комната по приглашению из Telegram («Собрать комнату» в боте) — метка карточки. */
+  invite?: string;
 
   constructor(private readonly o: RoomOptions) {
     this.code = o.code;
@@ -697,6 +701,7 @@ export class Room {
         offlineSince: m.peer ? 0 : m.offlineSince || this.now(),
       })),
       spectators: [...this.spectators.keys(), ...this.expectSpectators],
+      ...(this.invite ? { invite: this.invite } : {}),
     };
   }
 

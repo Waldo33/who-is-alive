@@ -101,6 +101,8 @@ const EMPTY_CLOSE_MS = 10 * 60_000;
 /** Комнаты нагрузочного прогона: пустая закрывается почти сразу — не держит места у настоящих игроков. */
 const LOAD_EMPTY_CLOSE_MS = 15_000;
 const HELLO_TIMEOUT_MS = 10_000;
+/** Метка приглашения (startapp=g_<метка> из карточки бота). */
+const INVITE = /^[A-Za-z0-9]{8,32}$/;
 const HEARTBEAT_MS = 10_000;
 
 interface ConnState {
@@ -115,6 +117,8 @@ interface ConnState {
 export class GameServer {
   readonly http: Server;
   readonly rooms = new Map<string, Room>();
+  /** Приглашение из Telegram → код его комнаты (пока комната жива). */
+  private readonly invites = new Map<string, string>();
   readonly instance: string;
   draining = false;
   /** Когда drain обязан закончиться (матчи, не доигравшие к этому сроку, закрываются). */
@@ -231,8 +235,14 @@ export class GameServer {
     this.botRate.sweep(now);
   }
 
+  private bindInvite(r: Room, invite: string): void {
+    r.invite = invite;
+    this.invites.set(invite, r.code);
+  }
+
   private dropRoom(r: Room, why: string): void {
     r.close(why);
+    if (r.invite && this.invites.get(r.invite) === r.code) this.invites.delete(r.invite);
     this.rooms.delete(r.code);
     this.emptySince.delete(r);
     this.loadRooms.delete(r.code);
@@ -319,10 +329,17 @@ export class GameServer {
   private async createRoom(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const userId = await this.bearer(req);
     if (!userId) return this.reply(res, 401, { error: 'bad_token' });
+    const body = (await readJson(req)) as { name?: unknown; settings?: unknown; lang?: unknown; invite?: unknown } | null;
+    // приглашение из Telegram (карточка «Собрать комнату» инлайн-режима бота): первый нажавший создаёт
+    // комнату, остальные по той же карточке попадают в неё же
+    const invite = typeof body?.invite === 'string' && INVITE.test(body.invite) ? body.invite : undefined;
+    if (invite) {
+      const have = this.rooms.get(this.invites.get(invite) ?? '');
+      if (have && !have.closed) return this.reply(res, 200, { code: have.code, wsUrl: this.wsUrl(req) });
+    }
     if (this.draining || this.rooms.size >= this.maxRooms) return this.reply(res, 503, { error: 'server_busy' });
     const load = this.isLoad(req);
     if (!load && (!this.roomUserRate.take(userId, this.now()) || !this.roomRate.take(this.ip(req), this.now()))) return this.reply(res, 429, { error: 'rate_limited' });
-    const body = (await readJson(req)) as { name?: unknown; settings?: unknown; lang?: unknown } | null;
     const settings = RoomSettingsSchema.safeParse(body?.settings);
     const code = this.newCode();
     if (!code) return this.reply(res, 503, { error: 'server_busy' });
@@ -341,7 +358,8 @@ export class GameServer {
     });
     this.rooms.set(code, room);
     if (load) this.loadRooms.add(code);
-    this.log('info', 'room_created', { room: code, user: hashId(userId), ...(load ? { load: true } : {}) });
+    if (invite) this.bindInvite(room, invite);
+    this.log('info', 'room_created', { room: code, user: hashId(userId), ...(load ? { load: true } : {}), ...(invite ? { invite: true } : {}) });
     return this.reply(res, 200, { code, wsUrl: this.wsUrl(req) });
   }
 
@@ -410,6 +428,7 @@ export class GameServer {
       });
       this.rooms.set(snap.code, room);
       if (snap.load === true) this.loadRooms.add(snap.code);
+      if (typeof snap.invite === 'string' && INVITE.test(snap.invite)) this.bindInvite(room, snap.invite);
       // пустая комната продолжает отсчёт до закрытия, а не держит место ещё 10 минут
       if (typeof snap.emptyMs === 'number' && snap.emptyMs >= 0) this.emptySince.set(room, this.now() - Math.min(snap.emptyMs, EMPTY_CLOSE_MS));
       this.log('info', 'room_imported', { room: snap.code, members: snap.members.length, ...(snap.load ? { load: true } : {}) });

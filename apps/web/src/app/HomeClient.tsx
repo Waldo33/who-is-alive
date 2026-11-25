@@ -47,7 +47,7 @@ export default function HomeClient() {
   const ny = useNewYear();
   const creating = useRef(false);
   // для автосоздания комнаты из эффекта (?create): самая свежая версия create
-  const createRef = useRef<() => Promise<void>>(async () => {});
+  const createRef = useRef<(invite?: string) => Promise<void>>(async () => {});
   useEffect(() => {
     const l = detectLang();
     setLang(l);
@@ -67,21 +67,28 @@ export default function HomeClient() {
     track('page_view', first ? { page: 'home', first: true } : { page: 'home' });
     getAudio().setMusic('menu');
     // «С друзьями» в конце матча с ИИ: сразу создать комнату и позвать
-    if (new URLSearchParams(location.search).has('create')) {
+    const q = new URLSearchParams(location.search);
+    if (q.has('create')) {
       history.replaceState(null, '', '/');
       track('invite_create', { from: 'sandbox' });
       void createRef.current();
+    } else if (q.get('invite')) {
+      // карточка бота «Собрать комнату»: первый нажавший создаёт лобби, остальные — в него же
+      const invite = q.get('invite')!;
+      history.replaceState(null, '', '/');
+      track('invite_create', { from: 'tg_card' });
+      void createRef.current(invite);
     }
   }, []);
   const t = DICTS[lang];
 
-  const create = async () => {
+  const create = async (invite?: string) => {
     if (creating.current) return;
     creating.current = true;
     setBusy(true);
     setError('');
     try {
-      const c = await createRoom(playerName(t), undefined, lang);
+      const c = await createRoom(playerName(t), undefined, lang, invite);
       track('room_create', { code: c });
       router.push(`/r/${c}`);
     } catch (e) {
@@ -134,7 +141,7 @@ export default function HomeClient() {
         <Link className="btn" href="/sandbox?go" onClick={() => track('quick_play_tap')}>
           {t.start.quickPlay}
         </Link>
-        <button className="btn alt" onClick={create} disabled={busy}>
+        <button className="btn alt" onClick={() => void create()} disabled={busy}>
           {busy ? t.lobby.connecting : t.start.withFriends}
         </button>
 {daily.on && (
