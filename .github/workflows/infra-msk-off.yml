@@ -1,0 +1,160 @@
+# Вывод московского сервера (massovka-game, 129.101.104.99) из эксплуатации (docs/server-migration.md › 15).
+#   PR с правкой этого файла и запуск без подтверждения — только проверка: DNS ни у одного резолвера не смотрит
+#   на Москву, сколько игроков к ней ещё подключается, вся ли её база уже в Европе.
+#   Удалить — вручную: Actions › infra-msk-off › Run workflow, в поле «confirm» написать «удалить».
+#   Перед удалением — последняя копия базы Москвы на сервер в Нидерландах (/var/backups/massovka-msk-final,
+#   ночная уборка копий её не трогает). Удаление необратимо; Terraform его не делает нарочно (prevent_destroy).
+name: infra-msk-off
+
+on:
+  pull_request:
+    paths: ['.github/workflows/infra-msk-off.yml']
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Напишите «удалить», чтобы удалить сервер (иначе только проверка)'
+        default: ''
+
+concurrency:
+  group: infra-msk-off
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  msk-off:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TWC_TOKEN: ${{ secrets.TWC_TOKEN }}
+      SSH_OPTS: -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=20 -o ServerAliveInterval=15 -o LogLevel=ERROR
+      FIND_ONLY: '1'
+      DELETE: ${{ github.event_name == 'workflow_dispatch' && inputs.confirm == 'удалить' }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m venv /tmp/py && /tmp/py/bin/pip install -q cryptography && sudo apt-get install -y -qq dnsutils >/dev/null
+
+      - id: msk
+        env: { SERVER_NAME: massovka-game }
+        run: /tmp/py/bin/python infra/game/provision.py || true
+      - id: eu
+        env: { SERVER_NAME: massovka-eu }
+        run: /tmp/py/bin/python infra/game/provision.py
+      - id: infra
+        env: { SERVER_NAME: massovka-infra }
+        run: /tmp/py/bin/python infra/game/provision.py
+
+      - name: DNS — никто не смотрит на Москву
+        env:
+          MSK: ${{ steps.msk.outputs.ip || '129.101.104.99' }}
+          EU: ${{ steps.eu.outputs.ip }}
+        run: |
+          bad=0
+          ns=$(dig +short NS benobody.app @8.8.8.8 | head -2 | tr '\n' ' ')
+          # публичные резолверы (Google, Cloudflare, Quad9, Яндекс) и свои серверы имён домена
+          for r in 8.8.8.8 1.1.1.1 9.9.9.9 77.88.8.8 $ns; do
+            for h in benobody.app www.benobody.app api.benobody.app; do
+              a=$(dig +short +time=3 +tries=2 A "$h" "@$r" 2>/dev/null | grep -E '^[0-9.]+$' | tr '\n' ' ')
+              ttl=$(dig +noall +answer +time=3 +tries=2 A "$h" "@$r" 2>/dev/null | awk '{print $2}' | head -1)
+              echo "$r: $h → ${a:-нет ответа} (TTL ${ttl:-?})"
+              case " $a " in *" $MSK "*) echo "::error::$r: $h ещё смотрит на Москву"; bad=1 ;; esac
+            done
+          done
+          [ "$bad" = 0 ] && echo "DNS везде на Европе ($EU)"
+          exit $bad
+
+      - name: Кто ещё приходит в Москву
+        if: steps.msk.outputs.ip != ''
+        env:
+          MSK: ${{ steps.msk.outputs.ip }}
+          IP: ${{ steps.infra.outputs.ip }}
+        run: |
+          # снаружи: соединения на 443/80 (игроки и сайт; туннели ходят на 22) — две минуты раз в 2 с.
+          # Адреса не печатаем — только сколько разных
+          ssh $SSH_OPTS root@$MSK 'bash -s' <<'SH'
+          seen=$(mktemp); peak=0
+          for _ in $(seq 1 60); do
+            ss -Htn state established '( sport = :443 or sport = :80 )' | awk '{print $4}' | sed 's/:[0-9]*$//' | grep -v -E '^(127\.|\[::1\])' > /tmp/now || true
+            n=$(wc -l < /tmp/now); [ "$n" -gt "$peak" ] && peak=$n
+            cat /tmp/now >> "$seen"; sleep 2
+          done
+          echo "Москва, 443/80 за 2 минуты: пик $peak соединений, разных адресов $(sort -u "$seen" | grep -c .)"
+          echo "пересылка в Европу: $(grep '^RELAY=' /etc/massovka/hosts.env 2>/dev/null || echo 'RELAY не задан')"
+          echo "службы игры: $(systemctl list-units 'massovka-game*' --state=running --no-legend --plain | awk '{print $1}' | tr '\n' ' ')"
+          echo "Caddy за сутки — сообщений в журнале: $(journalctl -u caddy --since -24h --no-pager -o cat | wc -l)"
+          SH
+          # трафик машины по часам (node_exporter Москвы, пока его собирают Нидерланды): спад — значит, игроки ушли
+          ssh $SSH_OPTS root@$IP 'bash -s' <<'SH' || true
+          q='sum(rate(node_network_transmit_bytes_total{server="msk",device!="lo"}[1h]))'
+          echo "исходящий трафик Москвы, КБ/с (среднее за час):"
+          curl -s -m 10 --data-urlencode "query=$q" --data-urlencode "start=$(date -d '-36 hours' +%s)" --data-urlencode "end=$(date +%s)" \
+            --data-urlencode step=3h http://127.0.0.1:8428/api/v1/query_range \
+            | jq -r '.data.result[0].values[]? | "\(.[0] | strftime("%d.%m %H:%M UTC"))  \((.[1] | tonumber) / 1024 | floor)"' || echo "нет данных"
+          SH
+
+      - name: База Москвы — уже в Европе?
+        if: steps.msk.outputs.ip != ''
+        env:
+          MSK: ${{ steps.msk.outputs.ip }}
+          EU: ${{ steps.eu.outputs.ip }}
+        run: |
+          q() { ssh $SSH_OPTS root@$1 "sudo -u postgres psql -d massovka -XAtc \"$2\""; }
+          last=$(q $MSK "select coalesce(max(created_at), 'epoch')::text from analytics_events")
+          n_msk=$(q $MSK "select count(*) from analytics_events")
+          n_eu=$(q $EU "select count(*) from analytics_events where created_at <= '$last'")
+          echo "событий в Москве: $n_msk (последнее — $last); в Европе до того же времени: $n_eu"
+          for t in $(q $MSK "select tablename from pg_tables where schemaname = 'public' order by 1"); do
+            echo "  таблица $t: Москва $(q $MSK "select count(*) from $t"), Европа $(q $EU "select count(*) from $t" 2>/dev/null || echo нет)"
+          done
+          [ "$n_eu" -ge "$n_msk" ] || { echo "::error::в Европе меньше событий, чем в Москве — сначала долить"; exit 1; }
+
+      - name: Последняя копия базы Москвы — в Нидерланды
+        if: env.DELETE == 'true' && steps.msk.outputs.ip != ''
+        env:
+          MSK: ${{ steps.msk.outputs.ip }}
+          IP: ${{ steps.infra.outputs.ip }}
+        run: |
+          f=massovka-msk-final-$(date -u +%Y%m%d).dump
+          ssh $SSH_OPTS root@$MSK 'sudo -u postgres pg_dump -Fc massovka' \
+            | ssh $SSH_OPTS root@$IP "install -d -m 700 /var/backups/massovka-msk-final && cat > /var/backups/massovka-msk-final/$f && ls -la /var/backups/massovka-msk-final/$f"
+          ssh $SSH_OPTS root@$IP "pg_restore -l /var/backups/massovka-msk-final/$f | grep -c 'TABLE DATA'" | sed 's/^/таблиц с данными в копии: /' || true
+
+      - name: Удалить сервер в Timeweb
+        if: env.DELETE == 'true' && steps.msk.outputs.server_id != ''
+        env:
+          SID: ${{ steps.msk.outputs.server_id }}
+          MSK: ${{ steps.msk.outputs.ip }}
+        run: |
+          /tmp/py/bin/python - <<'PY'
+          import os, sys
+          sys.path.insert(0, 'infra/game')
+          import provision
+          sid, ip = os.environ['SID'], os.environ['MSK']
+          s = provision.api('GET', f'/servers/{sid}')['server']
+          if s.get('name') != 'massovka-game':
+              print(f"::error::сервер {sid} называется {s.get('name')}, а не massovka-game — не трогаю"); sys.exit(1)
+          r = provision.api('DELETE', f'/servers/{sid}', soft=True)
+          if r.get('_error'):
+              print(f"::error::Timeweb не удалил сервер: HTTP {r['_error']}: {r['_msg']} — удалите massovka-game в панели (Облачные серверы › massovka-game › Удалить)")
+              sys.exit(1)
+          print(f'massovka-game ({ip}) удалён')
+          PY
+
+      - name: После удаления — не осталось ли платного
+        if: env.DELETE == 'true'
+        run: |
+          sleep 60
+          /tmp/py/bin/python - <<'PY'
+          import sys
+          sys.path.insert(0, 'infra/game')
+          import provision
+          names = [s.get('name') for s in provision.api('GET', '/servers').get('servers', [])]
+          print('серверы в Timeweb:', ', '.join(names))
+          if 'massovka-game' in names:
+              print('::warning::massovka-game ещё в списке (удаляется или удаление не прошло) — проверьте панель')
+          ips = provision.api('GET', '/floating-ips', soft=True)
+          for f in ips.get('ips', []) if not ips.get('_error') else []:
+              if f.get('ip') == '129.101.104.99' or not f.get('resource_id'):
+                  print(f"::warning::плавающий IP {f.get('ip')} ни к чему не привязан — он платный, удалите в панели (Сеть › Плавающие IP)")
+          PY

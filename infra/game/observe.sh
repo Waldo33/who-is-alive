@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Наблюдение: метрики, логи, Grafana, копии базы. Вызывает setup.sh; повторный запуск безопасен.
 #   оба сервера: node_exporter (127.0.0.1:9100), журнал → VictoriaLogs (systemd-journal-upload);
-#   game (Москва): роль базы «только чтение» grafana_ro (для Grafana и ночной копии);
-#   infra (Нидерланды): VictoriaMetrics (:8428), VictoriaLogs (:9428), Grafana (:3001, /grafana), копии базы Москвы.
-# Игровые серверы и Нидерланды связаны только туннелями (setup.sh): игровой сервер видит логи Нидерландов
-# на 127.0.0.1:9428, Нидерланды видят базу, метрики и node_exporter Москвы на 127.0.0.1:15432, :18080, :19100,
-# а сервера в Европе — на :25432, :28080, :29100.
-# GAME_SITE (msk | eu, запоминается в /etc/massovka/game-site) — где сейчас живёт игра: оттуда Grafana
-# берёт базу и туда смотрят ночные копии (переезд в Европу, docs/infra-plan.md › этап 3).
+#   game (Европа): роль базы «только чтение» grafana_ro (для Grafana и ночной копии);
+#   infra (Нидерланды): VictoriaMetrics (:8428), VictoriaLogs (:9428), Grafana (:3001, /grafana), копии базы игры.
+# Игровой сервер и Нидерланды связаны только туннелем (massovka-tunnel-eu): игровой сервер видит логи Нидерландов
+# на 127.0.0.1:9428, Нидерланды видят базу, метрики и node_exporter Европы на 127.0.0.1:25432, :28080, :29100.
+# Москва (msk, :15432/:18080/:19100) выключена 25.11.2026 (docs/server-migration.md › 15).
+# GAME_SITE (запоминается в /etc/massovka/game-site) — где живёт игра: оттуда Grafana берёт базу и туда
+# смотрят ночные копии. Сейчас только eu.
 set -euo pipefail
 D=${D:-/tmp/deploy}
 ROLE=${ROLE:-game}
@@ -90,7 +90,7 @@ fi
 
 [ "$ROLE" = infra ] || exit 0
 
-GS=${GAME_SITE:-$(cat /etc/massovka/game-site 2>/dev/null || echo msk)}
+GS=${GAME_SITE:-$(cat /etc/massovka/game-site 2>/dev/null || echo eu)}
 case "$GS" in eu) DBP=25432; GN="Европы" ;; *) GS=msk; DBP=15432; GN="Москвы" ;; esac
 echo "$GS" > /etc/massovka/game-site
 say "игра живёт: $GS (база через 127.0.0.1:$DBP)"
@@ -107,9 +107,7 @@ for b in victoria-metrics victoria-logs; do
   fi
 done
 install -d -m 755 /etc/victoria
-# Москва — пока есть её туннель; Европа — когда настроен туннель в Европу (TUNNEL_EU_TO)
-# метрики игры Москвы — только пока игра живёт там: после переезда (24.11) в Москве лишь пересылка в Европу
-msk_on=""; systemctl is-enabled -q massovka-tunnel 2>/dev/null && msk_on=1
+# Европа — когда настроен туннель в Европу (TUNNEL_EU_TO)
 eu_on=""; { [ -n "${TUNNEL_EU_TO:-}" ] || systemctl is-enabled -q massovka-tunnel-eu 2>/dev/null; } && eu_on=1
 cat > /etc/victoria/scrape.yml <<EOF
 global:
@@ -119,12 +117,10 @@ scrape_configs:
     static_configs:
       - targets: ['127.0.0.1:9100']
         labels: { server: nl }
-$([ -n "$msk_on" ] && printf "      - targets: ['127.0.0.1:19100']\n        labels: { server: msk }")
 $([ -n "$eu_on" ] && printf "      - targets: ['127.0.0.1:29100']\n        labels: { server: eu }")
   - job_name: game
     metrics_path: /metrics
     static_configs:
-$([ -n "$msk_on" ] && [ "$GS" = msk ] && printf "      - targets: ['127.0.0.1:18080']\n        labels: { server: msk }")
 $([ -n "$eu_on" ] && printf "      - targets: ['127.0.0.1:28080']\n        labels: { server: eu }")
       - targets: ['127.0.0.1:8080']
         labels: { server: nl }

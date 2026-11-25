@@ -74,7 +74,7 @@ def main():
         users = get('/storages/users').get('users', [])
         if users:
             access, secret = users[0].get('access_key'), users[0].get('secret_key')
-    if not access or not secret:
+    if (not access or not secret) and not os.environ.get('S3_SECRET_KEY'):
         print('::warning::S3: у бакета нет ключей в ответе API — сервер пишет клипы на диск')
         return
     host = b.get('hostname') or ENDPOINT_HOST
@@ -84,6 +84,11 @@ def main():
     # ключи бакета, затем ключи пользователей хранилища; проверка — HEAD самого бакета
     # (ListBuckets ключам одного бакета может быть запрещён: так и было при первой выкладке, 403)
     keys = [(access, secret)]
+    # ключи из панели Timeweb (S3 › бакет › ключи доступа), если владелец положил их в GitHub Secrets
+    # S3_ACCESS_KEY / S3_SECRET_KEY — пробуем первыми. 25.11: ключи из API (20 и 24 знака) не подошли
+    # ни с одним регионом (SignatureDoesNotMatch) — похоже, API отдаёт не тот секрет
+    if os.environ.get('S3_ACCESS_KEY') and os.environ.get('S3_SECRET_KEY'):
+        keys.insert(0, (os.environ['S3_ACCESS_KEY'], os.environ['S3_SECRET_KEY']))
     try:
         keys += [(u.get('access_key'), u.get('secret_key')) for u in get('/storages/users').get('users', [])]
     except urllib.error.HTTPError:
