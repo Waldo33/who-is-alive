@@ -35,12 +35,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 50
     strategy:
-      # на время переезда сайт живёт на обоих серверах (docs/infra-plan.md › этап 3): сначала Европа;
-      # новый сервер настраивает game-deploy — сайт ждёт его до 25 минут (Европа готова с 24.11)
+      # сайт — только в Европе (Москва выключена 25.11.2026); новый сервер настраивает game-deploy —
+      # сайт ждёт его до 25 минут
       max-parallel: 1
       fail-fast: false
       matrix:
-        server: [massovka-eu, massovka-game]
+        server: [massovka-eu]
     env:
       TWC_TOKEN: ${{ secrets.TWC_TOKEN }}
       SERVER_NAME: ${{ matrix.server }}
