@@ -110,8 +110,6 @@ export interface ThemePack {
   starStill?: number;
   /** Её значок в шапке: 2 кадра 10×10 — собранная и пустая ячейка. */
   hudStar?: () => HTMLCanvasElement;
-  /** Шеф темы (game-core › boss.ts): его костюм — те же кадры, что у толпы. */
-  boss?: CharStyle;
   /** Сумерки плавно уходят в ночь за дубль (game-core › sanity.ts › nightLevel): вуаль темнеет, у костра светлее. */
   night?: boolean;
 }

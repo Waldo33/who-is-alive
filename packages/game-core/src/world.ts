@@ -288,7 +288,7 @@ export class World {
 
   private applyBoss(ev: Extract<WorldEvent, { t: 'boss' }>): void {
     if (ev.act === 'in') {
-      this.boss = { x: ev.x, y: ev.y, px: ev.x, py: ev.y, path: [], pi: 0, dir: 0, walk: 0, moving: false, look: null, out: false };
+      this.boss = { x: ev.x, y: ev.y, px: ev.x, py: ev.y, path: [], pi: 0, dir: 0, walk: 0, moving: false, look: null, out: false, door: ev.at };
       return;
     }
     const b = this.boss;
@@ -304,6 +304,7 @@ export class World {
       b.look = { dir: ev.dir, from: ev.from, until: ev.until };
     } else if (ev.act === 'out') {
       b.out = true;
+      b.door = ev.at;
       b.path = [];
       b.pi = 0;
       b.look = null;

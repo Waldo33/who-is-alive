@@ -6,7 +6,7 @@ export type Sfx =
   | 'step' | 'hitPlayer' | 'hitBot' | 'poof' | 'starTake' | 'starSpawn' | 'crowd' | 'tick'
   | 'click' | 'ready' | 'accuseRight' | 'accuseWrong' | 'fanfare' | 'sad' | 'hedge' | 'pigeon' | 'drum' | 'denied' | 'count' | 'swing' | 'flicker' | 'dusk' | 'siren' | 'whack' | 'clang' | 'stab' | 'knockedOut'
   | 'hitOther' | 'cut' | 'clap' | 'logo' | 'wrap' | 'unmask' | 'rewind' | 'leshyStep' | 'leshyBreath' | 'leshyStinger' | 'leshyTake' | 'leshyCall' | 'snap' | 'whisper' | 'scream' | 'fern'
-  | 'bossAhem' | 'bossStamp';
+  | 'bossAhem' | 'bossStamp' | 'bossStep' | 'bossStare' | 'doorCreak' | 'doorShut';
 
 /**
  * Приоритет эффекта (звуковой гайд, план звука): P1 — меняет решение игрока, обязан пробиться
@@ -14,13 +14,13 @@ export type Sfx =
  * на поле (−35…−39 дБ, глушит на 4 дБ); остальное — фон. Уровни проверяет `pnpm --filter web sound-check`.
  */
 export const P1: ReadonlySet<Sfx> = new Set<Sfx>(['hitPlayer', 'hitBot', 'starTake', 'crowd', 'ready', 'knockedOut', 'cut', 'drum', 'accuseRight', 'accuseWrong', 'unmask', 'wrap', 'logo', 'leshyStinger', 'leshyTake', 'scream', 'fern', 'bossAhem']);
-export const P2: ReadonlySet<Sfx> = new Set<Sfx>(['hitOther', 'whack', 'clang', 'stab', 'starSpawn', 'flicker', 'dusk', 'leshyBreath', 'bossStamp']);
+export const P2: ReadonlySet<Sfx> = new Set<Sfx>(['hitOther', 'whack', 'clang', 'stab', 'starSpawn', 'flicker', 'dusk', 'leshyBreath', 'bossStamp', 'bossStare', 'doorCreak', 'doorShut']);
 
 /**
  * Частые звуки: каждый раз чуть другие (±30 центов, ±1,5 дБ), чтобы за три матча не стать
  * «пулемётом». Сигналы (команда, старт, логотип) не меняются — их узнают по звуку.
  */
-const VARY: ReadonlySet<Sfx> = new Set<Sfx>(['step', 'hitPlayer', 'hitOther', 'hitBot', 'poof', 'starSpawn', 'tick', 'click', 'hedge', 'pigeon', 'whack', 'clang', 'stab', 'swing', 'unmask']);
+const VARY: ReadonlySet<Sfx> = new Set<Sfx>(['step', 'hitPlayer', 'hitOther', 'hitBot', 'poof', 'starSpawn', 'tick', 'click', 'hedge', 'pigeon', 'whack', 'clang', 'stab', 'swing', 'unmask', 'bossStep']);
 
 /** Детский режим: без оружия, звона в ушах и пилы — удары «поф» и бумажный хлопок. */
 const KIDS: Partial<Record<Sfx, Sfx>> = { whack: 'hitOther', clang: 'hitOther', stab: 'hitOther', knockedOut: 'cut', siren: 'starSpawn', scream: 'cut' };
@@ -112,12 +112,47 @@ export class Synth {
       case 'step': this.noise(0.03, 0.05, 1800); break;
       // шеф поворачивается: «Кхм-кхм» — два хриплых толчка горлом (шум в полосе голоса + жёсткий тон с обертонами)
       case 'bossAhem':
-        for (const d of [0, 0.17]) {
-          this.noise(0.09, 0.9, 1100, d);
-          this.noise(0.06, 0.6, 2400, d + 0.01);
-          this.tone('sawtooth', 380, 280, 0.1, 0.42, d);
-          this.tone('square', 900, 660, 0.08, 0.2, d + 0.005);
+        // низкое, сиплое «Кхм-кхм» сверху вниз: не клерк кашлянул — начальник
+        for (const d of [0, 0.2]) {
+          this.noise(0.1, 1, 1000, d);
+          this.noise(0.06, 0.7, 2200, d + 0.01);
+          this.tone('sawtooth', 230, 150, 0.13, 0.5, d);
+          this.tone('square', 520, 360, 0.1, 0.3, d + 0.005);
+          this.tone('sine', 115, 80, 0.16, 0.35, d);
         }
+        break;
+      // шеф смотрит: низкий гул с биением (малая секунда) и тонкий «звон в ушах» сверху — музыка
+      // в это время молчит, слышно только его взгляд
+      case 'bossStare':
+        this.swell(3.1, 0.22, 420, 0, 0.35);
+        this.tone('sawtooth', 110, 104, 3.1, 0.07);
+        this.tone('sawtooth', 116.5, 110, 3.1, 0.06);
+        this.swell(2.8, 0.05, 3400, 0.3, 0.5);
+        this.tone('sine', 1975, 1865, 2.6, 0.018, 0.5);
+        break;
+      // шаг шефа: тяжёлый каблук дорогого ботинка по полу офиса — глухо и мерно
+      case 'bossStep':
+        this.tone('sine', 120, 55, 0.14, 0.12);
+        this.noise(0.06, 1, 900);
+        this.tone('square', 300, 150, 0.05, 0.1);
+        this.noise(0.02, 0.8, 2600, 0.008);
+        break;
+      // дверь кабинета: долгий скрип петель (щелчки, разгоняющиеся по высоте) и второй, короче
+      case 'doorCreak':
+        this.formant(34, 82, 0.85, 0.5, 0.25, 0, [1300, 2500], 9);
+        this.formant(70, 46, 0.4, 0.3, 0.3, 0.75, [1700, 3100], 12);
+        this.noise(0.3, 0.12, 600, 0);
+        break;
+      // дверь захлопнулась: глухой удар и щелчок замка
+      case 'doorShut':
+        this.noise(0.16, 1, 420);
+        this.noise(0.16, 1, 1000);
+        this.noise(0.12, 1, 1500, 0.01);
+        this.noise(0.05, 0.9, 2400);
+        this.tone('sine', 95, 42, 0.3, 0.3);
+        this.tone('square', 240, 100, 0.12, 0.35);
+        this.noise(0.025, 0.6, 2800, 0.09);
+        this.noise(0.4, 0.15, 260, 0.03);
         break;
       // выговор: шлёп печатью «ВЫГОВОР» — глухой удар по столу и сухой щелчок
       case 'bossStamp':
