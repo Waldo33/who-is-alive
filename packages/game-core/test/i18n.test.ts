@@ -32,7 +32,7 @@ describe('i18n', () => {
       const g = t.game;
       const flat: string[] = [
         g.soundOffHint, g.soundOn, g.soundOff, g.outSub, g.outHint, g.ghost, g.ghostHint, g.hedge, ...Object.values(g.denied),
-        ...Object.values(g.crowd), g.crowdVote, g.crowdGhost, g.voteMajority, g.voteMinority, g.spotted, g.spottedMe, g.clapHint, g.clapDone, g.cutByCrowd, g.modTitle,
+        ...Object.values(g.crowd), g.crowdVote, g.crowdGhost, g.voteMajority, g.voteMinority, g.spotted, g.spottedMe, g.clapHint, g.clapDone, g.noFight, g.cutByCrowd, g.modTitle,
         ...Object.values(t.mods).flatMap((m) => [m.name, m.desc]), g.withCrowd, g.late, g.watchLate, g.findYourself,
         g.spectator, g.spectatorLive, g.spectatorWait, g.spectatorDelay.replace('{n}', '10'), g.reveal, g.revealReplay, g.revealFinal, g.guessed, g.missed, fmt(g.caught, { n: 3 }), g.accuseTitle, g.accuseHint, g.bounty, g.bountyYou, g.headHunted, g.killedBy, g.noAccuse,
         tp(lang, g.resultsTitle, 5), ...Object.values(g.endReason), g.noAwards, tp(lang, g.nextIn, 10), fmt(g.nextTake, { n: 12, s: 10 }), fmt(g.toWin, { n: 12 }),

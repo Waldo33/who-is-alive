@@ -38,6 +38,12 @@ export interface TwistRules {
    * кто игрок» — решение владельца; в детском режиме не действует.
    */
   exposeKiller?: boolean;
+  /**
+   * Драка только в изнанке (офис → подвал, решение владельца): в обычном облике ударов нет
+   * совсем, а на первом включении изнанки у каждого игрока — `fight` ударов на весь дубль
+   * (во второй раз запас не пополняется: что не потратил — осталось, потратил — всё).
+   */
+  fight?: number;
 }
 
 export interface ThemeRules {
@@ -63,7 +69,7 @@ export const THEME_RULES: readonly ThemeRules[] = [
   { id: 'cosmonauts' },
   {
     id: 'office',
-    twist: { firstSec: [14, 26], onSec: [14, 20], gapSec: [10, 16], max: 2, emoteMul: 3 },
+    twist: { firstSec: [14, 26], onSec: [14, 20], gapSec: [10, 16], max: 2, emoteMul: 3, fight: 10 },
   },
   {
     // день на пляже → ночь в масках: ночь подольше, закат — плавный (облик в клиенте)
@@ -116,6 +122,16 @@ export function hasSanity(theme: number): boolean {
  */
 export function killerExposed(theme: number, twistOn: boolean): boolean {
   return twistOn && !!themeRules(theme).twist?.exposeKiller;
+}
+
+/** Ударов на дубль в теме, где дерутся только в изнанке (офис → подвал), или 0 — обычная тема. */
+export function fightAttacks(theme: number): number {
+  return themeRules(theme).twist?.fight ?? 0;
+}
+
+/** Сейчас можно бить: в обычной теме — всегда, в теме-драке — только в изнанке (в подвале). */
+export function canFight(theme: number, twistOn: boolean): boolean {
+  return twistOn || !fightAttacks(theme);
 }
 
 /** Эмоция, которую в изнанке показывают все (и боты, и кнопка эмоции у игроков), или null. */

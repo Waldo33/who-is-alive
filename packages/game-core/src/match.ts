@@ -10,7 +10,7 @@ import type { ActKind, CrowdKind, Dir, EmoteKind, EntitySpawn, WorldEvent } from
 import { NavGrid } from './nav';
 import { Rng } from './rng';
 import { LESHY_HUNT_SEC, fireLevel, leshySpot, leshyVisits, nightLevel, playLenSec, sanityDrain } from './sanity';
-import { ROTATION_THEMES, THEME_COUNT, THEME_RULES, hasSanity, killerExposed, themeRules, twistEmote } from './themes';
+import { ROTATION_THEMES, THEME_COUNT, THEME_RULES, canFight, fightAttacks, hasSanity, killerExposed, themeRules, twistEmote } from './themes';
 import { ROUND_MODS, roundMod } from './mods';
 import { World } from './world';
 
@@ -231,6 +231,8 @@ export class MatchSim {
   private nextTwistAt = Infinity;
   private lastTwistAt = -Infinity;
   private twistLeft = 0;
+  /** Тема-драка: запас ударов на дубль уже выдан (первое включение изнанки). */
+  private fightArmed = false;
   plannedPlayEnd = 0;
   playEnd = 0;
   endReason: RoundSummary['endReason'] = 'time';
@@ -387,7 +389,8 @@ export class MatchSim {
       pid: p.pid,
       eid: playerEids[i],
       alive: true,
-      attacksLeft: roundMod(this.mod) === 'onehit' ? 1 : this.cfg.attacksPerRound,
+      // в теме-драке (офис) ударов нет до первого подвала — там выдаётся запас на весь дубль
+      attacksLeft: fightAttacks(this.theme) ? 0 : roundMod(this.mod) === 'onehit' ? 1 : this.cfg.attacksPerRound,
       stars: 0,
       stunUntil: 0,
       autopilot: false,
@@ -435,7 +438,8 @@ export class MatchSim {
     if (this.round <= 1 || !this.cfg.roundMods || !this.rng.chance(this.cfg.roundModChance)) return;
     // «Купальская ночь» — свой режим: условий съёмки в ней нет (случайность берём всё равно — ход матча тот же)
     if (hasSanity(this.theme)) return;
-    const pool = ROUND_MODS.map((_, i) => i).filter((i) => i > 0 && i !== prev);
+    // «Один удар» в офисе не к месту: там удары и так выдаёт только подвал
+    const pool = ROUND_MODS.map((_, i) => i).filter((i) => i > 0 && i !== prev && !(fightAttacks(this.theme) && ROUND_MODS[i] === 'onehit'));
     this.mod = this.rng.pick(pool);
   }
 
@@ -509,6 +513,7 @@ export class MatchSim {
     // изнанка темы: расписание на дубль (зерно — общее, поэтому повтор совпадает)
     const tw = themeRules(this.theme).twist;
     this.twistLeft = tw ? tw.max : 0;
+    this.fightArmed = false;
     this.lastTwistAt = -Infinity;
     this.nextTwistAt = tw ? this.playStart + this.rng.range(tw.firstSec[0], tw.firstSec[1]) * 1000 : Infinity;
   }
@@ -542,6 +547,12 @@ export class MatchSim {
     this.emit({ t: 'twist', on, at: t });
     this.lastTwistAt = t;
     if (on) this.twistLeft--;
+    // подвал: драться можно — запас ударов на весь дубль выдаётся один раз (и вырезанным — не важно, они не бьют)
+    const fight = fightAttacks(this.theme);
+    if (on && fight && !this.fightArmed) {
+      this.fightArmed = true;
+      for (const p of this.pr) p.attacksLeft = fight;
+    }
     const [a, b] = on ? tw.onSec : tw.gapSec;
     this.nextTwistAt = t + this.rng.range(a, b) * 1000;
   }
@@ -1475,6 +1486,11 @@ export class MatchSim {
     const t = this.world.time;
     if (target < 0) {
       this.hitKiki(p, target, ax, ay);
+      return;
+    }
+    // офис: в обычном облике не дерутся (клиент сам не шлёт; старой вкладке — «Не сейчас»)
+    if (!canFight(this.theme, this.world.twist)) {
+      this.notices.push({ t: 'denied', pid: p.pid, reason: 'not_now' });
       return;
     }
     if (p.attacksLeft <= 0) {

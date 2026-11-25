@@ -328,4 +328,66 @@ describe('Напряжение: новые механики', () => {
     expect(hitOf(true, true).attacker).toBeDefined();
     expect(hitOf(true, false).attacker).toBeUndefined();
   });
+
+  it('офис: до подвала бить нельзя, в подвале — 10 ударов на весь дубль, второй подвал не пополняет', () => {
+    const sim = new MatchSim(makeConfig({ fixedTheme: 4 }), players, 93);
+    runUntil(sim, () => sim.phase === 'play');
+    sim.tick();
+    expect(sim.world.twist).toBe(false);
+    const a = sim.playerRound('a')!;
+    const b = sim.playerRound('b')!;
+    expect(a.attacksLeft).toBe(0);
+    const near = () => {
+      const ea = sim.world.get(a.eid)!;
+      const eb = sim.world.get(b.eid)!;
+      eb.x = ea.x + 5;
+      eb.y = ea.y;
+    };
+    near();
+    sim.notices.length = 0;
+    sim.intent('a', { k: 'attack', eid: b.eid });
+    sim.tick();
+    expect(b.alive).toBe(true);
+    expect(sim.notices.some((n) => n.t === 'denied' && n.reason === 'not_now')).toBe(true);
+    // ждём подвал (расписание изнанки — из зерна)
+    runUntil(sim, () => sim.world.twist);
+    expect(sim.world.twist).toBe(true);
+    expect(a.attacksLeft).toBe(10);
+    expect(b.attacksLeft).toBe(10);
+    a.attacksLeft = 4;
+    runUntil(sim, () => !sim.world.twist || sim.phase !== 'play');
+    // снова офис: удар не проходит, запас не тратится
+    if (sim.phase === 'play') {
+      near();
+      sim.intent('a', { k: 'attack', eid: b.eid });
+      sim.tick();
+      expect(b.alive).toBe(true);
+      expect(a.attacksLeft).toBe(4);
+      runUntil(sim, () => sim.world.twist || sim.phase !== 'play');
+      if (sim.world.twist) expect(a.attacksLeft).toBe(4);
+    }
+  });
+
+  it('офис: ИИ-игроки не бьют вне подвала, а в подвале дерутся', () => {
+    let calm = 0;
+    let fights = 0;
+    for (let seed = 0; seed < 6; seed++) {
+      const sim = new MatchSim(makeConfig({ fixedTheme: 4 }), players, 700 + seed);
+      for (const p of players) sim.addAgent(new AiPlayer(p.pid, 700 + seed));
+      // удары игроков — по уведомлениям 'attack' (вырезанные толпой и т. п. — тоже 'hit', но не удар)
+      for (let i = 0; i < 20 * 60 * 12 && sim.phase !== 'match_end'; i++) {
+        // изнанка выключается событием, которое мир применяет в конце шага: смотрим на облик до шага
+        const twist = sim.world.twist;
+        sim.tick();
+        for (const n of sim.notices) {
+          if (n.t !== 'attack') continue;
+          if (twist) fights++;
+          else calm++;
+        }
+        sim.notices.length = 0;
+      }
+    }
+    expect(calm).toBe(0);
+    expect(fights).toBeGreaterThan(0);
+  });
 });
