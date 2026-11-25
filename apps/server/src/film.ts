@@ -156,7 +156,9 @@ export class FilmService {
 
   /** Смонтировать фильм. null — не вышло (или очередь полна): клиент смонтирует сам. */
   make(req: Omit<FilmJob, 'site' | 'link'>): Promise<FilmDone | null> {
-    const job: FilmJob = { ...req, site: this.o.site, link: `https://${this.o.site}/?src=film&l=${req.lang}` };
+    // с загадкой QR ведёт на её страницу; метка film_qr — переход по QR с экрана (TikTok, сторис)
+    const link = req.puzzle ? `https://${this.o.site}/${req.puzzle}?src=film_qr&l=${req.lang}` : `https://${this.o.site}/?src=film&l=${req.lang}`;
+    const job: FilmJob = { ...req, site: this.o.site, link };
     // запись матча — даже если фильм не смонтируется: по ней его можно смонтировать потом
     this.o.recordings
       ?.save(job)

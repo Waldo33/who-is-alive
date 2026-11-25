@@ -33,6 +33,8 @@ export class DailyView {
   /** Ошибочные выборы (крестик) и правильный ответ (рамка). */
   wrong = new Set<number>();
   answer: number | null = null;
+  /** Загадка из фильма: актёров несколько — рамка у каждого. */
+  answers = new Set<number>();
   /** Подсказка после промаха: всё вне этой части поля притушено. */
   hint: HintRect | null = null;
 
@@ -139,7 +141,7 @@ export class DailyView {
       const y = Math.round(e.py + (e.y - e.py) * alpha);
       const fr = frameFor(e, t, ch.acts);
       const ce = a.charsFor(th, look, idx);
-      const isAnswer = this.answer === e.eid;
+      const isAnswer = this.answer === e.eid || this.answers.has(e.eid);
       const isWrong = this.wrong.has(e.eid);
       list.push({
         y,

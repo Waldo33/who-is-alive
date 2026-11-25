@@ -31,6 +31,8 @@ export interface FilmJob {
   link: string;
   /** Показ очков в финале (по умолчанию — пьедестал); для перемонтажа записей в вариантах. */
   finale?: FinaleStyle;
+  /** Код загадки из фильма (puzzles.ts): адрес `site/<код>` в водяном знаке и финале. */
+  puzzle?: string;
 }
 
 /**
@@ -208,6 +210,7 @@ export async function renderFilm(job: FilmJob, o: FilmRenderOpts): Promise<FilmR
     noGore: true,
     scale: SCALE,
     finale: job.finale,
+    puzzle: job.puzzle,
   });
   if (!inp) return null;
   const film = new FilmScene(inp);

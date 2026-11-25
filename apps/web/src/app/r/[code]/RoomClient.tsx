@@ -284,6 +284,7 @@ function GameView({
               on: (h) => room.link?.onFilm(h) ?? (() => undefined),
               url: (id, ext) => `${GAME_API}/v1/clips/${id}.${ext}`,
               rematch: { code: room.state.code, invite: telegramInvite() },
+              puzzle: () => room.link?.puzzle ?? null,
             },
       });
       if (cancelled) running.destroy();

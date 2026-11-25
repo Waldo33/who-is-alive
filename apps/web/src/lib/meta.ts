@@ -31,12 +31,13 @@ export function roomTheme(code: string): number {
 export function shareMetadata(
   lang: Lang,
   room?: { code: string; host?: string | null },
-  page: 'home' | 'sandbox' | 'daily' = 'home',
+  page: 'home' | 'sandbox' | 'daily' | 'puzzle' = 'home',
   theme?: number,
 ): Metadata {
   const T = DICTS[lang].og;
   const sandbox = !room && page === 'sandbox';
   const daily = !room && page === 'daily';
+  const puzzle = !room && page === 'puzzle';
   const title = room
     ? room.host
       ? fmt(T.roomTitle, { name: room.host })
@@ -45,8 +46,10 @@ export function shareMetadata(
       ? T.sbTitle
       : daily
         ? T.dailyTitle
-        : T.siteTitle;
-  const description = room ? fmt(T.roomDesc, { code: room.code }) : sandbox ? T.sbDesc : daily ? T.dailyDesc : T.siteDesc;
+        : puzzle
+          ? T.puzzleTitle
+          : T.siteTitle;
+  const description = room ? fmt(T.roomDesc, { code: room.code }) : sandbox ? T.sbDesc : daily ? T.dailyDesc : puzzle ? T.puzzleDesc : T.siteDesc;
   const t = room ? roomTheme(room.code) : (theme ?? Math.floor(Math.random() * OG_THEMES));
   // имя хоста — и в адресе картинки: если комната успеет закрыться, пока мессенджер дойдёт до картинки, имя не пропадёт
   const q = room

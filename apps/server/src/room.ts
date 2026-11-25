@@ -4,6 +4,7 @@ import { DEFAULT_WIRE_SETTINGS, HostSession } from '@kto/net';
 import type { Channel, PresenceMember, RoomMsg, ServerMsg, Transport, WireError, WireRoom, WireRoomSettings } from '@kto/net';
 import type { Logger } from './log';
 import type { FilmDone, FilmService } from './film';
+import type { PuzzleStore } from './puzzles';
 import { deathClipJob } from './death-clip';
 // только тип: код монтажа живёт в отдельном процессе (film-worker.ts) и в основную сборку не попадает
 import type { FilmTake } from '../../web/src/game/film';
@@ -57,6 +58,8 @@ export interface RoomOptions {
   onEmpty?: (room: Room) => void;
   /** «Фильм матча» (film.ts): нет — фильм монтирует телефон. */
   film?: FilmService;
+  /** Загадки из фильма (puzzles.ts): нет — фильм без загадки, QR ведёт на главную. */
+  puzzles?: PuzzleStore;
   /** Видео не выключено аварийно (video-switch.ts). */
   videoOn?: () => boolean;
   /** Фильм матча готов (на сервере): комнате по приглашению из Telegram — отправить его в чат (server.ts). */
@@ -75,6 +78,8 @@ export interface RoomFilm {
   draw: boolean;
   /** Награды матча с именами (для подписи «Снято!» в чате). */
   awards: { id: string; names: string[] }[];
+  /** Код загадки из фильма (/c/<код>) — кнопка «Найди актёра» под видео. */
+  puzzle?: string;
 }
 
 /**
@@ -280,7 +285,7 @@ export class Room {
   private directorGoneSince = 0;
   /** Номер фильма: готовый фильм прошлого матча не рассылаем, если уже идёт следующий. */
   private filmSeq = 0;
-  private film: { n: number; state: 'making' | 'ready' | 'failed'; done?: FilmDone } | null = null;
+  private film: { n: number; state: 'making' | 'ready' | 'failed'; done?: FilmDone; puzzle?: string } | null = null;
   /** Зрители, приехавшие со снимком: войдут — снова станут зрителями, а не займут место. */
   private expectSpectators = new Set<string>();
   closed = false;
@@ -748,29 +753,54 @@ export class Room {
    */
   private startFilm(r: MatchRunner, takes: FilmTake[]): void {
     const film = this.o.film;
-    if (!film || !takes.length) return;
+    const puzzles = this.o.puzzles;
+    if ((!film && !puzzles) || !takes.length) return;
     const n = ++this.filmSeq;
-    this.film = { n, state: 'making' };
+    this.film = { n, state: film ? 'making' : 'failed' };
     const match = r.host.sim.outcome();
     const winners = match.winners.map((pid) => r.players.find((p) => p.pid === pid)?.name ?? '').filter(Boolean);
-    void film
-      .make({ takes, players: r.players.map((p) => ({ pid: p.pid, name: p.name, color: p.color })), match, lang: this.lang })
-      .then((done) => {
+    void this.makePuzzle(takes).then((puzzle) => {
+      if (puzzle && this.film?.n === n) {
+        this.film.puzzle = puzzle;
+        // код — сразу всем: телефон, который монтирует фильм сам, впишет его в финал
+        if (!this.closed) this.broadcastText(JSON.stringify({ t: 'puzzle', code: puzzle } satisfies ServerMsg));
+      }
+      if (!film) return;
+      return film.make({ takes, players: r.players.map((p) => ({ pid: p.pid, name: p.name, color: p.color })), match, lang: this.lang, puzzle }).then((done) => {
         // в чат Telegram — даже если все уже ушли или начали реванш: фильм этого матча готов
         const name = (pid: string) => r.players.find((p) => p.pid === pid)?.name ?? '';
         const awards = match.awards.map((a) => ({ id: a.id, names: a.pids.map(name).filter(Boolean) })).filter((a) => a.names.length);
-        if (done && this.invite) this.o.onFilm?.(this, { id: done.id, winners, draw: winners.length > 1, awards });
+        if (done && this.invite) this.o.onFilm?.(this, { id: done.id, winners, draw: winners.length > 1, awards, puzzle });
         if (this.closed || this.film?.n !== n) return;
-        this.film = { n, state: done ? 'ready' : 'failed', done: done ?? undefined };
+        this.film = { n, state: done ? 'ready' : 'failed', done: done ?? undefined, puzzle };
         // конец матча уже на экране — разослать сразу, иначе дождётся его (filmToAll из pump)
         if (this.status === 'lobby' && this.runner?.host.phase === 'match_end') this.filmToAll();
       });
+    });
+  }
+
+  /** Загадка из дублей матча (puzzles.ts): код или undefined (нет хранилища, нет честного куска, сбой). */
+  private async makePuzzle(takes: FilmTake[]): Promise<string | undefined> {
+    const store = this.o.puzzles;
+    if (!store) return undefined;
+    try {
+      const p = await store.create(takes, this.lang);
+      this.o.log('info', p ? 'puzzle_made' : 'puzzle_none', { room: this.code, ...(p ? { code: p.code, round: p.puzzle.secret.round, tells: p.puzzle.secret.tells, actors: p.puzzle.secret.answer.length } : {}) });
+      return p?.code;
+    } catch (e) {
+      this.o.log('warn', 'puzzle_failed', { room: this.code, err: String(e).slice(0, 300) });
+      return undefined;
+    }
   }
 
   /** Разослать, что с фильмом (на экране конца матча). */
   private filmToAll(): void {
     const f = this.film;
     if (!f) return;
+    // загадка — до фильма: зашедшим позже (переподключение) код тоже нужен
+    if (f.puzzle) this.broadcastText(JSON.stringify({ t: 'puzzle', code: f.puzzle } satisfies ServerMsg));
+    // фильм монтирует не сервер (нет ffmpeg) — о нём молчим, как раньше: телефон смонтирует сам
+    if (!this.o.film) return;
     const msg: ServerMsg =
       f.state === 'ready' && f.done ? { t: 'film', state: 'ready', id: f.done.id, ext: f.done.ext, thumb: f.done.thumb } : f.state === 'failed' ? { t: 'film', state: 'failed' } : { t: 'film', state: 'making' };
     this.broadcastText(JSON.stringify(msg));
