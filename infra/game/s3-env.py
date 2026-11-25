@@ -32,16 +32,16 @@ def get(path):
         return json.loads(r.read())
 
 
-def s3_request(host, path, access, secret, method='HEAD'):
+def s3_request(host, path, access, secret, method='HEAD', region=REGION):
     """Подписанный (SigV4) запрос к S3 без тела. Возвращает (HTTP-код, код ошибки S3 или '')."""
     now = datetime.datetime.now(datetime.timezone.utc)
     amz, day = now.strftime('%Y%m%dT%H%M%SZ'), now.strftime('%Y%m%d')
     empty = hashlib.sha256(b'').hexdigest()
     canonical = f'{method}\n{path}\n\nhost:{host}\nx-amz-content-sha256:{empty}\nx-amz-date:{amz}\n\nhost;x-amz-content-sha256;x-amz-date\n{empty}'
-    scope = f'{day}/{REGION}/s3/aws4_request'
+    scope = f'{day}/{region}/s3/aws4_request'
     to_sign = f'AWS4-HMAC-SHA256\n{amz}\n{scope}\n' + hashlib.sha256(canonical.encode()).hexdigest()
     k = ('AWS4' + secret).encode()
-    for part in (day, REGION, 's3', 'aws4_request'):
+    for part in (day, region, 's3', 'aws4_request'):
         k = hmac.new(k, part.encode(), hashlib.sha256).digest()
     sig = hmac.new(k, to_sign.encode(), hashlib.sha256).hexdigest()
     req = urllib.request.Request(f'https://{host}{path}', method=method, headers={
@@ -92,23 +92,40 @@ def main():
     # поля ответа (без значений ключей) — чтобы по логу было видно, что прислал Timeweb
     print(f'S3: бакет {name} id={b.get("id")} статус={b.get("status")} хост={host} ключей-кандидатов={len([k for k in keys if k[0] and k[1]])}')
     ok = None
+    region = REGION
+    # 25.11: оба ключа с ru-1 получили SignatureDoesNotMatch при верной подписи (сверена с примерами AWS) —
+    # пробуем и другие регионы подписи; какой подошёл, тот и уходит серверу (S3_REGION)
     for i, (a, sec) in enumerate([k for k in keys if k[0] and k[1]]):
-        code, _ = s3_request(host, f'/{name}', a, sec)
-        if code == 200:
-            ok = (a, sec)
+        sec = sec.strip()
+        a = a.strip()
+        for reg in (REGION, 'us-east-1'):
+            # адрес «путём» (так работает сервер) и, для сравнения, бакет в имени хоста
+            for h, pth in ((host, f'/{name}'), (f'{name}.{host}', '/')):
+                code, _ = s3_request(h, pth, a, sec, 'HEAD', reg)
+                if code == 200:
+                    break
+                _, err = s3_request(h, pth, a, sec, 'GET', reg)
+                print(f'S3: ключ #{i + 1}, регион {reg}, хост {h}: HTTP {code} {err}')
+            if code == 200:
+                if h == host:
+                    ok, region = (a, sec), reg
+                    break
+                print(f'::warning::S3: ключ #{i + 1} подошёл только с бакетом в имени хоста ({reg}) — серверу нужен адрес путём, правка s3.ts')
+                continue
+        # длина и набор знаков секрета (не сам секрет) — видно, не пришло ли что-то не то
+        kind = 'hex' if re.fullmatch(r'[0-9a-f]+', sec) else 'b64' if re.fullmatch(r'[A-Za-z0-9+/=]+', sec) else 'другое'
+        print(f'S3: ключ #{i + 1}: ключ {len(a)} зн., секрет {len(sec)} зн., {kind}')
+        if ok:
             break
-        # код ошибки S3 (SignatureDoesNotMatch, InvalidAccessKeyId, AccessDenied…) — не секрет, объясняет причину
-        _, err = s3_request(host, f'/{name}', a, sec, 'GET')
-        print(f'S3: ключ #{i + 1} — бакет {name}: HTTP {code} {err}')
     if not ok:
         print(f'::warning::S3: ни один ключ не открыл бакет {name} (хост {host}) — сервер пишет клипы на диск')
         return
     access, secret = ok
     old = os.umask(0o077)
     with open(out, 'w') as f:
-        f.write(f'S3_ENDPOINT=https://{host}\nS3_REGION={REGION}\nS3_BUCKET={name}\nS3_ACCESS_KEY={access}\nS3_SECRET_KEY={secret}\n')
+        f.write(f'S3_ENDPOINT=https://{host}\nS3_REGION={region}\nS3_BUCKET={name}\nS3_ACCESS_KEY={access}\nS3_SECRET_KEY={secret}\n')
     os.umask(old)
-    print(f'S3: бакет {name} на {host} — ключи проверены, файл для сервера готов')
+    print(f'S3: бакет {name} на {host}, регион подписи {region} — ключи проверены, файл для сервера готов')
 
 
 if __name__ == '__main__':
