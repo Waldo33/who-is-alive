@@ -774,6 +774,15 @@ export class ClipPlayerScene {
         },
       });
     }
+    // верхняя полоса изгороди сжимающейся зоны — по глубине, как в игре: кто стоит у неё внутри зоны,
+    // виден перед стеной целиком, а не «за ней» с отрезанной головой
+    const zt = w.zoneRect();
+    if (!this.hedges.has(look)) this.hedges.set(look, g.createPattern(loc.hedge, 'repeat'));
+    const hedgeTop = this.hedges.get(look);
+    if (zt && hedgeTop && zt.w < this.inp.arena.walk.w - 1) {
+      const y0 = Math.round(zt.y) - 6;
+      if (y0 > 0) list.push({ y: y0, draw: () => { g.fillStyle = hedgeTop; g.fillRect(0, 0, W, y0); } });
+    }
     list.sort((p, q) => p.y - q.y);
     for (const d of list) d.draw();
     const arms = armsOf(themeLook(this.inp.rec.theme, look).chars.map);
@@ -821,8 +830,8 @@ export class ClipPlayerScene {
       const x1 = Math.round(z.x + z.w) + 4;
       const y1 = Math.round(z.y + z.h) + 2;
       g.fillStyle = hedge;
+      // верхняя полоса нарисована раньше, по глубине вместе с толпой
       for (const [rx, ry, rw, rh] of [
-        [0, 0, W, y0],
         [0, y1, W, H - y1],
         [0, y0, x0, y1 - y0],
         [x1, y0, W - x1, y1 - y0],

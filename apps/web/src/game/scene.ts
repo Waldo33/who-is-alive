@@ -3368,6 +3368,9 @@ export class GameScene extends Phaser.Scene {
       if (vis) {
         h.setPosition(x, AY + y).setSize(rw, rh);
         h.setTilePosition(x, y);
+        // верхняя полоса — по глубине, как предмет с основанием на своей нижней кромке: кто стоит
+        // у неё внутри зоны, виден перед стеной целиком, а не «за стеной» с отрезанной головой
+        h.setDepth(i === 0 ? AY + y0 : 900);
       }
     });
   }
