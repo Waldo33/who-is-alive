@@ -1,4 +1,4 @@
-import { CROWD_ACT, NavGrid, TICK_MS, World, clampToRect, crowdHoldDur, emoteDur, ghostClapOpenView, makeConfig, planPath, plazaArena, twistEmote } from '@kto/game-core';
+import { CROWD_ACT, NavGrid, TICK_MS, World, clampToRect, crowdHoldDur, emoteDur, ghostClapOpenView, killerExposed, makeConfig, planPath, plazaArena, twistEmote } from '@kto/game-core';
 import type {
   ArenaDef,
   AwardCard,
@@ -460,7 +460,10 @@ export class RemoteSession implements ClientSession {
     if (!te || !te.alive || this.world.time >= at || myEid === undefined) return;
     const t = this.world.time;
     this.fastHits.add(target);
-    this.pushLocal({ t: 'hit', target, result, x: te.x, y: te.y, at: t });
+    // бьющий — я сам: как у хоста, он указан при ударе по статисту и ночью в Майами (замах оружием
+    // виден всем, match.ts › exposeKiller) — без него сцена рисует «поф» вместо своего замаха
+    const attacker = result === 'bot' || killerExposed(this.theme, this.world.twist) ? myEid : undefined;
+    this.pushLocal({ t: 'hit', target, result, x: te.x, y: te.y, ...(attacker !== undefined ? { attacker } : {}), at: t });
     this.pushLocal({ t: 'remove', eid: target, cause: result, at: t });
     if (result === 'bot') {
       this.fastStun = { act: true, mark: true };
