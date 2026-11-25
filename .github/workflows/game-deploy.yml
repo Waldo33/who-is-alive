@@ -356,6 +356,9 @@ jobs:
           SITE: ${{ matrix.site }}
           TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           GRAFANA_PASSWORD: ${{ secrets.GRAFANA_PASSWORD }}
+          # ключи S3 из панели Timeweb (если заданы) — s3-env.py пробует их первыми
+          S3_ACCESS_KEY: ${{ secrets.S3_ACCESS_KEY }}
+          S3_SECRET_KEY: ${{ secrets.S3_SECRET_KEY }}
         run: |
           ssh $SSH_OPTS root@$IP 'rm -rf /tmp/deploy && mkdir -p /tmp/deploy'
           # ключ бота — только серверу бота, файлом по SSH (не в командной строке и не в логах)
