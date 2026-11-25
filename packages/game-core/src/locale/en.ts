@@ -55,6 +55,8 @@ export const en: Dict = {
       sanity: ['Clear head', 'Hear whispers?', 'The fog thickens', 'They are coming…'],
       sanityLost: 'Lost in the fog',
       leshyTook: 'The Leshy took you',
+      sinned: 'The Leshy marked you',
+      doomed: 'The Leshy will come',
     },
   } as Partial<Record<ThemeId, ThemeText>>,
   start: {

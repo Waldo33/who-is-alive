@@ -23,6 +23,8 @@ export interface MeView {
   clapAt: number;
   /** Рассудок (тема с рассудком, sanity.ts), целое 0–100; знает только сам игрок. */
   sanity: number;
+  /** Провинности перед Лешим (тема с рассудком): знает только сам игрок. */
+  sins: number;
   /** Свои кикиморы (только у себя): где и ходит ли уже (warn — пока рябь на воде). */
   kiki: KikiView[];
 }
@@ -152,6 +154,7 @@ export class LocalSession implements ClientSession {
       clapsLeft: p.clapsLeft,
       clapAt: p.clapAt,
       sanity: Math.ceil(p.sanity),
+      sins: p.sins,
       kiki: p.kiki.map((k) => ({ id: k.id, x: k.x, y: k.y, warn: this.sim.world.time < k.at })),
     };
   }

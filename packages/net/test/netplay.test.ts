@@ -217,6 +217,7 @@ describe('сетевая игра', () => {
     }
     for (const { msg } of rig.roomLog) {
       expect(JSON.stringify(msg)).not.toContain('sanity');
+      expect(JSON.stringify(msg)).not.toContain('sins');
       expect(JSON.stringify(msg)).not.toContain('"km"');
     }
     const kmTo = rig.privLog.filter(({ msg }) => (msg as { me?: { km?: unknown } }).me?.km).map(({ to }) => to);

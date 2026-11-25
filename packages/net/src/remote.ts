@@ -569,6 +569,7 @@ export class RemoteSession implements ClientSession {
       clapsLeft: m.clapsLeft ?? 0,
       clapAt: m.clapAt ?? 0,
       sanity: m.sanity ?? this.cfg.sanityStart,
+      sins: m.sins ?? 0,
       kiki: (m.km ?? []).map(([id, x, y, w]) => ({ id, x, y, warn: w === 1 })),
     };
   }

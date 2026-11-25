@@ -305,4 +305,34 @@ describe('рассудок («Купальская ночь»)', () => {
     expect(b.alive).toBe(true);
     expect(c.alive).toBe(true);
   });
+  it('провинности: прожектора нет, пропуск жеста — провинность; с двумя Леший забирает и замершего, остальным одна прощается', () => {
+    const three = ['a', 'b', 'c'].map((pid, i) => ({ pid, name: pid, color: i }));
+    const sim = new MatchSim(makeConfig({ fixedTheme: KUPALA, endWhenLastAlive: false }), three, 29);
+    toPlay(sim);
+    const [a, b, c] = sim.pr;
+    const spots: WorldEvent[] = [];
+    sim.world.listeners.push((ev) => ev.t === 'spot' && spots.push(ev));
+    const warn = () => (sim as unknown as { leshyWarn: number }).leshyWarn;
+    // a не повторяет обычные жесты, b и c — повторяют
+    for (let i = 0; i < 20 * 120 && warn() < 0; i++) {
+      for (const p of sim.pr) p.sanity = 100;
+      const cr = sim.world.crowd;
+      if (cr && !cr.vote && sim.world.time >= cr.showAt + 100) for (const p of [b, c]) if (p.crowdAnswered !== cr.warnAt) sim.intent(p.pid, { k: 'crowd', kind: cr.kind });
+      sim.tick();
+    }
+    expect(spots.length).toBe(0);
+    a.sins = 2; // накопил (команд до Лешего могло быть мало)
+    c.sins = 1;
+    // на «Тсс!» Лешего замирают все
+    for (let i = 0; i < 20 * 8; i++) {
+      const cr = sim.world.crowd;
+      if (cr && !cr.vote && sim.world.time >= cr.showAt + 100) for (const p of sim.pr) if (p.alive && p.crowdAnswered !== cr.warnAt) sim.intent(p.pid, { k: 'crowd', kind: cr.kind });
+      sim.tick();
+    }
+    expect(a.alive).toBe(false);
+    expect(b.alive).toBe(true);
+    expect(c.alive).toBe(true);
+    expect(c.sins).toBe(0);
+    expect(spots.length).toBe(0);
+  });
 });

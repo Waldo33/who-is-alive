@@ -232,6 +232,8 @@ export class GameScene extends Phaser.Scene {
   private giant!: Phaser.GameObjects.Image;
   private giantFor = -1;
   private dreadAt = 0;
+  /** Сколько своих провинностей уже показали (-1 — дубль не начат). */
+  private sinsShown = -1;
   /** Когда грохнул шаг Лешего: ночь на миг темнеет. */
   private stepDarkAt = 0;
   private giantFrame = -1;
@@ -2175,7 +2177,10 @@ export class GameScene extends Phaser.Scene {
     this.candleG.clear();
     if (!on || !me) {
       this.madVeil.setVisible(false);
-      if (this.sim.phase !== 'play') this.sanityStageShown = -1;
+      if (this.sim.phase !== 'play') {
+        this.sanityStageShown = -1;
+        this.sinsShown = -1;
+      }
       return;
     }
     const v = me.sanity;
@@ -2214,6 +2219,27 @@ export class GameScene extends Phaser.Scene {
     } else if (this.sanTrend <= -2) {
       g.fillStyle(hexToInt(PAL.coral));
       g.fillRect(ax + 1, ay, 1, 2).fillRect(ax, ay + 2, 3, 1).fillRect(ax + 1, ay + 3, 1, 1);
+    }
+    // провинности: глаза Лешего рядом с мозгом — пара за каждую; с роковым числом — красные и не моргают.
+    // Только у себя: звука нет, новая провинность — толчок в руку и подпись на своём экране
+    const sins = me.sins;
+    const doom = sins >= this.cfg.leshyDoomSins;
+    for (let i = 0; i < Math.min(3, sins); i++) {
+      const ex = 23;
+      const ey2 = by + 3 + i * 5;
+      if (!doom && Math.floor(now / 150 + i * 7) % 23 === 0) continue; // моргнул
+      const c = doom ? (Math.floor(now / 400) % 2 ? PAL.red : PAL.magenta) : PAL.amber;
+      g.fillStyle(hexToInt(c)).fillRect(ex, ey2, 2, 1).fillRect(ex + 3, ey2, 2, 1);
+      g.fillStyle(hexToInt(doom ? PAL.coral : PAL.yellow)).fillRect(ex + 1, ey2, 1, 1).fillRect(ex + 3, ey2, 1, 1);
+    }
+    if (sins !== this.sinsShown) {
+      const tt = this.themeText();
+      if (sins > this.sinsShown && this.sinsShown >= 0) {
+        haptic(doom ? 'heavy' : 'warning');
+        const line = doom ? tt?.doomed : tt?.sinned;
+        if (line) this.showToast(line, 1800);
+      }
+      this.sinsShown = sins;
     }
     // тьма по краям: сильнее с каждой стадией, в «Кошмаре» пульсирует сердцем
     const beat = stage >= 3 ? 0.12 * Math.max(0, Math.sin(now / 130)) : 0;

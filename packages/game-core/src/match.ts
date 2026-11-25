@@ -84,6 +84,8 @@ export interface PlayerRound {
   kikiNextAt: number;
   /** «Факел!» вовремя: до этого времени мира в руке горит факел (рассудок растёт, кикиморы не подходят). */
   torchUntil: number;
+  /** Провинности «Купальской ночи»: сколько раз не повторил жест — Леший помнит (знает только сам игрок). */
+  sins: number;
 }
 
 /** Кикимора — кошмар одного игрока: появляется из воды (`at` — когда вылезет), идёт к нему, касание — вырезан. */
@@ -358,6 +360,7 @@ export class MatchSim {
       kiki: [],
       kikiNextAt: 0,
       torchUntil: 0,
+      sins: 0,
     }));
     this.bots = new BotBrain(this.world, this.cfg, new Rng(rng.fork()), (ev) => this.emit(ev), themeRules(this.theme).twist);
     const pset = new Set(playerEids);
@@ -550,20 +553,35 @@ export class MatchSim {
     // Леший: из не замерших вовремя забирает одного — ближайшего к себе (дети — только подсвечены)
     const leshy = c.warnAt === this.leshyWarn && !cfg.kidsMode;
     const hard = !c.vote && (roundMod(this.mod) === 'hard' || cfg.strictCrowd);
+    // Леший идёт к самому виноватому: кто не замер сейчас или накопил leshyDoomSins провинностей (тому и
+    // замереть не поможет). Больше провинностей — раньше; поровну — ближайший к нему.
     let prey: PlayerRound | null = null;
     if (leshy) {
       const spot = leshySpot(c.warnAt, this.arena.width);
-      let best = Infinity;
+      let best = -Infinity;
       for (const p of this.pr) {
-        if (!p.alive || (p.crowdAnswered === c.warnAt && p.crowdPick === c.kind)) continue;
+        const froze = p.crowdAnswered === c.warnAt && p.crowdPick === c.kind;
+        if (!p.alive || (froze && p.sins < cfg.leshyDoomSins)) continue;
         const e = this.world.get(p.eid)!;
-        const d = Math.hypot(e.x - spot.x, e.y - spot.y);
-        if (d < best) [best, prey] = [d, p];
+        const score = (froze ? p.sins : p.sins + 1) * 1000 - Math.hypot(e.x - spot.x, e.y - spot.y);
+        if (score > best) [best, prey] = [score, p];
       }
     }
+    const sinful = hasSanity(this.theme) && c.warnAt !== this.leshyWarn;
     const slips: number[] = [];
     for (const p of this.pr) {
       if (!p.alive) continue;
+      if (p === prey) {
+        // забран Лешим (даже если замер — провинностей слишком много)
+        const e = this.world.get(p.eid)!;
+        p.alive = false;
+        p.diedAt = t;
+        p.kiki = [];
+        if (p.autopilot) this.bots.remove(p.eid);
+        this.emit({ t: 'hit', target: p.eid, result: 'player', x: e.x, y: e.y, at: t });
+        this.emit({ t: 'remove', eid: p.eid, cause: 'player', at: t });
+        continue;
+      }
       if (p.crowdAnswered === c.warnAt && p.crowdPick === c.kind && !p.crowdLate) {
         this.addSanity(p, cfg.sanityGesture); // толпа успокаивает (только в теме с рассудком)
         if (hasSanity(this.theme) && !c.vote) {
@@ -574,9 +592,10 @@ export class MatchSim {
         continue;
       }
       this.addSanity(p, -cfg.sanitySlip);
+      if (sinful && !(p.crowdAnswered === c.warnAt && p.crowdPick === c.kind)) p.sins++; // опоздавшему не в счёт
       const e = this.world.get(p.eid)!;
       // опоздавший всё же повторил жест — его только подсвечивают, вырезают не повторивших
-      if (p === prey || (hard && !(p.crowdAnswered === c.warnAt && p.crowdPick === c.kind))) {
+      if (hard && !(p.crowdAnswered === c.warnAt && p.crowdPick === c.kind)) {
         p.alive = false;
         p.diedAt = t;
         if (p.autopilot) this.bots.remove(p.eid);
@@ -584,6 +603,10 @@ export class MatchSim {
         this.emit({ t: 'remove', eid: p.eid, cause: 'player', at: t });
       } else slips.push(p.eid);
     }
+    // забрал — остальным одна провинность прощается, иначе к концу ночи обречены все
+    if (prey) for (const p of this.pr) if (p.alive && p.sins > 0) p.sins--;
+    // «Купальская ночь»: прожектора нет — сбившихся никто не подсвечивает, их помнит только Леший
+    if (hasSanity(this.theme)) return;
     for (const eid of this.bots.lastSlips) if (this.world.get(eid)?.alive) slips.push(eid);
     for (const eid of this.rng.shuffle(slips)) {
       const e = this.world.get(eid)!;

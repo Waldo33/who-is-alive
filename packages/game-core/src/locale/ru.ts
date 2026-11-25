@@ -20,6 +20,9 @@ export interface ThemeText {
   sanityLost?: string;
   /** Вырезан Лешим: шевельнулся в его стоп-кадр. */
   leshyTook?: string;
+  /** Своя провинность (не повторил жест) и «следующая — последняя»: только у себя на экране. */
+  sinned?: string;
+  doomed?: string;
   /** Тема с рассудком: чем кончился дубль — остался один, рассвет (живых несколько), сгинули все. */
   ends?: { last: string; dawn: string; none: string };
   /** Вторая подсказка после `intro` (в начале дубля). */
@@ -91,6 +94,8 @@ export const ru = {
       sanity: ['Голова ясная', 'Слышишь шёпот?', 'Туман сгущается', 'Они идут…'],
       sanityLost: 'Сгинул в тумане',
       leshyTook: 'Тебя забрал Леший',
+      sinned: 'Леший тебя запомнил',
+      doomed: 'Леший придёт за тобой',
     },
   } as Partial<Record<ThemeId, ThemeText>>,
   start: {

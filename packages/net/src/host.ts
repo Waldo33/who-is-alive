@@ -152,7 +152,7 @@ export class HostSession implements ClientSession {
       kills: this.sim.matchKills[pid] ?? 0,
       clapsLeft: p.clapsLeft,
       clapAt: p.clapAt,
-      ...(hasSanity(this.sim.theme) ? { sanity: Math.ceil(p.sanity) } : {}),
+      ...(hasSanity(this.sim.theme) ? { sanity: Math.ceil(p.sanity), sins: p.sins } : {}),
       ...(p.kiki.length ? { km: p.kiki.map((k) => [k.id, Math.round(k.x), Math.round(k.y), this.sim.world.time < k.at ? 1 : 0] as [number, number, number, number]) } : {}),
     };
   }
