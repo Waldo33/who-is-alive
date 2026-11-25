@@ -32,10 +32,15 @@ export class Synth {
   private base = 0;
   /** Детский режим (настройка комнаты): мягкие тембры. */
   kids = false;
+  /** Куда сейчас идут слои эффекта: обычно на выход, у визга — через перегруз (scream). */
+  private route: AudioNode | null = null;
+  private get out(): AudioNode {
+    return this.route ?? this.dest;
+  }
 
   constructor(
     private readonly ctx: BaseAudioContext,
-    private readonly out: AudioNode,
+    private readonly dest: AudioNode,
     private readonly noiseBuf: AudioBuffer,
   ) {}
 
@@ -166,36 +171,58 @@ export class Synth {
         this.formant(920, 300, 0.7, 0.22, 0.05, 0.12, [900, 1300, 2600], 9);
         this.tone('square', 160, 40, 0.5, 0.4, 0.05);
         break;
-      // скример: морда Лешего во весь экран (scene.ts › leshyScreamer, картинка идёт по этим же отметкам).
-      // 0–0,26 с — вдох перед ударом: шум нарастает (обратная тарелка) и свист снизу вверх; 0,26 — удар:
-      // щелчок сверху, «тук» и хор визгливых голосов вразнобой (малые секунды) с «шершавостью» 70–90 Гц, как у
-      // настоящего вопля; 0,95 — морда бросается вплотную: второй удар и короткий взвизг; потом — тишина,
-      // гул и сердце. Слышит только вырезанный (и соседи).
+      // скример: морда Лешего во весь экран (scene.ts › leshyScreamer, картинка по этим же отметкам).
+      // Пугает не громкость, а скачок из тишины: никакого «вдоха» перед ударом (слабый звук за полсекунды
+      // до удара гасит вздрагивание — сцена держит перед ним тишину), удар с атакой в пару мс. Визг — как
+      // настоящий вопль ужаса: «шершавый» (громкость дрожит с частотой 70–140 Гц), нелинейный — высота
+      // срывается скачками, под голосом субгармоника, всё через перегруз, как у динамика на пределе.
+      // 0,69 — бросок вплотную, второй взвизг; потом — темнота, гул и сердце. Слышит только вырезанный.
       case 'scream': {
-        const H = 0.26;
-        this.swell(H, 0.42, 3000, 0, 1);
-        this.swell(H, 0.3, 900, 0, 1);
-        this.tone('sine', 300, 1400, H, 0.08);
-        // удар
-        this.noise(0.04, 1, 3600, H);
-        this.tone('square', 240, 50, 0.32, 0.42, H);
-        this.noise(0.14, 0.7, 1300, H + 0.01);
-        // визг: голоса разной высоты, вверх на миг — и вниз, срываясь
-        for (const [f, v, am] of [[1180, 0.12, 73], [1250, 0.1, 87], [1660, 0.07, 79], [940, 0.09, 61]] as const) {
-          this.formant(f * 0.9, f * 1.12, 0.08, v, 0.3, H, [f, f * 2, 3000], 11, am);
-          this.formant(f * 1.12, f * 0.62, 0.62, v, 0.02, H + 0.08, [f, f * 2, 3000], 13, am);
+        this.noise(0.04, 1, 3600);
+        this.noise(0.03, 0.8, 5200);
+        this.tone('square', 240, 50, 0.32, 0.45);
+        this.noise(0.14, 0.75, 1300, 0.005);
+        const ctx = this.ctx;
+        const t0 = ctx.currentTime + this.base;
+        const shaper = ctx.createWaveShaper();
+        const curve = new Float32Array(1024);
+        for (let i = 0; i < curve.length; i++) curve[i] = Math.tanh(((i / (curve.length - 1)) * 2 - 1) * 5);
+        shaper.curve = curve;
+        const post = ctx.createGain();
+        post.gain.setValueAtTime(0.42, t0);
+        post.gain.setValueAtTime(0.42, t0 + 1.0);
+        post.gain.linearRampToValueAtTime(0, t0 + 1.2);
+        shaper.connect(post).connect(this.dest);
+        this.route = shaper;
+        try {
+          // голоса: каждый — цепочка отрезков, высота срывается скачками до ±4 полутонов и в целом падает
+          for (const [f, v] of [[1180, 0.16], [1250, 0.13], [1660, 0.09], [940, 0.12]] as const) {
+            let w = 0;
+            let fr = f * 1.08;
+            while (w < 0.62) {
+              const d = 0.07 + Math.random() * 0.09;
+              const nf = fr * Math.pow(2, (Math.random() * 8 - 5) / 12);
+              this.formant(fr, nf, d * 1.35, v, 0.05, w, [f, f * 2, 3000], 11 + Math.random() * 6, 70 + Math.random() * 70);
+              fr = nf;
+              w += d;
+            }
+          }
+          // субгармоника под самым низким голосом и хрип выдоха
+          this.formant(470, 300, 0.62, 0.1, 0.05, 0, [700, 1100, 2400], 7, 45);
+          this.swell(0.62, 0.45, 2600, 0, 0.04);
+          this.swell(0.5, 0.3, 1500, 0.02, 0.04);
+          // бросок вплотную — второй взвизг выше
+          const L = 0.69;
+          for (const [f, am] of [[1480, 113], [1570, 97], [2093, 131]] as const) this.formant(f * 1.1, f * 0.72, 0.26, 0.12, 0.02, L, [f, f * 2, 3200], 14, am);
+          this.swell(0.22, 0.4, 3000, L, 0.03);
+        } finally {
+          this.route = null;
         }
-        // под ним — рык
-        this.formant(190, 140, 0.7, 0.16, 0.05, H, [700, 1100, 2400], 6, 37);
-        this.swell(0.6, 0.3, 2800, H, 0.05);
-        // бросок вплотную
-        const L = 0.95;
-        this.noise(0.04, 0.9, 3400, L);
-        this.tone('square', 200, 45, 0.25, 0.38, L);
-        for (const [f, am] of [[1400, 83], [1480, 71]] as const) this.formant(f * 1.1, f * 0.7, 0.24, 0.1, 0.02, L, [f, f * 2, 3200], 14, am);
-        // потом — темнота: низкий гул и сердце
-        this.swell(1.4, 0.12, 500, L + 0.25, 0.3);
-        [1.35, 1.57, 2.15, 2.37].forEach((d, i) => {
+        this.noise(0.04, 0.95, 3400, 0.69);
+        this.tone('square', 200, 45, 0.25, 0.4, 0.69);
+        // темнота: низкий гул и сердце
+        this.swell(1.4, 0.12, 500, 1.0, 0.3);
+        [1.1, 1.32, 1.9, 2.12].forEach((d, i) => {
           this.tone('sine', 72, 42, 0.2, i % 2 ? 0.25 : 0.35, d);
           this.noise(0.04, i % 2 ? 0.45 : 0.7, 1100, d);
           this.tone('square', 220, 120, 0.08, i % 2 ? 0.1 : 0.15, d);
