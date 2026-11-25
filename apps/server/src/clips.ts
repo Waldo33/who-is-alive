@@ -9,6 +9,10 @@
  *
  * Хранится 2 суток под случайным именем, папка не больше 1 ГБ (сначала уходят старые).
  * Тело пишется на диск потоком — в памяти 1-гигабайтного сервера не копится.
+ *
+ * Есть S3 (s3.ts, бакет из infra/terraform/storage.tf) — каждый файл после записи уходит и туда
+ * (`clips/<id>.<ext>`, бакет сам удаляет через 2 суток). Отдаём локальную копию, пока она есть; ушла
+ * (папка переполнилась, файл с другой машины) — GET отвечает 302 на подписанную ссылку S3.
  */
 import { randomBytes } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
@@ -18,6 +22,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { Transform } from 'node:stream';
+import type { S3Client } from './s3';
 
 export const CLIP_MAX = 12 * 1024 * 1024;
 export const THUMB_MAX = 400 * 1024;
@@ -33,13 +38,77 @@ export const CLIP_ID = /^[0-9a-f]{20}$/;
 
 export type ClipResult = { status: number; body: unknown };
 
+/** Копия в S3: куда класть и как сообщать о сбоях. */
+export interface ClipRemote {
+  s3: S3Client;
+  log?: (level: 'info' | 'warn' | 'error', msg: string, f?: Record<string, unknown>) => void;
+}
+
+/** Ссылка из S3 живёт столько же, сколько сам файл. */
+export const REMOTE_URL_TTL_S = 48 * 3600;
+
 export class ClipStore {
   readonly dir: string;
   private readonly uploads = new Map<string, number[]>();
   private usageCache: { at: number; v: { bytes: number; count: number } } | null = null;
+  /** Что уже точно лежит в S3 (ключ → когда положили) — чтобы не спрашивать бакет на каждый GET. */
+  private readonly inRemote = new Map<string, number>();
+  /** Идущие загрузки в S3 (тесты ждут их через `flushRemote`). */
+  private readonly pending = new Set<Promise<void>>();
+  readonly remoteStats = { uploaded: 0, failed: 0, redirects: 0 };
 
-  constructor(dir?: string, private readonly now: () => number = Date.now) {
+  constructor(dir?: string, private readonly now: () => number = Date.now, private readonly remote?: ClipRemote) {
     this.dir = dir ?? join(tmpdir(), 'massovka-clips');
+  }
+
+  get hasRemote(): boolean {
+    return !!this.remote;
+  }
+
+  /** Положить файл в S3 в фоне: сбой S3 не ломает клип — он остаётся на диске, как раньше. */
+  private mirror(id: string, ext: string): void {
+    const r = this.remote;
+    if (!r) return;
+    const key = `clips/${id}.${ext}`;
+    const job = r.s3
+      .putFile(key, join(this.dir, `${id}.${ext}`), CLIP_MIME[ext])
+      .then(() => {
+        this.inRemote.set(key, this.now());
+        this.remoteStats.uploaded++;
+        if (this.inRemote.size > 50_000) this.inRemote.clear();
+      })
+      .catch((e: unknown) => {
+        this.remoteStats.failed++;
+        r.log?.('warn', 's3_put_failed', { key, err: String(e).slice(0, 300) });
+      })
+      .finally(() => this.pending.delete(job));
+    this.pending.add(job);
+  }
+
+  /** Дождаться фоновых загрузок в S3 (тесты, остановка сервера). */
+  async flushRemote(): Promise<void> {
+    while (this.pending.size) await Promise.all([...this.pending]);
+  }
+
+  /**
+   * Подписанная ссылка на файл в S3 или null (S3 нет, файла там нет, бакет не ответил).
+   * Локальной копии уже нет — сюда приходит GET /v1/clips/<id>.<ext>.
+   */
+  async remoteUrl(id: string, ext: string): Promise<string | null> {
+    const r = this.remote;
+    if (!r || !CLIP_ID.test(id) || !CLIP_MIME[ext]) return null;
+    const key = `clips/${id}.${ext}`;
+    const at = this.inRemote.get(key);
+    if (at === undefined || this.now() - at > CLIP_TTL_MS) {
+      const ok = await r.s3.has(key).catch((e: unknown) => {
+        r.log?.('warn', 's3_head_failed', { key, err: String(e).slice(0, 300) });
+        return false;
+      });
+      if (!ok) return null;
+      this.inRemote.set(key, this.now());
+    }
+    this.remoteStats.redirects++;
+    return r.s3.presignGet(key, REMOTE_URL_TTL_S, { disposition: `attachment; filename="massovka-${id.slice(0, 6)}.${ext}"` });
   }
 
   /** Клип из тела запроса. */
@@ -58,6 +127,7 @@ export class ClipStore {
       await rm(join(this.dir, `${id}.${ext}`), { force: true });
       return { status: size < 0 ? 413 : 400, body: { error: size < 0 ? 'too_big' : 'bad_clip' } };
     }
+    this.mirror(id, ext);
     return { status: 200, body: { id, ext } };
   }
 
@@ -75,6 +145,8 @@ export class ClipStore {
       await writeFile(join(this.dir, `${id}.jpg`), thumb);
       hasThumb = true;
     }
+    this.mirror(id, ext);
+    if (hasThumb) this.mirror(id, 'jpg');
     return { id, thumb: hasThumb };
   }
 
@@ -87,6 +159,7 @@ export class ClipStore {
       await rm(path, { force: true });
       return { status: 400, body: { error: 'bad_thumb' } };
     }
+    this.mirror(id, 'jpg');
     return { status: 200, body: { ok: true } };
   }
 

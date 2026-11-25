@@ -28,6 +28,8 @@ export interface FilmFeed {
   on(h: (f: WireFilm) => void): () => void;
   /** Ссылка на файл в хранилище клипов игрового сервера. */
   url(id: string, ext: string): string;
+  /** Комната матча: под фильмом в чате — кнопка «Реванш» туда же (метка карточки бота или код). */
+  rematch?: { code: string; invite?: string };
 }
 
 /**
@@ -268,7 +270,7 @@ export function openFilmOverlay(
     };
     root.querySelector('.clip-send')!.addEventListener('click', () => {
       if (caps?.chat) {
-        void tg('chat', () => telegramShareCard({ kind: 'clip', clip: f.id, text, thumb: f.thumb })).then(async (ok) => {
+        void tg('chat', () => telegramShareCard({ kind: 'clip', clip: f.id, text, thumb: f.thumb, ...feed.rematch })).then(async (ok) => {
           if (!ok) await withFile(share);
         });
         return;

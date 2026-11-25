@@ -750,8 +750,14 @@ export class ClipPlayerScene {
       holders.set(k, by ? (pos.get(by.eid) ?? { x: Math.round(by.x), y: Math.round(by.y) }) : null);
     }
     for (const st of w.stars.values()) {
-      const bob = Math.floor((now + st.id * 300) / 300) % 2;
-      list.push({ y: st.y - 1, draw: () => frame(g, a.star, 10, 10, Math.floor(now / 140) % 4, st.x - 5, st.y - 8 - bob) });
+      // цветок на земле (starStill) не подпрыгивает и мерцает медленнее, как в игре
+      const still = themePack(this.inp.rec.theme).starStill;
+      const bob = still ? 0 : Math.floor((now + st.id * 300) / 300) % 2;
+      const fr = Math.floor((now + (still ? st.id * 170 : 0)) / (still ?? 140)) % 4;
+      // кадр — четверть холста (цветок «Купальской ночи» крупнее звезды), ножка — на точке звезды
+      const sw = a.star.width / 4;
+      const sh = a.star.height;
+      list.push({ y: st.y - 1, draw: () => frame(g, a.star, sw, sh, fr, st.x - Math.round(sw / 2), st.y - Math.round(sh * 0.8) - bob) });
     }
     // Леший в своём стоп-кадре: стоит в толпе по глубине (кто ниже — перед ним)
     const giant = this.giantAt(w, t, now);
@@ -767,6 +773,15 @@ export class ClipPlayerScene {
           frame(g, this.night!.leshy, LESHY_W, LESHY_H, gp.frame, gp.x - LESHY_W / 2, gp.feet + 1 - LESHY_H, gp.flipX);
         },
       });
+    }
+    // верхняя полоса изгороди сжимающейся зоны — по глубине, как в игре: кто стоит у неё внутри зоны,
+    // виден перед стеной целиком, а не «за ней» с отрезанной головой
+    const zt = w.zoneRect();
+    if (!this.hedges.has(look)) this.hedges.set(look, g.createPattern(loc.hedge, 'repeat'));
+    const hedgeTop = this.hedges.get(look);
+    if (zt && hedgeTop && zt.w < this.inp.arena.walk.w - 1) {
+      const y0 = Math.round(zt.y) - 6;
+      if (y0 > 0) list.push({ y: y0, draw: () => { g.fillStyle = hedgeTop; g.fillRect(0, 0, W, y0); } });
     }
     list.sort((p, q) => p.y - q.y);
     for (const d of list) d.draw();
@@ -815,8 +830,8 @@ export class ClipPlayerScene {
       const x1 = Math.round(z.x + z.w) + 4;
       const y1 = Math.round(z.y + z.h) + 2;
       g.fillStyle = hedge;
+      // верхняя полоса нарисована раньше, по глубине вместе с толпой
       for (const [rx, ry, rw, rh] of [
-        [0, 0, W, y0],
         [0, y1, W, H - y1],
         [0, y0, x0, y1 - y0],
         [x1, y0, W - x1, y1 - y0],

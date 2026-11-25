@@ -5,15 +5,16 @@
 export type Sfx =
   | 'step' | 'hitPlayer' | 'hitBot' | 'poof' | 'starTake' | 'starSpawn' | 'crowd' | 'tick'
   | 'click' | 'ready' | 'accuseRight' | 'accuseWrong' | 'fanfare' | 'sad' | 'hedge' | 'pigeon' | 'drum' | 'denied' | 'count' | 'swing' | 'flicker' | 'dusk' | 'siren' | 'whack' | 'clang' | 'stab' | 'knockedOut'
-  | 'hitOther' | 'cut' | 'clap' | 'logo' | 'wrap' | 'unmask' | 'rewind' | 'leshyStep' | 'leshyBreath' | 'leshyStinger' | 'leshyTake' | 'leshyCall' | 'snap' | 'whisper' | 'scream' | 'fern';
+  | 'hitOther' | 'cut' | 'clap' | 'logo' | 'wrap' | 'unmask' | 'rewind' | 'leshyStep' | 'leshyBreath' | 'leshyStinger' | 'leshyTake' | 'leshyCall' | 'snap' | 'whisper' | 'scream' | 'fern'
+  | 'bossAhem' | 'bossStamp';
 
 /**
  * Приоритет эффекта (звуковой гайд, план звука): P1 — меняет решение игрока, обязан пробиться
  * через музыку (на динамике телефона −30…−33 дБ, музыку глушит на 9 дБ на 0,6 с); P2 — событие
  * на поле (−35…−39 дБ, глушит на 4 дБ); остальное — фон. Уровни проверяет `pnpm --filter web sound-check`.
  */
-export const P1: ReadonlySet<Sfx> = new Set<Sfx>(['hitPlayer', 'hitBot', 'starTake', 'crowd', 'ready', 'knockedOut', 'cut', 'drum', 'accuseRight', 'accuseWrong', 'unmask', 'wrap', 'logo', 'leshyStinger', 'leshyTake', 'scream', 'fern']);
-export const P2: ReadonlySet<Sfx> = new Set<Sfx>(['hitOther', 'whack', 'clang', 'stab', 'starSpawn', 'flicker', 'dusk', 'leshyBreath']);
+export const P1: ReadonlySet<Sfx> = new Set<Sfx>(['hitPlayer', 'hitBot', 'starTake', 'crowd', 'ready', 'knockedOut', 'cut', 'drum', 'accuseRight', 'accuseWrong', 'unmask', 'wrap', 'logo', 'leshyStinger', 'leshyTake', 'scream', 'fern', 'bossAhem']);
+export const P2: ReadonlySet<Sfx> = new Set<Sfx>(['hitOther', 'whack', 'clang', 'stab', 'starSpawn', 'flicker', 'dusk', 'leshyBreath', 'bossStamp']);
 
 /**
  * Частые звуки: каждый раз чуть другие (±30 центов, ±1,5 дБ), чтобы за три матча не стать
@@ -109,6 +110,22 @@ export class Synth {
   private voice(name: Sfx, step: number): void {
     switch (name) {
       case 'step': this.noise(0.03, 0.05, 1800); break;
+      // шеф поворачивается: «Кхм-кхм» — два хриплых толчка горлом (шум в полосе голоса + жёсткий тон с обертонами)
+      case 'bossAhem':
+        for (const d of [0, 0.17]) {
+          this.noise(0.09, 0.9, 1100, d);
+          this.noise(0.06, 0.6, 2400, d + 0.01);
+          this.tone('sawtooth', 380, 280, 0.1, 0.42, d);
+          this.tone('square', 900, 660, 0.08, 0.2, d + 0.005);
+        }
+        break;
+      // выговор: шлёп печатью «ВЫГОВОР» — глухой удар по столу и сухой щелчок
+      case 'bossStamp':
+        this.noise(0.06, 1, 1400);
+        this.noise(0.04, 0.6, 3200, 0.005);
+        this.tone('square', 620, 300, 0.12, 0.4);
+        this.tone('triangle', 1240, 640, 0.09, 0.24);
+        break;
       // ты выбил живого — самый яркий звук игры: треск, удар и мажорная квинта вверх
       case 'hitPlayer':
         this.noise(0.035, 1, 3800);

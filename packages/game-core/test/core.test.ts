@@ -145,6 +145,30 @@ describe('MatchSim', () => {
     expect(sim.world.get(me.eid)!.markUntil).toBeGreaterThan(sim.world.time);
   });
 
+  it('в стоп-кадре «Море волнуется» удар не проходит, а ИИ не замахивается', () => {
+    const sim = new MatchSim(makeConfig(), players, 12);
+    runUntil(sim, () => sim.phase === 'play' && sim.world.isFrozen());
+    const a = sim.playerRound('a')!;
+    const b = sim.playerRound('b')!;
+    const ea = sim.world.get(a.eid)!;
+    const eb = sim.world.get(b.eid)!;
+    eb.x = ea.x + 5;
+    eb.y = ea.y;
+    sim.intent('a', { k: 'attack', eid: b.eid });
+    sim.tick();
+    expect(b.alive).toBe(true);
+    expect(a.attacksLeft).toBe(sim.cfg.attacksPerRound);
+    // ИИ за весь матч ни разу не бьёт, пока мир замер
+    const sim2 = new MatchSim(makeConfig(), players, 33);
+    players.forEach((p, i) => sim2.addAgent(new AiPlayer(p.pid, 500 + i)));
+    let frozenHits = 0;
+    sim2.world.listeners.push((ev) => {
+      if (ev.t === 'hit' && ev.target >= 0 && sim2.world.isFrozen(ev.at)) frozenHits++;
+    });
+    runUntil(sim2, () => sim2.phase === 'match_end', 20 * 60 * 15);
+    expect(frozenHits).toBe(0);
+  });
+
   it('удар по игроку: +1, жертва становится призраком, нападающий не раскрыт в событии', () => {
     const sim = new MatchSim(makeConfig(), players, 12);
     runUntil(sim, () => sim.phase === 'play');

@@ -3,6 +3,7 @@ import type { CrowdKind, WorldEvent } from './events';
 import { Rng } from './rng';
 import { aiLevel } from './config';
 import { canFight } from './themes';
+import { bossLooking, pathInBossCone } from './boss';
 
 export interface AiPersona {
   /** Шанс опоздать на «Море волнуется». */
@@ -36,6 +37,10 @@ export class AiPlayer implements AiAgent {
   private attackAt = 0;
   private accuseAt = 0;
   private kikiAt = 0;
+  /** Взгляд шефа, который ИИ уже заметил: когда замрёт и не зазевался ли. */
+  private bossSeen = -1;
+  private bossReactAt = 0;
+  private bossSlip = false;
   private persona: AiPersona;
   private bound = false;
 
@@ -68,6 +73,8 @@ export class AiPlayer implements AiAgent {
     if (ev.t === 'star_taken') this.bump(ev.eid, 7);
     else if (ev.t === 'hit' && ev.attacker !== undefined) this.bump(ev.attacker, 9);
     else if (ev.t === 'remove') this.suspicion.delete(ev.eid);
+    // шеф поймал шевельнувшегося — ботов тоже ловит, но живые попадаются чаще
+    else if (ev.t === 'boss' && ev.act === 'catch') this.bump(ev.eid, 5);
     else if (ev.t === 'act' && (ev.kind === 'freeze' || ev.kind === 'jump' || ev.kind === 'dance')) {
       const c = sim.world.crowd;
       if (c && ev.at > c.resumeAt + 320 && ev.at < c.windowEnd + 500) this.bump(ev.eid, 3);
@@ -129,6 +136,24 @@ export class AiPlayer implements AiAgent {
       this.freezeChecked = c.warnAt;
       for (const o of w.alive()) if (o.moving && o.act === null) this.bump(o.eid, 3);
     }
+    // шеф смотрит: в его конусе не шевелиться (заметил с задержкой, а иногда и зазевался)
+    const b = w.boss;
+    if (bossLooking(b, t)) {
+      if (this.bossSeen !== b.look.from) {
+        this.bossSeen = b.look.from;
+        this.bossReactAt = t + this.rng.range(150, 650);
+        this.bossSlip = this.rng.chance(0.12);
+      }
+      const rest = e.path.slice(e.pi).map((c) => ({ x: w.nav.cx(c), y: w.nav.cy(c) }));
+      if (!this.bossSlip && t >= this.bossReactAt && pathInBossCone(b, b.look.dir, e.x, e.y, rest)) {
+        if (e.pi < e.path.length) sim.intent(this.pid, { k: 'stop' });
+        this.walking = false;
+        this.pauseUntil = Math.max(this.pauseUntil, b.look.until + 200);
+        return;
+      }
+    }
+    // стоп-кадр: мир замер, удары не принимаются — стоит, как все
+    if (w.isFrozen()) return;
     if (e.act && t < e.actEnd) return;
     if (t < me.stunUntil) return;
 

@@ -11,3 +11,12 @@ output "servers" {
     }
   }
 }
+
+# Бакет для видео: имя (с приставкой Timeweb) и адрес — без ключей (они sensitive и в план не попадают)
+output "media_bucket" {
+  value = {
+    name     = twc_s3_bucket.media.full_name
+    hostname = twc_s3_bucket.media.hostname
+    location = twc_s3_bucket.media.location
+  }
+}

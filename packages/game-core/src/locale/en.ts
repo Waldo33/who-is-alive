@@ -28,8 +28,8 @@ export const en: Dict = {
   themeText: {
     office: {
       intro: 'Rule 1: blend in',
-      twistOn: 'Basement! Fists up!',
-      twistOff: 'Back to the office',
+      twistOn: 'Boss is out. Fight!',
+      twistOff: 'Boss is back!',
       crowd: { freeze: 'Boss is coming!', jump: 'Coffee break!', dance: 'Smoke break!' },
       twistCrowd: { freeze: 'Guard up!', jump: 'Jump rope!', dance: 'Shadowbox!' },
     },
@@ -124,6 +124,9 @@ export const en: Dict = {
     clapHint: 'Clapper: bottom right',
     clapDone: 'Your move is set!',
     noFight: 'No fights at work',
+    bossLook: 'Boss looking: freeze!',
+    bossCatch: 'Write-up!',
+    bossCaughtMe: { one: 'Write-up! −{n} hit', other: 'Write-up! −{n} hits' },
     cutByCrowd: 'Wrong move!',
     modTitle: 'Shooting rules:',
     withCrowd: 'Blended in!',
@@ -338,7 +341,11 @@ export const en: Dict = {
     cast: 'Starring',
     play1: 'Play it',
     play2: 'with friends',
-    filmText: 'Our Be Nobody movie 🎬 Can you spot the real players?',
+    filmText: 'Our Be Nobody movie 🎬 Your turn?',
+    // film caption in a Telegram chat: star of the match and awards
+    filmStar: "🎬 That's a wrap! Star of the film: {name}",
+    filmDraw: "🎬 That's a wrap! Draw: {names}",
+    filmAward: '🏅 {title}: {names}',
     // film credits: roles instead of a score table
     lead: 'Starring',
     cameo: 'Cameo',

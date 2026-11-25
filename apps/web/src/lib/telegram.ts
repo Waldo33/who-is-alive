@@ -252,6 +252,11 @@ export function telegramStartTarget(): string | null {
   return start === 'daily' && featureOn('casting') ? '/daily?src=tg' : null;
 }
 
+/** Метка карточки бота «Собрать комнату», если игру открыли с неё (g_МЕТКА) — для «Реванша» в чат. */
+export function telegramInvite(): string | undefined {
+  return /^g_([A-Za-z0-9]{8,32})$/.exec(telegramStart() ?? '')?.[1];
+}
+
 /** Ссылка, открывающая игру в Telegram с параметром (или null, если бот ещё не настроен). */
 export function tgLink(start: string): string | null {
   if (!TG_APP) return null;
@@ -331,7 +336,7 @@ async function botPost<T>(path: string, body: Record<string, unknown>): Promise<
   }
 }
 
-export type ShareCard = { kind: 'room'; code: string } | { kind: 'daily'; squares: string } | { kind: 'invite' } | { kind: 'clip'; clip: string; text: string; thumb: boolean };
+export type ShareCard = { kind: 'room'; code: string } | { kind: 'daily'; squares: string } | { kind: 'invite' } | { kind: 'clip'; clip: string; text: string; thumb: boolean; code?: string; invite?: string };
 
 /**
  * Поделиться карточкой с кнопкой «Играть» (Bot API 8.0): Telegram показывает выбор чата поверх игры

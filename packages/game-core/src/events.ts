@@ -38,7 +38,16 @@ export type WorldEvent =
    */
   | { t: 'spot'; x: number; y: number; r: number; until: number; at: number }
   /** Изнанка темы (themes.ts › twist): включилась или выключилась. Ничего не говорит об игроках. */
-  | { t: 'twist'; on: boolean; at: number };
+  | { t: 'twist'; on: boolean; at: number }
+  /**
+   * Шеф в офисе (boss.ts): появился (in), идёт (walk), смотрит (look: с from конус «горит»),
+   * ушёл за дверь (out), поймал шевельнувшегося (catch — ловит и ботов, это улика, а не указатель).
+   */
+  | { t: 'boss'; act: 'in'; x: number; y: number; at: number }
+  | { t: 'boss'; act: 'walk'; path: number[]; at: number }
+  | { t: 'boss'; act: 'look'; dir: Dir; from: number; until: number; at: number }
+  | { t: 'boss'; act: 'out'; at: number }
+  | { t: 'boss'; act: 'catch'; eid: number; at: number };
 
 export interface EntitySpawn {
   eid: number;

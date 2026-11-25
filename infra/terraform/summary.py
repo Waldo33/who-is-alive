@@ -12,7 +12,8 @@ plan = json.load(sys.stdin)
 bad = False
 lines = []
 # поля, которые меняются сами (статус, диски, сети) — в сводке шум
-NOISE = {'status', 'disks', 'networks', 'cpu_frequency', 'avatar_id', 'boot_mode', 'root_pass', 'vnc_pass'}
+NOISE = {'status', 'disks', 'networks', 'cpu_frequency', 'avatar_id', 'boot_mode', 'root_pass', 'vnc_pass',
+         'disk_stats', 'object_amount', 'access_key', 'secret_key'}
 
 for rc in plan.get('resource_changes', []):
     actions = rc['change']['actions']
@@ -23,7 +24,7 @@ for rc in plan.get('resource_changes', []):
         lines.append(f'- ⛔ **{addr}** — {"пересоздать" if "create" in actions else "удалить"}: так нельзя, план остановлен')
         continue
     if actions == ['create']:
-        lines.append(f'- 🆕 **{addr}** — создать (платно, см. тариф в servers.tf)')
+        lines.append(f'- 🆕 **{addr}** — создать (платно, см. тариф в servers.tf / storage.tf)')
         continue
     if actions == ['update']:
         before, after = rc['change']['before'] or {}, rc['change']['after'] or {}

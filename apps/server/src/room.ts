@@ -61,6 +61,8 @@ export interface RoomOptions {
   videoOn?: () => boolean;
   /** Фильм матча готов (на сервере): комнате по приглашению из Telegram — отправить его в чат (server.ts). */
   onFilm?: (room: Room, film: RoomFilm) => void;
+  /** Комната по приглашению из Telegram: что показать на карточке в чате (сбор, съёмка) — server.ts › cardToChat. */
+  onCard?: (room: Room, card: RoomCard) => void;
   /** Комната переехала с соседнего экземпляра сервера (выкладка без обрыва): состав и настройки — оттуда. */
   restore?: RoomSnapshot;
 }
@@ -71,7 +73,19 @@ export interface RoomFilm {
   /** Имена победителей; больше одного — ничья. */
   winners: string[];
   draw: boolean;
+  /** Награды матча с именами (для подписи «Снято!» в чате). */
+  awards: { id: string; names: string[] }[];
 }
+
+/**
+ * Живая карточка в чате Telegram: сбор («2 из 4»), съёмка (счёт по дублям), отмена (комната закрылась
+ * без матча). После конца матча карточку меняет фильм (onFilm). Только имена и очки — то, что и так
+ * видно всем в игре; кто из человечков кто, сюда не попадает.
+ */
+export type RoomCard =
+  | { state: 'lobby'; seats: { name: string; color: number }[]; max: number }
+  | { state: 'playing'; take: number; target: number; scores: { name: string; color: number; score: number }[] }
+  | { state: 'closed' };
 
 /**
  * Снимок комнаты в лобби для переезда на другой экземпляр сервера (синий/зелёный, другой регион):
@@ -94,6 +108,8 @@ export interface RoomSnapshot {
   emptyMs?: number;
   /** Метка приглашения из Telegram: по той же карточке после переезда — в эту же комнату. */
   invite?: string;
+  /** Матч уже был (карточку в чате держит фильм, а не сбор). */
+  played?: boolean;
 }
 
 /**
@@ -140,6 +156,8 @@ export class MatchRunner {
   private armed = false;
   /** Снят последний дубль матча (разоблачение): итоги уже известны — можно монтировать фильм. */
   onLastTake: ((takes: FilmTake[]) => void) | null = null;
+  /** Дубль кончился (разоблачение): очки начислены — карточка в чате обновит счёт. */
+  onTake: (() => void) | null = null;
   /**
    * Живого игрока выбили, и прошло 1,5 с (столько клип показывает после удара): можно заготовить
    * его клип — кнопка «Клип» у него появится только через 3,4 с после удара.
@@ -198,6 +216,7 @@ export class MatchRunner {
       summary: s,
       arena: h.arena,
     });
+    this.onTake?.();
     if (h.sim.lastRound) this.onLastTake?.(this.flushTakes());
   }
 
@@ -267,6 +286,10 @@ export class Room {
   closed = false;
   /** Комната по приглашению из Telegram («Собрать комнату» в боте) — метка карточки. */
   invite?: string;
+  /** Что последним ушло на карточку в чате — одинаковое второй раз не шлём. */
+  private cardSig = '';
+  /** Был ли тут матч: закрытие лобби без матча — «Съёмку отменили» на карточке. */
+  private played = false;
 
   constructor(private readonly o: RoomOptions) {
     this.code = o.code;
@@ -284,6 +307,7 @@ export class Room {
       this.lastActive = snap.lastActive;
       for (const m of snap.members) this.members.set(m.userId, { ...m, peer: null, offlineSince: m.offlineSince || o.now() });
       for (const id of snap.spectators) this.expectSpectators.add(id);
+      this.played = snap.played === true;
       return;
     }
     // создатель занимает место и цвет 0 сразу (как create_room), подключится следом
@@ -582,6 +606,10 @@ export class Room {
     this.broadcastText(JSON.stringify({ t: 'film', state: 'none' } satisfies ServerMsg));
     runner.onLastTake = (takes) => this.startFilm(runner, takes);
     runner.onKnockout = (pid, eid, round) => this.preclip(pid, eid, round);
+    runner.onTake = () => this.cardNote();
+    this.played = true;
+    // карточка в чате: «Идёт съёмка» сразу со стартом
+    this.cardNote();
     // процесс монтажа — заранее: первый клип выбывшего не ждёт его запуска
     if (this.videoOn()) this.o.film?.warm();
     this.lastActive = this.now();
@@ -729,7 +757,9 @@ export class Room {
       .make({ takes, players: r.players.map((p) => ({ pid: p.pid, name: p.name, color: p.color })), match, lang: this.lang })
       .then((done) => {
         // в чат Telegram — даже если все уже ушли или начали реванш: фильм этого матча готов
-        if (done && this.invite) this.o.onFilm?.(this, { id: done.id, winners, draw: winners.length > 1 });
+        const name = (pid: string) => r.players.find((p) => p.pid === pid)?.name ?? '';
+        const awards = match.awards.map((a) => ({ id: a.id, names: a.pids.map(name).filter(Boolean) })).filter((a) => a.names.length);
+        if (done && this.invite) this.o.onFilm?.(this, { id: done.id, winners, draw: winners.length > 1, awards });
         if (this.closed || this.film?.n !== n) return;
         this.film = { n, state: done ? 'ready' : 'failed', done: done ?? undefined };
         // конец матча уже на экране — разослать сразу, иначе дождётся его (filmToAll из pump)
@@ -772,6 +802,35 @@ export class Room {
 
   broadcastRoom(): void {
     this.broadcastText(JSON.stringify({ t: 'room', room: this.view() } satisfies ServerMsg));
+    this.cardNote();
+  }
+
+  /** Карточка в чате Telegram (только комнаты по приглашению): что на ней должно быть сейчас. */
+  cardNow(): RoomCard | null {
+    if (!this.invite) return null;
+    if (this.closed) return this.played ? null : { state: 'closed' };
+    const r = this.runner;
+    if (this.status === 'playing' && r) {
+      // реванш стартует: старый матч ещё на месте — его итог на карточке не нужен
+      if (r.host.phase === 'match_end') return null;
+      const sim = r.host.sim;
+      // счёт — только после разоблачения дубля (до этого очки не начислены и не видны)
+      const scores = r.players.map((p) => ({ name: p.name, color: p.color, score: sim.scores[p.pid] ?? 0 })).sort((a, b) => b.score - a.score);
+      return { state: 'playing', take: Math.max(1, sim.round), target: sim.cfg.scoreToWin, scores };
+    }
+    // матч кончился — карточку заменит фильм; лобби до первого матча — сбор
+    if (r || this.played) return null;
+    const seats = [...this.members.values()].sort((a, b) => a.joinedAt - b.joinedAt).map((m) => ({ name: m.name, color: m.color }));
+    return { state: 'lobby', seats, max: SEATS };
+  }
+
+  private cardNote(): void {
+    const c = this.cardNow();
+    if (!c || !this.o.onCard) return;
+    const sig = JSON.stringify(c);
+    if (sig === this.cardSig) return;
+    this.cardSig = sig;
+    this.o.onCard(this, c);
   }
 
   broadcastText(text: string): void {
@@ -809,6 +868,7 @@ export class Room {
       })),
       spectators: [...this.spectators.keys(), ...this.expectSpectators],
       ...(this.invite ? { invite: this.invite } : {}),
+      ...(this.played ? { played: true } : {}),
     };
   }
 
@@ -838,6 +898,8 @@ export class Room {
   close(reason: string): void {
     if (this.closed) return;
     this.closed = true;
+    // лобби по карточке из Telegram закрылось без матча — «Съёмку отменили» в чате
+    this.cardNote();
     this.runner?.stop();
     this.runner = null;
     const text = JSON.stringify({ t: 'closed' } satisfies ServerMsg);

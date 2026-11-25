@@ -104,10 +104,14 @@ export interface ThemePack {
   dressUp?: { to: number; look: Pick<Look, 'chars' | 'variants' | 'poses'>; poses: number[]; ms: number };
   /** «25-й кадр»: в обычном облике иногда мелькает персонаж из изнанки (~140 мс), изредка — весь кадр изнанки (80 мс). */
   subliminal?: boolean;
-  /** Своя «звезда» на поле (цветок): лента 4 кадра 10×10, как `sprites.ts › makeStar`. */
+  /** Своя «звезда» на поле (цветок): лента 4 кадра (10×10, как `sprites.ts › makeStar`, или крупнее — кадр = ¼ ширины). */
   star?: () => HTMLCanvasElement;
+  /** «Звезда» растёт на земле: не подпрыгивает, кадры сменяются медленно (мс на кадр) — мерцает, а не мигает. */
+  starStill?: number;
   /** Её значок в шапке: 2 кадра 10×10 — собранная и пустая ячейка. */
   hudStar?: () => HTMLCanvasElement;
+  /** Шеф темы (game-core › boss.ts): его костюм — те же кадры, что у толпы. */
+  boss?: CharStyle;
   /** Сумерки плавно уходят в ночь за дубль (game-core › sanity.ts › nightLevel): вуаль темнеет, у костра светлее. */
   night?: boolean;
 }
