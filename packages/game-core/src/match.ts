@@ -10,10 +10,12 @@ import type { ActKind, CrowdKind, Dir, EmoteKind, EntitySpawn, WorldEvent } from
 import { NavGrid } from './nav';
 import { Rng } from './rng';
 import { LESHY_HUNT_SEC, fireLevel, leshySpot, leshyVisits, nightLevel, playLenSec, sanityDrain } from './sanity';
-import { ROTATION_THEMES, THEME_COUNT, hasSanity, killerExposed, themeRules, twistEmote } from './themes';
+import { ROTATION_THEMES, THEME_COUNT, THEME_RULES, hasSanity, killerExposed, themeRules, twistEmote } from './themes';
 import { ROUND_MODS, roundMod } from './mods';
 import { World } from './world';
 
+/** «Купальская ночь» — тема-финал при матч-боле (nightFinale). */
+const NIGHT_THEME = THEME_RULES.findIndex((r) => r.id === 'kupala');
 const EMOTES: EmoteKind[] = ['wave', 'dance', 'jump'];
 
 export interface PlayerInfo {
@@ -169,6 +171,10 @@ export class MatchSim {
   mod = 0;
   /** Порядок тем в матче — свой в каждом матче и реванше. */
   themeOrder: number[] = [];
+  /** В этом матче (реванше) ночь станет финалом при матч-боле — решается при тасовке тем. */
+  nightFinale = false;
+  /** Свой генератор для решения о финале: основной `rng` не трогаем, чтобы матчи по зерну не менялись. */
+  private readonly finaleRng: Rng;
   scores: Record<string, number> = {};
   matchKills: Record<string, number> = {};
   roundAwards: AwardCard[][] = [];
@@ -226,6 +232,7 @@ export class MatchSim {
     this.nav = new NavGrid(this.arena, cfg.navCellSize);
     this.world = new World(this.nav, cfg.entitySpeed);
     this.rng = new Rng(seed);
+    this.finaleRng = new Rng(seed ^ 0x4b55504c);
     this.shuffleThemes();
     for (const p of players) {
       this.scores[p.pid] = 0;
@@ -311,6 +318,7 @@ export class MatchSim {
   private startRound(): void {
     this.round++;
     this.theme = this.themeOrder[(this.round - 1) % this.themeOrder.length];
+    if (this.nightFinale && this.round > 1 && Math.max(...Object.values(this.scores)) >= this.cfg.nightFinaleScore) this.theme = NIGHT_THEME;
     this.pickMod();
     this.summary = null;
     const rng = this.rng;
@@ -1150,6 +1158,9 @@ export class MatchSim {
   private shuffleThemes(): void {
     const last = this.theme;
     const fixed = this.cfg.fixedTheme;
+    // решаем всегда (и при fixedTheme), чтобы последовательность finaleRng не зависела от настроек
+    const finale = this.finaleRng.next() < this.cfg.nightFinaleChance;
+    this.nightFinale = finale && !(fixed >= 0 && fixed < THEME_COUNT) && ROTATION_THEMES.includes(NIGHT_THEME);
     if (fixed >= 0 && fixed < THEME_COUNT) {
       this.themeOrder = Array.from({ length: THEME_COUNT }, () => fixed);
       return;
