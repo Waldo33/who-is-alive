@@ -194,8 +194,10 @@ describe('MatchSim', () => {
       sim.tick();
     }
     expect(a.stars).toBe(3);
-    // отдельного экрана обвинения нет: сразу разоблачение
-    expect(sim.phase).toBe('reveal');
+    // в конце дубля — стоп-кадр «Кто ещё живой?» для живых, потом разоблачение
+    expect(sim.phase).toBe('accuse');
+    expect(sim.summary).toBeNull();
+    runUntil(sim, () => sim.phase === 'reveal', 20 * 10);
     expect(sim.summary!.endReason).toBe('stars');
     expect(sim.summary!.points.a.stars).toBe(2);
   });
@@ -278,11 +280,11 @@ describe('MatchSim', () => {
     expect(sim.notices.some((n) => n.t === 'attack' && n.pid === a.pid && n.result === 'bot')).toBe(true);
   });
 
-  it('вычислили живого: метка вырезанного по ходу дубля — +1, у обвинённого нет очка за выживание', () => {
+  it('«Кража»: угадал живого — +1 себе и −1 ему из счёта матча; живые угадывают в конце', () => {
     const sim = new MatchSim(makeConfig(), players, 43);
     runUntil(sim, () => sim.phase === 'play' && sim.world.time > 2000, 20 * 30);
     const [a, b, c, d] = sim.pr;
-    // живой обвинять не может
+    // живой по ходу дубля обвинять не может
     sim.intent(b.pid, { k: 'accuse', eid: c.eid });
     sim.tick();
     expect(b.accused).toBeNull();
@@ -295,13 +297,46 @@ describe('MatchSim', () => {
     expect(a.accused).toBeNull();
     sim.intent(a.pid, { k: 'accuse', eid: b.eid }); // перенёс — верно
     sim.tick();
-    runUntil(sim, () => sim.phase === 'reveal', 20 * 90);
+    sim.scores[b.pid] = 3;
+    runUntil(sim, () => sim.phase === 'accuse', 20 * 90);
+    // стоп-кадр «Кто ещё живой?»: теперь угадывают живые
+    sim.intent(c.pid, { k: 'accuse', eid: b.eid });
+    const bot = sim.world.alive().find((e) => !sim.pr.some((p) => p.eid === e.eid))!;
+    sim.intent(d.pid, { k: 'accuse', eid: bot.eid });
+    sim.tick();
+    expect(c.accused).toBe(b.eid);
+    expect(c.accusedAsGhost).toBe(false);
+    runUntil(sim, () => sim.phase === 'reveal', 20 * 10);
     expect(b.alive && c.alive).toBe(true);
     const pts = sim.summary!.points;
     expect(pts[a.pid].accuse).toBe(1);
-    expect(sim.summary!.accusations).toEqual([{ pid: a.pid, eid: b.eid, correct: true }]);
-    expect(pts[b.pid].survive).toBe(0);
+    expect(pts[c.pid].accuse).toBe(1);
+    expect(pts[d.pid].accuse).toBe(0);
+    expect(sim.summary!.accusations).toEqual([
+      { pid: a.pid, eid: b.eid, correct: true },
+      { pid: c.pid, eid: b.eid, correct: true },
+      { pid: d.pid, eid: bot.eid, correct: false },
+    ]);
+    // выживание засчитано всегда; двое угадали — у b украдено 2 очка
+    expect(pts[b.pid].survive).toBe(1);
+    expect(pts[b.pid].stolen).toBe(-2);
+    expect(sim.scores[b.pid]).toBe(3 + pts[b.pid].kill + 1 - 2);
     expect(pts[c.pid].survive).toBe(1);
+  });
+
+  it('«Кража»: счёт вычисленного не уходит ниже нуля, угадавшему +1 всё равно', () => {
+    const sim = new MatchSim(makeConfig({ roundMods: false }), players.slice(0, 2), 44);
+    runUntil(sim, () => sim.phase === 'play' && sim.world.time > 2000, 20 * 30);
+    const [a, b] = sim.pr;
+    cut(sim, b);
+    sim.intent(b.pid, { k: 'accuse', eid: a.eid });
+    sim.tick();
+    runUntil(sim, () => sim.phase === 'reveal', 20 * 90);
+    const pts = sim.summary!.points;
+    expect(pts[b.pid].accuse).toBe(1);
+    // a выжил (+1), но у него украли 1 — итог дубля 0 (плюс выбитые, если были)
+    expect(pts[a.pid].stolen).toBe(-1);
+    expect(sim.scores[a.pid]).toBeGreaterThanOrEqual(0);
   });
 
   it('чудачества ботов: случаются, все виды, бот остаётся ботом', () => {
