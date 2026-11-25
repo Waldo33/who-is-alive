@@ -210,7 +210,7 @@ export function telegramLang(): 'ru' | 'en' | null {
 
 /**
  * Параметр запуска (?startapp=…): `r_КОД` — комната, `play` — сразу матч с ИИ, `friends` — новая
- * комната, `daily` — загадка дня, `dev[_tN][_sN]` — песочница с дев-панелью (тема N, ускорение N). Telegram передаёт его
+ * комната, `g_МЕТКА` — общее лобби по карточке бота «Собрать комнату», `daily` — загадка дня, `dev[_tN][_sN]` — песочница с дев-панелью (тема N, ускорение N). Telegram передаёт его
  * и в адресе (`tgWebAppStartParam`) — так он известен сразу, ещё до загрузки SDK.
  */
 export function telegramStart(): string | null {
@@ -240,6 +240,9 @@ export function telegramStartTarget(): string | null {
   const dev = /^dev(?:_t(\d{1,2}))?(?:_s(\d{1,2}))?$/.exec(start);
   if (dev) return `/sandbox?dev${dev[1] ? `&theme=${dev[1]}` : ''}${dev[2] ? `&speed=${dev[2]}` : ''}&src=tg`;
   if (start === 'friends') return '/?create=1&src=tg';
+  // карточка бота «Собрать комнату»: первый нажавший создаёт лобби, остальные попадают в него же
+  const invite = /^g_([A-Za-z0-9]{8,32})$/.exec(start);
+  if (invite) return `/?invite=${invite[1]}&src=tg`;
   return start === 'daily' && featureOn('casting') ? '/daily?src=tg' : null;
 }
 
@@ -259,6 +262,15 @@ export function tgLinkFor(webUrl: string): string | null {
   }
   const room = /^\/r\/([A-Z]{4})/.exec(path);
   return tgLink(room ? `r_${room[1]}` : path.startsWith('/daily') ? 'daily' : 'home');
+}
+
+/**
+ * Ссылка, которую игрок отдаёт другим (приглашение, QR): в Telegram — на бота (друг откроет игру там же),
+ * вне Telegram — на сайт как есть. У человека без Telegram t.me покажет страницу с кнопкой «открыть в браузере».
+ */
+export function inviteLink(webUrl: string): string {
+  if (!inTelegram() || webUrl.startsWith('https://t.me/')) return webUrl;
+  return tgLinkFor(webUrl) ?? webUrl;
 }
 
 /** Внутри Telegram: родное окно «Переслать в чат» со ссылкой и текстом. true — открыто. */

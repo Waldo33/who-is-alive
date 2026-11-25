@@ -1,4 +1,4 @@
-import { inTelegram, telegramShare, tgLinkFor } from './telegram';
+import { inTelegram, inviteLink, telegramShare } from './telegram';
 /**
  * «Поделиться» для текста, картинки и видео. Порядок попыток:
  *  1) системное меню с файлом (iOS, Android, часть десктопов);
@@ -14,7 +14,9 @@ export interface ShareInput {
   files?: File[];
 }
 
-export async function shareContent({ text, url, files }: ShareInput): Promise<ShareResult> {
+export async function shareContent({ text, url: siteUrl, files }: ShareInput): Promise<ShareResult> {
+  // из Telegram — ссылка на бота: друг откроет игру там же, где получил
+  const url = inviteLink(siteUrl);
   const nav = navigator as Navigator & { canShare?: (d: ShareData) => boolean };
   const full = `${text} ${url}`;
   // Telegram: текст и ссылка — родным окном выбора чата; файлы (клип, карточка) — системным меню,
@@ -28,8 +30,7 @@ export async function shareContent({ text, url, files }: ShareInput): Promise<Sh
         if ((e as DOMException)?.name === 'AbortError') return 'cancelled';
       }
     }
-    // ссылка из Telegram — тоже в Telegram: друг откроет игру там же, где получил
-    if (telegramShare(url.startsWith('https://t.me/') ? url : (tgLinkFor(url) ?? url), text)) return 'shared';
+    if (telegramShare(url, text)) return 'shared';
   }
   if (files?.length) {
     if (nav.share && nav.canShare?.({ files })) {

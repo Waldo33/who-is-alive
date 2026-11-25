@@ -76,6 +76,26 @@ describe('Telegram-бот', () => {
     expect((await bot.handle('POST', '/daily', {}, { initData: a, n: n + 5, tries: 1, won: true })).status).toBe(400);
   });
 
+  it('инлайн-режим: первой — «Собрать комнату» со своей меткой; набран код — сначала эта комната', async () => {
+    const { bot, calls } = makeBot();
+    const hdr = { 'x-telegram-bot-api-secret-token': bot.hookSecret };
+    const ask = async (query: string) => {
+      calls.length = 0;
+      await bot.handle('POST', '/hook', hdr, { inline_query: { id: 'q', query, from: { language_code: 'ru' } } });
+      const body = calls.find((c) => c.method === 'answerInlineQuery')!.body as { cache_time: number; results: { id: string; reply_markup: { inline_keyboard: { url: string }[][] } }[] };
+      return { cache: body.cache_time, results: body.results, urls: body.results.map((r) => r.reply_markup.inline_keyboard[0][0].url) };
+    };
+    const a = await ask('');
+    expect(a.cache).toBe(0);
+    expect(a.results[0].id).toMatch(/^lobby-/);
+    expect(a.urls[0]).toMatch(/^https:\/\/t\.me\/be_nobody_bot\/play\?startapp=g_[A-Za-z0-9]{12}$/);
+    const b = await ask('');
+    expect(b.urls[0]).not.toBe(a.urls[0]);
+    const c = await ask('abcd');
+    expect(c.urls[0]).toBe('https://t.me/be_nobody_bot/play?startapp=r_ABCD');
+    expect(c.urls[1]).toMatch(/startapp=g_/);
+  });
+
   it('«поделиться» из Mini App: карточка комнаты со ссылкой startapp', async () => {
     const { bot, calls } = makeBot();
     const r = await bot.handle('POST', '/prepare', {}, { initData: initData({ id: 5 }), kind: 'room', code: 'WXYZ' });

@@ -57,8 +57,11 @@ export function forgetGameUser(): void {
   }
 }
 
-/** Создать комнату: код и адрес WebSocket. Ошибки — кодами словаря (`lobby.errors`). */
-export async function createGameRoom(name: string, settings: WireRoomSettings | undefined, lang: string): Promise<string> {
+/**
+ * Создать комнату: код и адрес WebSocket. Ошибки — кодами словаря (`lobby.errors`).
+ * `invite` — метка карточки бота «Собрать комнату»: комната по ней уже есть — вернётся её код.
+ */
+export async function createGameRoom(name: string, settings: WireRoomSettings | undefined, lang: string, invite?: string): Promise<string> {
   for (let attempt = 0; attempt < 2; attempt++) {
     const u = await ensureGameUser();
     let res: Response;
@@ -66,7 +69,7 @@ export async function createGameRoom(name: string, settings: WireRoomSettings | 
       res = await fetch(`${GAME_API}/v1/rooms`, {
         method: 'POST',
         headers: { authorization: `Bearer ${u.token}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ name, settings, lang }),
+        body: JSON.stringify({ name, settings, lang, ...(invite ? { invite } : {}) }),
       });
     } catch {
       throw new Error('network');

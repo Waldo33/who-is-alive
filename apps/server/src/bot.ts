@@ -1,4 +1,4 @@
-import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { Logger } from './log';
 import type { Store } from './store';
 
@@ -45,6 +45,10 @@ const T = {
     inviteTitle: 'Позвать в «Массовку»',
     inviteDesc: 'Карточка с кнопкой: друзья откроют игру прямо в Telegram',
     inviteText: 'Сыграем в «Массовку»? 32 одинаковых человечка, среди них — мы. Кто кого вычислит первым?',
+    lobbyTitle: 'Собрать комнату',
+    lobbyDesc: 'Новое лобби: все, кто нажмёт кнопку, попадут в одну комнату',
+    lobbyText: 'Сыграем в «Массовку»? Жми кнопку — соберёмся в одной комнате. 32 одинаковых человечка, среди них — мы.',
+    lobbyJoin: '👥 В комнату',
     roomTitle: 'Позвать в комнату {code}',
     roomDesc: 'Друзья попадут сразу в твою комнату',
     roomText: 'Заходи в «Массовку» — комната {code}. Спрячься в толпе и вычисли живых!',
@@ -65,6 +69,10 @@ const T = {
     inviteTitle: 'Invite to Be Nobody',
     inviteDesc: 'A card with a button: friends open the game right in Telegram',
     inviteText: 'Play Be Nobody? 32 identical pixel people, and we are among them. Who spots whom first?',
+    lobbyTitle: 'Start a room',
+    lobbyDesc: 'A new lobby: everyone who taps the button lands in the same room',
+    lobbyText: 'Play Be Nobody? Tap the button and we all meet in one room. 32 identical pixel people, and we are among them.',
+    lobbyJoin: '👥 Join the room',
     roomTitle: 'Invite to room {code}',
     roomDesc: 'Friends join your room directly',
     roomText: 'Join me in Be Nobody — room {code}. Hide in the crowd and spot the humans!',
@@ -82,6 +90,11 @@ type Texts = (typeof T)['ru'];
 const langOf = (code?: string): Lang => (code && /^(ru|uk|be|kk)/.test(code) ? 'ru' : 'en');
 const fmt = (s: string, v: Record<string, string | number>) => s.replace(/\{(\w+)\}/g, (_, k) => String(v[k] ?? ''));
 const SQUARES = /^[🟥🟩⬜]{1,6}$/u;
+const TAG_ABC = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+/** Метка приглашения: 12 случайных букв и цифр (startapp допускает A-Za-z0-9_-, до 64 символов). */
+function inviteTag(): string {
+  return [...randomBytes(12)].map((b) => TAG_ABC[b % TAG_ABC.length]).join('');
+}
 
 /** Номер «Кастинга дня» (как в game-core › daily.ts): №1 — 23.11.2026, по дате UTC. */
 export function dailyNow(now = Date.now()): number {
@@ -310,6 +323,15 @@ export class Bot {
     return this.article(`daily-${n}-${id}`, fmt(t.dailyTitle, { n }), t.dailyDesc, text, t.solve, await this.link('daily'));
   }
 
+  /**
+   * «Собрать комнату»: кнопка с меткой приглашения (startapp=g_<метка>). Первый нажавший создаёт комнату
+   * на игровом сервере, остальные по той же карточке попадают в неё же (server.ts › createRoom, `invite`).
+   */
+  private async lobbyCard(t: Texts) {
+    const tag = inviteTag();
+    return this.article('lobby-' + tag, t.lobbyTitle, t.lobbyDesc, t.lobbyText, t.lobbyJoin, await this.link(`g_${tag}`));
+  }
+
   private async inviteCard(t: Texts) {
     return this.article('invite', t.inviteTitle, t.inviteDesc, t.inviteText, t.play, await this.link());
   }
@@ -321,13 +343,16 @@ export class Bot {
     const daily = this.casting ? /^daily\b\s*(\S*)/u.exec(query) : null;
     const squares = daily && SQUARES.test(daily[1]) ? daily[1] : '';
     const results: unknown[] = [];
+    // код комнаты набран руками — карточка этой комнаты; иначе первой — «Собрать комнату» (новое лобби)
     if (room) results.push(await this.roomCard(t, room[1].toUpperCase()));
     if (daily) results.push(await this.dailyCard(t, squares));
+    if (!daily) results.push(await this.lobbyCard(t));
     if (!room && !daily) results.push(await this.inviteCard(t), ...(this.casting ? [await this.dailyCard(t, '')] : []));
     await this.api('answerInlineQuery', {
       inline_query_id: q.id,
       results,
-      cache_time: room || daily ? 0 : 300,
+      // у каждой карточки «Собрать комнату» своя метка — без кэша, иначе две компании попадут в одно лобби
+      cache_time: 0,
       is_personal: true,
       button: { text: t.openApp, web_app: { url: `${this.o.site}/?src=tg` } },
     });

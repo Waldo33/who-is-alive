@@ -21,7 +21,7 @@ import { loadChunk } from '@/lib/chunk';
 import { setTrackContext, shareKind, track } from '@/lib/analytics';
 import { Snow, useNewYear } from '@/ui/Festive';
 import { Actor } from '@/ui/Actor';
-import { inTelegram, telegramReady, telegramShare, telegramShareCard, tgLink } from '@/lib/telegram';
+import { inTelegram, inviteLink, telegramReady, telegramShare, telegramShareCard, tgLink } from '@/lib/telegram';
 import { download, shareContent, withLang } from '@/lib/share';
 import { Room, SPECTATE_DELAY_MS } from '@/net/room';
 import { GAME_API } from '@/lib/env';
@@ -349,9 +349,10 @@ export function Lobby({
   const allReady = online.every((m) => m.userId === state.hostId || m.ready);
   const canStart = isHost && enough && allReady;
   // язык отправителя в ссылке — для превью в мессенджере (t меняется вместе с языком)
-  const url = useMemo(() => (typeof window === 'undefined' ? '' : withLang(`${window.location.origin}/r/${state.code}`, 'invite')), [state.code, t]);
+  // в Telegram ссылка и QR — на бота (inviteLink): друг откроет игру сразу в Telegram, в эту комнату
+  const url = useMemo(() => (typeof window === 'undefined' ? '' : inviteLink(withLang(`${window.location.origin}/r/${state.code}`, 'invite'))), [state.code, t]);
   // у QR своя метка: так видно, сколько друзей зашло с экрана рядом, а сколько — по ссылке в чате
-  const qrUrl = useMemo(() => (typeof window === 'undefined' ? '' : withLang(`${window.location.origin}/r/${state.code}`, 'qr')), [state.code, t]);
+  const qrUrl = useMemo(() => (typeof window === 'undefined' ? '' : inviteLink(withLang(`${window.location.origin}/r/${state.code}`, 'qr'))), [state.code, t]);
 
   useEffect(() => {
     if (!qrUrl) return;

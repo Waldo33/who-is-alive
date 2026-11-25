@@ -51,7 +51,7 @@ import {
 } from './sprites';
 import { isThemeLoaded, loadTheme, lookCount, preloadThemes, themeLook, themePack, variantOf } from './themes';
 import type { Look } from './themes';
-import { haptic, setClosingConfirmation } from '../lib/telegram';
+import { haptic, inviteLink, setClosingConfirmation } from '../lib/telegram';
 import { canvas, px as ppx } from './pixels';
 
 /** Постоянные кнопки «автопилот» и «эмоция» в нижней панели (выключены — не пользовались). */
@@ -1956,7 +1956,7 @@ export class GameScene extends Phaser.Scene {
         captions: known ? { find: c.whoGotMe, reveal: c.reveal, kind: c.gotMe } : { find: c.findMe, reveal: c.thatWasMe, kind: c.whoGotMe },
         noGore: mildOn(),
         hero: dc.eid,
-        link: `${location.origin}/?src=clip&l=${this.lang}`,
+        link: inviteLink(`${location.origin}/?src=clip&l=${this.lang}`),
       },
       (p) => {
         if (this.deathClip !== dc) return;
@@ -4239,7 +4239,7 @@ export class GameScene extends Phaser.Scene {
           lang: this.lang,
           font: this.init0.fontFamily,
           site: location.host,
-          link: `${location.origin}/?src=film&l=${this.lang}`,
+          link: inviteLink(`${location.origin}/?src=film&l=${this.lang}`),
           noGore: mildOn(),
           self: this.sim.selfPid,
         })
