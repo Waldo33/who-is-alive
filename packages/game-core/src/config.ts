@@ -35,6 +35,9 @@ export const DEFAULT_CONFIG = {
   fixedTheme: -1,
   // тема первого дубля каждого матча: -1 — нет; в новогодний сезон — «Корпоратив» (seasonLeadTheme)
   leadTheme: -1,
+  // «Купальская ночь» — финал: у лидера матч-бол (столько очков) → с этим шансом следующий дубль — ночь, и она последняя
+  nightFinaleScore: 6,
+  nightFinaleChance: 0.5,
 
   // боты
   botWanderRadius: [20, 80] as [number, number],

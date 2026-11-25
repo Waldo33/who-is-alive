@@ -130,6 +130,8 @@ describe('фильм матча в комнате', () => {
     const jobs: { takes: unknown[]; match: { winners: string[] } }[] = [];
     const film = {
       warm: () => {},
+      // клип выбывшего заранее (в ночи игроки гибнут и без ударов) здесь не нужен
+      preclip: () => null,
       make: (job: (typeof jobs)[number]) => {
         jobs.push(job);
         return Promise.resolve({ id: 'f'.repeat(20), ext: 'mp4' as const, thumb: true, ms: 1 });
