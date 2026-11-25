@@ -2270,7 +2270,8 @@ export class GameScene extends Phaser.Scene {
   private byLeshy(ev: WorldEvent): boolean {
     if (ev.t !== 'hit' || ev.attacker !== undefined || !hasSanity(this.sim.theme)) return false;
     const c = this.sim.world.crowd;
-    return !!c && c.warnAt === this.leshy.warn && ev.at > c.windowEnd && ev.at < c.windowEnd + 2000;
+    // Леший смотрит до watchUntil (leshyWatchMs) — его удар позже прежних «windowEnd + 2 с» (как в sanity.ts › nightDeaths)
+    return !!c && c.warnAt === this.leshy.warn && ev.at > c.windowEnd && ev.at <= (c.watchUntil ?? c.windowEnd + LAG_GRACE_MS) + 1000;
   }
 
   /**
