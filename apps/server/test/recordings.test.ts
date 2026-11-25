@@ -33,7 +33,7 @@ describe('записи матчей', () => {
     const dir = mkdtempSync(join(tmpdir(), 'rec-'));
     try {
       const store = new MatchRecordings(dir, () => Date.UTC(2026, 10, 24, 19, 5, 7));
-      const name = await store.save(job(12));
+      const name = await store.save(job(13));
       expect(name).toMatch(RECORDING_NAME);
       expect(name.startsWith('20261124-190507-')).toBe(true);
       const raw = JSON.parse(gunzipSync(readFileSync(join(dir, name))).toString('utf8'));

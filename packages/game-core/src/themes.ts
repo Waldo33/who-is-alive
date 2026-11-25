@@ -76,13 +76,19 @@ export const THEME_RULES: readonly ThemeRules[] = [
     twist: { firstSec: [14, 24], onSec: [14, 20], gapSec: [10, 16], max: 2, emoteMul: 3 },
   },
   // Купальская ночь: болото, грибники, сумерки плавно уходят в ночь; рассудок тает, цветы вместо звёзд
-  { id: 'kupala', sanity: true, hidden: true },
+  { id: 'kupala', sanity: true },
 ];
 
 export const THEME_COUNT = THEME_RULES.length;
 
-/** Темы обычной очереди (без `hidden`): из них тасуется порядок дублей матча и выбирается загадка дня. */
+/** Темы обычной очереди (без `hidden`): из них тасуется порядок дублей матча. */
 export const ROTATION_THEMES: readonly number[] = THEME_RULES.map((r, i) => (r.hidden ? -1 : i)).filter((i) => i >= 0);
+
+/**
+ * Темы загадки дня: обычная очередь без тем-режимов (рассудок — своя механика, кастингу не подходит).
+ * Список тот же, что был до того, как «Купальская ночь» встала в очередь, — загадки прошлых дней не меняются.
+ */
+export const DAILY_THEMES: readonly number[] = ROTATION_THEMES.filter((i) => !THEME_RULES[i].sanity);
 
 /** Новогодний сезон: с 1 декабря по 14 января (месяц с нуля, как в Date). */
 export function isNewYearSeason(month0: number, day: number): boolean {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { FilmCandidate, Moment, WorldEvent } from '../src';
-import { MOMENT_MAX_MS, MOMENT_MIN_MS, coreFrom, createLocalSession, filmHook, findBestMoment, pickFilmMoments, makeConfig, makeReplay, momentEvents, recordRound, worldOf } from '../src';
+import { MOMENT_MAX_MS, MOMENT_MIN_MS, coreFrom, createLocalSession, filmHook, findBestMoment, pickFilmMoments, makeConfig, makeReplay, momentEvents, recordRound, worldOf, hasSanity } from '../src';
 
 const players = ['me', 'b', 'c', 'd'].map((pid, i) => ({ pid, name: pid, color: i }));
 
@@ -9,6 +9,7 @@ describe('лучший момент', () => {
     let found = 0;
     for (const seed of [11, 12, 13, 14, 15, 16, 21, 22, 23, 24]) {
       const s = createLocalSession(makeConfig(), players, seed, 'me');
+      if (hasSanity(s.theme)) continue; // «Купальская ночь» — матч в одну ночь, следующего раунда нет
       for (let i = 0; i < 20 * 200 && s.phase !== 'reveal'; i++) s.tick();
       expect(s.phase).toBe('reveal');
       const sum = s.summary!;

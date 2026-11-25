@@ -34,7 +34,7 @@ describe.skipIf(!hasFfmpeg)('фильм матча на сервере', () => {
       const store = new ClipStore(dir);
       const logs: string[] = [];
       const film = new FilmService({ store, site: 'benobody.app', fonts: join(__dirname, '../../web/assets/og'), log: (_l, m, d) => logs.push(`${m} ${JSON.stringify(d ?? {})}`) });
-      const { takes, players, match } = playMatch(12);
+      const { takes, players, match } = playMatch(13);
       expect(takes.length).toBeGreaterThan(1);
       const t0 = Date.now();
       const done = await film.make({ takes, players, match, lang: 'ru' });

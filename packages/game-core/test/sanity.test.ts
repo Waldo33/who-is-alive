@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CROWD_ACT, LAG_GRACE_MS, LESHY_HUNT_SEC, MatchSim, ROTATION_THEMES, THEME_RULES, leshySec, leshySpot, leshyVisits, makeConfig, sanityStage } from '../src';
+import { CROWD_ACT, LAG_GRACE_MS, LESHY_HUNT_SEC, DAILY_THEMES, MatchSim, ROTATION_THEMES, THEME_RULES, leshySec, leshySpot, leshyVisits, makeConfig, sanityStage } from '../src';
 import type { WorldEvent } from '../src';
 
 const players = ['a', 'b'].map((pid, i) => ({ pid, name: pid, color: i }));
@@ -10,11 +10,27 @@ function toPlay(sim: MatchSim): void {
 }
 
 describe('рассудок («Купальская ночь»)', () => {
-  it('тема спрятана из обычной очереди и выпадает только по fixedTheme', () => {
+  it('тема в общей очереди: выпав, ночь заканчивает матч; условий съёмки в ней нет; в загадке дня её нет', () => {
     expect(KUPALA).toBeGreaterThan(0);
-    expect(ROTATION_THEMES).not.toContain(KUPALA);
-    for (let seed = 1; seed <= 20; seed++) expect(new MatchSim(makeConfig(), players, seed).themeOrder).not.toContain(KUPALA);
+    expect(ROTATION_THEMES).toContain(KUPALA);
+    expect(DAILY_THEMES).not.toContain(KUPALA);
     expect(new MatchSim(makeConfig({ fixedTheme: KUPALA }), players, 3).theme).toBe(KUPALA);
+    // матч, где ночь выпала не первой: обычные дубли, потом ночь — и на ней конец
+    let seen = 0;
+    for (let seed = 1; seed <= 40 && seen < 3; seed++) {
+      const sim = new MatchSim(makeConfig({ maxRounds: 7, roundModChance: 1 }), players, seed);
+      const at = sim.themeOrder.indexOf(KUPALA);
+      if (at < 1 || at >= 4) continue;
+      seen++;
+      for (let i = 0; i < 20 * 60 * 30 && sim.phase !== 'match_end'; i++) {
+        if (sim.theme === KUPALA && sim.phase === 'play') expect(sim.mod).toBe(0);
+        sim.tick();
+      }
+      expect(sim.phase).toBe('match_end');
+      expect(sim.theme).toBe(KUPALA);
+      expect(sim.round).toBe(at + 1);
+    }
+    expect(seen).toBeGreaterThan(0);
   });
 
   it('тает сам по себе, в других темах не меняется', () => {

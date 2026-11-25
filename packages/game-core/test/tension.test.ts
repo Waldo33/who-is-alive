@@ -1,9 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { AiPlayer, MatchSim, makeConfig, roundMod } from '../src';
+import { AiPlayer, MatchSim, hasSanity, makeConfig, roundMod } from '../src';
+import type { GameConfig } from '../src';
 import type { CrowdKind, WorldEvent } from '../src';
 
 const players = ['a', 'b', 'c', 'd'].map((pid, i) => ({ pid, name: pid, color: i }));
 const KINDS: CrowdKind[] = ['freeze', 'jump', 'dance'];
+
+/** Матч, который начинается обычным дублем (не «Купальской ночью» — она занимает весь матч). */
+function dayMatch(cfg: GameConfig, seed: number): MatchSim {
+  for (let s = seed; ; s++) {
+    const sim = new MatchSim(cfg, players, s);
+    if (!hasSanity(sim.theme)) return sim;
+  }
+}
 
 function runUntil(sim: MatchSim, pred: () => boolean, maxTicks = 20 * 200): void {
   for (let i = 0; i < maxTicks && !pred(); i++) sim.tick();
@@ -80,7 +89,7 @@ describe('Напряжение: новые механики', () => {
   });
 
   it('первый дубль матча — без «Условий съёмки», дальше они бывают', () => {
-    const sim = new MatchSim(makeConfig({ roundModChance: 1 }), players, 77);
+    const sim = dayMatch(makeConfig({ roundModChance: 1 }), 77);
     expect(sim.mod).toBe(0);
     players.forEach((p, i) => sim.addAgent(new AiPlayer(p.pid, 70 + i)));
     runUntil(sim, () => sim.round === 2, 20 * 60 * 5);
@@ -248,7 +257,7 @@ describe('Напряжение: новые механики', () => {
   });
 
   it('«Хлопушка» во время команды толпы встаёт в очередь, а не «не сейчас»; перед сужением — уже нельзя', () => {
-    const sim = new MatchSim(makeConfig({ roundMods: false }), players, 85);
+    const sim = dayMatch(makeConfig({ roundMods: false }), 85);
     runUntil(sim, () => sim.phase === 'play');
     const b = sim.playerRound('b')!;
     b.alive = false;

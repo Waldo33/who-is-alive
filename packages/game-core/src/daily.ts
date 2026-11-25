@@ -3,7 +3,7 @@ import type { AiPersona } from './ai';
 import { makeConfig } from './config';
 import { MatchSim } from './match';
 import { Rng } from './rng';
-import { ROTATION_THEMES } from './themes';
+import { DAILY_THEMES } from './themes';
 import type { World } from './world';
 
 /**
@@ -53,7 +53,7 @@ const ACTOR: AiPersona = { lateChance: 0.5, greed: 0.8, aggression: 0.15 };
 
 function attempt(n: number, k: number): DailyPuzzle | null {
   const rng = new Rng(n * 7_919 + k * 104_729 + 17);
-  const theme = ROTATION_THEMES[rng.int(0, ROTATION_THEMES.length - 1)];
+  const theme = DAILY_THEMES[rng.int(0, DAILY_THEMES.length - 1)];
   // без «Условий съёмки», без сужения в окне просмотра, дубль не кончается раньше времени
   const cfg = makeConfig({ fixedTheme: theme, roundMods: false, endWhenLastAlive: false, countdownSec: 1, roundSec: 75 });
   const sim = new MatchSim(cfg, [{ pid: 'actor', name: 'actor', color: 0 }], rng.int(1, 2 ** 30), 'actor');

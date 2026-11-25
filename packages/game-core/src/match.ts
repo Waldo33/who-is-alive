@@ -387,6 +387,8 @@ export class MatchSim {
     const prev = this.mod;
     this.mod = 0;
     if (this.round <= 1 || !this.cfg.roundMods || !this.rng.chance(this.cfg.roundModChance)) return;
+    // «Купальская ночь» — свой режим: условий съёмки в ней нет (случайность берём всё равно — ход матча тот же)
+    if (hasSanity(this.theme)) return;
     const pool = ROUND_MODS.map((_, i) => i).filter((i) => i > 0 && i !== prev);
     this.mod = this.rng.pick(pool);
   }
