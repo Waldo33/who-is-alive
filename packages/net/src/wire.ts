@@ -36,7 +36,15 @@ const Name = z.string().max(40);
 
 /** Клиент → сервер. */
 export const ClientMsg = z.discriminatedUnion('t', [
-  z.object({ t: z.literal('hello'), v: z.number().int(), token: z.string().max(2000), code: z.string().max(8), name: Name }),
+  z.object({
+    t: z.literal('hello'),
+    v: z.number().int(),
+    token: z.string().max(2000),
+    code: z.string().max(8),
+    name: Name,
+    /** Язык и «без крови» для клипа выбывшего: сервер заготовит его до нажатия. Старые клиенты не шлют. */
+    clip: z.object({ lang: z.enum(['ru', 'en']), mild: z.boolean() }).optional(),
+  }),
   z.object({ t: z.literal('ready'), on: z.boolean() }),
   z.object({ t: z.literal('rename'), name: Name }),
   z.object({ t: z.literal('settings'), settings: RoomSettingsSchema }),

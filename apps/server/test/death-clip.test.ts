@@ -83,6 +83,9 @@ describe.skipIf(!hasFfmpeg)('клип выбывшего на сервере: м
       expect(done, logs.join('\n')).not.toBeNull();
       const ms = Date.now() - t0;
       await p2;
+      // процесс монтажа один на оба клипа: второй не грузил модули заново
+      expect(film.workerStarts).toBe(1);
+      film.stop();
       const path = await store.file(done!.id, 'mp4');
       const probe = spawnSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_type,width,height:format=duration', '-of', 'json', path!], { encoding: 'utf8' });
       const info = JSON.parse(probe.stdout) as { streams: { codec_type: string; width?: number; height?: number }[]; format: { duration: string } };
@@ -141,6 +144,66 @@ describe.skipIf(!hasFfmpeg)('клип выбывшего: комната цел�
       expect(ready?.n).toBe(7);
       expect(await store.file(ready!.id!, 'mp4')).not.toBeNull();
       room.runner?.stop();
+      film.stop();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
+});
+
+describe.skipIf(!hasFfmpeg)('клип выбывшего: заготовка до нажатия', () => {
+  it('через 1,5 с после удара сервер монтирует клип сам; по нажатию — сразу ready', async () => {
+    const { Room } = await import('../src/room');
+    const { silentLogger } = await import('../src/log');
+    const dir = mkdtempSync(join(tmpdir(), 'clip-pre-'));
+    try {
+      const store = new ClipStore(dir);
+      const film = new FilmService({ store, site: 'benobody.app', fonts: join(__dirname, '../../web/assets/og'), log: () => {} });
+      let now = 1_000_000;
+      const room = new Room({ code: 'ABCE', directorId: 'a', directorName: 'A', settings: { roundSec: 60, maxRounds: 3, kidsMode: false, aiFill: false }, lang: 'ru', now: () => now, log: silentLogger, film });
+      // трое: выбит один — дубль идёт дальше (двое — сразу разоблачение, там телефон просит полный клип)
+      const got: Record<string, { t: string; n?: number; state?: string; eta?: number; id?: string }[]> = { a: [], b: [], c: [] };
+      for (const u of ['a', 'b', 'c']) room.join(u, u.toUpperCase(), { send: (t) => got[u].push(JSON.parse(t)), close: () => {} });
+      // как из hello: английский, без крови
+      room.setClipPrefs('b', { lang: 'en', mild: true });
+      room.setReady('b', true);
+      room.setReady('c', true);
+      expect(room.start('a')).toBeNull();
+      const h = room.runner!.host;
+      const step = (ms: number) => {
+        now += ms;
+        room.runner!.pump();
+      };
+      for (let i = 0; i < 400 && h.phase !== 'play'; i++) step(50);
+      step(3000);
+      const ea = h.sim.playerRound('a')!.eid;
+      const eb = h.sim.playerRound('b')!.eid;
+      const A = h.world.get(ea)!;
+      const B = h.world.get(eb)!;
+      A.x = B.x + 4;
+      A.y = B.y;
+      h.sim.intent('a', { k: 'attack', eid: eb });
+      step(50);
+      expect(h.sim.playerRound('b')!.alive).toBe(false);
+      step(1000);
+      expect(film.preclips).toBe(0);
+      step(600);
+      expect(film.preclips).toBe(1);
+      // монтаж идёт фоном, пока на телефоне баннер «Ты выбит!»
+      for (let i = 0; i < 300 && film.queued > 0; i++) await new Promise((r) => setTimeout(r, 100));
+      step(1800);
+      room.clip('b', { n: 3, round: h.round, lang: 'en', mild: true });
+      const first = got.b.find((m) => m.t === 'clip');
+      expect(first).toMatchObject({ t: 'clip', n: 3, state: 'ready' });
+      expect(await store.file(first!.id!, 'mp4')).not.toBeNull();
+      // второй раз (другой язык) — монтирует заново, а не отдаёт заготовку
+      room.clip('b', { n: 4, round: h.round, lang: 'ru', mild: true });
+      expect(got.b.at(-1)).toMatchObject({ t: 'clip', n: 4, state: 'making' });
+      for (let i = 0; i < 300 && !got.b.some((m) => m.n === 4 && m.state !== 'making'); i++) await new Promise((r) => setTimeout(r, 100));
+      expect(got.b.at(-1)).toMatchObject({ n: 4, state: 'ready' });
+      expect(film.preclips).toBe(1);
+      room.runner?.stop();
+      film.stop();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

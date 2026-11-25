@@ -5,6 +5,8 @@ import type { RoomMsg, WireRoom, WireRoomSettings } from '@kto/net';
 import type { ClientSession, PlayerInfo } from '@kto/game-core';
 import { createGameRoom, ensureGameUser, forgetGameUser, gameRoomInfo } from '@/lib/game-server';
 import { setVideoOff } from '@/game/video-switch';
+import { detectLang } from '@/lib/lang';
+import { mildOn } from '@/ui/topbar';
 
 /**
  * Комната на своём игровом сервере (docs/server-migration.md): одно WebSocket-соединение на лобби
@@ -121,7 +123,9 @@ export class Room {
       return;
     }
     this.set({ selfId: user.userId });
-    const link = new ServerLink({ url: info.wsUrl, token: user.token, selfId: user.userId, code: this.state.code, name });
+    // язык и «без крови» — серверу для клипа выбывшего: он смонтирует его сразу после удара, до нажатия
+    const clipPrefs = () => ({ lang: detectLang(), mild: mildOn() });
+    const link = new ServerLink({ url: info.wsUrl, token: user.token, selfId: user.userId, code: this.state.code, name, clipPrefs });
     this.link = link;
     link.onRoom((r) => this.onRoom(r));
     // аварийный выключатель видео: сервер сказал — кнопки клипа и фильма прячутся сразу
