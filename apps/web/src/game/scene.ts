@@ -1061,6 +1061,12 @@ export class GameScene extends Phaser.Scene {
     }
     const inRange = this.candidates(x, y).filter((e) => Math.hypot(e.x - mine.x, e.y - mine.y) <= this.cfg.attackRange);
     if (inRange.length) {
+      // стоп-кадр: бить нельзя (сервер тоже откажет) — не замахиваемся и не идём
+      if (w.isFrozen()) {
+        this.audio.play('denied');
+        this.showToast(this.t.game.denied.not_now, 900);
+        return;
+      }
       if (this.cfg.attackConfirm === 'hold') this.holdTarget = { eid: inRange[0].eid, at: performance.now() };
       else this.doAttack(inRange[0].eid);
       return;
@@ -3362,6 +3368,9 @@ export class GameScene extends Phaser.Scene {
       if (vis) {
         h.setPosition(x, AY + y).setSize(rw, rh);
         h.setTilePosition(x, y);
+        // верхняя полоса — по глубине, как предмет с основанием на своей нижней кромке: кто стоит
+        // у неё внутри зоны, виден перед стеной целиком, а не «за стеной» с отрезанной головой
+        h.setDepth(i === 0 ? AY + y0 : 900);
       }
     });
   }
