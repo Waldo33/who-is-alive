@@ -15,3 +15,8 @@ export function jsonLogger(minLevel: LogLevel = 'info'): Logger {
 }
 
 export const silentLogger: Logger = () => {};
+
+/** Поля журнала для пойманной ошибки: текст и стек (стек забирает трекер ошибок, errors.ts). */
+export function errFields(e: unknown): { err: string; stack?: string } {
+  return e instanceof Error ? { err: String(e).slice(0, 600), stack: e.stack?.slice(0, 3000) } : { err: String(e).slice(0, 600) };
+}

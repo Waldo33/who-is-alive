@@ -4,6 +4,9 @@ const config: NextConfig = {
   reactStrictMode: true,
   transpilePackages: ['@kto/game-core', '@kto/net', '@kto/assets'],
   poweredByHeader: false,
+  // карты исходников для трекера ошибок (apps/server/src/errors.ts): web-deploy уносит их из статики
+  // на сервер в закрытую папку — наружу не отдаются, а стек с телефона разворачивается до строки в .ts
+  productionBrowserSourceMaps: process.env.SOURCE_MAPS === '1',
   // свой сервер: один каталог с сервером и нужными модулями (docs/server-migration.md › 9)
   output: process.env.NEXT_STANDALONE === '1' ? 'standalone' : undefined,
   // шрифт и фон для картинок превью читаются с диска — берём их в серверную сборку

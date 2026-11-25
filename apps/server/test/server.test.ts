@@ -174,8 +174,9 @@ describe('игровой сервер: ошибки с телефонов', () =
     const r = await fetch(`${http}/v1/errors`, { method: 'POST', headers: { 'content-type': 'text/plain' }, body: JSON.stringify(body) });
     expect(r.status).toBe(204);
     const e = logs.find((l) => l.msg === 'client_error')!.f!;
-    expect(e).toMatchObject({ msg: 'TypeError: x is undefined', kind: 'error', path: '/r/', build: 'abc1234' });
-    expect(String(e.stack).length).toBe(2000);
+    expect(e).toMatchObject({ error: 'TypeError: x is undefined', kind: 'error', path: '/r/', build: 'abc1234' });
+    // стек — в базе трекера (errors.ts), не в журнале
+    expect(e.stack).toBeUndefined();
     expect(e.extra).toBeUndefined();
     expect((await fetch(`${http}/v1/errors`, { method: 'POST', body: JSON.stringify({ k: 'error' }) })).status).toBe(400);
     expect(await (await fetch(`${http}/metrics`)).text()).toContain('game_client_errors_total{instance="blue"} 1');

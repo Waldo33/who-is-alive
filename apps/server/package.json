@@ -17,6 +17,7 @@
     "test:native": "cargo test --release --manifest-path native/Cargo.toml"
   },
   "dependencies": {
+    "@jridgewell/trace-mapping": "0.3.31",
     "@kto/game-core": "workspace:*",
     "@kto/net": "workspace:*",
     "@napi-rs/canvas": "0.1.80",

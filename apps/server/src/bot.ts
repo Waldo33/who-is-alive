@@ -1,4 +1,5 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { errFields } from './log';
 import type { Logger } from './log';
 import type { Store } from './store';
 
@@ -236,7 +237,7 @@ export class Bot {
           else if (u?.inline_query) await this.onInline(u.inline_query);
           else if (u?.chosen_inline_result) await this.onChosen(u.chosen_inline_result);
         } catch (e) {
-          this.o.log('error', 'tg_hook', { err: String(e) });
+          this.o.log('error', 'tg_hook', errFields(e));
         }
         return { status: 200, body: { ok: true } };
       }
@@ -244,7 +245,7 @@ export class Bot {
       if (method === 'POST' && (path === '/daily' || path === '/board')) return await this.onDaily(body as { initData?: string; n?: number; tries?: number; won?: boolean }, path === '/daily');
       return { status: 404, body: { error: 'not_found' } };
     } catch (e) {
-      this.o.log('error', 'tg_error', { path, err: String(e) });
+      this.o.log('error', 'tg_error', { path, ...errFields(e) });
       return { status: 500, body: { error: 'server' } };
     }
   }
