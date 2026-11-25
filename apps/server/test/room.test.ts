@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { hasSanity } from '@kto/game-core';
 import type { ServerMsg } from '@kto/net';
 import { MsgBudget, RateWindow } from '../src/limits';
 import { silentLogger } from '../src/log';
@@ -111,10 +112,16 @@ describe('комната', () => {
 
   it('новичок по ссылке посреди матча занимает место ИИ: очки и персонаж — от места', () => {
     const now = 1_000_000;
-    const room = new Room({ code: 'ABCD', directorId: 'a', directorName: 'A', settings: { roundSec: 60, maxRounds: 3, kidsMode: false, aiFill: true }, lang: 'ru', now: () => now, log: silentLogger });
-    const pa = fakePeer();
-    room.join('a', 'A', pa);
-    expect(room.start('a')).toBeNull();
+    // первая тема матча случайна (зерно комнаты); «Купальская ночь» — матч в один дубль, а тесту нужен второй:
+    // такую комнату пересоздаём
+    let room: Room;
+    for (;;) {
+      room = new Room({ code: 'ABCD', directorId: 'a', directorName: 'A', settings: { roundSec: 60, maxRounds: 3, kidsMode: false, aiFill: true }, lang: 'ru', now: () => now, log: silentLogger });
+      room.join('a', 'A', fakePeer());
+      expect(room.start('a')).toBeNull();
+      if (!hasSanity(room.runner!.host.sim.theme)) break;
+      room.close('test');
+    }
     const h = room.runner!.host;
     expect(h.aiSeats().length).toBe(3);
     for (let i = 0; i < 100; i++) room.runner!.step();
