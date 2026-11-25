@@ -1,0 +1,6 @@
+# метку снимает setup.sh, когда новый экземпляр поднялся
+- name: настройка игры поменялась
+  ansible.builtin.copy:
+    dest: /etc/massovka/restart-needed
+    content: "ansible\n"
+    mode: '0600'
