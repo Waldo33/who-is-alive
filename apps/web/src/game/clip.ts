@@ -1153,11 +1153,28 @@ export class ClipPlayerScene {
   }
 }
 
+/** Запись, которая идёт сейчас: следующая ждёт её конца. */
+let recording: Promise<unknown> = Promise.resolve();
+
 /**
  * Записать клип (или фильм) в видео в браузере. Идёт в реальном времени: MediaRecorder пишет то,
  * что появляется на холсте. onFrame получает долю готовности 0..1.
+ *
+ * Записи идут по одной: на iPhone вторая запись, начатая поверх первой (клип выбывшего ещё пишется
+ * фоном, а игрок открыл «Фильм матча»), обрывала первую — клип выходил обрезанным, — а сама
+ * заканчивалась «Клип не получился». Пока ждёт — прогресс 0%.
  */
-export async function recordClip(
+export function recordClip(
+  scene: Parameters<typeof recordNow>[0],
+  mime: string,
+  onFrame?: (progress: number) => void,
+): Promise<ClipResult> {
+  const run = recording.then(() => recordNow(scene, mime, onFrame));
+  recording = run.catch(() => undefined);
+  return run;
+}
+
+async function recordNow(
   scene: { c: HTMLCanvasElement; duration: number; draw(ms: number): void; sound: (ClipSoundCore & { stream?: MediaStream }) | null },
   mime: string,
   onFrame?: (progress: number) => void,
