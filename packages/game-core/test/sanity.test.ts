@@ -183,12 +183,12 @@ describe('рассудок («Купальская ночь»)', () => {
     for (let i = 0; i < 20 * 5; i++) sim.tick();
     expect(b.alive).toBe(false);
     expect(sim.phase).toBe('play');
-    // сгинул и a — ночь кончилась, a продержался дольше: бонус победителя и очко за b
+    // сгинул и a — ночь кончилась, a продержался дольше: очко за b (второго бонуса победителю ночи нет)
     a.sanity = 0.01;
     for (let i = 0; i < 20 * 30 && sim.phase === 'play'; i++) sim.tick();
     for (let i = 0; i < 20 * 30 && !sim.summary; i++) sim.tick();
     expect(sim.summary?.starWinner).toBe('a');
-    expect(sim.summary?.points.a.stars).toBe(cfg.points.stars);
+    expect(sim.summary?.points.a.stars).toBe(0);
     expect(sim.summary?.points.a.survive).toBe(1);
     expect(sim.summary?.points.b.stars).toBe(0);
     expect(sim.summary?.points.b.survive).toBe(0);

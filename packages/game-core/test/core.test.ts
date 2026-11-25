@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   AiPlayer,
+  bountyLeader,
   MatchSim,
   NavGrid,
   Rng,
@@ -322,6 +323,24 @@ describe('MatchSim', () => {
     expect(pts[b.pid].stolen).toBe(-2);
     expect(sim.scores[b.pid]).toBe(3 + pts[b.pid].kill + 1 - 2);
     expect(pts[c.pid].survive).toBe(1);
+  });
+
+  it('«Награда за голову»: угадал лидера — +2 и −2 ему; лидер — единственный с наибольшим счётом', () => {
+    expect(bountyLeader({ a: 3, b: 5, c: 0 })).toBe('b');
+    expect(bountyLeader({ a: 5, b: 5 })).toBeNull();
+    expect(bountyLeader({ a: 0, b: 0 })).toBeNull();
+    const sim = new MatchSim(makeConfig({ roundMods: false }), players, 45);
+    runUntil(sim, () => sim.phase === 'play' && sim.world.time > 2000, 20 * 30);
+    const [a, b] = sim.pr;
+    sim.scores[b.pid] = 6;
+    sim.bountyPid = b.pid;
+    cut(sim, a);
+    sim.intent(a.pid, { k: 'accuse', eid: b.eid });
+    sim.tick();
+    runUntil(sim, () => sim.phase === 'reveal', 20 * 90);
+    const pts = sim.summary!.points;
+    expect(pts[a.pid].accuse + (pts[a.pid].bounty ?? 0)).toBe(2);
+    expect(pts[b.pid].stolen).toBeLessThanOrEqual(-2);
   });
 
   it('«Кража»: счёт вычисленного не уходит ниже нуля, угадавшему +1 всё равно', () => {
