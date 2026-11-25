@@ -1,0 +1,28 @@
+global:
+  scrape_interval: 30s
+scrape_configs:
+  - job_name: node
+    static_configs:
+      - targets: ['127.0.0.1:9100']
+        labels: { server: nl }
+{% if msk_on %}      - targets: ['127.0.0.1:19100']
+        labels: { server: msk }{% endif %}
+
+{% if eu_on %}      - targets: ['127.0.0.1:29100']
+        labels: { server: eu }{% endif %}
+
+  - job_name: game
+    metrics_path: /metrics
+    static_configs:
+{% if msk_on %}      - targets: ['127.0.0.1:18080']
+        labels: { server: msk }{% endif %}
+
+{% if eu_on %}      - targets: ['127.0.0.1:28080']
+        labels: { server: eu }{% endif %}
+
+      - targets: ['127.0.0.1:8080']
+        labels: { server: nl }
+  - job_name: victoria
+    static_configs:
+      - targets: ['127.0.0.1:8428', '127.0.0.1:9428']
+        labels: { server: nl }

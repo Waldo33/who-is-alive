@@ -1,0 +1,24 @@
+# Нидерланды: туннели в Европу и (пока жива) в Москву — как TUNNEL_EU_TO / TUNNEL_TO в game-deploy
+eu_ip: "{{ hostvars[groups['game'][0]]['ansible_host'] if groups['game'] | default([]) | length > 0 else '' }}"
+tunnels_all:
+  - name: massovka-tunnel
+    to: "tunnel@{{ moscow_ip | default('') }}"
+    desc: "в Москву (бот; логи Москвы сюда; база, метрики Москвы отсюда)"
+    args: "-R 127.0.0.1:9090:127.0.0.1:8080 -R 127.0.0.1:9428:127.0.0.1:9428 -L 127.0.0.1:15432:127.0.0.1:5432 -L 127.0.0.1:18080:127.0.0.1:8080 -L 127.0.0.1:19100:127.0.0.1:9100"
+    when: "{{ moscow_ip | default('') != '' }}"
+  - name: massovka-tunnel-eu
+    to: "tunnel@{{ eu_ip }}"
+    desc: "в Европу (бот; логи сюда; база, метрики отсюда)"
+    args: "-R 127.0.0.1:9090:127.0.0.1:8080 -R 127.0.0.1:9428:127.0.0.1:9428 -L 127.0.0.1:25432:127.0.0.1:5432 -L 127.0.0.1:28080:127.0.0.1:8080 -L 127.0.0.1:29100:127.0.0.1:9100"
+    when: "{{ eu_ip != '' }}"
+tunnels: "{{ tunnels_all | selectattr('when') | list }}"
+
+# адреса сервера бота (как vars для setup.sh в game-deploy, Нидерланды)
+app_host: "{{ ansible_host | replace('.', '-') }}.sslip.io"
+app_region: nl
+app_site_url: https://benobody.app
+# аналитика — на игровой сервер в Европе по туннелю
+app_events_up: http://127.0.0.1:28080
+# где живёт игра: оттуда Grafana берёт базу и туда смотрят ночные копии (Европа — туннель :25432)
+game_site: eu
+game_db_port: "{{ 25432 if game_site == 'eu' else 15432 }}"

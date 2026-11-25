@@ -1,0 +1,12 @@
+[Unit]
+Description=node_exporter (метрики машины)
+After=network-online.target
+[Service]
+User=node_exporter
+ExecStart=/usr/local/bin/node_exporter --web.listen-address=127.0.0.1:9100 --collector.systemd --no-collector.wifi --no-collector.infiniband
+Restart=always
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+[Install]
+WantedBy=multi-user.target

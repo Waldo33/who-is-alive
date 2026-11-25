@@ -1,0 +1,49 @@
+# Сторож на сервере в Нидерландах (то же, что «сторож и тревоги» в infra/game/setup.sh): раз в минуту
+# проверяет сайт, игру, бот и туннели и шлёт тревоги в Telegram. Без /etc/massovka/alerts.env не ставится.
+# alerts.env кладётся, только если заданы ALERTS_BOT_TOKEN и ALERTS_CHAT (секреты GitHub) — иначе остаётся прежний.
+- name: Ключ бота тревог
+  ansible.builtin.copy:
+    dest: /etc/massovka/alerts.env
+    content: "ALERTS_BOT_TOKEN={{ lookup('env', 'ALERTS_BOT_TOKEN') }}\nALERTS_CHAT={{ lookup('env', 'ALERTS_CHAT') }}\n"
+    mode: '0600'
+  no_log: true
+  when: lookup('env', 'ALERTS_BOT_TOKEN') != '' and lookup('env', 'ALERTS_CHAT') != ''
+
+- name: Есть ли ключ бота тревог
+  ansible.builtin.stat:
+    path: /etc/massovka/alerts.env
+  register: alerts_env
+
+- name: Сторож
+  when: alerts_env.stat.exists
+  block:
+    - name: jq и dig (сторож проверяет, что у домена нет лишних записей AAAA)
+      ansible.builtin.apt:
+        name: [jq, bind9-dnsutils]  # dig; dnsutils — лишь переходный пакет к нему
+        state: present
+
+    - name: Папка программ
+      ansible.builtin.file:
+        path: /opt/massovka/bin
+        state: directory
+        mode: '0755'
+
+    - name: watch.sh
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../game/watch.sh"
+        dest: /opt/massovka/bin/watch.sh
+        mode: '0755'
+
+    - name: Служба и таймер сторожа
+      ansible.builtin.copy:
+        src: "{{ item }}"
+        dest: "/etc/systemd/system/{{ item }}"
+        mode: '0644'
+      loop: [massovka-watch.service, massovka-watch.timer]
+      notify: перезапустить сторожа
+
+    - name: Таймер сторожа включён
+      ansible.builtin.systemd_service:
+        name: massovka-watch.timer
+        enabled: true
+        state: started
