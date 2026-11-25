@@ -48,7 +48,9 @@ describe('загадка из фильма', () => {
 
   it('повтор из JSON совпадает с исходным матчем; ответ — в кадре на стоп-кадре', () => {
     const p = pickFilmPuzzle(takes)!;
-    const tk = takes.find((t) => t.rec.round === p.secret.round && t.rec.keyframes[0].time <= p.pub.from && t.rec.playEnd >= p.pub.to && t.rec.theme === p.pub.theme)!;
+    // дубль, из которого вырезана загадка, — по ключевому кадру (номер дубля у всех тестовых — 1)
+    const kfKey = JSON.stringify(p.pub.kf.entities);
+    const tk = takes.find((t) => t.rec.keyframes.some((k) => k.time === p.pub.kf.time && JSON.stringify(k.entities) === kfKey))!;
     const pub = JSON.parse(JSON.stringify(p.pub)) as typeof p.pub;
     const a = makeReplay(puzzleWorld(pub), pub.from, pub.to)!;
     const b = makeReplay(worldOf(tk.rec), pub.from, pub.to)!;
