@@ -1,6 +1,7 @@
 # Настройка игрового сервера (то же, что «секреты», game.env, «службы» и hosts.env в infra/game/setup.sh;
 # файлы — байт в байт). Роль только раскладывает настройку и ничего не перезапускает: выкладку версии
-# синим/зелёным (и перезапуск при смене настройки) по-прежнему делает setup.sh.
+# синим/зелёным делает setup.sh. Если настройка игры поменялась, роль оставляет метку
+# /etc/massovka/restart-needed — setup.sh по ней поднимает новый экземпляр (синий/зелёный, без обрыва матчей).
 - name: Размер машины
   ansible.builtin.slurp:
     src: /proc/meminfo
@@ -26,12 +27,14 @@
     src: game.env.j2
     dest: /etc/massovka/game.env
     mode: '0600'
+  notify: настройка игры поменялась
 
 - name: game-blue.env и game-green.env (свой порт и сосед для переезда комнат)
   ansible.builtin.template:
     src: game-color.env.j2
     dest: "/etc/massovka/game-{{ item }}.env"
     mode: '0600'
+  notify: настройка игры поменялась
   loop: [blue, green]
 
 - name: Ключ бота — только серверу бота
@@ -46,6 +49,7 @@
     dest: "/etc/systemd/system/{{ item }}"
     mode: '0644'
   loop: [massovka-game@.service, caddy.service]
+  notify: настройка игры поменялась
 
 - name: Память игрового сервера — папка
   ansible.builtin.file:
@@ -58,6 +62,7 @@
     src: memory.conf.j2
     dest: /etc/systemd/system/massovka-game@.service.d/memory.conf
     mode: '0644'
+  notify: настройка игры поменялась
 
 - name: Прежний RELAY (Москва пересылает игру в Европу; выкладка его не сбрасывает)
   ansible.builtin.slurp:
@@ -72,6 +77,12 @@
     mode: '0644'
   vars:
     app_relay: "{{ (hosts_env.content | default('') | b64decode | regex_search('(?m)^RELAY=(.*)$', '\\1') or ['']) | first }}"
+
+- name: Папка программ
+  ansible.builtin.file:
+    path: /opt/massovka/bin
+    state: directory
+    mode: '0755'
 
 - name: caddy.sh
   ansible.builtin.copy:
