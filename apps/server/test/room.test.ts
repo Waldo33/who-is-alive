@@ -118,7 +118,8 @@ describe('комната', () => {
     const h = room.runner!.host;
     expect(h.aiSeats().length).toBe(3);
     for (let i = 0; i < 100; i++) room.runner!.step();
-    h.sim.scores['ai-1'] = 4;
+    // очков у мест немного: матч не должен кончиться досрочно в первом дубле (иначе второго дубля нет)
+    h.sim.scores['ai-1'] = 1;
     h.sim.scores['ai-2'] = 2;
     const eid1 = h.sim.playerRound('ai-1')!.eid;
     // старый клиент (без seat) — по-прежнему зритель
