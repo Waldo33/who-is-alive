@@ -57,6 +57,7 @@ export const en: Dict = {
       leshyTook: 'The Leshy took you',
       sinned: 'The Leshy marked you',
       doomed: 'The Leshy will come',
+      triumph: { you: 'Fern flower is yours', other: 'Fern flower found:', sub: 'Longest in the night' },
     },
   } as Partial<Record<ThemeId, ThemeText>>,
   start: {

@@ -27,6 +27,8 @@ export interface ThemeText {
   ends?: { last: string; dawn: string; none: string };
   /** Вторая подсказка после `intro` (в начале дубля). */
   hint?: string;
+  /** Свой триумф победителя матча (вместо «Ты звезда!»): у себя, у других, подпись. */
+  triumph?: { you: string; other: string; sub: string };
 }
 
 /** Формы множественного числа по Intl.PluralRules: one / few / many / other. */
@@ -96,6 +98,7 @@ export const ru = {
       leshyTook: 'Тебя забрал Леший',
       sinned: 'Леший тебя запомнил',
       doomed: 'Леший придёт за тобой',
+      triumph: { you: 'Цвет папоротника твой', other: 'Цвет папоротника:', sub: 'Дольше всех в ночи' },
     },
   } as Partial<Record<ThemeId, ThemeText>>,
   start: {

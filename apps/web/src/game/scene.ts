@@ -289,6 +289,8 @@ export class GameScene extends Phaser.Scene {
   private crowdG!: Phaser.GameObjects.Graphics;
   private grayFx: Phaser.FX.ColorMatrix | null = null;
   private wasBw = false;
+  /** Идёт триумф «Купальской ночи»: цветок цветной, остальное нарисовано серым (фильтр снят). */
+  private fernOn = false;
   private freezeVeil!: Phaser.GameObjects.Rectangle;
   private dim!: Phaser.GameObjects.Rectangle;
   private overlayPhase = '';
@@ -509,6 +511,7 @@ export class GameScene extends Phaser.Scene {
     this.addSheet('kikimora', makeKikimora(), KIKI_W, KIKI_H);
     this.addSheet('leshy', makeLeshy(), LESHY_W, LESHY_H);
     this.addSheet('leshyFace', makeLeshyFace(), FACE_W, FACE_H);
+    this.addSheet('fern', makeFern(), 15, 15);
     this.kikiG = this.add.graphics().setDepth(946);
     this.glimpse = this.add.image(0, 0, 'kikimora', 0).setOrigin(0.5, 1).setDepth(946).setTintFill(hexToInt(PAL.ink)).setVisible(false);
     // подсказки сверху поля: шаги пробного дубля и «впервые видишь» в настоящей игре
@@ -3197,7 +3200,7 @@ export class GameScene extends Phaser.Scene {
       } else this.freezeVeil.setVisible(frozen);
     }
     // «Купальская ночь»: итоги и конец матча — чёрно-белые, как старая фотография с той ночи
-    const bw = hasSanity(this.sim.theme) && (this.sim.phase === 'results' || this.sim.phase === 'match_end');
+    const bw = hasSanity(this.sim.theme) && (this.sim.phase === 'results' || this.sim.phase === 'match_end') && !this.fernOn;
     if (bw !== this.wasBw) {
       this.wasBw = bw;
       if (this.grayFx) {
@@ -3653,11 +3656,14 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     this.ovPanel(8, AY + 8, 164, 244);
-    this.ov(this.add.image(90, AY + 22, 'icons', this.icon('crown')).setScale(2), 2100);
+    // в «Купальской ночи» вместо короны — цвет папоротника
+    if (hasSanity(sim.theme) && this.themeText()?.triumph) this.ov(this.add.image(90, AY + 22, 'fern', 3).setScale(2), 2100);
+    else this.ov(this.add.image(90, AY + 22, 'icons', this.icon('crown')).setScale(2), 2100);
     if (m.tooAlive) this.ovText(90, AY + 36, this.t.game.tooAlive, 'yellow');
     else {
       const w = sim.info(m.winners[0])!;
-      this.ovText(90, AY + 36, w.pid === this.sim.selfPid ? this.t.game.youWon : this.t.game.winner, 'yellow');
+      const tr = hasSanity(sim.theme) ? this.themeText()?.triumph : undefined;
+      this.ovText(90, AY + 36, w.pid === this.sim.selfPid ? (tr?.you ?? this.t.game.youWon) : (tr?.other ?? this.t.game.winner), 'yellow');
       if (w.pid !== this.sim.selfPid) this.ovText(90, AY + 48, w.name, COLOR_FONT[w.color]);
     }
     const order = [...sim.players].sort((a, b) => m.scores[b.pid] - m.scores[a.pid]);
@@ -3840,6 +3846,10 @@ export class GameScene extends Phaser.Scene {
    * но не раньше чем через 1,5 с (случайный тап, доигрывавший дубль, не съедает момент).
    */
   private showTriumph(done: () => void): void {
+    if (hasSanity(this.sim.theme) && this.themeText()?.triumph) {
+      this.showFernTriumph(done);
+      return;
+    }
     const sim = this.sim;
     const m = sim.match!;
     const pid = m.winners[0];
@@ -3887,6 +3897,90 @@ export class GameScene extends Phaser.Scene {
       if (finished) return;
       finished = true;
       dance.remove();
+      if (this.sim.phase === 'match_end') done();
+    };
+    this.time.delayedCall(TRIUMPH_MS, finish);
+    this.time.delayedCall(TRIUMPH_SKIP_MS, () => {
+      if (!finished) this.input.once('pointerup', finish);
+    });
+  }
+
+  /**
+   * Триумф «Купальской ночи» — не прожектор с короной, а цвет папоротника: по легенде он цветёт в эту ночь
+   * один миг, и найти его может только тот, кто не побоится леса. Мир ещё чёрно-белый (итоги), цветной
+   * только сам цветок и обводка победителя; победитель (притушенный, серо-синий) поднимает над головой распускающийся цветок,
+   * вокруг поднимаются светлячки, вместо фанфар — музыкальная шкатулка.
+   */
+  private showFernTriumph(done: () => void): void {
+    const sim = this.sim;
+    const m = sim.match!;
+    const pid = m.winners[0];
+    const info = sim.info(pid)!;
+    const tr = this.themeText()!.triumph!;
+    const color = hexToInt(PLAYER_COLORS[info.color]);
+    const eid = sim.summary?.reveal.find((r) => r.pid === pid)?.eid ?? -1;
+    const idx = Math.max(0, sim.world.entities.findIndex((e) => e.eid === eid));
+    const fig = this.charKey(this.lookKey, idx);
+    const cy = AY + 168;
+    // цвет только у цветка: чёрно-белый фильтр итогов на время триумфа снят, вокруг — одни серые
+    this.fernOn = true;
+    const bg = this.add.graphics();
+    bg.fillStyle(hexToInt(PAL.ink), 0.94).fillRect(0, AY, 180, PANEL_Y - AY);
+    // папоротник у ног: тёмные листья-вайи веером
+    for (const [side, len] of [[-1, 30], [1, 28], [-1, 20], [1, 22]] as const) {
+      for (let i = 0; i < len; i++) {
+        const x = 90 + side * (6 + i);
+        const y = cy - Math.round(Math.sin((i / len) * Math.PI) * (len * 0.45));
+        bg.fillStyle(hexToInt(i % 3 === 0 ? PAL.slate : PAL.dusk)).fillRect(x, y, 1, 1);
+        if (i % 3 === 1) bg.fillRect(x, y + 1, 1, 2).fillRect(x - side, y - 2, 1, 2);
+      }
+    }
+    this.ov(bg, 2050);
+    const glow = this.ov(this.add.graphics(), 2051);
+    const ol = this.ov(this.add.image(90, cy, 'ol' + fig, F.JUMP).setOrigin(7 / OL_W, 17 / OL_H).setScale(3).setTint(color), 2052);
+    this.ov(this.add.image(90, cy, 'ch' + fig, F.JUMP).setOrigin(6 / CH_W, 1).setScale(3).setTint(hexToInt(PAL.slate)), 2053);
+    const fy = cy - CH_H * 3 - 24;
+    const flower = this.ov(this.add.image(90, fy, 'fern', 0).setScale(3), 2054);
+    const me = pid === sim.selfPid;
+    this.ovText(90, AY + 30, me ? tr.you : tr.other, 'yellow');
+    this.ovText(90, AY + 42, tr.sub, 'mist');
+    this.ovText(90, cy + 14, info.name, COLOR_FONT[info.color]);
+    this.audio.play('fern');
+    haptic('success');
+    // распускается по кадрам, потом мерцает
+    [0, 1, 2, 3].forEach((f, i) => this.time.delayedCall(250 + i * 320, () => flower.active && flower.setFrame(f)));
+    const flies = Array.from({ length: 22 }, () => ({ x: 10 + Math.random() * 160, y: AY + 60 + Math.random() * 180, v: 0.1 + Math.random() * 0.25, ph: Math.random() * 6 }));
+    let k = 0;
+    const tick = this.time.addEvent({
+      delay: 50,
+      loop: true,
+      callback: () => {
+        k++;
+        glow.clear();
+        const open = k > 26;
+        // свет от цветка: решётка янтаря, дышит
+        const r = open ? 13 + (Math.floor(k / 6) % 2) : Math.min(13, Math.floor(k / 2));
+        for (let y = -r; y <= r; y += 2)
+          for (let x = -r; x <= r; x += 2) {
+            const d = Math.hypot(x, y);
+            if (d <= r && d > 4 && (x + y + k) % 4 !== 2) glow.fillStyle(hexToInt(d < r * 0.6 ? PAL.amber : PAL.brick)).fillRect(90 + x, fy + y, 1, 1);
+          }
+        // светлячки поднимаются, мигают
+        for (const f of flies) {
+          f.y -= f.v;
+          if (f.y < AY + 50) f.y = AY + 250;
+          const on = Math.sin(k * 0.15 + f.ph) > -0.2;
+          if (on) glow.fillStyle(hexToInt(Math.sin(k * 0.15 + f.ph) > 0.6 ? PAL.yellow : PAL.amber)).fillRect(Math.round(f.x + Math.sin(k * 0.05 + f.ph) * 3), Math.round(f.y), 1, 1);
+        }
+        ol.setAlpha(0.75 + 0.25 * Math.sin(k * 0.2));
+      },
+    });
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      tick.remove();
+      this.fernOn = false;
       if (this.sim.phase === 'match_end') done();
     };
     this.time.delayedCall(TRIUMPH_MS, finish);
@@ -4279,6 +4373,45 @@ function makeLeshy(): HTMLCanvasElement {
       for (let x = 0; x < r.length; x++) if (r[x] !== '.') ppx(g, f * LESHY_W + x, y, col[r[x] as LeshyKey]);
     }),
   );
+  return c;
+}
+
+/** Цвет папоротника (триумф «Купальской ночи»): 0 — бутон, 1–2 — распускается, 3 — раскрыт и сияет. */
+function makeFern(): HTMLCanvasElement {
+  const { c, g } = canvas(15 * 4, 15);
+  for (let f = 0; f < 4; f++) {
+    const ox = f * 15;
+    const px = (x: number, y: number, col: string) => x >= 0 && y >= 0 && x < 15 && y < 15 && ppx(g, ox + x, y, col);
+    // стебель
+    for (let y = 9; y < 15; y++) px(7, y, PAL.pine);
+    px(6, 12, PAL.forest);
+    px(8, 11, PAL.forest);
+    if (f === 0) {
+      px(7, 7, PAL.red);
+      px(7, 8, PAL.wine);
+      px(6, 8, PAL.forest);
+      px(8, 8, PAL.forest);
+      continue;
+    }
+    const R = [0, 3, 5, 6][f];
+    for (let i = 0; i < 5; i++) {
+      const a = -Math.PI / 2 + (i * Math.PI * 2) / 5;
+      for (let r = 1; r <= R; r++) {
+        const x = Math.round(7 + Math.cos(a) * r);
+        const y = Math.round(7 + Math.sin(a) * r);
+        px(x, y, r === R ? PAL.coral : PAL.red);
+        if (r > 1 && r < R) {
+          px(Math.round(x - Math.sin(a)), Math.round(y + Math.cos(a)), PAL.red);
+          px(Math.round(x + Math.sin(a)), Math.round(y - Math.cos(a)), r > R / 2 ? PAL.wine : PAL.red);
+        }
+      }
+    }
+    px(7, 7, f === 3 ? PAL.white : PAL.yellow);
+    px(6, 7, PAL.yellow);
+    px(8, 7, PAL.yellow);
+    px(7, 6, PAL.yellow);
+    px(7, 8, PAL.amber);
+  }
   return c;
 }
 

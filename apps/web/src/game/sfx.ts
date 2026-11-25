@@ -5,14 +5,14 @@
 export type Sfx =
   | 'step' | 'hitPlayer' | 'hitBot' | 'poof' | 'starTake' | 'starSpawn' | 'crowd' | 'tick'
   | 'click' | 'ready' | 'accuseRight' | 'accuseWrong' | 'fanfare' | 'sad' | 'hedge' | 'pigeon' | 'drum' | 'denied' | 'count' | 'swing' | 'flicker' | 'dusk' | 'siren' | 'whack' | 'clang' | 'stab' | 'knockedOut'
-  | 'hitOther' | 'cut' | 'clap' | 'logo' | 'wrap' | 'unmask' | 'rewind' | 'leshyStep' | 'leshyBreath' | 'leshyStinger' | 'leshyTake' | 'leshyCall' | 'snap' | 'whisper' | 'scream';
+  | 'hitOther' | 'cut' | 'clap' | 'logo' | 'wrap' | 'unmask' | 'rewind' | 'leshyStep' | 'leshyBreath' | 'leshyStinger' | 'leshyTake' | 'leshyCall' | 'snap' | 'whisper' | 'scream' | 'fern';
 
 /**
  * Приоритет эффекта (звуковой гайд, план звука): P1 — меняет решение игрока, обязан пробиться
  * через музыку (на динамике телефона −30…−33 дБ, музыку глушит на 9 дБ на 0,6 с); P2 — событие
  * на поле (−35…−39 дБ, глушит на 4 дБ); остальное — фон. Уровни проверяет `pnpm --filter web sound-check`.
  */
-export const P1: ReadonlySet<Sfx> = new Set<Sfx>(['hitPlayer', 'hitBot', 'starTake', 'crowd', 'ready', 'knockedOut', 'cut', 'drum', 'accuseRight', 'accuseWrong', 'unmask', 'wrap', 'logo', 'leshyStinger', 'leshyTake', 'scream']);
+export const P1: ReadonlySet<Sfx> = new Set<Sfx>(['hitPlayer', 'hitBot', 'starTake', 'crowd', 'ready', 'knockedOut', 'cut', 'drum', 'accuseRight', 'accuseWrong', 'unmask', 'wrap', 'logo', 'leshyStinger', 'leshyTake', 'scream', 'fern']);
 export const P2: ReadonlySet<Sfx> = new Set<Sfx>(['hitOther', 'whack', 'clang', 'stab', 'starSpawn', 'flicker', 'dusk', 'leshyBreath']);
 
 /**
@@ -326,6 +326,17 @@ export class Synth {
         break;
       case 'accuseRight': [523, 659, 784].forEach((f, i) => this.tone('triangle', f, f, 0.25, 0.2, i * 0.07)); break;
       case 'accuseWrong': this.tone('sawtooth', 440, 220, 0.4, 0.16); this.tone('sawtooth', 466, 200, 0.4, 0.1); break;
+      // цвет папоротника (триумф «Купальской ночи»): музыкальная шкатулка в миноре — вверх и замирает,
+      // над ней звон-мерцание; в конце низкий колокол, как с той стороны болота
+      case 'fern':
+        [880, 1047, 1319, 1760, 1568, 1319, 1760].forEach((f, i) => {
+          this.tone('triangle', f, f, 0.5, 0.2, i * 0.17);
+          this.tone('sine', f * 2, f * 2, 0.3, 0.07, i * 0.17);
+        });
+        this.swell(1.6, 0.1, 5200, 0.2, 0.5);
+        this.tone('square', 440, 436, 1.6, 0.08, 1.25);
+        this.tone('triangle', 880, 875, 1.4, 0.12, 1.25);
+        break;
       case 'fanfare': [523, 659, 784, 1047, 784, 1047].forEach((f, i) => this.tone('square', f, f, 0.16, 0.16, i * 0.12)); break;
       // «Слишком живые!» — грустный тромбон: три ступени вниз и долгая нота с вибрато
       case 'sad': [392, 370, 349].forEach((f, i) => this.tone('sawtooth', f, f * 0.98, 0.32, 0.12, i * 0.36)); this.sadTail(1.08); break;
