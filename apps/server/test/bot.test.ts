@@ -58,6 +58,7 @@ describe('Telegram-бот', () => {
     const kb = (calls.find((c) => c.method === 'sendMessage')!.body as { reply_markup: { inline_keyboard: { text: string; web_app: { url: string } }[][] } }).reply_markup.inline_keyboard;
     expect(kb[0][0].web_app.url).toBe('https://site.example/sandbox?go&src=tg');
     expect(kb[1][0].web_app.url).toBe('https://site.example/?create=1&src=tg');
+    expect(JSON.stringify(kb.at(-1))).toContain('https://t.me/benobody_app');
   });
 
   it('кастинг: первый результат за день окончательный, рейтинг чата по победам и попыткам', async () => {
