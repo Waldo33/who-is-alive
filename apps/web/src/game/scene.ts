@@ -27,6 +27,13 @@ import {
   bountyLeader,
   canFight,
   fightAttacks,
+  bossDoor,
+  bossLooking,
+  bossWatching,
+  inBossCone,
+  BOSS_RANGE,
+  BOSS_SPREAD,
+  WALK_TOP,
 } from '@kto/game-core';
 import type { AwardId, ClientSession, CrowdKind, Dict, Entity, GameConfig, Lang, Moment, Notice, RoundSummary, ThemeText, World, WorldEvent } from '@kto/game-core';
 import { resultCardFile } from './card';
@@ -199,6 +206,14 @@ export class GameScene extends Phaser.Scene {
   private cfg!: GameConfig;
   private audio!: Audio;
   private views: EntityView[] = [];
+  /** Шеф в офисе (game-core › boss.ts): фигура, тень, конус взгляда и дверь, подписи «Выговор!» над пойманными. */
+  private bossSpr: Phaser.GameObjects.Image | null = null;
+  private bossShadow: Phaser.GameObjects.Image | null = null;
+  private bossG: Phaser.GameObjects.Graphics | null = null;
+  private bossNotes: { eid: number; at: number; txt: Phaser.GameObjects.BitmapText }[] = [];
+  /** Взгляд шефа, на который уже прозвучало «Кхм» (from), и показана ли за матч подсказка «замри». */
+  private bossAhemFor = -1;
+  private bossTipShown = false;
   private starSprites = new Map<number, Phaser.GameObjects.Image>();
   private hedges: Phaser.GameObjects.TileSprite[] = [];
   private props: { spr: Phaser.GameObjects.Image; kind: string }[] = [];
@@ -489,6 +504,10 @@ export class GameScene extends Phaser.Scene {
         poof: this.add.image(0, 0, 'poof', 0).setVisible(false),
       });
     }
+    this.bossG = this.add.graphics().setDepth(2);
+    this.bossShadow = this.add.image(0, 0, 'shadow').setOrigin(0.5, 0.5).setVisible(false);
+    this.bossSpr = this.add.image(0, 0, 'ch0_0', 0).setOrigin(6 / CH_W, 1).setVisible(false);
+    this.bossNotes = [];
     // свой персонаж (только у себя): кольцо под ногами, стрелка над головой, контур — цветом игрока
     const myColor = hexToInt(PLAYER_COLORS[this.sim.info(this.sim.selfPid)?.color ?? 0]);
     this.myColor = myColor;
@@ -1181,6 +1200,9 @@ export class GameScene extends Phaser.Scene {
       case 'zone':
         this.audio.play('hedge');
         this.showToast(this.t.game.hedge, 1800);
+        break;
+      case 'boss':
+        this.onBossEvent(ev, myEid);
         break;
       case 'twist': {
         // изнанка темы: свет мигает, офис → подвал (и обратно); песня темы — громче.
@@ -2795,6 +2817,124 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  /**
+   * Шеф в офисе: фигура в тёмном костюме, дверь в верхней стене, конус взгляда на полу — пока он
+   * поворачивается, конус бледный и мигает («Кхм!» — успей замереть), потом горит. Над пойманными
+   * — «Выговор!». Рисуется из состояния мира, поэтому шеф есть и в повторе разоблачения.
+   */
+  private renderBoss(w: World, alpha: number, mode: 'live' | 'replay' | 'final'): void {
+    const g = this.bossG;
+    const spr = this.bossSpr;
+    const sh = this.bossShadow;
+    if (!g || !spr || !sh) return;
+    g.clear();
+    const th = this.sim.theme;
+    const style = isThemeLoaded(th) ? themePack(th).boss : undefined;
+    const b = w.boss;
+    if (!b || !style) {
+      spr.setVisible(false);
+      sh.setVisible(false);
+      for (const n of this.bossNotes) n.txt.destroy();
+      this.bossNotes = [];
+      return;
+    }
+    const tex = 'boss' + th;
+    if (!this.textures.exists(tex)) this.addSheet(tex, makeCharacterSheets(style).body, CH_W, CH_H);
+    const t = w.time - TICK_MS + alpha * TICK_MS;
+    // дверь: середина верхней стены; пока шеф за ней — приоткрыта (темно внутри)
+    const door = bossDoor(this.sim.arena.width);
+    // дверь под рост шефа (он вдвое выше толпы): во всю стену, до пола
+    const dx = door.x - 10;
+    const dy = AY;
+    const dh = WALK_TOP - 1;
+    g.fillStyle(hexToInt(PAL.ink)).fillRect(dx, dy, 20, dh);
+    g.fillStyle(hexToInt(b.out ? PAL.night : PAL.umber)).fillRect(dx + 1, dy + 1, 18, dh - 1);
+    if (b.out) g.fillStyle(hexToInt(PAL.umber)).fillRect(dx + 1, dy + 1, 5, dh - 1);
+    else {
+      g.fillStyle(hexToInt(PAL.brick)).fillRect(dx + 4, dy + 3, 12, 8).fillRect(dx + 4, dy + 14, 12, 8);
+      g.fillStyle(hexToInt(PAL.yellow)).fillRect(dx + 15, dy + 12, 2, 1);
+    }
+    if (b.out) {
+      spr.setVisible(false);
+      sh.setVisible(false);
+    } else {
+      const x = Math.round(b.px + (b.x - b.px) * alpha);
+      const y = Math.round(b.py + (b.y - b.py) * alpha);
+      const sy = AY + y;
+      // конус взгляда: на полу, под толпой; бледный и мигает, пока шеф поворачивается
+      if (bossLooking(b, t)) {
+        const hot = bossWatching(b, t);
+        if (hot || Math.floor(t / 150) % 2 === 0) {
+          const col = hexToInt(hot ? PAL.yellow : PAL.sand);
+          g.fillStyle(col, hot ? 0.22 : 0.12);
+          const d = b.look.dir;
+          for (let a = 2; a <= BOSS_RANGE; a++) {
+            const half = Math.round(5 + a * BOSS_SPREAD);
+            if (d === 0 || d === 1) g.fillRect(x - half, sy + (d === 0 ? a : -a) - 2, half * 2 + 1, 1);
+            else g.fillRect(x + (d === 3 ? a : -a), sy - 2 - half, 1, half * 2 + 1);
+          }
+          // кромка — пунктиром, чтобы край читался на любом полу
+          g.fillStyle(col, hot ? 0.8 : 0.5);
+          for (let a = 4; a <= BOSS_RANGE; a += 3) {
+            const half = Math.round(5 + a * BOSS_SPREAD);
+            if (d === 0 || d === 1) {
+              const yy = sy + (d === 0 ? a : -a) - 2;
+              g.fillRect(x - half, yy, 1, 1).fillRect(x + half, yy, 1, 1);
+            } else {
+              const xx = x + (d === 3 ? a : -a);
+              g.fillRect(xx, sy - 2 - half, 1, 1).fillRect(xx, sy - 2 + half, 1, 1);
+            }
+          }
+        }
+      }
+      const pseudo = { ...b, eid: -7, act: null, actStart: 0, actEnd: 0 } as unknown as Entity;
+      const f = frameFor(pseudo, t);
+      // шеф крупнее толпы вдвое (целый масштаб — пиксели те же): видно издалека, что это не клерк
+      spr.setTexture(tex, f.frame).setScale(2).setVisible(true).setFlipX(f.flip).setPosition(x, sy + f.yoff).setDepth(sy).setAlpha(1);
+      sh.setScale(2).setVisible(true).setPosition(x, sy).setDepth(sy - 0.5);
+    }
+    // «Выговор!» над пойманными — 1,5 с, над головой, чуть всплывает
+    this.bossNotes = this.bossNotes.filter((n) => {
+      const age = w.time - n.at;
+      const e = w.get(n.eid);
+      if (age > 1500 || age < -100 || !e || mode === 'final') {
+        n.txt.destroy();
+        return false;
+      }
+      const x = Math.round(e.px + (e.x - e.px) * alpha);
+      const y = Math.round(e.py + (e.y - e.py) * alpha);
+      n.txt.setPosition(x, AY + y - CH_H - 14 - Math.min(4, Math.floor(age / 120))).setVisible(true);
+      return true;
+    });
+  }
+
+  /** Событие шефа: «Кхм» на поворот (и подсказка один раз за матч), «Выговор!» над пойманным, свой — тостом. */
+  private onBossEvent(ev: Extract<WorldEvent, { t: 'boss' }>, myEid: number | undefined): void {
+    if (ev.act === 'catch') {
+      const txt = this.txt(0, 0, this.t.game.bossCatch, 'coral').setOrigin(0.5, 0).setDepth(1450).setVisible(false);
+      this.bossNotes.push({ eid: ev.eid, at: ev.at, txt });
+      if (this.sim.phase !== 'play') return;
+      this.audio.play('bossStamp');
+      if (ev.eid === myEid) {
+        haptic('error');
+        this.showToast(tp(this.lang, this.t.game.bossCaughtMe, this.cfg.bossPenalty), 1800);
+      }
+      return;
+    }
+    if (ev.act === 'look' && this.sim.phase === 'play' && this.bossAhemFor !== ev.from) {
+      this.bossAhemFor = ev.from;
+      this.audio.play('bossAhem');
+      const me = myEid !== undefined ? this.sim.world.get(myEid) : undefined;
+      const b = this.sim.world.boss;
+      // свой персонаж в конусе — вибрация: «замри»
+      if (me?.alive && b && inBossCone(b, ev.dir, me.x, me.y)) haptic('warning');
+      if (!this.bossTipShown) {
+        this.bossTipShown = true;
+        this.showToast(this.t.game.bossLook, 1800);
+      }
+    }
+  }
+
   private frameFor(e: Entity, t: number): CharFrame {
     return frameFor(e, t, this.lookActs);
   }
@@ -2921,6 +3061,7 @@ export class GameScene extends Phaser.Scene {
       if (q) v.q.setPosition(x + 5, sy - CH_H - 2).setDepth(sy + 0.4);
     });
     if (!crownShown) this.crown.setVisible(false);
+    this.renderBoss(w, alpha, mode);
     for (let i = w.entities.length; i < this.views.length; i++) {
       const v = this.views[i];
       v.spr.setVisible(false);

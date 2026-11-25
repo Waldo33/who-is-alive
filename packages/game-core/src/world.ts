@@ -3,6 +3,8 @@ import { lerpRect } from './arena';
 import type { ActKind, CrowdKind, Dir, EntitySpawn, WorldEvent } from './events';
 import type { NavGrid } from './nav';
 import { TICK_MS } from './config';
+import type { BossState } from './boss';
+import { BOSS_SPEED_MUL } from './boss';
 
 export interface Entity {
   eid: number;
@@ -64,6 +66,8 @@ export interface WorldSnapshot {
   crowd: CrowdState | null;
   /** Изнанка темы включена (необязательно — для снимков старых версий). */
   twist?: boolean;
+  /** Шеф в офисе (необязательно — для снимков старых версий). */
+  boss?: BossState | null;
   pending: WorldEvent[];
 }
 
@@ -80,6 +84,8 @@ export class World {
   crowd: CrowdState | null = null;
   /** Изнанка темы: офис стал подвалом (themes.ts › twist). */
   twist = false;
+  /** Шеф в офисе (boss.ts); null — в теме его нет. */
+  boss: BossState | null = null;
   private pending: WorldEvent[] = [];
   /** Журнал применённых событий (для повтора и клипа). */
   log: WorldEvent[] = [];
@@ -120,6 +126,7 @@ export class World {
     this.zone = null;
     this.crowd = null;
     this.twist = false;
+    this.boss = null;
     this.pending = [];
     this.log = [];
     this.keyframes = [];
@@ -162,10 +169,17 @@ export class World {
       }
       if (e.pi < e.path.length) this.advance(e, this.speed * dt);
     }
+    const b = this.boss;
+    if (b) {
+      b.px = b.x;
+      b.py = b.y;
+      b.moving = false;
+      if (!b.out && !frozen && b.pi < b.path.length) this.advance(b, this.speed * BOSS_SPEED_MUL * dt);
+    }
     this.time += TICK_MS;
   }
 
-  private advance(e: Entity, dist: number): void {
+  private advance(e: Pick<Entity, 'x' | 'y' | 'path' | 'pi' | 'dir' | 'walk' | 'moving'>, dist: number): void {
     let left = dist;
     while (left > 0 && e.pi < e.path.length) {
       const tx = this.nav.cx(e.path[e.pi]);
@@ -262,11 +276,38 @@ export class World {
       case 'twist':
         this.twist = ev.on;
         break;
+      case 'boss':
+        this.applyBoss(ev);
+        break;
       case 'hit':
       case 'spot':
         break;
     }
     for (const l of this.listeners) l(ev);
+  }
+
+  private applyBoss(ev: Extract<WorldEvent, { t: 'boss' }>): void {
+    if (ev.act === 'in') {
+      this.boss = { x: ev.x, y: ev.y, px: ev.x, py: ev.y, path: [], pi: 0, dir: 0, walk: 0, moving: false, look: null, out: false };
+      return;
+    }
+    const b = this.boss;
+    if (!b) return;
+    if (ev.act === 'walk') {
+      b.path = ev.path.slice();
+      b.pi = 0;
+      b.look = null;
+    } else if (ev.act === 'look') {
+      b.path = [];
+      b.pi = 0;
+      b.dir = ev.dir;
+      b.look = { dir: ev.dir, from: ev.from, until: ev.until };
+    } else if (ev.act === 'out') {
+      b.out = true;
+      b.path = [];
+      b.pi = 0;
+      b.look = null;
+    }
   }
 
   /** Идёт стоп-кадр «Море волнуется»: никто не двигается. */
@@ -306,6 +347,7 @@ export class World {
       zone: this.zone ? { ...this.zone } : null,
       crowd: this.crowd ? { ...this.crowd } : null,
       twist: this.twist,
+      boss: this.boss ? { ...this.boss, path: this.boss.path.slice(), look: this.boss.look ? { ...this.boss.look } : null } : null,
       pending: this.pending.slice(),
     };
   }
@@ -318,6 +360,7 @@ export class World {
     this.zone = s.zone ? { ...s.zone } : null;
     this.crowd = s.crowd ? { ...s.crowd } : null;
     this.twist = !!s.twist;
+    this.boss = s.boss ? { ...s.boss, path: s.boss.path.slice(), look: s.boss.look ? { ...s.boss.look } : null } : null;
     this.pending = s.pending.slice();
   }
 }
