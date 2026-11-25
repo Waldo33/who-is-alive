@@ -12,7 +12,6 @@ import {
   planPath,
   ROTATION_THEMES,
   WALK_TOP,
-  THEME_COUNT,
   THEME_RULES,
   seasonLeadTheme,
   themeRules,
