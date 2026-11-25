@@ -165,6 +165,16 @@ export const DEFAULT_CONFIG = {
   // «Перепуг»: бот вздрагивает и убегает от пустоты — ложный след для охотников (эпизодов в минуту на бота к глухой ночи)
   botPanicPerMin: 0.12,
 
+  // шеф в офисе (boss.ts): поворот перед взглядом (успеть замереть), сколько смотрит, пауза после;
+  // выговор — минус ударов на подвал и метка на виду; доля ботов, что не успевают «заработаться»
+  bossWarnMs: 900,
+  kidsBossWarnMs: 1400,
+  bossLookMs: 2200,
+  bossRestMs: [400, 1400] as [number, number],
+  bossPenalty: 2,
+  bossMarkSec: 2,
+  bossBotSlip: 0.1,
+
   // сужение
   zoneStartBeforeEndSec: 20,
   zoneShrinkSec: 15,

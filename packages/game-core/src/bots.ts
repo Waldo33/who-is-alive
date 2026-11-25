@@ -5,6 +5,7 @@ import type { ActKind, CrowdKind, Dir, WorldEvent } from './events';
 import type { Rng } from './rng';
 import type { TwistRules } from './themes';
 import type { World } from './world';
+import { bossLooking, pathInBossCone } from './boss';
 
 interface BotState {
   eid: number;
@@ -403,6 +404,14 @@ export class BotBrain {
   private walkTo(s: BotState, tx: number, ty: number, zone: Rect | null, now: number, escape: boolean): boolean {
     const path = planPath(this.world, s.eid, tx, ty, zone, escape);
     if (!path || !path.length) return false;
+    // шеф смотрит: в его конус не заходят (зазевавшихся выбирает сам взгляд — match.ts › bossLook)
+    const b = this.world.boss;
+    if (!escape && bossLooking(b, now)) {
+      const nav = this.world.nav;
+      const e = this.world.get(s.eid)!;
+      const seen = pathInBossCone(b, b.look.dir, e.x, e.y, path.map((c) => ({ x: nav.cx(c), y: nav.cy(c) })));
+      if (seen) return false;
+    }
     this.emit({ t: 'move', eid: s.eid, path, at: now });
     s.walking = true;
     s.turnAt = 0;
