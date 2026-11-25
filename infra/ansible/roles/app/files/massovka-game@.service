@@ -10,6 +10,8 @@ EnvironmentFile=/etc/massovka/game.env
 EnvironmentFile=/etc/massovka/game-%i.env
 EnvironmentFile=/etc/massovka/secrets.env
 EnvironmentFile=-/etc/massovka/bot.env
+# ключи S3 (клипы и фильмы в бакете, apps/server/src/s3.ts): кладёт выкладка, нет файла — всё на диске
+EnvironmentFile=-/etc/massovka/s3.env
 ExecStart=/opt/node/bin/node --enable-source-maps /opt/massovka/color/%i/server.mjs
 Restart=on-failure
 RestartSec=1

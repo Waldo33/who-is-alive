@@ -11,6 +11,7 @@
  * Расширять — только добавлением полей; несовместимая правка — новый "v".
  *
  * Хранится 2 суток (как фильмы), папка не больше 300 МБ — сначала уходят старые.
+ * Есть S3 — копия уходит в бакет (`matches/<имя>`, бакет сам удаляет через 2 суток).
  */
 import { randomBytes } from 'node:crypto';
 import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
@@ -19,6 +20,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { gunzip, gzip } from 'node:zlib';
 import type { FilmJob } from './film-render';
+import type { ClipRemote } from './clips';
 
 export const RECORDING_FORMAT = 'massovka-match';
 export const RECORDING_V = 1;
@@ -67,7 +69,7 @@ const pad = (n: number) => String(n).padStart(2, '0');
 export class MatchRecordings {
   readonly dir: string;
 
-  constructor(dir?: string, private readonly now: () => number = Date.now) {
+  constructor(dir?: string, private readonly now: () => number = Date.now, private readonly remote?: ClipRemote) {
     this.dir = dir ?? join(tmpdir(), 'massovka-matches');
   }
 
@@ -79,6 +81,11 @@ export class MatchRecordings {
     const stamp = `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}-${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}`;
     const name = `${stamp}-${randomBytes(5).toString('hex')}.match.json.gz`;
     await writeFile(join(this.dir, name), await gz(encodeRecording(job, d), { level: 6 }));
+    const r = this.remote;
+    if (r) {
+      // копия в S3 — в фоне; сбой не мешает фильму
+      void r.s3.putFile(`matches/${name}`, join(this.dir, name), 'application/gzip', 'private, max-age=0').catch((e: unknown) => r.log?.('warn', 's3_put_failed', { key: `matches/${name}`, err: String(e).slice(0, 300) }));
+    }
     return name;
   }
 

@@ -8,6 +8,7 @@ import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ClipStore } from './clips';
+import { S3Client, s3FromEnv } from './s3';
 import { FilmService } from './film';
 import { MatchRecordings } from './recordings';
 import { GameServer } from './server';
@@ -27,6 +28,7 @@ import { VideoSwitch } from './video-switch';
  *   PEER_HTTP + PEER_WS_URL — соседний экземпляр (синий ↔ зелёный): к нему переезжают комнаты при выкладке
  *   (POST /internal/drain изнутри машины), после drain процесс завершается сам.
  *   SOURCEMAPS_DIR — карты сборок сайта для трекера ошибок (/var/lib/massovka-sourcemaps, кладёт web-deploy).
+ *   S3_BUCKET, S3_ACCESS_KEY, S3_SECRET_KEY (+ S3_ENDPOINT, S3_REGION) — копия клипов, фильмов и записей матчей в S3 (s3.ts).
  */
 const env = process.env;
 let log = jsonLogger((env.LOG_LEVEL as LogLevel) || 'info');
@@ -93,8 +95,23 @@ const bot = env.TELEGRAM_BOT_TOKEN
   : undefined;
 if (!bot) log('warn', 'TELEGRAM_BOT_TOKEN не задан — бота нет');
 
+// S3 для видео (s3.ts, бакет — infra/terraform/storage.tf; ключи — /etc/massovka/s3.env от выкладки). Нет — всё на диске
+const s3cfg = s3FromEnv(env);
+const s3 = s3cfg ? new S3Client(s3cfg) : undefined;
+if (s3) {
+  // срок хранения и CORS ставим при каждом старте: дёшево и не зависит от того, кто создал бакет
+  void s3
+    .putLifecycle([
+      { prefix: 'clips/', days: 2 },
+      { prefix: 'matches/', days: 2 },
+    ])
+    .then(() => s3.putCors())
+    .then(() => log('info', 's3_ready', { bucket: s3cfg?.bucket }))
+    .catch((e: unknown) => log('warn', 's3_rules_failed', { err: String(e).slice(0, 300) }));
+} else log('info', 's3_off');
+
 // клипы для Telegram и фильмы матча: systemd StateDirectory=massovka-clips (/var/lib/massovka-clips)
-const clips = new ClipStore(env.CLIP_DIR || env.STATE_DIRECTORY || undefined);
+const clips = new ClipStore(env.CLIP_DIR || env.STATE_DIRECTORY || undefined, undefined, s3 ? { s3, log } : undefined);
 
 // «Фильм матча» монтирует сервер, если есть ffmpeg и шрифты (иначе — телефон, как раньше); FILM=off — выключить
 const ffmpeg = env.FFMPEG || 'ffmpeg';
@@ -109,7 +126,7 @@ else if (spawnSync(ffmpeg, ['-version'], { stdio: 'ignore' }).status !== 0) log(
 else if (!existsSync(join(fonts, 'press-start-2p-cyrillic-400-normal.woff'))) log('warn', 'film_no_fonts', { fonts });
 else {
   // записи матчей (для перемонтажа фильма в других вариантах) — в подпапке клипов, 2 суток; MATCH_RECORDINGS=off — не писать
-  const recordings = env.MATCH_RECORDINGS === 'off' ? undefined : new MatchRecordings(join(clips.dir, 'matches'));
+  const recordings = env.MATCH_RECORDINGS === 'off' ? undefined : new MatchRecordings(join(clips.dir, 'matches'), undefined, s3 ? { s3, log } : undefined);
   film = new FilmService({ store: clips, log, fonts, ffmpeg, recordings, enabled: () => video.on, site: (env.SITE_URL || 'https://benobody.app').replace(/^https?:\/\//, '').replace(/\/$/, '') });
   log('info', 'film_ready');
 }

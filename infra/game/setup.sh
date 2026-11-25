@@ -63,6 +63,9 @@ fi
 if [ -s "$D/bot.env" ]; then install -m 600 "$D/bot.env" /etc/massovka/bot.env; rm -f "$D/bot.env"; fi
 # бот живёт только на сервере бота (infra): на игровом ключа быть не должно
 if [ "${ROLE:-game}" = game ]; then rm -f /etc/massovka/bot.env; fi
+# ключи S3 для видео (apps/server/src/s3.ts) — выкладка берёт их из API Timeweb по TWC_TOKEN (s3-env.py).
+# Нет файла в этой выкладке (бакет не куплен, API не ответил) — прежний файл не трогаем
+if [ -s "$D/s3.env" ]; then install -m 600 "$D/s3.env" /etc/massovka/s3.env; rm -f "$D/s3.env"; fi
 envsum_after=$(cat /etc/massovka/*.env 2>/dev/null | sha256sum)
 
 # наблюдение (метрики, логи, Grafana, копии) — до Caddy: он смотрит, стоит ли Grafana
