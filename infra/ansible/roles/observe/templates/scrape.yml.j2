@@ -14,7 +14,8 @@ scrape_configs:
   - job_name: game
     metrics_path: /metrics
     static_configs:
-{% if msk_on %}      - targets: ['127.0.0.1:18080']
+{# игра в Москве после переезда (24.11) не работает — там только пересылка в Европу, метрик игры нет #}
+{% if msk_on and game_site == 'msk' %}      - targets: ['127.0.0.1:18080']
         labels: { server: msk }{% endif %}
 
 {% if eu_on %}      - targets: ['127.0.0.1:28080']

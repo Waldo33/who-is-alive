@@ -108,6 +108,7 @@ for b in victoria-metrics victoria-logs; do
 done
 install -d -m 755 /etc/victoria
 # Москва — пока есть её туннель; Европа — когда настроен туннель в Европу (TUNNEL_EU_TO)
+# метрики игры Москвы — только пока игра живёт там: после переезда (24.11) в Москве лишь пересылка в Европу
 msk_on=""; systemctl is-enabled -q massovka-tunnel 2>/dev/null && msk_on=1
 eu_on=""; { [ -n "${TUNNEL_EU_TO:-}" ] || systemctl is-enabled -q massovka-tunnel-eu 2>/dev/null; } && eu_on=1
 cat > /etc/victoria/scrape.yml <<EOF
@@ -123,7 +124,7 @@ $([ -n "$eu_on" ] && printf "      - targets: ['127.0.0.1:29100']\n        label
   - job_name: game
     metrics_path: /metrics
     static_configs:
-$([ -n "$msk_on" ] && printf "      - targets: ['127.0.0.1:18080']\n        labels: { server: msk }")
+$([ -n "$msk_on" ] && [ "$GS" = msk ] && printf "      - targets: ['127.0.0.1:18080']\n        labels: { server: msk }")
 $([ -n "$eu_on" ] && printf "      - targets: ['127.0.0.1:28080']\n        labels: { server: eu }")
       - targets: ['127.0.0.1:8080']
         labels: { server: nl }
