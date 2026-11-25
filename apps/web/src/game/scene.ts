@@ -1061,6 +1061,12 @@ export class GameScene extends Phaser.Scene {
     }
     const inRange = this.candidates(x, y).filter((e) => Math.hypot(e.x - mine.x, e.y - mine.y) <= this.cfg.attackRange);
     if (inRange.length) {
+      // стоп-кадр: бить нельзя (сервер тоже откажет) — не замахиваемся и не идём
+      if (w.isFrozen()) {
+        this.audio.play('denied');
+        this.showToast(this.t.game.denied.not_now, 900);
+        return;
+      }
       if (this.cfg.attackConfirm === 'hold') this.holdTarget = { eid: inRange[0].eid, at: performance.now() };
       else this.doAttack(inRange[0].eid);
       return;

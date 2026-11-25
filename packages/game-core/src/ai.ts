@@ -152,6 +152,8 @@ export class AiPlayer implements AiAgent {
         return;
       }
     }
+    // стоп-кадр: мир замер, удары не принимаются — стоит, как все
+    if (w.isFrozen()) return;
     if (e.act && t < e.actEnd) return;
     if (t < me.stunUntil) return;
 
