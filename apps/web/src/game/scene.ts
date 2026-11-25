@@ -2153,7 +2153,7 @@ export class GameScene extends Phaser.Scene {
     this.lastSanity = v;
     const stage = sanityStage(this.cfg, v);
     const now = performance.now();
-    // мозг на панели: тает сверху вниз и меняет цвет по стадиям, в «Кошмаре» дрожит; рядом — стрелка, куда идёт
+    // мозг: тает сверху вниз и меняет цвет по стадиям, в «Кошмаре» дрожит; рядом — стрелка, куда идёт
     if (now >= this.sanTrendAt) {
       this.sanTrend = v - this.sanPrev;
       this.sanPrev = v;
@@ -2161,8 +2161,10 @@ export class GameScene extends Phaser.Scene {
     }
     const g = this.candleG;
     const shake = stage >= 3 ? (Math.floor(now / 90) % 3) - 1 : 0;
-    const bx = 4 + shake;
-    const by = PANEL_Y + 7;
+    // вверху, на месте таймера: таймера в этой теме нет, а мозг — главное, на что смотреть
+    const bx = 3 + shake;
+    const by = 3;
+    this.hud.timer.setVisible(false);
     // уровень: от верха полушарий (строка 1) до низа (строка 11); выше уровня — серое, «опустевшее»
     const level = 1 + Math.round(11 * (1 - v / 100));
     const full = BRAIN_FULL[Math.min(2, stage)];
@@ -2175,7 +2177,7 @@ export class GameScene extends Phaser.Scene {
       }
     });
     // стрелка: растёт (костёр, цветок) — вверх, падает быстро — вниз
-    const ax = 25;
+    const ax = 19;
     const ay = by + 6;
     if (this.sanTrend > 0) {
       g.fillStyle(hexToInt(PAL.green));
