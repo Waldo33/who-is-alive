@@ -16,6 +16,9 @@ export interface Store {
   /** Рейтинг «Кастинга дня» в чате Telegram: записать результат игрока. */
   saveDailyScore(row: DailyScore): Promise<void>;
   dailyBoard(chat: string, day: number): Promise<DailyScore[]>;
+  /** Инлайн-карточка «Собрать комнату», отправленная в чат: метка приглашения → id сообщения (для фильма матча). */
+  saveTgCard(card: TgCard): Promise<void>;
+  tgCard(tag: string): Promise<TgCard | null>;
   ping(): Promise<boolean>;
   close(): Promise<void>;
 }
@@ -28,6 +31,17 @@ export interface DailyScore {
   tries: number;
   won: boolean;
 }
+
+export interface TgCard {
+  /** Метка приглашения (startapp=g_<метка>). */
+  tag: string;
+  /** inline_message_id из chosen_inline_result. */
+  inlineId: string;
+  lang: 'ru' | 'en';
+}
+
+/** Карточки старше недели не нужны: фильм приходит в конце матча, через минуты после отправки. */
+const TG_CARD_TTL = '7 days';
 
 /** Схема: только «расширяющие» изменения (новые таблицы и столбцы), старый код с ними работает. */
 const MIGRATIONS: string[] = [
@@ -53,6 +67,12 @@ const MIGRATIONS: string[] = [
      won boolean not null,
      created_at timestamptz not null default now(),
      primary key (chat, day, user_id)
+   )`,
+  `create table if not exists tg_inline_cards (
+     tag text primary key,
+     inline_id text not null,
+     lang text not null,
+     created_at timestamptz not null default now()
    )`,
 ];
 
@@ -98,6 +118,21 @@ export class PgStore implements Store {
     return res.rows.map((x) => ({ chat: x.chat, day: x.day, userId: Number(x.user_id), name: x.name, tries: x.tries, won: x.won }));
   }
 
+  async saveTgCard(c: TgCard): Promise<void> {
+    await this.pool.query(
+      `insert into tg_inline_cards (tag, inline_id, lang) values ($1, $2, $3) on conflict (tag) do update set inline_id = excluded.inline_id, lang = excluded.lang`,
+      [c.tag, c.inlineId, c.lang],
+    );
+    // уборка заодно: карточек немного (по одной на приглашение)
+    await this.pool.query(`delete from tg_inline_cards where created_at < now() - interval '${TG_CARD_TTL}'`);
+  }
+
+  async tgCard(tag: string): Promise<TgCard | null> {
+    const res = await this.pool.query(`select tag, inline_id, lang from tg_inline_cards where tag = $1 and created_at > now() - interval '${TG_CARD_TTL}'`, [tag]);
+    const x = res.rows[0];
+    return x ? { tag: x.tag, inlineId: x.inline_id, lang: x.lang === 'en' ? 'en' : 'ru' } : null;
+  }
+
   async ping(): Promise<boolean> {
     try {
       await this.pool.query('select 1');
@@ -131,6 +166,18 @@ export class MemoryStore implements Store {
       .filter((x) => x.chat === chat && x.day === day)
       .sort((a, b) => Number(b.won) - Number(a.won) || a.tries - b.tries)
       .slice(0, 20);
+  }
+
+  cards = new Map<string, TgCard>();
+
+  async saveTgCard(c: TgCard): Promise<void> {
+    this.cards.delete(c.tag);
+    this.cards.set(c.tag, { ...c });
+    if (this.cards.size > 5000) this.cards.delete(this.cards.keys().next().value!);
+  }
+
+  async tgCard(tag: string): Promise<TgCard | null> {
+    return this.cards.get(tag) ?? null;
   }
 
   async ping(): Promise<boolean> {

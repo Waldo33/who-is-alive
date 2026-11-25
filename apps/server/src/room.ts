@@ -59,8 +59,18 @@ export interface RoomOptions {
   film?: FilmService;
   /** Видео не выключено аварийно (video-switch.ts). */
   videoOn?: () => boolean;
+  /** Фильм матча готов (на сервере): комнате по приглашению из Telegram — отправить его в чат (server.ts). */
+  onFilm?: (room: Room, film: RoomFilm) => void;
   /** Комната переехала с соседнего экземпляра сервера (выкладка без обрыва): состав и настройки — оттуда. */
   restore?: RoomSnapshot;
+}
+
+/** Готовый фильм матча: ролик в хранилище клипов и итог для подписи. */
+export interface RoomFilm {
+  id: string;
+  /** Имена победителей; больше одного — ничья. */
+  winners: string[];
+  draw: boolean;
 }
 
 /**
@@ -713,9 +723,13 @@ export class Room {
     if (!film || !takes.length) return;
     const n = ++this.filmSeq;
     this.film = { n, state: 'making' };
+    const match = r.host.sim.outcome();
+    const winners = match.winners.map((pid) => r.players.find((p) => p.pid === pid)?.name ?? '').filter(Boolean);
     void film
-      .make({ takes, players: r.players.map((p) => ({ pid: p.pid, name: p.name, color: p.color })), match: r.host.sim.outcome(), lang: this.lang })
+      .make({ takes, players: r.players.map((p) => ({ pid: p.pid, name: p.name, color: p.color })), match, lang: this.lang })
       .then((done) => {
+        // в чат Telegram — даже если все уже ушли или начали реванш: фильм этого матча готов
+        if (done && this.invite) this.o.onFilm?.(this, { id: done.id, winners, draw: winners.length > 1 });
         if (this.closed || this.film?.n !== n) return;
         this.film = { n, state: done ? 'ready' : 'failed', done: done ?? undefined };
         // конец матча уже на экране — разослать сразу, иначе дождётся его (filmToAll из pump)

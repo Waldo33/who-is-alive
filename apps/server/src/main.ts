@@ -22,6 +22,7 @@ import { VideoSwitch } from './video-switch';
  *   MAX_ROOMS — потолок комнат под память машины (~1,5 МБ на комнату, считает setup.sh; иначе 2000),
  *   REGION (msk | nl), GEOIP_DB — база стран для замера доступности, EVENTS_UPSTREAM — куда пересылать аналитику.
  *   LOAD_KEY — ключ нагрузочного прогона (load-test.yml), секрет рождается на сервере,
+ *   BOT_INTERNAL — бот изнутри (http://127.0.0.1:9090): фильм матча комнаты из Telegram-карточки уходит ему,
  *   PEER_HTTP + PEER_WS_URL — соседний экземпляр (синий ↔ зелёный): к нему переезжают комнаты при выкладке
  *   (POST /internal/drain изнутри машины), после drain процесс завершается сам.
  */
@@ -109,6 +110,8 @@ const server = new GameServer({
   clips,
   film,
   video,
+  // фильм матча — в чат Telegram, откуда позвали (бот на другом сервере, туннель: http://127.0.0.1:9090)
+  botInternal: env.BOT_INTERNAL || undefined,
 });
 
 const port = await server.listen(Number(env.PORT) || 8080);

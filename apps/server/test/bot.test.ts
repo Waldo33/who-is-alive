@@ -118,6 +118,75 @@ describe('Telegram-бот', () => {
   });
 });
 
+describe('фильм матча в чат приглашения', () => {
+  const hdr = (bot: Bot) => ({ 'x-telegram-bot-api-secret-token': bot.hookSecret });
+  const film = { invite: 'AbCd1234xyz9', id: 'cd'.repeat(10), code: 'WXYZ', winners: ['Аня'], draw: false };
+
+  it('карточку «Собрать комнату» отправили — в конце матча она становится видео с итогом и «Ещё дубль»', async () => {
+    const { bot, calls, store } = makeBot();
+    // без отправленной карточки — молчим
+    expect((await bot.film(film)).body).toEqual({ sent: false });
+    await bot.handle('POST', '/hook', hdr(bot), { chosen_inline_result: { result_id: 'lobby-AbCd1234xyz9', inline_message_id: 'IM1', from: { language_code: 'ru' } } });
+    // чужие карточки и без inline_message_id — не запоминаем
+    await bot.handle('POST', '/hook', hdr(bot), { chosen_inline_result: { result_id: 'invite', inline_message_id: 'IM2', from: {} } });
+    await bot.handle('POST', '/hook', hdr(bot), { chosen_inline_result: { result_id: 'lobby-Zzzz1234xyz9', from: {} } });
+    expect([...store.cards.keys()]).toEqual(['AbCd1234xyz9']);
+    calls.length = 0;
+    expect((await bot.film(film)).body).toEqual({ sent: true });
+    const edit = calls.find((c) => c.method === 'editMessageMedia')!.body as {
+      inline_message_id: string;
+      media: { type: string; media: string; caption: string };
+      reply_markup: { inline_keyboard: { url: string; text: string }[][] };
+    };
+    expect(edit.inline_message_id).toBe('IM1');
+    expect(edit.media.type).toBe('video');
+    expect(edit.media.media).toBe(`https://msk.example/v1/clips/${'cd'.repeat(10)}.mp4`);
+    expect(edit.media.caption).toContain('WXYZ');
+    expect(edit.media.caption).toContain('Победа: Аня');
+    // та же метка — та же комната
+    expect(edit.reply_markup.inline_keyboard[0][0].url).toBe('https://t.me/be_nobody_bot/play?startapp=g_AbCd1234xyz9');
+    expect((await bot.film({ ...film, id: '../x' })).status).toBe(400);
+  });
+
+  it('Telegram не взял видео — карточка становится текстом со ссылкой на ролик', async () => {
+    const calls: string[] = [];
+    const fetchImpl = (async (url: string, init: { body: string }) => {
+      const method = url.split('/').pop()!;
+      calls.push(method + ' ' + init.body);
+      if (method === 'editMessageMedia') return new Response(JSON.stringify({ ok: false, description: 'Bad Request: there is no media in the message to edit' }));
+      return new Response(JSON.stringify({ ok: true, result: method === 'getMe' ? { username: 'be_nobody_bot' } : true }));
+    }) as unknown as typeof fetch;
+    const store = new MemoryStore();
+    const bot = new Bot({ token: TOKEN, apiBase: 'https://api.example', site: 'https://site.example', store, log: silentLogger, fetchImpl, clipBase: 'https://msk.example' });
+    await store.saveTgCard({ tag: 'AbCd1234xyz9', inlineId: 'IM1', lang: 'en' });
+    expect((await bot.film({ ...film, winners: ['A', 'B'], draw: true })).body).toEqual({ sent: true, text: true });
+    const text = calls.find((c) => c.startsWith('editMessageText'))!;
+    expect(text).toContain('Draw: A, B');
+    expect(text).toContain(`/v1/clips/${'cd'.repeat(10)}.mp4`);
+  });
+
+  it('игровой сервер отдаёт фильм боту изнутри (/internal/tg/film), снаружи этого входа нет', async () => {
+    const { GameServer } = await import('../src/server');
+    const { bot, calls } = makeBot();
+    const botSrv = new GameServer({ authSecret: 'test-secret-test-secret-test-secret!!', log: silentLogger, bot });
+    const port = await botSrv.listen(0, '127.0.0.1');
+    const game = new GameServer({ authSecret: 'test-secret-test-secret-test-secret!!', log: silentLogger, botInternal: `http://127.0.0.1:${port}` });
+    try {
+      await bot.handle('POST', '/hook', hdr(bot), { chosen_inline_result: { result_id: 'lobby-AbCd1234xyz9', inline_message_id: 'IM1', from: { language_code: 'ru' } } });
+      // снаружи (адрес клиента — не свой) — нет
+      const outside = await fetch(`http://127.0.0.1:${port}/internal/tg/film`, { method: 'POST', headers: { 'x-forwarded-for': '1.2.3.4' }, body: JSON.stringify(film) });
+      expect(outside.status).toBe(404);
+      const room = { code: 'WXYZ', invite: 'AbCd1234xyz9' };
+      (game as unknown as { filmToChat: (r: unknown, f: unknown) => void }).filmToChat(room, { id: film.id, winners: ['Аня'], draw: false });
+      for (let i = 0; i < 200 && !calls.some((c) => c.method === 'editMessageMedia'); i++) await new Promise((r) => setTimeout(r, 10));
+      expect(calls.find((c) => c.method === 'editMessageMedia')?.body.inline_message_id).toBe('IM1');
+    } finally {
+      await botSrv.close();
+      await game.close();
+    }
+  });
+});
+
 describe('клипы на игровом сервере (/v1/clips)', () => {
   it('загрузка потоком с токеном игрока, обложка, файл с attachment; без токена и больше 12 МБ — нет', async () => {
     const { GameServer } = await import('../src/server');
