@@ -369,35 +369,44 @@ const BOG: PropSet = {
   },
 };
 
-/** Цветок вместо звезды: белые лепестки, жёлтая серединка, светится (4 кадра 10×10, как звезда). */
+/**
+ * Цветок папоротника вместо звезды: раскрытый, вид чуть сверху, как кувшинка — острые лепестки вокруг
+ * светящейся сердцевины, по бокам листья плашмя; толстый тёмный контур, как у нарисованного от руки.
+ * Цветок мерцает: лепестки тлеют и разгораются, сердцевина — до белой вспышки (4 кадра 12×9; размер
+ * кадра сцена берёт из холста — четверть ширины).
+ */
+const BLOOM = [
+  '.....oo.....',
+  '..o.ocRo.o..',
+  '.ocoocrRooco',
+  '.ocrohyyhoRo',
+  'ocrrcohhoRRo',
+  'orcrrRoRrRRo',
+  '.orrRRoRRRo.',
+  'oLLooooooLLo',
+  '.oooLooLooo.',
+];
+const LEAVES = { o: PAL.ink, L: PAL.green };
+/** Мерцание: лепесток, тень, блик, кольцо и сердцевина — от тлеющего к вспышке и обратно. */
+const BLOOM_GLOW = [
+  { r: PAL.rust, R: PAL.umber, c: PAL.clay, h: PAL.amber, y: PAL.amber },
+  { r: PAL.red, R: PAL.wine, c: PAL.orange, h: PAL.amber, y: PAL.yellow },
+  { r: PAL.orange, R: PAL.rust, c: PAL.amber, h: PAL.yellow, y: PAL.white },
+  { r: PAL.red, R: PAL.wine, c: PAL.orange, h: PAL.amber, y: PAL.yellow },
+];
+
 function flower(): HTMLCanvasElement {
-  const { c, g } = canvas(40, 10);
-  const shape = [
-    '...oooo...',
-    '..owwwwo..',
-    '.owwyywwo.',
-    '.owyyyywo.',
-    '.owwyywwo.',
-    '..owwwwo..',
-    '...oogo...',
-    '..ogogo...',
-    '..oogo....',
-    '....oo....',
-  ];
-  for (let f = 0; f < 4; f++) {
-    grid(g, f * 10, 0, shape, { o: PAL.ink, w: f % 2 ? PAL.mist : PAL.white, y: f % 2 ? PAL.amber : PAL.yellow, g: PAL.green });
-    const sp = [[1, 1], [8, 2], [8, 6], [1, 5]][f];
-    px(g, f * 10 + sp[0], sp[1], PAL.cyan);
-  }
+  const { c, g } = canvas(48, 9);
+  for (let f = 0; f < 4; f++) grid(g, f * 12, 0, BLOOM, { ...LEAVES, ...BLOOM_GLOW[f] });
   return c;
 }
 
 /** Значок цветка в шапке (8×8 в ячейке 10×10): собранный и пустая ячейка. */
 function hudFlower(): HTMLCanvasElement {
   const { c, g } = canvas(20, 10);
-  const rows = ['..oooo..', '.owwwwo.', 'owwyywwo', 'owyyyywo', 'owwyywwo', '.owwwwo.', '..oogo..', '...oo...'];
-  grid(g, 1, 1, rows, { o: PAL.ink, w: PAL.white, y: PAL.yellow, g: PAL.green });
-  grid(g, 11, 1, rows.map((r) => r.replace(/[^.o]/g, 'n')), { o: PAL.ink, n: PAL.dusk });
+  const rows = ['...oo...', '.oocRoo.', 'ocohyhRo', 'orrohoRo', '.orRoRo.', 'oLooooLo', '.o....o.', '........'];
+  grid(g, 1, 2, rows, { ...LEAVES, ...BLOOM_GLOW[1] });
+  grid(g, 11, 2, rows.map((r) => r.replace(/[^.o]/g, 'n')), { o: PAL.ink, n: PAL.dusk });
   return c;
 }
 
@@ -512,6 +521,7 @@ const pack: ThemePack = {
   ],
   music: { flavor: { transpose: 2, bpm: 84, swing: 0.1, lead: 'triangle', bass: 'sine', arp: false, echo: true }, song },
   star: flower,
+  starStill: 240,
   hudStar: hudFlower,
   night: true,
 };

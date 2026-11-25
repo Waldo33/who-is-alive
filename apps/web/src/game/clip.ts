@@ -750,8 +750,14 @@ export class ClipPlayerScene {
       holders.set(k, by ? (pos.get(by.eid) ?? { x: Math.round(by.x), y: Math.round(by.y) }) : null);
     }
     for (const st of w.stars.values()) {
-      const bob = Math.floor((now + st.id * 300) / 300) % 2;
-      list.push({ y: st.y - 1, draw: () => frame(g, a.star, 10, 10, Math.floor(now / 140) % 4, st.x - 5, st.y - 8 - bob) });
+      // цветок на земле (starStill) не подпрыгивает и мерцает медленнее, как в игре
+      const still = themePack(this.inp.rec.theme).starStill;
+      const bob = still ? 0 : Math.floor((now + st.id * 300) / 300) % 2;
+      const fr = Math.floor((now + (still ? st.id * 170 : 0)) / (still ?? 140)) % 4;
+      // кадр — четверть холста (цветок «Купальской ночи» крупнее звезды), ножка — на точке звезды
+      const sw = a.star.width / 4;
+      const sh = a.star.height;
+      list.push({ y: st.y - 1, draw: () => frame(g, a.star, sw, sh, fr, st.x - Math.round(sw / 2), st.y - Math.round(sh * 0.8) - bob) });
     }
     // Леший в своём стоп-кадре: стоит в толпе по глубине (кто ниже — перед ним)
     const giant = this.giantAt(w, t, now);

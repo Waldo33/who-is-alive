@@ -2044,7 +2044,9 @@ export class GameScene extends Phaser.Scene {
     const pack = themePack(th);
     if (!pack.star || !isThemeLoaded(th)) return 'star';
     const key = 'star_t' + th;
-    this.addSheet(key, pack.star(), 10, 10);
+    // кадр — четверть холста: у темы он может быть крупнее общей звезды (цветок «Купальской ночи» 14×12)
+    const sheet = pack.star();
+    this.addSheet(key, sheet, sheet.width / 4, sheet.height);
     return key;
   }
 
@@ -2939,10 +2941,13 @@ export class GameScene extends Phaser.Scene {
         spr = this.add.image(s.x, AY + s.y, this.starKey(), 0).setOrigin(0.5, 0.8);
         this.starSprites.set(s.id, spr);
       }
-      const bob = Math.floor((performance.now() + s.id * 300) / 300) % 2;
+      const pack = themePack(this.sim.theme);
+      // цветок на земле (starStill) не подпрыгивает и мерцает медленнее; сдвиг по id — мерцают вразнобой
+      const bob = pack.starStill ? 0 : Math.floor((performance.now() + s.id * 300) / 300) % 2;
+      const fr = Math.floor((performance.now() + (pack.starStill ? s.id * 170 : 0)) / (pack.starStill ?? 140)) % 4;
       // ночью цветы светятся: поверх вуали ночи, их видно издалека
-      const glow = themePack(this.sim.theme).night ? 942 : AY + s.y - 1;
-      spr.setPosition(s.x, AY + s.y - bob).setFrame(Math.floor(performance.now() / 140) % 4).setDepth(glow).setVisible(true);
+      const glow = pack.night ? 942 : AY + s.y - 1;
+      spr.setPosition(s.x, AY + s.y - bob).setFrame(fr).setDepth(glow).setVisible(true);
     }
     for (const [id, spr] of this.starSprites) {
       if (!seen.has(id)) {
