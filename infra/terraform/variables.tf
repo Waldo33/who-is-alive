@@ -12,3 +12,9 @@ variable "ssh_key_ids" {
   type        = list(number)
   default     = []
 }
+
+variable "existing_buckets" {
+  description = "Бакеты S3, которые уже есть в Timeweb: имя → id (storage.tf подхватывает massovka-media import'ом)"
+  type        = map(string)
+  default     = {}
+}
