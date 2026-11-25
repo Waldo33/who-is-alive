@@ -25,6 +25,8 @@ import {
   fireLevel,
   LAG_GRACE_MS,
   bountyLeader,
+  canFight,
+  fightAttacks,
 } from '@kto/game-core';
 import type { AwardId, ClientSession, CrowdKind, Dict, Entity, GameConfig, Lang, Moment, Notice, RoundSummary, ThemeText, World, WorldEvent } from '@kto/game-core';
 import { resultCardFile } from './card';
@@ -739,6 +741,8 @@ export class GameScene extends Phaser.Scene {
     for (let i = 0; i < this.cfg.attacksPerRound; i++) {
       this.hudIcons.push(this.add.image(40 + i * 11, 7, 'hud', 0).setOrigin(0, 0).setDepth(1100));
     }
+    // счётчик ударов темы-драки (в офисе — до 10 ударов на подвал): рядом с первым кулаком
+    this.hud.atkNum = this.txt(52, 7, '0', 'mist').setDepth(1100).setVisible(false);
     // свои звёзды — ячейками до цели дубля: цель «3 звезды» видна без слов
     for (let i = 0; i < this.cfg.starsToWin; i++) {
       this.hudStars.push(this.add.image(74 + i * 9, 7, 'hud', 3).setOrigin(0, 0).setDepth(1100));
@@ -1042,6 +1046,13 @@ export class GameScene extends Phaser.Scene {
   }
 
   private doAttack(eid: number): void {
+    // офис: до подвала не дерутся — даже не замахиваемся (сервер всё равно откажет)
+    if (!canFight(this.sim.theme, this.sim.world.twist)) {
+      this.audio.play('denied');
+      haptic('error');
+      this.showToast(this.t.game.noFight, 1000);
+      return;
+    }
     this.lastAttackAt = this.sim.world.time;
     this.lastAttackEid = eid;
     // мгновенный отклик: замах, свист и искры у цели. Итог (поф или оглушение) — от хоста
@@ -3537,7 +3548,17 @@ export class GameScene extends Phaser.Scene {
     // кнопка клипа выбывшего стоит в шапке на месте ударов и звёзд — их тогда прячем
     const clip = this.buttons.find((b) => b.id === 'deathclip');
     const mine = !(clip && clip.visible() && clip.y < AY);
-    this.hudIcons.forEach((ic, i) => ic.setFrame(me && i < me.attacksLeft ? 0 : 1).setVisible(mine));
+    // тема-драка (офис → подвал): ударов до 10 — один кулак и число; в офисе кулак погашен
+    const fight = fightAttacks(sim.theme) > 0;
+    if (fight) {
+      const n = me?.attacksLeft ?? 0;
+      const lit = n > 0 && sim.world.twist;
+      this.hudIcons.forEach((ic, i) => ic.setFrame(lit ? 0 : 1).setVisible(mine && i === 0));
+      this.hud.atkNum?.setText(String(n)).setFont(lit ? 'px-sand' : 'px-mist').setVisible(mine);
+    } else {
+      this.hudIcons.forEach((ic, i) => ic.setFrame(me && i < me.attacksLeft ? 0 : 1).setVisible(mine));
+      this.hud.atkNum?.setVisible(false);
+    }
     const hk = this.hudStarKey();
     this.hudStars.forEach((ic, i) => (hk ? ic.setTexture(hk, me && i < me.stars ? 0 : 1) : ic.setTexture('hud', me && i < me.stars ? 2 : 3)).setVisible(mine));
     this.renderSanity();

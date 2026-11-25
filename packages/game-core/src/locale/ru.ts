@@ -69,7 +69,7 @@ export const ru = {
   themeText: {
     office: {
       intro: 'Правило 1: не светись',
-      twistOn: 'Свет мигнул… подвал!',
+      twistOn: 'Подвал! Можно драться',
       twistOff: 'Обратно в офис',
       crowd: { freeze: 'Шеф идёт!', jump: 'Кофе-брейк!', dance: 'Перекур!' },
       twistCrowd: { freeze: 'В стойку!', jump: 'Скакалка!', dance: 'Бой с тенью!' },
@@ -166,6 +166,8 @@ export const ru = {
     spottedMe: 'Ты в прожекторе!',
     clapHint: 'Хлопушка — справа!',
     clapDone: 'Жест загадан!',
+    /** Офис: бить нельзя до подвала (themes.ts › fight). */
+    noFight: 'В офисе не дерутся',
     cutByCrowd: 'Мимо жеста!',
     modTitle: 'Условия съёмки:',
     withCrowd: 'Как все!',

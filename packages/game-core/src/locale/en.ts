@@ -28,7 +28,7 @@ export const en: Dict = {
   themeText: {
     office: {
       intro: 'Rule 1: blend in',
-      twistOn: 'Lights out. Basement!',
+      twistOn: 'Basement! Fists up!',
       twistOff: 'Back to the office',
       crowd: { freeze: 'Boss is coming!', jump: 'Coffee break!', dance: 'Smoke break!' },
       twistCrowd: { freeze: 'Guard up!', jump: 'Jump rope!', dance: 'Shadowbox!' },
@@ -122,6 +122,7 @@ export const en: Dict = {
     spottedMe: 'Spotlight on you!',
     clapHint: 'Clapper: bottom right',
     clapDone: 'Your move is set!',
+    noFight: 'No fights at work',
     cutByCrowd: 'Wrong move!',
     modTitle: 'Shooting rules:',
     withCrowd: 'Blended in!',

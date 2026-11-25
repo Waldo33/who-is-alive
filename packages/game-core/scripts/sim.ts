@@ -2,7 +2,7 @@
  * Безголовая симуляция: N раундов с ботами и ИИ-игроками, проверка инвариантов.
  * Запуск: pnpm sim -- --rounds 1000
  */
-import { AiPlayer, MatchSim, ROUND_MODS, hasSanity, makeConfig, rectContains } from '../src/index';
+import { AiPlayer, MatchSim, ROUND_MODS, fightAttacks, hasSanity, makeConfig, rectContains } from '../src/index';
 import type { WorldEvent } from '../src/index';
 
 const argi = process.argv.indexOf('--rounds');
@@ -75,7 +75,7 @@ while (rounds < target) {
       for (const p of sim.pr) {
         tally.kills += p.kills;
         tally.botHits += p.botHits;
-        check(p.attacksLeft >= 0 && p.attacksLeft <= sim.cfg.attacksPerRound, 'лимит ударов нарушен');
+        check(p.attacksLeft >= 0 && p.attacksLeft <= (fightAttacks(sim.theme) || sim.cfg.attacksPerRound), 'лимит ударов нарушен');
       }
       if (hasSanity(sim.theme)) {
         for (const p of sim.pr) {

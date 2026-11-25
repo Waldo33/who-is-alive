@@ -2,6 +2,7 @@ import type { AiAgent, MatchSim } from './match';
 import type { CrowdKind, WorldEvent } from './events';
 import { Rng } from './rng';
 import { aiLevel } from './config';
+import { canFight } from './themes';
 
 export interface AiPersona {
   /** Шанс опоздать на «Море волнуется». */
@@ -140,7 +141,9 @@ export class AiPlayer implements AiAgent {
     const lv = aiLevel(cfg);
     const need = cfg.aiSuspectMin[lv];
     const warm = t < sim.playStart + cfg.aiWarmupSec[lv] * 1000;
-    if (me.attacksLeft > 0 && !warm) {
+    // в офисе не дерутся — только в подвале (themes.ts › fight)
+    const armed = me.attacksLeft > 0 && canFight(sim.theme, w.twist);
+    if (armed && !warm) {
       const sus = this.topSuspect(sim, cfg.attackRange - 1);
       if (sus !== null && (this.suspicion.get(sus) ?? 0) >= need) {
         const [r0, r1] = cfg.aiReactMs[lv];
@@ -174,7 +177,7 @@ export class AiPlayer implements AiAgent {
 
     // выбрать цель: подозреваемый, звезда или прогулка «как бот»
     const hunt = this.topSuspect(sim, 70);
-    if (hunt !== null && !warm && me.attacksLeft > 0 && (this.suspicion.get(hunt) ?? 0) >= need && this.rng.chance(this.persona.aggression)) {
+    if (hunt !== null && !warm && armed && (this.suspicion.get(hunt) ?? 0) >= need && this.rng.chance(this.persona.aggression)) {
       const h = w.get(hunt)!;
       this.go(sim, h.x + this.rng.range(-5, 5), h.y + this.rng.range(-4, 4));
       return;
