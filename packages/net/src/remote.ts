@@ -1,4 +1,4 @@
-import { CROWD_ACT, NavGrid, TICK_MS, World, clampToRect, crowdActDur, emoteDur, ghostClapOpenView, makeConfig, planPath, plazaArena, twistEmote } from '@kto/game-core';
+import { CROWD_ACT, NavGrid, TICK_MS, World, clampToRect, crowdHoldDur, emoteDur, ghostClapOpenView, makeConfig, planPath, plazaArena, twistEmote } from '@kto/game-core';
 import type {
   ArenaDef,
   AwardCard,
@@ -568,6 +568,9 @@ export class RemoteSession implements ClientSession {
       accused: this.phase === 'play' && this.accusePred !== null ? (this.accusePred < 0 ? null : this.accusePred) : m.accused,
       clapsLeft: m.clapsLeft ?? 0,
       clapAt: m.clapAt ?? 0,
+      sanity: m.sanity ?? this.cfg.sanityStart,
+      sins: m.sins ?? 0,
+      kiki: (m.km ?? []).map(([id, x, y, w]) => ({ id, x, y, warn: w === 1 })),
     };
   }
 
@@ -637,7 +640,8 @@ export class RemoteSession implements ClientSession {
         this.emotePred = { kind, until: this.clock() + 3000 };
         this.lastPredClock = this.clock();
         out = { k: 'emote', kind };
-      } else if (it.k === 'attack') {
+      } else if (it.k === 'attack' && it.eid >= 0) {
+        // удар по своей кикиморе (id < 0) ударов дубля не тратит
         const left = me!.attacksLeft - this.pendingAtk.length;
         if (left > 0) this.pendingAtk.push({ base: me!.attacksLeft, until: this.clock() + OPTIMISTIC_MS });
       } else if (it.k === 'crowd') {
@@ -647,7 +651,7 @@ export class RemoteSession implements ClientSession {
           const [a, b] = this.cfg.botCrowdReactMs;
           const at = this.world.time < c.resumeAt ? c.resumeAt + Math.round((a + Math.random() * (b - a)) / TICK_MS) * TICK_MS : this.stopAt(e);
           this.crowdPred = { warnAt: c.warnAt, kind: it.kind, act: true };
-          this.pushLocal({ t: 'act', eid: me!.eid, kind: CROWD_ACT[it.kind], dur: crowdActDur(this.cfg, it.kind), at });
+          this.pushLocal({ t: 'act', eid: me!.eid, kind: CROWD_ACT[it.kind], dur: crowdHoldDur(this.cfg, it.kind, at, c.watchUntil), at });
           // хост начнёт жест в тот же момент (свой персонаж в стоп-кадре поставлен вровень с хостом)
           if (this.world.time < c.resumeAt) out = { ...out, at } as Intent;
         }

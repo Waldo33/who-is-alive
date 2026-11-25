@@ -1,0 +1,7 @@
+# «Фильм матча» монтирует игровой сервер (apps/server/src/film.ts). Не поставился — фильм смонтирует телефон
+- name: ffmpeg
+  ansible.builtin.apt:
+    name: ffmpeg
+    install_recommends: false
+    update_cache: true
+    cache_valid_time: 86400

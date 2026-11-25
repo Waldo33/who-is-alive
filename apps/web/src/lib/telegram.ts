@@ -210,7 +210,7 @@ export function telegramLang(): 'ru' | 'en' | null {
 
 /**
  * Параметр запуска (?startapp=…): `r_КОД` — комната, `play` — сразу матч с ИИ, `friends` — новая
- * комната, `daily` — загадка дня. Telegram передаёт его
+ * комната, `daily` — загадка дня, `dev[_tN][_sN]` — песочница с дев-панелью (тема N, ускорение N). Telegram передаёт его
  * и в адресе (`tgWebAppStartParam`) — так он известен сразу, ещё до загрузки SDK.
  */
 export function telegramStart(): string | null {
@@ -235,6 +235,10 @@ export function telegramStartTarget(): string | null {
   const room = /^r_([A-Z]{4})$/.exec(start);
   if (room) return `/r/${room[1]}?src=tg`;
   if (start === 'play') return '/sandbox?go&src=tg';
+  // дев-режим песочницы для владельца (в Telegram адрес не поправить руками): dev, dev_t7, dev_t7_s8 —
+  // тема и ускорение, как ?dev&theme=7&speed=8
+  const dev = /^dev(?:_t(\d{1,2}))?(?:_s(\d{1,2}))?$/.exec(start);
+  if (dev) return `/sandbox?dev${dev[1] ? `&theme=${dev[1]}` : ''}${dev[2] ? `&speed=${dev[2]}` : ''}&src=tg`;
   if (start === 'friends') return '/?create=1&src=tg';
   return start === 'daily' && featureOn('casting') ? '/daily?src=tg' : null;
 }

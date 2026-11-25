@@ -21,6 +21,8 @@ on:
       - 'packages/net/**'
       - 'packages/game-core/**'
       - 'infra/game/**'
+      # настройка машины — Ansible, его гоняет выкладка перед setup.sh
+      - 'infra/ansible/**'
       # «Фильм матча» монтирует сервер теми же сценами, что телефон (apps/server/src/film-render.ts)
       - 'apps/web/src/game/**'
       - '.github/workflows/game-deploy.yml'
@@ -258,7 +260,7 @@ jobs:
             mv /tmp/package/dbip-country.mmdb deploy/geoip.mmdb
             echo "$gv" > deploy/geoip.version
           else echo "GeoIP ${gv:-?} уже стоит"; fi
-          cp apps/server/dist/server.mjs apps/server/dist/server.mjs.map apps/server/film.tar.gz infra/game/setup.sh infra/game/caddy.sh infra/game/watch.sh infra/game/observe.sh deploy/
+          cp apps/server/dist/server.mjs apps/server/dist/server.mjs.map apps/server/film.tar.gz infra/game/setup.sh infra/game/observe.sh deploy/
           ls -la deploy
 
       - name: Привезти наблюдение (если нужно)
@@ -330,6 +332,19 @@ jobs:
             echo "старая схема — проверка «через выкладку» начнётся со следующей выкладки"
           fi
 
+      - name: Настройка машины (Ansible)
+        # infra/ansible/site.yml только для этого сервера: система, Postgres, туннели, сторож, game.env,
+        # службы. Перезапуска игры здесь нет: поменялась настройка — роль оставляет метку, и setup.sh
+        # ниже поднимает новый экземпляр синим/зелёным, без обрыва матчей
+        working-directory: infra/ansible
+        env:
+          ALERTS_BOT_TOKEN: ${{ matrix.role == 'infra' && secrets.ALERTS_BOT_TOKEN || '' }}
+          NAME: ${{ matrix.name }}
+        run: |
+          /tmp/py/bin/pip install -q ansible-core==2.17.7
+          /tmp/py/bin/python inventory.py
+          /tmp/py/bin/ansible-playbook site.yml --limit "$NAME" --diff
+
       - name: Настроить и выкатить
         env:
           IP: ${{ steps.srv.outputs.ip }}
@@ -340,7 +355,6 @@ jobs:
           EU_IP: ${{ steps.eu.outputs.ip }}
           SITE: ${{ matrix.site }}
           TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          ALERTS_TOKEN: ${{ secrets.ALERTS_BOT_TOKEN }}
           GRAFANA_PASSWORD: ${{ secrets.GRAFANA_PASSWORD }}
         run: |
           ssh $SSH_OPTS root@$IP 'rm -rf /tmp/deploy && mkdir -p /tmp/deploy'
@@ -352,10 +366,7 @@ jobs:
           # получают одно и то же, отдельного секрета не нужно
           ( umask 077; python3 -c 'import hmac,hashlib,os;print("PGRO_PASSWORD="+hmac.new(os.environ["TWC_TOKEN"].encode(),b"massovka-pgro-v1",hashlib.sha256).hexdigest()[:40])' > deploy/pgro.env )
           if [ "$ROLE" = infra ] && [ -n "$GRAFANA_PASSWORD" ]; then ( umask 077; printf '%s' "$GRAFANA_PASSWORD" > deploy/grafana_admin ); fi
-          # бот тревог — только сторожу в Нидерландах
-          if [ "$ROLE" = infra ] && [ -n "$ALERTS_TOKEN" ]; then
-            ( umask 077; printf 'ALERTS_BOT_TOKEN=%s\nALERTS_CHAT=%s\n' "$ALERTS_TOKEN" "$ALERTS_CHAT" > deploy/alerts.env )
-          fi
+          # бот тревог (alerts.env) кладёт Ansible — шагом выше
           # открытый ключ туннеля сервера бота — Москве (вход только для проброса порта)
           if [ "$ROLE" = game ] && [ -n "$BOT_IP" ]; then
             ssh $SSH_OPTS root@$BOT_IP 'cat /etc/massovka/tunnel_ed25519.pub 2>/dev/null' > deploy/tunnel.pub || true
@@ -378,7 +389,7 @@ jobs:
             # копии базы и сторож — тоже туда
             vars="HOST=$HOST BOT_SITE=https://benobody.app TUNNEL_TO=$MOSCOW_IP TUNNEL_EU_TO=$EU_IP GAME_SITE=eu EVENTS_TO=28080"
           fi
-          ssh $SSH_OPTS root@$IP "ROLE=$ROLE $vars SHA=${GITHUB_SHA::12} bash /tmp/deploy/setup.sh"
+          ssh $SSH_OPTS root@$IP "ANSIBLE=1 ROLE=$ROLE $vars SHA=${GITHUB_SHA::12} bash /tmp/deploy/setup.sh"
 
       - name: HTTPS снаружи
         env:

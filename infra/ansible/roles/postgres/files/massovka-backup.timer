@@ -1,0 +1,7 @@
+[Unit]
+Description=Массовка: копия базы раз в сутки
+[Timer]
+OnCalendar=*-*-* 03:17:00
+Persistent=true
+[Install]
+WantedBy=timers.target

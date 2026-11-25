@@ -24,7 +24,8 @@ interface BotState {
   moodAt: number;
 }
 
-export type QuirkKind = 'zigzag' | 'stalker' | 'starRun' | 'emoteSpam' | 'late';
+/** panic — «перепуг» (тема с рассудком): вздрогнул, убегает от пустоты, иногда отмахивается. */
+export type QuirkKind = 'zigzag' | 'stalker' | 'starRun' | 'emoteSpam' | 'late' | 'panic';
 
 interface Quirk {
   kind: QuirkKind;
@@ -38,6 +39,12 @@ export const CROWD_ACT: Record<CrowdKind, ActKind> = { freeze: 'freeze', jump: '
 
 export function crowdActDur(cfg: GameConfig, kind: CrowdKind): number {
   return (kind === 'freeze' ? cfg.freezeSec : kind === 'jump' ? cfg.jumpSec : cfg.danceSec) * 1000;
+}
+
+/** Поза по команде, начатая в at: пока смотрит Леший (`watchUntil`), замершие стоят до его приговора. */
+export function crowdHoldDur(cfg: GameConfig, kind: CrowdKind, at: number, watchUntil?: number): number {
+  const d = crowdActDur(cfg, kind);
+  return kind === 'freeze' && watchUntil !== undefined ? Math.max(d, watchUntil - at) : d;
 }
 
 /** Разброс реакции толпы — одинаковый для ботов и вовремя нажавших игроков. */
@@ -64,6 +71,12 @@ export class BotBrain {
     /** Изнанка темы: какой эмоцией и насколько чаще толпа «живёт» в ней. */
     private twist?: TwistRules,
   ) {}
+
+  /**
+   * «Перепуг» (тема с рассудком): эпизодов в минуту на бота, сейчас. Ставит MatchSim — к ночи чаще.
+   * Игрока с кикиморой видно со стороны как человечка, который шарахается от пустоты; боты делают так же.
+   */
+  panicPerMin = 0;
 
   /** Для отладки и тестов: сколько эпизодов чудачеств было. */
   quirkLog: { eid: number; kind: QuirkKind; at: number }[] = [];
@@ -163,7 +176,8 @@ export class BotBrain {
       if (s.crowdKind && now >= s.crowdReactAt) {
         const kind = s.crowdKind;
         s.crowdKind = null;
-        const dur = crowdActDur(this.cfg, kind);
+        // при Лешем толпа стоит, пока он не уйдёт (иначе стоять — выдать себя)
+        const dur = crowdHoldDur(this.cfg, kind, now, this.world.crowd?.watchUntil);
         this.emit({ t: 'act', eid: s.eid, kind: CROWD_ACT[kind], dur, at: now });
         s.walking = false;
         s.pauseUntil = now + dur + this.rng.range(100, 700);
@@ -200,6 +214,7 @@ export class BotBrain {
         s.pauseUntil = now + 250;
         continue;
       }
+      if (this.panicPerMin > 0 && s.quirky && !s.quirk && !zoneNow && this.rng.chance((this.panicPerMin * 50) / 60000)) this.startPanic(s, now);
       if (s.quirky && !s.quirk && !zoneNow && this.rng.chance((this.cfg.botQuirkPerMin * 50) / 60000)) this.startQuirk(s, now);
       if (s.quirk) {
         if (this.runQuirk(s, now, zoneFinal ?? zoneNow)) continue;
@@ -257,6 +272,16 @@ export class BotBrain {
     s.emoteAt = 0;
   }
 
+  private startPanic(s: BotState, now: number): void {
+    this.quirkLog.push({ eid: s.eid, kind: 'panic', at: now });
+    // «откуда» пришёл страх — случайное направление; убегает в противоположную сторону
+    const ang = this.rng.range(0, Math.PI * 2);
+    this.emit({ t: 'act', eid: s.eid, kind: 'startle', dur: 500, dx: Math.cos(ang) * 3, dy: Math.sin(ang) * 3, at: now });
+    s.quirk = { kind: 'panic', until: now + this.rng.range(3000, 5000), nextAt: now + 450, target: Math.round(ang * 1000), left: this.rng.int(2, 3) };
+    s.turnAt = 0;
+    s.emoteAt = 0;
+  }
+
   /** Шаг чудачества. true — бот занят чудачеством и обычная логика пропускается. */
   private runQuirk(s: BotState, now: number, zone: Rect | null): boolean {
     const q = s.quirk!;
@@ -308,6 +333,20 @@ export class BotBrain {
         const kind = this.world.twist && this.twist?.emote ? this.twist.emote : this.rng.pick<ActKind>(['wave', 'dance', 'jump']);
         this.emit({ t: 'act', eid: s.eid, kind, dur: emoteDur(kind), at: now });
         q.nextAt = now + emoteDur(kind) + this.rng.range(100, 300);
+        break;
+      }
+      case 'panic': {
+        if (q.left <= 0) {
+          // иногда отмахивается от того, чего нет, — как игрок, бьющий свою кикимору
+          if (this.rng.chance(0.4)) this.emit({ t: 'act', eid: s.eid, kind: 'jab', dur: emoteDur('jab'), at: now });
+          q.until = now;
+          break;
+        }
+        q.left--;
+        const ang = q.target / 1000 + this.rng.range(-0.6, 0.6);
+        const r = this.rng.range(18, 30);
+        this.walkTo(s, e.x + Math.cos(ang) * r, e.y + Math.sin(ang) * r, zone, now, false);
+        q.nextAt = now + this.rng.range(700, 1100);
         break;
       }
       default:

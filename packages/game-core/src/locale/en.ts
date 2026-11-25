@@ -24,7 +24,7 @@ export const en: Dict = {
     noun: ['Pixel', 'Toaster', 'Pigeon', 'Raccoon', 'Penguin', 'Gizmo', 'Noodle', 'Sprite', 'Bagel', 'Cactus'],
   },
   colors: ['Red', 'Blue', 'Yellow', 'Green'],
-  themes: ['Caps', 'Chefs', 'Penguins', 'Astronauts', 'Clerks', 'Tourists', 'Office Party'],
+  themes: ['Caps', 'Chefs', 'Penguins', 'Astronauts', 'Clerks', 'Tourists', 'Office Party', 'Foragers'],
   themeText: {
     office: {
       intro: 'Rule 1: blend in',
@@ -46,6 +46,18 @@ export const en: Dict = {
       twistOff: 'Lights back on',
       crowd: { freeze: 'Cheers!', jump: 'Gift!', dance: 'Conga!' },
       twistCrowd: { freeze: 'Make a wish!', jump: 'Fireworks!', dance: 'Sparklers!' },
+    },
+    kupala: {
+      intro: 'Be the last alive!',
+      hint: 'Flowers heal sanity',
+      ends: { last: 'Last one alive', dawn: 'Dawn', none: 'The fog took them all' },
+      crowd: { freeze: 'Hush! A rustle!', jump: 'Torch!', dance: 'Round dance!' },
+      sanity: ['Clear head', 'Hear whispers?', 'The fog thickens', 'They are coming…'],
+      sanityLost: 'Lost in the fog',
+      leshyTook: 'The Leshy took you',
+      sinned: 'The Leshy marked you',
+      doomed: 'The Leshy will come',
+      triumph: { you: 'Fern flower is yours', other: 'Fern flower found:', sub: 'Longest in the night' },
     },
   } as Partial<Record<ThemeId, ThemeText>>,
   start: {
@@ -133,6 +145,8 @@ export const en: Dict = {
     next: 'Take {n} »',
     nextIn: 'Next in {n}',
     nextTake: 'Take {n} · {s}s',
+    toFinal: 'Finale »',
+    toFinalIn: 'Finale · {s}s',
     toWin: 'to {n}',
     spectator: 'Spectating',
     spectatorLive: 'Match in progress',

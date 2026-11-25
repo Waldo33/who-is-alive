@@ -5,15 +5,15 @@
 export type Sfx =
   | 'step' | 'hitPlayer' | 'hitBot' | 'poof' | 'starTake' | 'starSpawn' | 'crowd' | 'tick'
   | 'click' | 'ready' | 'accuseRight' | 'accuseWrong' | 'fanfare' | 'sad' | 'hedge' | 'pigeon' | 'drum' | 'denied' | 'count' | 'swing' | 'flicker' | 'dusk' | 'siren' | 'whack' | 'clang' | 'stab' | 'knockedOut'
-  | 'hitOther' | 'cut' | 'clap' | 'logo' | 'wrap' | 'unmask' | 'rewind';
+  | 'hitOther' | 'cut' | 'clap' | 'logo' | 'wrap' | 'unmask' | 'rewind' | 'leshyStep' | 'leshyBreath' | 'leshyStinger' | 'leshyTake' | 'leshyCall' | 'snap' | 'whisper' | 'scream' | 'fern';
 
 /**
  * Приоритет эффекта (звуковой гайд, план звука): P1 — меняет решение игрока, обязан пробиться
  * через музыку (на динамике телефона −30…−33 дБ, музыку глушит на 9 дБ на 0,6 с); P2 — событие
  * на поле (−35…−39 дБ, глушит на 4 дБ); остальное — фон. Уровни проверяет `pnpm --filter web sound-check`.
  */
-export const P1: ReadonlySet<Sfx> = new Set<Sfx>(['hitPlayer', 'hitBot', 'starTake', 'crowd', 'ready', 'knockedOut', 'cut', 'drum', 'accuseRight', 'accuseWrong', 'unmask', 'wrap', 'logo']);
-export const P2: ReadonlySet<Sfx> = new Set<Sfx>(['hitOther', 'whack', 'clang', 'stab', 'starSpawn', 'flicker', 'dusk']);
+export const P1: ReadonlySet<Sfx> = new Set<Sfx>(['hitPlayer', 'hitBot', 'starTake', 'crowd', 'ready', 'knockedOut', 'cut', 'drum', 'accuseRight', 'accuseWrong', 'unmask', 'wrap', 'logo', 'leshyStinger', 'leshyTake', 'scream', 'fern']);
+export const P2: ReadonlySet<Sfx> = new Set<Sfx>(['hitOther', 'whack', 'clang', 'stab', 'starSpawn', 'flicker', 'dusk', 'leshyBreath']);
 
 /**
  * Частые звуки: каждый раз чуть другие (±30 центов, ±1,5 дБ), чтобы за три матча не стать
@@ -22,7 +22,7 @@ export const P2: ReadonlySet<Sfx> = new Set<Sfx>(['hitOther', 'whack', 'clang', 
 const VARY: ReadonlySet<Sfx> = new Set<Sfx>(['step', 'hitPlayer', 'hitOther', 'hitBot', 'poof', 'starSpawn', 'tick', 'click', 'hedge', 'pigeon', 'whack', 'clang', 'stab', 'swing', 'unmask']);
 
 /** Детский режим: без оружия, звона в ушах и пилы — удары «поф» и бумажный хлопок. */
-const KIDS: Partial<Record<Sfx, Sfx>> = { whack: 'hitOther', clang: 'hitOther', stab: 'hitOther', knockedOut: 'cut', siren: 'starSpawn' };
+const KIDS: Partial<Record<Sfx, Sfx>> = { whack: 'hitOther', clang: 'hitOther', stab: 'hitOther', knockedOut: 'cut', siren: 'starSpawn', scream: 'cut' };
 
 export class Synth {
   /** Сдвиг высоты и громкости текущего эффекта (вариации). */
@@ -32,10 +32,15 @@ export class Synth {
   private base = 0;
   /** Детский режим (настройка комнаты): мягкие тембры. */
   kids = false;
+  /** Куда сейчас идут слои эффекта: обычно на выход, у визга — через перегруз (scream). */
+  private route: AudioNode | null = null;
+  private get out(): AudioNode {
+    return this.route ?? this.dest;
+  }
 
   constructor(
     private readonly ctx: BaseAudioContext,
-    private readonly out: AudioNode,
+    private readonly dest: AudioNode,
     private readonly noiseBuf: AudioBuffer,
   ) {}
 
@@ -126,6 +131,158 @@ export class Synth {
         this.tone('square', 466, 456, 0.3, 0.1, 0.08);
         break;
       case 'poof': this.noise(0.3, 0.3, 2400); break;
+      // Леший идёт («Купальская ночь»): шаг великана — глухой удар, хруст сучьев сверху, гул земли следом.
+      // step 0–10 — насколько близко: далёкий шаг тихий и тупой, близкий — с треском. Слышат все одинаково.
+      case 'leshyStep': {
+        const k = Math.min(1, (step + 1) / 11);
+        const v = 0.12 + 0.88 * k * k;
+        this.tone('square', 150, 48, 0.32, 0.36 * v);
+        this.tone('square', 420, 160, 0.2, 0.22 * v);
+        this.noise(0.28, 1 * v, 720);
+        this.noise(0.16, 1 * v, 1150, 0.005);
+        this.noise(0.06, 0.7 * v * (0.3 + k), 1900, 0.01);
+        if (k > 0.6) this.tone('triangle', 980, 720, 0.09, 0.14 * v, 0.05);
+        // земля гудит ещё миг
+        this.noise(0.5, 0.3 * v, 520, 0.12);
+        break;
+      }
+      // Леший над лугом: долгий хриплый выдох и низкий стон
+      case 'leshyBreath':
+        this.swell(1.8, 0.32, 650, 0, 0.5);
+        this.swell(1.6, 0.14, 1900, 0.1, 0.4);
+        this.tone('sawtooth', 112, 84, 1.6, 0.12);
+        this.tone('square', 224, 168, 1.4, 0.05);
+        break;
+      // Леший вышел на поляну: визг расстроенных струн (малые секунды наверху), скрежет и удар — как в
+      // хорроре, когда монстр попадает в кадр. Сигнал: не шевелиться.
+      case 'leshyStinger':
+        this.tone('square', 190, 52, 0.5, 0.35);
+        this.noise(0.05, 0.6, 3400);
+        for (const [f, d] of [[1396, 0], [1480, 0.02], [1568, 0.04], [2093, 0.06]] as const) this.formant(f, f * 0.94, 1.3, 0.065, 0, d, [f * 1.0, f * 2.01], 6);
+        this.swell(1.2, 0.24, 2900, 0, 0.08);
+        this.swell(1.4, 0.14, 1200, 0.05, 0.1);
+        break;
+      // Леший забрал того, кто шевельнулся: треск ломаемых сучьев и обрывающийся крик
+      case 'leshyTake':
+        for (let i = 0; i < 4; i++) {
+          this.noise(0.05, 0.9 - i * 0.15, 2600 - i * 300, i * 0.07);
+          this.noise(0.1, 0.6, 1100, i * 0.07 + 0.01);
+        }
+        this.formant(920, 300, 0.7, 0.22, 0.05, 0.12, [900, 1300, 2600], 9);
+        this.tone('square', 160, 40, 0.5, 0.4, 0.05);
+        break;
+      // скример: морда Лешего во весь экран (scene.ts › leshyScreamer, картинка по этим же отметкам).
+      // Пугает не громкость, а скачок из тишины: никакого «вдоха» перед ударом (слабый звук за полсекунды
+      // до удара гасит вздрагивание — сцена держит перед ним тишину), удар с атакой в пару мс. Визг — как
+      // настоящий вопль ужаса: «шершавый» (громкость дрожит с частотой 70–140 Гц), нелинейный — высота
+      // срывается скачками, под голосом субгармоника, всё через перегруз, как у динамика на пределе.
+      // Начинается с «А» того «Ау», которым Леший звал всю ночь. 0,69 — бросок вплотную, второй взвизг;
+      // потом — темнота, гул, сердце и у самого уха его сорванное «Ау-у». Слышит только вырезанный.
+      case 'scream': {
+        this.noise(0.04, 1, 3600);
+        this.noise(0.03, 0.8, 5200);
+        this.tone('square', 240, 50, 0.32, 0.45);
+        this.noise(0.14, 0.75, 1300, 0.005);
+        const ctx = this.ctx;
+        const t0 = ctx.currentTime + this.base;
+        const shaper = ctx.createWaveShaper();
+        const curve = new Float32Array(1024);
+        for (let i = 0; i < curve.length; i++) curve[i] = Math.tanh(((i / (curve.length - 1)) * 2 - 1) * 5);
+        shaper.curve = curve;
+        const post = ctx.createGain();
+        post.gain.setValueAtTime(0.42, t0);
+        post.gain.setValueAtTime(0.42, t0 + 1.0);
+        post.gain.linearRampToValueAtTime(0, t0 + 1.2);
+        shaper.connect(post).connect(this.dest);
+        this.route = shaper;
+        try {
+          // голоса: каждый — цепочка отрезков, высота срывается скачками до ±4 полутонов и в целом падает
+          for (const [f, v] of [[1180, 0.16], [1250, 0.13], [1660, 0.09], [940, 0.12]] as const) {
+            let w = 0;
+            let fr = f * 1.08;
+            while (w < 0.62) {
+              const d = 0.07 + Math.random() * 0.09;
+              const nf = fr * Math.pow(2, (Math.random() * 8 - 5) / 12);
+              this.formant(fr, nf, d * 1.35, v, 0.05, w, [f, f * 2, 3000], 11 + Math.random() * 6, 70 + Math.random() * 70);
+              fr = nf;
+              w += d;
+            }
+          }
+          // начало вопля — голос, который звал всю ночь: его «А» (форманты «Ау» из leshyCall) взлетает в визг
+          this.formant(330, 1250, 0.11, 0.2, 0.05, 0, [820, 1180, 2500], 5, 60);
+          // субгармоника под самым низким голосом и хрип выдоха
+          this.formant(470, 300, 0.62, 0.1, 0.05, 0, [700, 1100, 2400], 7, 45);
+          this.swell(0.62, 0.45, 2600, 0, 0.04);
+          this.swell(0.5, 0.3, 1500, 0.02, 0.04);
+          // бросок вплотную — второй взвизг выше
+          const L = 0.69;
+          for (const [f, am] of [[1480, 113], [1570, 97], [2093, 131]] as const) this.formant(f * 1.1, f * 0.72, 0.26, 0.12, 0.02, L, [f, f * 2, 3200], 14, am);
+          this.swell(0.22, 0.4, 3000, L, 0.03);
+        } finally {
+          this.route = null;
+        }
+        this.noise(0.04, 0.95, 3400, 0.69);
+        this.tone('square', 200, 45, 0.25, 0.4, 0.69);
+        // темнота: он ещё здесь — у самого уха, медленно и сорванно, то же «Ау-у»
+        {
+          const sh2 = ctx.createWaveShaper();
+          sh2.curve = curve;
+          const g2 = ctx.createGain();
+          g2.gain.value = 0.3;
+          sh2.connect(g2).connect(this.dest);
+          this.route = sh2;
+          try {
+            this.formant(250, 230, 0.5, 0.12, 0.2, 1.55, [820, 1180, 2500], 4, 41);
+            this.formant(230, 160, 1.1, 0.12, 0.25, 1.95, [380, 760, 2300], 3, 37);
+            this.swell(1.2, 0.18, 2400, 1.55, 0.3);
+          } finally {
+            this.route = null;
+          }
+        }
+        // темнота: низкий гул и сердце
+        this.swell(1.4, 0.12, 500, 1.0, 0.3);
+        [1.1, 1.32, 1.9, 2.12].forEach((d, i) => {
+          this.tone('sine', 72, 42, 0.2, i % 2 ? 0.25 : 0.35, d);
+          this.noise(0.04, i % 2 ? 0.45 : 0.7, 1100, d);
+          this.tone('square', 220, 120, 0.08, i % 2 ? 0.1 : 0.15, d);
+        });
+        break;
+      }
+      // «Ау-у…» из леса: Леший зовёт голосом заблудившегося и сам себе вторит эхом
+      case 'leshyCall':
+        for (let e = 0; e < 3; e++) {
+          const v = [0.2, 0.09, 0.04][e];
+          const w = e * 0.55;
+          this.formant(330, 300, 0.45, v, 0.12, w, [820, 1180, 2500], 5);
+          this.formant(300, 228, 1.0, v, 0.3, w + 0.38, [380, 760, 2300], 5);
+        }
+        break;
+      // шёпот из темноты: без голоса, только дыхание через «гласные» — слоги неразборчивой речи,
+      // шипящие сверху. Каждый раз другой. Общий (лес шепчет всем), со своим рассудком не связан.
+      case 'whisper': {
+        const n = 4 + Math.floor(Math.random() * 5);
+        const vowels: [number, number][] = [[700, 1200], [400, 2000], [550, 900], [350, 800], [500, 1700]];
+        let w = 0;
+        for (let i = 0; i < n; i++) {
+          const v = 0.55 + 0.45 * Math.sin((i / n) * Math.PI); // громче в середине фразы
+          if (Math.random() < 0.6) this.noise(0.06, 0.32 * v, 3600 + Math.random() * 2400, w); // «с», «ш», «ф»
+          const [f1, f2] = vowels[Math.floor(Math.random() * vowels.length)];
+          const d = 0.1 + Math.random() * 0.12;
+          this.swell(d, 0.5 * v, f2, w + 0.04, 0.3);
+          this.swell(d, 0.3 * v, f1 + 600, w + 0.04, 0.3);
+          w += d + 0.03 + (Math.random() < 0.2 ? 0.18 : 0);
+        }
+        // долгий выдох в конце фразы
+        this.swell(0.5, 0.18, 2600, w, 0.2);
+        break;
+      }
+      // сухой треск ветки где-то в темноте
+      case 'snap':
+        this.noise(0.03, 0.7, 3200);
+        this.noise(0.07, 0.5, 1500, 0.004);
+        this.noise(0.02, 0.38, 2600, 0.09);
+        this.noise(0.05, 0.28, 1200, 0.095);
+        break;
       // ночь Майами: бита — треск дерева, труба — звон металла, нож — свист и тычок;
       // бас — опора, слышно на телефоне то, что сверху
       case 'whack':
@@ -169,6 +326,17 @@ export class Synth {
         break;
       case 'accuseRight': [523, 659, 784].forEach((f, i) => this.tone('triangle', f, f, 0.25, 0.2, i * 0.07)); break;
       case 'accuseWrong': this.tone('sawtooth', 440, 220, 0.4, 0.16); this.tone('sawtooth', 466, 200, 0.4, 0.1); break;
+      // цвет папоротника (триумф «Купальской ночи»): музыкальная шкатулка в миноре — вверх и замирает,
+      // над ней звон-мерцание; в конце низкий колокол, как с той стороны болота
+      case 'fern':
+        [880, 1047, 1319, 1760, 1568, 1319, 1760].forEach((f, i) => {
+          this.tone('triangle', f, f, 0.5, 0.2, i * 0.17);
+          this.tone('sine', f * 2, f * 2, 0.3, 0.07, i * 0.17);
+        });
+        this.swell(1.6, 0.1, 5200, 0.2, 0.5);
+        this.tone('square', 440, 436, 1.6, 0.08, 1.25);
+        this.tone('triangle', 880, 875, 1.4, 0.12, 1.25);
+        break;
       case 'fanfare': [523, 659, 784, 1047, 784, 1047].forEach((f, i) => this.tone('square', f, f, 0.16, 0.16, i * 0.12)); break;
       // «Слишком живые!» — грустный тромбон: три ступени вниз и долгая нота с вибрато
       case 'sad': [392, 370, 349].forEach((f, i) => this.tone('sawtooth', f, f * 0.98, 0.32, 0.12, i * 0.36)); this.sadTail(1.08); break;
@@ -326,6 +494,75 @@ export class Synth {
     o.connect(g).connect(out ?? this.out);
     o.start(t);
     o.stop(t + dur + 0.02);
+  }
+
+  /**
+   * Голос: пила с дрожью через полосы-форманты (гласная — по частотам `fmt`), медленная атака и спад.
+   * f0→f1 — высота, att — доля длины на нарастание, vib — дрожь, Гц.
+   */
+  private formant(f0: number, f1: number, dur: number, vol: number, att: number, when: number, fmt: number[], vib: number, am = 0): void {
+    const ctx = this.ctx;
+    const t = ctx.currentTime + this.base + when;
+    const o = ctx.createOscillator();
+    o.type = 'sawtooth';
+    o.frequency.setValueAtTime(f0 * this.det, t);
+    o.frequency.linearRampToValueAtTime(f1 * this.det, t + dur);
+    const lfo = ctx.createOscillator();
+    lfo.frequency.value = vib;
+    const lg = ctx.createGain();
+    lg.gain.value = f0 * 0.012;
+    lfo.connect(lg).connect(o.frequency);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(vol * this.lvl, t + Math.max(0.01, dur * att));
+    g.gain.setValueAtTime(vol * this.lvl, t + dur * 0.7);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    fmt.forEach((fr, i) => {
+      const f = ctx.createBiquadFilter();
+      f.type = 'bandpass';
+      f.frequency.value = fr;
+      f.Q.value = 6;
+      const fg = ctx.createGain();
+      fg.gain.value = [1.4, 1, 0.5][i] ?? 0.4;
+      o.connect(f).connect(fg).connect(g);
+    });
+    if (am > 0) {
+      // «шершавость» крика: громкость дрожит с частотой am (30–150 Гц) — так звучит настоящий вопль ужаса
+      const amG = ctx.createGain();
+      amG.gain.value = 0.5;
+      const amO = ctx.createOscillator();
+      amO.frequency.value = am;
+      const amD = ctx.createGain();
+      amD.gain.value = 0.5;
+      amO.connect(amD).connect(amG.gain);
+      g.connect(amG).connect(this.out);
+      amO.start(t);
+      amO.stop(t + dur + 0.02);
+    } else g.connect(this.out);
+    o.start(t);
+    lfo.start(t);
+    o.stop(t + dur + 0.02);
+    lfo.stop(t + dur + 0.02);
+  }
+
+  /** Шум с медленной атакой (дыхание, ветер): нарастает за `rise` доли длины, потом гаснет. */
+  private swell(dur: number, vol: number, freq: number, when = 0, rise = 0.4): void {
+    const ctx = this.ctx;
+    const t = ctx.currentTime + this.base + when;
+    const s = ctx.createBufferSource();
+    s.buffer = this.noiseBuf;
+    s.loop = true;
+    const f = ctx.createBiquadFilter();
+    f.type = 'bandpass';
+    f.frequency.value = freq * this.det;
+    f.Q.value = 0.8;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(vol * this.lvl, t + dur * rise);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    s.connect(f).connect(g).connect(this.out);
+    s.start(t, Math.random() * 0.5);
+    s.stop(t + dur + 0.05);
   }
 
   private noise(dur: number, vol: number, freq: number, when = 0, out?: AudioNode): void {

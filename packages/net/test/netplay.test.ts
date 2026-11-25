@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Rng, killerExposed } from '@kto/game-core';
-import type { PlayerInfo } from '@kto/game-core';
+import { Rng, THEME_RULES, killerExposed } from '@kto/game-core';
+import type { GameConfig, PlayerInfo } from '@kto/game-core';
 import { DelayedTransport, HostSession, LoopbackHub, RemoteSession } from '../src';
 import type { RoomMsg } from '../src';
 
@@ -21,7 +21,7 @@ interface Rig {
   history: Map<number, Map<number, [number, number]>>;
 }
 
-function makeRig(latency: [number, number], loss = 0, seed = 1): Rig {
+function makeRig(latency: [number, number], loss = 0, seed = 1, cfg: Partial<GameConfig> = {}): Rig {
   let nowMs = 0;
   const clock = () => nowMs;
   const hub = new LoopbackHub(seed);
@@ -38,8 +38,8 @@ function makeRig(latency: [number, number], loss = 0, seed = 1): Rig {
     }),
   );
   // гости подключаются раньше хоста, как в жизни: сообщение match_start пришло — сессия создана
-  const guests = tGuests.map((t) => new RemoteSession({ transport: t, selfPid: t.selfId, hostPid: 'h', players, cfg: {}, clock }));
-  const host = new HostSession({ transport: tHost, players, cfg: {}, seed, hostPid: 'h' });
+  const guests = tGuests.map((t) => new RemoteSession({ transport: t, selfPid: t.selfId, hostPid: 'h', players, cfg, clock }));
+  const host = new HostSession({ transport: tHost, players, cfg, seed, hostPid: 'h' });
   const history: Rig['history'] = new Map();
   const step = () => {
     nowMs += 50;
@@ -196,6 +196,47 @@ describe('сетевая игра', () => {
     for (const { to, msg } of rig.privLog) {
       const m = msg as { t: string; me?: { eid: number } };
       if (m.t === 'me') expect(m.me!.eid).toBe(rig.host.sim.playerRound(to)!.eid);
+    }
+  });
+
+  it('рассудок («Купальская ночь») приходит только лично: в общих сообщениях его нет, у гостя — свой', () => {
+    const kupala = THEME_RULES.findIndex((r) => r.id === 'kupala');
+    const rig = makeRig([50, 120], 0, 7, { fixedTheme: kupala });
+    const rng = new Rng(7);
+    // до прихода Лешего: при нём кикиморы прячутся
+    for (let i = 0; i < 20 * 9; i++) {
+      rig.step();
+      botFingers(rig, rng);
+    }
+    expect(rig.host.sim.theme).toBe(kupala);
+    // кикиморы — тоже только лично: подтолкнём одного гостя в «Кошмар»
+    const mad = rig.host.sim.playerRound('g1')!;
+    for (let i = 0; i < 20 * 3; i++) {
+      if (mad.alive) mad.sanity = Math.min(mad.sanity, 20);
+      rig.step();
+    }
+    for (const { msg } of rig.roomLog) {
+      expect(JSON.stringify(msg)).not.toContain('sanity');
+      expect(JSON.stringify(msg)).not.toContain('sins');
+      expect(JSON.stringify(msg)).not.toContain('"km"');
+    }
+    const kmTo = rig.privLog.filter(({ msg }) => (msg as { me?: { km?: unknown } }).me?.km).map(({ to }) => to);
+    expect(kmTo.length).toBeGreaterThan(0);
+    expect(new Set(kmTo)).toEqual(new Set(['g1']));
+    let got = 0;
+    for (const { to, msg } of rig.privLog) {
+      const m = msg as { t: string; me?: { eid: number; sanity?: number } };
+      if (m.t !== 'me' || m.me?.sanity === undefined) continue;
+      got++;
+      expect(m.me.eid).toBe(rig.host.sim.playerRound(to)!.eid);
+    }
+    expect(got).toBeGreaterThan(0);
+    // у гостя — его собственный рассудок, как у хоста (с точностью до последнего сообщения)
+    for (const g of rig.guests) {
+      const p = rig.host.sim.playerRound(g.selfPid)!;
+      if (!p.alive) continue;
+      expect(g.me()!.sanity).toBeLessThan(100);
+      expect(Math.abs(g.me()!.sanity - Math.ceil(p.sanity))).toBeLessThanOrEqual(2);
     }
   });
 

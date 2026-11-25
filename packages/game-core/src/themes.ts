@@ -12,7 +12,7 @@ import type { EmoteKind } from './events';
  * название в `themes` словарей, пакет в клиенте. См. docs/architecture.md › «Темы».
  */
 
-export type ThemeId = 'caps' | 'chefs' | 'penguins' | 'cosmonauts' | 'office' | 'miami' | 'party';
+export type ThemeId = 'caps' | 'chefs' | 'penguins' | 'cosmonauts' | 'office' | 'miami' | 'party' | 'kupala';
 
 export interface TwistRules {
   /** Когда изнанка включается впервые, с начала игры, сек [от, до]. */
@@ -44,6 +44,16 @@ export interface ThemeRules {
   id: ThemeId;
   /** Внезапная смена облика посреди дубля: офис → подвал, клерки → бойцы. */
   twist?: TwistRules;
+  /**
+   * У живых игроков тает рассудок (sanity.ts): ночь сгущается, цветы чуть поднимают, на нуле — вырезан.
+   * Рассудок знает только сам игрок — приходит личным сообщением.
+   */
+  sanity?: boolean;
+  /**
+   * Тема не выпадает в обычной очереди тем — только по `fixedTheme` (песочница `?dev&theme=N`,
+   * настройка комнаты): пока владелец её пробует.
+   */
+  hidden?: boolean;
 }
 
 export const THEME_RULES: readonly ThemeRules[] = [
@@ -65,9 +75,14 @@ export const THEME_RULES: readonly ThemeRules[] = [
     id: 'party',
     twist: { firstSec: [14, 24], onSec: [14, 20], gapSec: [10, 16], max: 2, emoteMul: 3 },
   },
+  // Купальская ночь: болото, грибники, сумерки плавно уходят в ночь; рассудок тает, цветы вместо звёзд
+  { id: 'kupala', sanity: true, hidden: true },
 ];
 
 export const THEME_COUNT = THEME_RULES.length;
+
+/** Темы обычной очереди (без `hidden`): из них тасуется порядок дублей матча и выбирается загадка дня. */
+export const ROTATION_THEMES: readonly number[] = THEME_RULES.map((r, i) => (r.hidden ? -1 : i)).filter((i) => i >= 0);
 
 /** Новогодний сезон: с 1 декабря по 14 января (месяц с нуля, как в Date). */
 export function isNewYearSeason(month0: number, day: number): boolean {
@@ -81,6 +96,11 @@ export function seasonLeadTheme(month0: number, day: number): number {
 
 export function themeRules(theme: number): ThemeRules {
   return THEME_RULES[theme] ?? THEME_RULES[0];
+}
+
+/** В дубле этой темы тает рассудок. */
+export function hasSanity(theme: number): boolean {
+  return !!themeRules(theme).sanity;
 }
 
 /**

@@ -2,7 +2,7 @@
  * Безголовая симуляция: N раундов с ботами и ИИ-игроками, проверка инвариантов.
  * Запуск: pnpm sim -- --rounds 1000
  */
-import { AiPlayer, MatchSim, ROUND_MODS, makeConfig, rectContains } from '../src/index';
+import { AiPlayer, MatchSim, ROUND_MODS, hasSanity, makeConfig, rectContains } from '../src/index';
 import type { WorldEvent } from '../src/index';
 
 const argi = process.argv.indexOf('--rounds');
@@ -15,6 +15,7 @@ let rounds = 0;
 let matches = 0;
 let errors = 0;
 const tally = { time: 0, stars: 0, last_alive: 0, kills: 0, botHits: 0, awards: new Map<string, number>() };
+const madness = { players: 0, lost: 0, minSum: 0, endSum: 0, alive: 0 };
 // новые механики: команды (всего / «Толпа решает» / от вырезанных), звёзды (игроки / статисты), вырезанные «Жёстким дублем»
 const mech = { crowd: 0, vote: 0, clap: 0, starP: 0, starB: 0, hardCut: 0, mods: new Map<string, number>(), deadMs: 0 };
 const t0 = Date.now();
@@ -76,6 +77,15 @@ while (rounds < target) {
         tally.botHits += p.botHits;
         check(p.attacksLeft >= 0 && p.attacksLeft <= sim.cfg.attacksPerRound, 'лимит ударов нарушен');
       }
+      if (hasSanity(sim.theme)) {
+        for (const p of sim.pr) {
+          madness.players++;
+          if (!p.alive && p.sanity <= 0) madness.lost++;
+          madness.minSum += p.sanityMin;
+          if (p.alive) madness.endSum += p.sanity;
+          if (p.alive) madness.alive++;
+        }
+      }
       for (const a of s.awards) tally.awards.set(a.id, (tally.awards.get(a.id) ?? 0) + 1);
       const roundPts = Object.values(s.points).reduce((acc, l) => acc + l.total, 0);
       scoreSum += roundPts;
@@ -92,6 +102,12 @@ while (rounds < target) {
 }
 
 const sec = ((Date.now() - t0) / 1000).toFixed(1);
+if (madness.players) {
+  console.log(
+    `Рассудок: сгинули в тумане ${((madness.lost / madness.players) * 100).toFixed(1)}% игроков, ` +
+      `минимум в среднем ${(madness.minSum / madness.players).toFixed(0)}, у доживших к концу ${(madness.endSum / Math.max(1, madness.alive)).toFixed(0)}`,
+  );
+}
 console.log(`Раундов: ${rounds}, матчей: ${matches}, ${sec} с`);
 console.log(`Конец раунда: по времени ${tally.time}, звёзды ${tally.stars}, последний живой ${tally.last_alive}`);
 console.log(`Выбиваний на раунд: ${(tally.kills / rounds).toFixed(2)}, ударов по ботам: ${(tally.botHits / rounds).toFixed(2)}`);

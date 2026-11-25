@@ -15,3 +15,4 @@ export * from './locale';
 export * from './moments';
 export * from './daily';
 export * from './story';
+export * from './sanity';

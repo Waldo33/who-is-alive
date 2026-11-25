@@ -85,6 +85,10 @@ export interface SongStep {
   /** Изнанка темы включена (themes.ts › twist) и сколько тактов назад переключилась. */
   twist: boolean;
   barsSinceTwist: number;
+  /** Насколько стемнело (тема с рассудком, 0–1; у всех одинаково — по времени дубля). */
+  dread: number;
+  /** Леший рядом: песня замолкает, остаётся только сердце. */
+  hush: boolean;
 }
 
 /** Своя песня темы: вместо общего мотива — свой шаг секвенсора. */
@@ -180,6 +184,8 @@ export class Music {
     rng: () => this.rng(),
   };
   private intensity = 0;
+  private dread = 0;
+  private hush = false;
   private tempoMul = 1;
   private live: Live[] = [];
   private pulse: PeriodicWave;
@@ -325,6 +331,16 @@ export class Music {
     bus.gain.exponentialRampToValueAtTime(0.0001, now + T);
     bus.gain.setValueAtTime(0.0001, now + 1.0);
     bus.gain.exponentialRampToValueAtTime(full, now + 1.04);
+  }
+
+  /** Леший рядом: своя песня темы замолкает (тишина — тоже сигнал). */
+  setHush(on: boolean): void {
+    this.hush = on;
+  }
+
+  /** Ночь темы с рассудком 0–1: песня темнеет и расстраивается. */
+  setDread(v: number): void {
+    this.dread = Math.max(0, Math.min(1, v));
   }
 
   /** Уровень напряжения 0–2 (меняется на следующей доле). */
@@ -527,6 +543,8 @@ export class Music {
         intensity: this.intensity,
         twist: this.twist,
         barsSinceTwist: this.bar - this.twistBar,
+        dread: this.dread,
+        hush: this.hush,
       });
       this.next += dt;
       this.s16 = (this.s16 + 1) % 16;

@@ -1,0 +1,11 @@
+# Адреса и роли — те же, что game-deploy передаёт setup.sh (HOST, ALT_HOST, WS_HOSTS…); задаются в group_vars.
+app_alt_host: ''
+app_ws_hosts: ''
+app_site_host: ''
+app_site_redirect: ''
+app_bot_upstream: ''
+app_relay_front: ''
+app_events_up: ''
+app_peer_host: "{{ app_host }}"
+app_ports: { blue: 8081, green: 8082 }
+app_peer: { blue: green, green: blue }

@@ -1,0 +1,11 @@
+- name: sysctl
+  ansible.builtin.command: sysctl -q --system
+  failed_when: false
+
+- name: ssh
+  ansible.builtin.shell: systemctl reload ssh 2>/dev/null || systemctl reload sshd
+
+- name: journald
+  ansible.builtin.systemd_service:
+    name: systemd-journald
+    state: restarted

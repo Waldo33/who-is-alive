@@ -1,0 +1,24 @@
+# Настройка машин «Массовки» из кода — то, что делает infra/game/setup.sh, по ролям: base (пользователи, папки,
+# подкачка, сеть, SSH, файрвол, журнал), postgres, tunnels (туннели SSH), app (game.env, службы игры и Caddy,
+# hosts.env, caddy.sh — без перезапусков), observe (метрики, логи, Grafana, копии базы), ffmpeg, watch (сторож). Каждая роль сначала проходит сухой прогон
+# (--check --diff) против живых серверов (docs/ansible.md). game-deploy запускает этот плейбук перед
+# setup.sh; программы (Node, Caddy, Victoria*, Grafana), пароли и выкладку версии синим/зелёным делает setup.sh.
+- name: Системный слой
+  hosts: all
+  become: false
+  roles:
+    - base
+    - postgres
+    - tunnels
+    - app
+    - observe
+
+- name: Игровой сервер
+  hosts: game
+  roles:
+    - ffmpeg
+
+- name: Сервер бота и наблюдения
+  hosts: infra
+  roles:
+    - watch

@@ -2,14 +2,15 @@ import type { ArenaDef, Rect } from './arena';
 import { clampToRect, plazaArena, rectContains, shrinkRect } from './arena';
 import type { AwardCard, RoundStats } from './awards';
 import { pickMatchAwards, pickRoundAwards } from './awards';
-import { BotBrain, CROWD_ACT, crowdActDur, crowdJitter, emoteDur, planPath } from './bots';
+import { BotBrain, CROWD_ACT, crowdActDur, crowdHoldDur, crowdJitter, emoteDur, planPath } from './bots';
 import type { GameConfig } from './config';
 import { TICK_MS, crowdPauseMs, revealMs } from './config';
 import type { ActKind, CrowdKind, Dir, EmoteKind, EntitySpawn, WorldEvent } from './events';
 
 import { NavGrid } from './nav';
 import { Rng } from './rng';
-import { THEME_COUNT, killerExposed, themeRules, twistEmote } from './themes';
+import { LESHY_HUNT_SEC, fireLevel, leshySpot, leshyVisits, nightLevel, playLenSec, sanityDrain } from './sanity';
+import { ROTATION_THEMES, THEME_COUNT, hasSanity, killerExposed, themeRules, twistEmote } from './themes';
 import { ROUND_MODS, roundMod } from './mods';
 import { World } from './world';
 
@@ -64,6 +65,8 @@ export interface PlayerRound {
   accused: number | null;
   accusedAsGhost: boolean;
   crowdAnswered: number;
+  /** warnAt прихода Лешего, при котором игрок шевельнулся, пока тот смотрел (leshySees). */
+  leshyMoved: number;
   /** Нажал во время стоп-кадра: команда выполнится в этот момент вместе с толпой. */
   crowdQueued: { kind: CrowdKind; at: number } | null;
   /** Какой жест выбрал на последнюю команду (для «Жёсткого дубля» и «Толпа решает»). */
@@ -73,6 +76,29 @@ export interface PlayerRound {
   /** «Хлопушка» вырезанного: сколько осталось и когда можно снова (время мира). */
   clapsLeft: number;
   clapAt: number;
+  /** Рассудок (sanity.ts), 0–100; в теме без рассудка не меняется. */
+  sanity: number;
+  /** Самый низкий рассудок за дубль (награды). */
+  sanityMin: number;
+  /** Свои кикиморы (рассудок ниже порога «Кошмар»): видит только сам игрок, id отрицательные. */
+  kiki: Kiki[];
+  /** Раньше этого времени мира новая кикимора не появится. */
+  kikiNextAt: number;
+  /** «Факел!» вовремя: до этого времени мира в руке горит факел (рассудок растёт, кикиморы не подходят). */
+  torchUntil: number;
+  /** Провинности «Купальской ночи»: сколько раз не повторил жест — Леший помнит (знает только сам игрок). */
+  sins: number;
+}
+
+/** Кикимора — кошмар одного игрока: появляется из воды (`at` — когда вылезет), идёт к нему, касание — вырезан. */
+export interface Kiki {
+  id: number;
+  x: number;
+  y: number;
+  /** С какого времени мира ходит (до — рябь на воде). */
+  at: number;
+  /** Сколько ударов ещё выдержит. */
+  hp: number;
 }
 
 export interface PointsLine {
@@ -176,6 +202,11 @@ export class MatchSim {
   private forcedKind: CrowdKind | null = null;
   private moodOn = false;
   private crowdCount = 0;
+  /** Леший в этом дубле уже прошёл (тема с рассудком). */
+  /** Какой приход Лешего следующий (sanity.ts › leshyVisits). */
+  private leshyIdx = 0;
+  /** warnAt команды Лешего: кто на ней шевельнулся — того он забирает (в детском режиме — нет). */
+  private leshyWarn = -1;
   private hardChecked = -1;
   crowdShowTimes: number[] = [];
   zoneStarted = false;
@@ -279,7 +310,7 @@ export class MatchSim {
 
   private startRound(): void {
     this.round++;
-    this.theme = this.themeOrder[(this.round - 1) % THEME_COUNT];
+    this.theme = this.themeOrder[(this.round - 1) % this.themeOrder.length];
     this.pickMod();
     this.summary = null;
     const rng = this.rng;
@@ -321,11 +352,18 @@ export class MatchSim {
       accused: null,
       accusedAsGhost: false,
       crowdAnswered: -1,
+      leshyMoved: -1,
       crowdQueued: null,
       crowdPick: null,
       crowdLate: false,
       clapsLeft: this.cfg.ghostClaps,
       clapAt: 0,
+      sanity: this.cfg.sanityStart,
+      sanityMin: this.cfg.sanityStart,
+      kiki: [],
+      kikiNextAt: 0,
+      torchUntil: 0,
+      sins: 0,
     }));
     this.bots = new BotBrain(this.world, this.cfg, new Rng(rng.fork()), (ev) => this.emit(ev), themeRules(this.theme).twist);
     const pset = new Set(playerEids);
@@ -361,10 +399,12 @@ export class MatchSim {
   }
 
   private beginPlay(): void {
-    this.setPhase('play', this.cfg.roundSec * 1000);
+    this.setPhase('play', playLenSec(this.cfg, this.theme) * 1000);
     this.playStart = this.world.time;
-    this.plannedPlayEnd = this.playStart + this.cfg.roundSec * 1000;
+    this.plannedPlayEnd = this.playStart + playLenSec(this.cfg, this.theme) * 1000;
     this.crowdCount = 0;
+    this.leshyIdx = 0;
+    this.leshyWarn = -1;
     this.hardChecked = -1;
     this.scheduleCrowd(this.playStart);
     // звёзды выходят по одной: сначала starsAtStart, остальные — с шагом появления
@@ -387,7 +427,7 @@ export class MatchSim {
     const c = this.world.crowd;
     if (!c || t < c.showAt) return false;
     if (t <= c.windowEnd) return true;
-    if (t > c.windowEnd + crowdActDur(this.cfg, c.kind) + 1500) return false;
+    if (t > Math.max(c.windowEnd, c.watchUntil ?? 0) + crowdActDur(this.cfg, c.kind) + 1500) return false;
     const act = CROWD_ACT[c.kind];
     return this.world.entities.some((e) => e.alive && e.act === act && e.actEnd > t);
   }
@@ -421,7 +461,8 @@ export class MatchSim {
     const k = Math.min(1, Math.max(0, (from - this.playStart) / span));
     const [a0, b0] = cfg.crowdCmdIntervalSec;
     const [a1, b1] = cfg.crowdCmdIntervalEndSec;
-    const mul = roundMod(this.mod) === 'rush' ? 0.5 : 1;
+    // «Купальская ночь»: обычные команды реже — главное в ночи Леший, жесты не должны его заслонять
+    const mul = (roundMod(this.mod) === 'rush' ? 0.5 : 1) * (hasSanity(this.theme) ? cfg.nightCrowdMul : 1);
     const sec = this.rng.range(a0 + (a1 - a0) * k, b0 + (b1 - b0) * k) * mul;
     return Math.round(Math.max(3, sec) * 20) * 50;
   }
@@ -462,12 +503,15 @@ export class MatchSim {
     return t >= this.lastTwistAt + quiet && !this.zoneStarted && t < this.plannedPlayEnd - this.cfg.zoneStartBeforeEndSec * 1000 - 3000;
   }
 
-  private fireCrowd(kind: CrowdKind, vote: boolean, ghost = false): void {
+  private fireCrowd(kind: CrowdKind, vote: boolean, ghost = false, pauseMs?: number, watchMs?: number): void {
     const t = this.world.time;
     const cfg = this.cfg;
-    const pause = crowdPauseMs(cfg);
+    const pause = pauseMs ?? crowdPauseMs(cfg);
     const resumeAt = t + pause;
-    this.emit({ t: 'crowd', kind, at: t, showAt: t, resumeAt, windowEnd: resumeAt + cfg.crowdLateMs, ...(vote ? { vote: true } : {}), ...(ghost ? { ghost: true } : {}) });
+    const windowEnd = resumeAt + cfg.crowdLateMs;
+    // Леший смотрит и после окна ответа: приговор — в watchUntil (judgeTick)
+    const watch = watchMs !== undefined ? { watchUntil: windowEnd + LAG_GRACE_MS + watchMs } : {};
+    this.emit({ t: 'crowd', kind, at: t, showAt: t, resumeAt, windowEnd, ...(vote ? { vote: true } : {}), ...(ghost ? { ghost: true } : {}), ...watch });
     this.nextGhost = false;
     this.crowdShowTimes.push(resumeAt);
     this.crowdCount++;
@@ -509,13 +553,56 @@ export class MatchSim {
    */
   private judgeTick(t: number): void {
     const c = this.world.crowd;
-    if (!c || (c.vote && !c.ghost) || this.hardChecked === c.warnAt || t <= c.windowEnd + LAG_GRACE_MS) return;
+    if (!c || (c.vote && !c.ghost) || this.hardChecked === c.warnAt || t <= (c.watchUntil ?? c.windowEnd + LAG_GRACE_MS)) return;
     this.hardChecked = c.warnAt;
     const cfg = this.cfg;
-    const hard = !c.vote && (roundMod(this.mod) === 'hard' || cfg.strictCrowd);
+    // Леший: из не замерших вовремя забирает одного — ближайшего к себе (дети — только подсвечены)
+    const leshy = c.warnAt === this.leshyWarn && !cfg.kidsMode;
+    // «Купальская ночь»: за жест вырезает только Леший — уровень «сложно» и «Жёсткий дубль» здесь не режут
+    const hard = !c.vote && !hasSanity(this.theme) && (roundMod(this.mod) === 'hard' || cfg.strictCrowd);
+    // Леший идёт к самому виноватому: кто не замер сейчас или накопил leshyDoomSins провинностей (тому и
+    // замереть не поможет). Больше провинностей — раньше; поровну — ближайший к нему.
+    // На охоте (глубокая ночь, sanity.ts › LESHY_HUNT_SEC) замереть не спасает: забирает ближайшего.
+    let prey: PlayerRound | null = null;
+    if (leshy) {
+      const spot = leshySpot(c.warnAt, this.arena.width);
+      const hunt = this.playClock(c.warnAt) >= LESHY_HUNT_SEC * 1000;
+      let best = -Infinity;
+      for (const p of this.pr) {
+        // замер, но шевельнулся, пока он смотрел, — как не замерший
+        const froze = p.crowdAnswered === c.warnAt && p.crowdPick === c.kind && p.leshyMoved !== c.warnAt;
+        if (!p.alive || (froze && p.sins < cfg.leshyDoomSins && !hunt)) continue;
+        const e = this.world.get(p.eid)!;
+        const score = (froze ? p.sins : p.sins + 1) * 1000 - Math.hypot(e.x - spot.x, e.y - spot.y);
+        if (score > best) [best, prey] = [score, p];
+      }
+    }
+    const sinful = hasSanity(this.theme) && c.warnAt !== this.leshyWarn;
     const slips: number[] = [];
     for (const p of this.pr) {
-      if (!p.alive || (p.crowdAnswered === c.warnAt && p.crowdPick === c.kind && !p.crowdLate)) continue;
+      if (!p.alive) continue;
+      if (p === prey) {
+        // забран Лешим (даже если замер — провинностей слишком много)
+        const e = this.world.get(p.eid)!;
+        p.alive = false;
+        p.diedAt = t;
+        p.kiki = [];
+        if (p.autopilot) this.bots.remove(p.eid);
+        this.emit({ t: 'hit', target: p.eid, result: 'player', x: e.x, y: e.y, at: t });
+        this.emit({ t: 'remove', eid: p.eid, cause: 'player', at: t });
+        continue;
+      }
+      if (p.crowdAnswered === c.warnAt && p.crowdPick === c.kind && !p.crowdLate) {
+        this.addSanity(p, cfg.sanityGesture); // толпа успокаивает (только в теме с рассудком)
+        if (hasSanity(this.theme) && !c.vote) {
+          // купальские обряды: факел в руке; хоровод рядом с другими танцующими лечит сильнее
+          if (c.kind === 'jump') p.torchUntil = c.windowEnd + cfg.torchMs;
+          else if (c.kind === 'dance' && this.danceNear(p.eid, c.showAt, c.windowEnd) >= cfg.danceRingMin) this.addSanity(p, cfg.danceRing);
+        }
+        continue;
+      }
+      this.addSanity(p, -cfg.sanitySlip);
+      if (sinful && !(p.crowdAnswered === c.warnAt && p.crowdPick === c.kind)) p.sins++; // опоздавшему не в счёт
       const e = this.world.get(p.eid)!;
       // опоздавший всё же повторил жест — его только подсвечивают, вырезают не повторивших
       if (hard && !(p.crowdAnswered === c.warnAt && p.crowdPick === c.kind)) {
@@ -526,6 +613,10 @@ export class MatchSim {
         this.emit({ t: 'remove', eid: p.eid, cause: 'player', at: t });
       } else slips.push(p.eid);
     }
+    // забрал — остальным одна провинность прощается, иначе к концу ночи обречены все
+    if (prey) for (const p of this.pr) if (p.alive && p.sins > 0) p.sins--;
+    // «Купальская ночь»: прожектора нет — сбившихся никто не подсвечивает, их помнит только Леший
+    if (hasSanity(this.theme)) return;
     for (const eid of this.bots.lastSlips) if (this.world.get(eid)?.alive) slips.push(eid);
     for (const eid of this.rng.shuffle(slips)) {
       const e = this.world.get(eid)!;
@@ -535,6 +626,43 @@ export class MatchSim {
       const y = Math.round(Math.min(this.arena.walk.y + this.arena.walk.h, Math.max(this.arena.walk.y, e.y + Math.sin(a) * d)));
       this.emit({ t: 'spot', x, y, r: cfg.spotRadius, until: t + cfg.spotSec * 1000, at: t });
     }
+  }
+
+  /**
+   * Леший рядом: от «Ау» перед его шагами (scene.ts › renderLeshy, за leshyLeadSec + 3 с) до его ухода
+   * после стоп-кадра. Время — из номера дубля и часов дубля, у всех одинаковое.
+   */
+  private leshyHides(t: number): boolean {
+    if (!hasSanity(this.theme) || this.phase !== 'play') return false;
+    const cfg = this.cfg;
+    if (this.leshyWarn >= 0 && t < this.leshyWarn + cfg.leshyPauseMs + cfg.crowdLateMs + LAG_GRACE_MS + cfg.leshyWatchMs + 3000) return true;
+    const v = leshyVisits(this.round)[this.leshyIdx];
+    if (!v) return false;
+    const clock = this.playClock(t);
+    return clock >= (v.sec - cfg.leshyLeadSec - 3) * 1000;
+  }
+
+  /** «Часы дубля», мс: сколько прошло от начала игры без пауз стоп-кадров (у клиента — scene.ts › playSec). */
+  private playClock(t: number): number {
+    return playLenSec(this.cfg, this.theme) * 1000 - (this.plannedPlayEnd - t);
+  }
+
+  /** Сколько фигур рядом станцевали «Хоровод» в окне команды (по событиям `act`, у всех одинаково). */
+  private danceNear(eid: number, from: number, to: number): number {
+    const me = this.world.get(eid);
+    if (!me) return 0;
+    const dancers = new Set<number>();
+    const log = this.world.log;
+    for (let i = log.length - 1; i >= 0 && log[i].at >= from - 5000; i--) {
+      const ev = log[i];
+      if (ev.t === 'act' && ev.kind === 'dance' && ev.at >= from && ev.at <= to && ev.eid !== eid) dancers.add(ev.eid);
+    }
+    let n = 0;
+    for (const id of dancers) {
+      const o = this.world.get(id);
+      if (o?.alive && Math.hypot(o.x - me.x, o.y - me.y) <= this.cfg.sanityCrowdRadius) n++;
+    }
+    return n;
   }
 
   private emit(ev: WorldEvent): void {
@@ -551,7 +679,23 @@ export class MatchSim {
       this.moodOn = true;
       this.bots.setMood(this.nextVote, t, this.nextCrowdAt);
     }
-    if (t >= this.nextCrowdAt && this.crowdCanStart(t)) {
+    // Леший: в секунду настоящего прихода — его «Тсс!»; ложный приход просто проходит. Вокруг прихода
+    // обычных команд нет, чтобы он пришёл вовремя (sanity.ts › leshyVisits)
+    const clock = this.playClock(t);
+    const visit = hasSanity(this.theme) ? leshyVisits(this.round)[this.leshyIdx] : undefined;
+    if (visit && clock >= visit.sec * 1000) {
+      if (!visit.real) {
+        if (clock >= (visit.sec + 4) * 1000) this.leshyIdx++;
+      } else if (this.crowdCanStart(t)) {
+        this.leshyIdx++;
+        this.fireCrowd('freeze', false, false, cfg.leshyPauseMs, cfg.kidsMode ? undefined : cfg.leshyWatchMs);
+        this.leshyWarn = t; // warnAt команды = время её запуска
+      }
+    }
+    // до прихода (с запасом на «Ау» и шаги) и после него — тишина без обычных команд
+    const prev = hasSanity(this.theme) ? leshyVisits(this.round)[this.leshyIdx - 1] : undefined;
+    const leshyNear = (!!visit && clock >= (visit.sec - cfg.leshyLeadSec - 6) * 1000) || (!!prev && clock < (prev.sec + cfg.leshyQuietSec) * 1000);
+    if (!leshyNear && t >= this.nextCrowdAt && this.crowdCanStart(t)) {
       if (this.nextVote) this.fireCrowd(this.nextVote, true, this.nextGhost);
       else this.fireCrowd(this.forcedKind ?? this.rng.pick<CrowdKind>(['freeze', 'jump', 'dance']), false);
     }
@@ -561,7 +705,7 @@ export class MatchSim {
       if (p.crowdQueued && t >= p.crowdQueued.at) {
         const k = p.crowdQueued.kind;
         p.crowdQueued = null;
-        if (p.alive) this.emit({ t: 'act', eid: p.eid, kind: CROWD_ACT[k], dur: crowdActDur(cfg, k), at: t });
+        if (p.alive) this.emit({ t: 'act', eid: p.eid, kind: CROWD_ACT[k], dur: crowdHoldDur(cfg, k, t, this.world.crowd?.watchUntil), at: t });
       }
     }
 
@@ -616,8 +760,15 @@ export class MatchSim {
           this.emit({ t: 'star_taken', id: st.id, eid: p.eid, at: t });
           takenNow.add(st.id); // чтобы второй игрок не взял ту же звезду в этом же тике
           p.stars++;
+          this.addSanity(p, cfg.sanityFlower);
+          // цветок отгоняет ближайшую кикимору обратно в воду
+          if (p.kiki.length) {
+            const near = p.kiki.reduce((a, b) => (Math.hypot(a.x - e.x, a.y - e.y) <= Math.hypot(b.x - e.x, b.y - e.y) ? a : b));
+            p.kiki = p.kiki.filter((k) => k !== near);
+          }
           this.queueStar(t + this.starRespawnMs());
-          if (p.stars >= cfg.starsToWin && !this.starWinner) {
+          // с рассудком цветы только лечат: побеждает последний выживший (finishRound)
+          if (!hasSanity(this.theme) && p.stars >= cfg.starsToWin && !this.starWinner) {
             this.starWinner = p.pid;
             this.endReason = 'stars';
           }
@@ -664,16 +815,165 @@ export class MatchSim {
       }
     }
 
+    this.sanityTick(t);
+
     this.world.step();
     this.recordPositions();
 
     const aliveCount = this.pr.filter((p) => p.alive).length;
-    const lastAlive = cfg.endWhenLastAlive && this.players.length >= 2 && aliveCount <= 1;
+    // «Купальская ночь» — до последнего: ночь кончается, только когда сгинули все
+    const lastAlive = cfg.endWhenLastAlive && this.players.length >= 2 && aliveCount <= (hasSanity(this.theme) ? 0 : 1);
     if (lastAlive && this.endReason === 'time') this.endReason = 'last_alive';
     if (this.starWinner || lastAlive || this.world.time >= this.plannedPlayEnd) this.endPlay();
   }
 
   private starTouched = new Set<number>();
+
+  /** Рассудок меняется только в теме с рассудком (themes.ts › sanity) и только у живых. */
+  private addSanity(p: PlayerRound, d: number): void {
+    if (!hasSanity(this.theme) || !p.alive || this.phase !== 'play') return;
+    p.sanity = Math.max(0, Math.min(100, p.sanity + d));
+    p.sanityMin = Math.min(p.sanityMin, p.sanity);
+  }
+
+  /**
+   * Рассудок тает сам: быстрее к ночи, вдвое медленнее в толпе, у горящего костра растёт, каждый цветок
+   * в венке замедляет падение. В стоп-кадре время стоит. На нуле — вырезан, как в «Жёстком дубле»: удар
+   * без нападавшего (в детском режиме не вырезает). Автопилот (игрок отвалился) рассудок не теряет.
+   */
+  private sanityTick(t: number): void {
+    if (!hasSanity(this.theme) || this.world.isFrozen(t)) return;
+    const cfg = this.cfg;
+    const sec = (t - this.playStart) / 1000;
+    const fire = fireLevel(cfg, sec);
+    const fx = this.arena.width / 2;
+    const fy = 132;
+    this.bots.panicPerMin = cfg.botPanicPerMin * nightLevel(cfg, sec);
+    for (const p of this.pr) {
+      if (!p.alive || p.autopilot) continue;
+      const e = this.world.get(p.eid)!;
+      let rate: number;
+      if (fire > 0 && Math.hypot(e.x - fx, e.y - fy) <= cfg.sanityFireRadius) rate = cfg.sanityFireGain * fire;
+      else if (t < p.torchUntil) rate = cfg.sanityFireGain;
+      else {
+        rate = -sanityDrain(cfg, sec) * Math.max(0.4, 1 - cfg.sanityFlowerSlow * p.stars);
+        let near = 0;
+        for (const o of this.world.entities) {
+          if (o.alive && o.eid !== p.eid && Math.hypot(o.x - e.x, o.y - e.y) <= cfg.sanityCrowdRadius) near++;
+        }
+        if (near >= cfg.sanityCrowdMin) rate *= cfg.sanityCrowdMul;
+        // рядом с кикиморой рассудок тает быстрее — долго бегать не выйдет, надо отбиваться
+        if (p.kiki.some((k) => t >= k.at && Math.hypot(k.x - e.x, k.y - e.y) <= cfg.kikiDreadRadius)) rate *= cfg.kikiDreadMul;
+      }
+      this.addSanity(p, (rate * TICK_MS) / 1000);
+      if (this.kikiTick(p, t)) continue;
+      if (p.sanity > 0 || cfg.kidsMode) continue;
+      this.madCut(p, t);
+    }
+  }
+
+  /** Вырезан рассудком или кикиморой: удар без нападавшего, как у режиссёра в «Жёстком дубле». */
+  private madCut(p: PlayerRound, t: number): void {
+    const e = this.world.get(p.eid)!;
+    p.alive = false;
+    p.diedAt = t;
+    p.kiki = [];
+    this.emit({ t: 'hit', target: p.eid, result: 'player', x: e.x, y: e.y, at: t });
+    this.emit({ t: 'remove', eid: p.eid, cause: 'player', at: t });
+  }
+
+  /**
+   * Кикиморы игрока: ниже порога «Кошмар» вылезают из воды у края поля (с рябью за kikiWarnMs), чем ниже
+   * рассудок — тем их больше и тем они быстрее, но медленнее человечка: убежать можно, только бегом.
+   * Касание — вырезан (в детском режиме — оглушён, кикимора уходит). Рассудок выше порога — все тают.
+   * Знает о них только сам игрок (личное сообщение). true — игрок вырезан.
+   */
+  private kikiTick(p: PlayerRound, t: number): boolean {
+    const cfg = this.cfg;
+    const limit = cfg.sanityStages[2];
+    // пока идёт Леший — хозяин леса — кикиморы прячутся в воду: двух чудищ разом не бывает
+    if (this.leshyHides(t)) {
+      p.kiki = [];
+      p.kikiNextAt = Math.max(p.kikiNextAt, t + cfg.kikiWarnMs);
+      return false;
+    }
+    if (p.sanity >= limit) {
+      p.kiki = [];
+      return false;
+    }
+    const e = this.world.get(p.eid)!;
+    const want = p.sanity < cfg.kikiMoreAt[1] ? 3 : p.sanity < cfg.kikiMoreAt[0] ? 2 : 1;
+    if (p.kiki.length < want && t >= p.kikiNextAt) {
+      const w = this.arena.walk;
+      for (let k = 0; k < 20; k++) {
+        const side = this.rng.int(0, 3);
+        const x = side === 0 ? w.x + 2 : side === 1 ? w.x + w.w - 2 : this.rng.range(w.x + 4, w.x + w.w - 4);
+        const y = side === 2 ? w.y + 2 : side === 3 ? w.y + w.h - 2 : this.rng.range(w.y + 4, w.y + w.h - 4);
+        if (Math.hypot(x - e.x, y - e.y) < cfg.kikiSpawnMinDist && k < 19) continue;
+        p.kiki.push({ id: this.kikiSeq--, x: Math.round(x), y: Math.round(y), at: t + cfg.kikiWarnMs, hp: cfg.kikiHp });
+        break;
+      }
+      p.kikiNextAt = t + cfg.kikiGapMs;
+    }
+    const depth = 1 - p.sanity / limit; // 0 у порога, 1 на нуле
+    const speed = cfg.kikiSpeed[0] + (cfg.kikiSpeed[1] - cfg.kikiSpeed[0]) * depth;
+    for (const k of p.kiki) {
+      if (t < k.at) continue;
+      const dx = e.x - k.x;
+      const dy = e.y - k.y;
+      const d = Math.hypot(dx, dy);
+      const step = (speed * TICK_MS) / 1000;
+      // факел в руке: кикимора не подходит ближе света и пятится
+      if (t < p.torchUntil && d < cfg.torchRadius) {
+        k.x -= (dx / (d || 1)) * step;
+        k.y -= (dy / (d || 1)) * step;
+        continue;
+      }
+      if (t < p.torchUntil && d - step < cfg.torchRadius) continue;
+      if (d > step) {
+        k.x += (dx / d) * step;
+        k.y += (dy / d) * step;
+      }
+      if (Math.hypot(e.x - k.x, e.y - k.y) > cfg.kikiTouch) continue;
+      if (cfg.kidsMode) {
+        p.kiki = p.kiki.filter((o) => o !== k);
+        p.stunUntil = t + cfg.missStunSec * 1000;
+        this.emit({ t: 'act', eid: p.eid, kind: 'stun', dur: cfg.missStunSec * 1000, at: t });
+        return false;
+      }
+      this.madCut(p, t);
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Удар по своей кикиморе: ударов дубля не тратит, два удара — отбита (+рассудок). Для остальных игроков
+   * это взмах по пустому месту (эмоция «удар»), а значит — улика.
+   */
+  private hitKiki(p: PlayerRound, id: number, ax: number, ay: number): void {
+    const cfg = this.cfg;
+    const t = this.world.time;
+    const k = p.kiki.find((o) => o.id === id);
+    if (!k) return;
+    if (Math.hypot(k.x - ax, k.y - ay) > cfg.attackRange + 4) {
+      this.notices.push({ t: 'denied', pid: p.pid, reason: 'out_of_range' });
+      return;
+    }
+    const dx = k.x - ax;
+    const dy = k.y - ay;
+    const d = Math.hypot(dx, dy) || 1;
+    this.emit({ t: 'act', eid: p.eid, kind: 'jab', dur: emoteDur('jab'), at: t });
+    // отшатнулась
+    k.x -= (dx / d) * 8;
+    k.y -= (dy / d) * 8;
+    k.at = Math.max(k.at, t + 400);
+    if (--k.hp > 0) return;
+    p.kiki = p.kiki.filter((o) => o !== k);
+    this.addSanity(p, cfg.kikiBanish);
+  }
+
+  private kikiSeq = -1;
 
   /** Очередь появления звёзд держим по времени: ранняя замена взятой звезды не ждёт позднюю. */
   private queueStar(at: number): void {
@@ -716,6 +1016,9 @@ export class MatchSim {
     const pts: Record<string, PointsLine> = {};
     for (const p of this.pr) pts[p.pid] = { kill: p.kills * cfg.points.kill, survive: 0, stars: 0, accuse: 0, total: 0 };
     const aliveEids = new Set(this.pr.filter((p) => p.alive).map((p) => p.eid));
+    // с рассудком: дубль выигрывает последний выживший — один живой; все сгинули — кто продержался дольше;
+    // плёнка кончилась при нескольких живых — у кого голова яснее
+    if (hasSanity(this.theme) && this.pr.length >= 2) this.starWinner = this.lastSurvivor();
     const accusations: RoundSummary['accusations'] = [];
     const accusedCount = new Map<number, number>();
     for (const p of this.pr) {
@@ -731,7 +1034,12 @@ export class MatchSim {
       // выжил, но тебя вычислили — очко за выживание пропадает (обвинитель своё +1 уже получил)
       if (p.alive && !accusedCount.get(p.eid)) this.addScore(p.pid, cfg.points.survive, 'survive', pts);
       // три звезды, но тебя вычислили — звёзды сгорели: иначе бег по звёздам в открытую выгоднее всего
-      if (this.starWinner === p.pid && !accusedCount.get(p.eid)) this.addScore(p.pid, cfg.points.stars, 'stars', pts);
+      if (this.starWinner === p.pid && (hasSanity(this.theme) || !accusedCount.get(p.eid))) this.addScore(p.pid, cfg.points.stars, 'stars', pts);
+    }
+    // «Купальская ночь»: место — по тому, кто продержался дольше: очко за каждого, кто сгинул раньше
+    if (hasSanity(this.theme)) {
+      const died = (p: PlayerRound) => p.diedAt ?? Infinity;
+      for (const p of this.pr) this.addScore(p.pid, this.pr.filter((q) => died(q) < died(p)).length, 'survive', pts);
     }
     for (const p of this.pr) pts[p.pid].total = pts[p.pid].kill + pts[p.pid].survive + pts[p.pid].stars + pts[p.pid].accuse;
 
@@ -776,6 +1084,19 @@ export class MatchSim {
     this.setPhase('reveal', revealMs(cfg));
   }
 
+  private lastSurvivor(): string | null {
+    const alive = this.pr.filter((p) => p.alive);
+    if (alive.length === 1) return alive[0].pid;
+    if (alive.length > 1) {
+      const top = alive.reduce((a, b) => (b.sanity > a.sanity ? b : a));
+      return alive.filter((p) => p.sanity === top.sanity).length === 1 ? top.pid : null;
+    }
+    const dead = this.pr.filter((p) => p.diedAt !== null);
+    if (!dead.length) return null;
+    const last = dead.reduce((a, b) => (b.diedAt! > a.diedAt! ? b : a));
+    return dead.filter((p) => p.diedAt === last.diedAt).length === 1 ? last.pid : null;
+  }
+
   private addScore(pid: string, delta: number, reason: keyof Omit<PointsLine, 'total'>, pts?: Record<string, PointsLine>): void {
     if (!delta) return;
     this.scores[pid] += delta;
@@ -789,7 +1110,8 @@ export class MatchSim {
    */
   get lastRound(): boolean {
     const top = Math.max(...Object.values(this.scores));
-    return top >= this.cfg.scoreToWin || this.round >= this.cfg.maxRounds;
+    // «Купальская ночь» — матч в одну ночь: до смерти всех, без повторов между дублями
+    return top >= this.cfg.scoreToWin || this.round >= this.cfg.maxRounds || hasSanity(this.theme);
   }
 
   /** Итоги матча по уже начисленным очкам — те же, что будут на match_end. */
@@ -827,12 +1149,13 @@ export class MatchSim {
       this.themeOrder = Array.from({ length: THEME_COUNT }, () => fixed);
       return;
     }
-    const order = this.rng.shuffle(Array.from({ length: THEME_COUNT }, (_, i) => i));
+    // скрытые темы (themes.ts › hidden) в очередь не попадают — порядок остальных при этом прежний
+    const order = this.rng.shuffle([...ROTATION_THEMES]);
     // реванш не начинается с той же темы, которой закончился прошлый матч
     if (this.round > 0 && order[0] === last) order.push(order.shift()!);
     // сезонная тема (под Новый год — «Корпоратив») открывает матч; кончился ею прошлый — идёт второй
     const lead = this.cfg.leadTheme;
-    if (lead >= 0 && lead < THEME_COUNT) {
+    if (lead >= 0 && lead < THEME_COUNT && order.includes(lead)) {
       order.splice(order.indexOf(lead), 1);
       order.splice(this.round > 0 && last === lead ? 1 : 0, 0, lead);
     }
@@ -949,7 +1272,7 @@ export class MatchSim {
           const own = it.at !== undefined && it.at >= c.resumeAt + a && it.at <= c.resumeAt + b && it.at % TICK_MS === 0 ? it.at : undefined;
           p.crowdQueued = { kind: it.kind, at: Math.max(t, own ?? c.resumeAt + jitter) };
         } else {
-          this.emit({ t: 'act', eid: p.eid, kind: CROWD_ACT[it.kind], dur: crowdActDur(cfg, it.kind), at: t });
+          this.emit({ t: 'act', eid: p.eid, kind: CROWD_ACT[it.kind], dur: crowdHoldDur(cfg, it.kind, t, c.watchUntil), at: t });
         }
         return;
       }
@@ -967,23 +1290,37 @@ export class MatchSim {
         const zone = this.world.zoneRect(t);
         const target = zone ? clampToRect(zone, it.x, it.y, 2) : { x: it.x, y: it.y };
         const path = planPath(this.world, p.eid, target.x, target.y, zone);
-        if (path && path.length) this.emit({ t: 'move', eid: p.eid, path, at: t });
+        if (path && path.length) {
+          this.leshySees(p, t);
+          this.emit({ t: 'move', eid: p.eid, path, at: t });
+        }
         return;
       }
       case 'stop':
         this.emit({ t: 'stop', eid: p.eid, at: t });
         return;
       case 'emote': {
+        this.leshySees(p, t);
         // в изнанке темы эмоция у всех одна (бой с тенью в подвале) — игрок не выделяется
         const kind: ActKind = twistEmote(this.theme, this.world.twist) ?? (it.kind && EMOTES.includes(it.kind) ? it.kind : this.rng.pick<ActKind>(EMOTES));
         this.emit({ t: 'act', eid: p.eid, kind, dur: emoteDur(kind), at: t });
         return;
       }
       case 'attack':
+        if (it.eid >= 0) this.leshySees(p, t);
         // момент мира на экране нападавшего (не раньше LAG_GRACE_MS назад)
         this.attack(p, it.eid, e.x, e.y, Math.max(t - LAG_GRACE_MS, Math.min(t, it.wt ?? t)));
         return;
     }
+  }
+
+  /**
+   * Леший смотрит (от конца стоп-кадра до приговора в watchUntil): замерший игрок, который пошёл,
+   * помахал или ударил, для него — дёрнувшийся (judgeTick › prey). Стоп-кадр сам ставит позу поверх.
+   */
+  private leshySees(p: PlayerRound, t: number): void {
+    const c = this.world.crowd;
+    if (c && c.watchUntil !== undefined && c.warnAt === this.leshyWarn && t >= c.resumeAt && t <= c.watchUntil) p.leshyMoved = c.warnAt;
   }
 
   private recordPositions(): void {
@@ -1002,6 +1339,10 @@ export class MatchSim {
   private attack(p: PlayerRound, target: number, ax: number, ay: number, view?: number): void {
     const cfg = this.cfg;
     const t = this.world.time;
+    if (target < 0) {
+      this.hitKiki(p, target, ax, ay);
+      return;
+    }
     if (p.attacksLeft <= 0) {
       this.notices.push({ t: 'denied', pid: p.pid, reason: 'no_attacks' });
       return;
@@ -1036,12 +1377,19 @@ export class MatchSim {
       this.emit({ t: 'hit', target, result: 'player', x: hx, y: hy, ...(attacker !== undefined ? { attacker } : {}), at: t });
     } else {
       p.botHits++;
+      this.addSanity(p, -cfg.sanityBotHit);
       p.stunUntil = t + cfg.missStunSec * 1000;
       this.bots.remove(target);
       this.emit({ t: 'hit', target, result: 'bot', x: hx, y: hy, attacker: p.eid, at: t });
     }
     this.emit({ t: 'remove', eid: target, cause: victim ? 'player' : 'bot', at: t });
     this.notices.push({ t: 'attack', pid: p.pid, target, result: victim ? 'player' : 'bot', at: t });
+    // рядом кого-то вырезали — не по себе всем, кто стоял близко (и нападавшему тоже)
+    for (const o of this.pr) {
+      if (!o.alive) continue;
+      const oe = this.world.get(o.eid)!;
+      if (Math.hypot(oe.x - hx, oe.y - hy) <= cfg.sanityNearRadius) this.addSanity(o, -cfg.sanityNearCut);
+    }
     // испуг соседей маскирует нападающего
     for (const o of this.world.alive()) {
       if (o.eid === target) continue;

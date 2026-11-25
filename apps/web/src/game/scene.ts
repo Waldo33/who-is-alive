@@ -1,4 +1,5 @@
 import * as Phaser from 'phaser';
+import { FACE_EYES, FACE_H, FACE_W, LESHY_H, LESHY_W, leshyFace, leshyFrames, type LeshyKey } from './leshy-art';
 import { PAL, PLAYER_COLORS, hexToInt } from '@kto/assets';
 import {
   LocalSession,
@@ -12,6 +13,14 @@ import {
   DICTS,
   THEME_RULES,
   roundMod,
+  hasSanity,
+  sanityStage,
+  nightLevel,
+  playLenSec,
+  leshyVisits,
+  leshySpot,
+  fireLevel,
+  LAG_GRACE_MS,
 } from '@kto/game-core';
 import type { AwardId, ClientSession, CrowdKind, Dict, Entity, GameConfig, Lang, Moment, Notice, RoundSummary, ThemeText, World, WorldEvent } from '@kto/game-core';
 import { resultCardFile } from './card';
@@ -39,6 +48,7 @@ import {
 import { isThemeLoaded, loadTheme, lookCount, preloadThemes, themeLook, themePack, variantOf } from './themes';
 import type { Look } from './themes';
 import { haptic, setClosingConfirmation } from '../lib/telegram';
+import { canvas, px as ppx } from './pixels';
 
 /** Постоянные кнопки «автопилот» и «эмоция» в нижней панели (выключены — не пользовались). */
 const HUD_EXTRAS = false;
@@ -210,6 +220,46 @@ export class GameScene extends Phaser.Scene {
   private duskWorld: World | null = null;
   /** Мигалка «звёзд розыска»: время начала. */
   private siren = 0;
+  /** Ночь темы с `night` («Купальская ночь»): вуаль с просветом у костра и сплошная — когда костёр прогорел. */
+  private nightVeil!: Phaser.GameObjects.RenderTexture;
+  /** Рассудок (тема с рассудком): тьма по краям своего экрана, свеча на панели, стадия и «сердце». */
+  private madVeil!: Phaser.GameObjects.Image;
+  private candleG!: Phaser.GameObjects.Graphics;
+  private sanPrev = 100;
+  private sanTrend = 0;
+  private sanTrendAt = 0;
+  private sanityStageShown = -1;
+  private lastSanity = 100;
+  /** Когда Леший забрал меня (время сцены): до конца скримера лес молчит. */
+  private screamerAt = -1e9;
+  /** Свои кикиморы (видит только тот, за кем пришли): спрайт и сглаженная позиция. */
+  private kikiViews = new Map<number, { spr: Phaser.GameObjects.Image; x: number; y: number; seen: number }>();
+  private kikiG!: Phaser.GameObjects.Graphics;
+  /** «Краем глаза»: в «Мороке» и «Кошмаре» тень мелькает у края своего экрана и пропадает. */
+  private glimpse!: Phaser.GameObjects.Image;
+  private glimpseAt = 0;
+  /** «Факел!» вовремя: у кого (eid) и до какого времени мира горит факел — по событиям `act`, у всех одинаково. */
+  private torches = new Map<number, number>();
+  private torchG!: Phaser.GameObjects.Graphics;
+  /** «Тсс!»: огромная тень ползёт по лугу в стоп-кадре. */
+  private giant!: Phaser.GameObjects.Image;
+  private giantFor = -1;
+  private dreadAt = 0;
+  /** Сколько своих провинностей уже показали (-1 — дубль не начат). */
+  private sinsShown = -1;
+  /** Когда грохнул шаг Лешего: ночь на миг темнеет. */
+  private stepDarkAt = 0;
+  private giantFrame = -1;
+  private giantShadow?: Phaser.GameObjects.Graphics;
+  private giantStrike: { x: number; y: number; at: number } | null = null;
+  private giantDust: { x: number; y: number; dx: number; t0: number }[] = [];
+  /** Приходы Лешего за ночь (sanity.ts › leshyVisits): «Ау», шаги, тишина; настоящий — выходит и забирает, ложный — уходит. */
+  private leshy = { round: -1, idx: 0, sec: 0, stage: 'wait' as 'wait' | 'near' | 'over' | 'leave' | 'done', nextAt: 0, steps: 0, warn: -1 };
+  /** Галлюцинация на «Мороке»: у фигуры (индекс) на миг вместо лица — тьма и белые глаза. */
+  private halluc: { idx: number; until: number } | null = null;
+  private hallucAt = 0;
+  private glimpseOff = 0;
+  private heartAt = 0;
   private pigeons: Pigeon[] = [];
   private ui!: Phaser.GameObjects.Graphics;
   private fxG!: Phaser.GameObjects.Graphics;
@@ -238,6 +288,14 @@ export class GameScene extends Phaser.Scene {
   private uiSet = new Set<Phaser.GameObjects.GameObject>();
   private crowdG!: Phaser.GameObjects.Graphics;
   private grayFx: Phaser.FX.ColorMatrix | null = null;
+  private wasBw = 0;
+  /** «Купальская ночь»: в этом дубле успела наступить ночь (иначе итоги — обычные, цветные). */
+  private nightFell = false;
+  private nightRound = -1;
+  /** Часы дубля на последнем кадре игры: по ним костёр в повторе и в итогах горит так, как горел тогда. */
+  private endPlaySec = 0;
+  /** Идёт триумф «Купальской ночи»: цветок цветной, остальное нарисовано серым (фильтр снят). */
+  private fernOn = false;
   private freezeVeil!: Phaser.GameObjects.Rectangle;
   private dim!: Phaser.GameObjects.Rectangle;
   private overlayPhase = '';
@@ -298,6 +356,17 @@ export class GameScene extends Phaser.Scene {
   /** Повтор: кто бил → его удары (он замахивается). */
   private replayBy = new Map<number, Kill[]>();
   private replayT: number | null = null;
+  /**
+   * «Купальская ночь»: повтор — плёнка с той ночи. Время повтора неравномерное (узлы [стена, мир], мс от
+   * начала повтора / мировое): у каждой смерти замедление и стоп-кадр, остальное быстрее; длина та же.
+   */
+  private replayWarp: [number, number][] = [];
+  private replayHold = false;
+  private replayOn = false;
+  /** Удары Лешего в журнале дубля: warnAt его «Тсс!» → где и когда забрал. */
+  private replayLeshy = new Map<number, { x: number; y: number; at: number }>();
+  private replayDeaths: { at: number; leshy: boolean }[] = [];
+  private replayDeathIdx = 0;
   private pxCache = new Map<string, number>();
   private noPoof = new Set<number>();
   /** Переодевание при смене облика (ThemePack.dressUp): когда началось и в какую сторону. */
@@ -333,6 +402,8 @@ export class GameScene extends Phaser.Scene {
     this.audio = data.audio;
     this.views = [];
     this.starSprites.clear();
+    this.kikiViews.clear();
+    this.torches.clear();
     this.hedges = [];
     this.props = [];
     this.pigeons = [];
@@ -443,6 +514,22 @@ export class GameScene extends Phaser.Scene {
     this.duskVeil = this.add.rectangle(0, AY, 180, 260, 0, 0).setOrigin(0, 0).setDepth(998).setVisible(false);
     this.pulseVeil = this.add.rectangle(0, AY, 180, 260, 0, 0).setOrigin(0, 0).setDepth(997).setVisible(false);
     this.sirenVeil = this.add.rectangle(0, AY, 180, 260, 0, 0).setOrigin(0, 0).setDepth(999).setVisible(false);
+    // ночь «Купальской ночи»: под интерфейсом и прожектором, над фигурами; у своего рассудка — края темнеют
+    if (!this.textures.exists('nightveil')) this.textures.addCanvas('nightveil', makeNightVeil());
+    if (!this.textures.exists('madveil')) this.textures.addCanvas('madveil', makeMadVeil());
+    // ночь — одна текстура: вуаль, полная тьма, когда костёр прогорел, и просветы вокруг факелов
+    if (!this.textures.exists('torchhole')) this.textures.addCanvas('torchhole', makeTorchHole());
+    this.nightVeil = this.add.renderTexture(0, AY, 180, 260).setOrigin(0, 0).setDepth(940).setVisible(false);
+    this.torchG = this.add.graphics().setDepth(943);
+    this.madVeil = this.add.image(0, AY, 'madveil').setOrigin(0, 0).setDepth(945).setVisible(false);
+    this.candleG = this.add.graphics().setDepth(1100);
+    // кикиморы — поверх тьмы краёв: выходят из неё
+    this.addSheet('kikimora', makeKikimora(), KIKI_W, KIKI_H);
+    this.addSheet('leshy', makeLeshy(), LESHY_W, LESHY_H);
+    this.addSheet('leshyFace', makeLeshyFace(), FACE_W, FACE_H);
+    this.addSheet('fern', makeFern(), 15, 15);
+    this.kikiG = this.add.graphics().setDepth(946);
+    this.glimpse = this.add.image(0, 0, 'kikimora', 0).setOrigin(0.5, 1).setDepth(946).setTintFill(hexToInt(PAL.ink)).setVisible(false);
     // подсказки сверху поля: шаги пробного дубля и «впервые видишь» в настоящей игре
     this.coachG = this.add.graphics().setDepth(1600);
     // затемнение поля вокруг того, что выделяет обучение (на основной камере — под кнопками и подсказкой)
@@ -475,8 +562,15 @@ export class GameScene extends Phaser.Scene {
     if (phase === 'countdown' || phase === 'play') {
       this.audio.setMusic('play', this.sim.theme, restart && phase === 'countdown');
       if (phase === 'play' && this.sim.world.isFrozen()) this.audio.cutMusic();
-    } else if (phase === 'accuse') this.audio.setMusic('accuse');
+    } else if (this.dreadAfter()) this.audio.setMusic('play', this.sim.theme);
+    else if (phase === 'accuse') this.audio.setMusic('accuse');
     else this.audio.setMusic('off');
+  }
+
+  /** «Купальская ночь»: страх не отпускает и после дубля — до «Далее» ночь, шкатулка и глаза в лесу. */
+  private dreadAfter(): boolean {
+    const ph = this.sim.phase;
+    return hasSanity(this.sim.theme) && (ph === 'accuse' || ph === 'reveal' || ph === 'results');
   }
 
   private setupFreezeFrame(): void {
@@ -908,6 +1002,20 @@ export class GameScene extends Phaser.Scene {
       }
       return;
     }
+    // тап по своей кикиморе — отбиваться (удары не тратятся; бьёшь по пустоте — со стороны это видно)
+    const kk = me.kiki.find((k) => !k.warn && Math.abs(k.x - x) <= 9 && y >= k.y - KIKI_H + 4 && y <= k.y + 3);
+    if (kk) {
+      if (Math.hypot(kk.x - mine.x, kk.y - mine.y) <= this.cfg.attackRange + 4 && w.time >= me.stunUntil) {
+        const d = Math.hypot(kk.x - mine.x, kk.y - mine.y) || 1;
+        this.lunge = { dx: ((kk.x - mine.x) / d) * 3, dy: ((kk.y - mine.y) / d) * 2, start: performance.now() };
+        this.swingFx.push({ eid: kk.id, x: kk.x, y: kk.y, t: 0 });
+        haptic('medium');
+        sim.intent({ k: 'attack', eid: kk.id });
+        return;
+      }
+      sim.intent({ k: 'move', x: Math.round(kk.x), y: Math.round(kk.y) });
+      return;
+    }
     // тап по звезде — идти за ней (даже если она прямо над своим персонажем или рядом с кем-то)
     for (const st of w.stars.values()) {
       if (Math.hypot(st.x - x, st.y - 3 - y) <= 6) {
@@ -950,6 +1058,11 @@ export class GameScene extends Phaser.Scene {
 
   private onWorldEvent(ev: WorldEvent): void {
     const myEid = this.me()?.eid;
+    if (ev.t === 'act' && ev.kind === 'jump' && hasSanity(this.sim.theme)) {
+      // «Факел!» вовремя — факел в руке; опоздавшему не достаётся (та же улика, что и сейчас)
+      const c = this.sim.world.crowd;
+      if (c && !c.vote && c.kind === 'jump' && ev.at >= c.showAt && ev.at <= c.windowEnd) this.torches.set(ev.eid, c.windowEnd + this.cfg.torchMs);
+    }
     switch (ev.t) {
       case 'hit':
         // ночью Майами — удар оружием: звук, тряска и стоп-кадр — в момент удара (weaponImpact)
@@ -957,10 +1070,23 @@ export class GameScene extends Phaser.Scene {
         if (this.weaponKills() && ev.attacker !== undefined) this.weaponHit(ev.target, ev.x, ev.y, ev.attacker);
         else {
           // вырезали меня — «вырезан»; мой удар по живому — награда; чужой — событие на поле
-          if (ev.target === myEid) this.audio.play('cut');
-          else if (ev.result === 'player') this.audio.play(this.myHit(ev.target) ? 'hitPlayer' : 'hitOther');
-          else this.audio.play('hitBot');
-          this.audio.play('poof');
+          // Леший забрал меня — у себя ни звука: музыка обрывается, дальше мёртвая тишина до скримера
+          // (любой звук перед ударом гасит вздрагивание); соседи по комнате слышат «забрал» у себя
+          const screamer = this.byLeshy(ev) && ev.target === myEid && !this.cfg.kidsMode;
+          if (this.byLeshy(ev)) {
+            this.giantStrike = { x: ev.x, y: ev.y, at: ev.at };
+            if (!screamer) this.audio.play('leshyTake');
+            this.cameras.main.shake(500, 0.016);
+          }
+          if (screamer) {
+            this.screamerAt = this.time.now;
+            this.audio.cutMusic();
+          } else {
+            if (ev.target === myEid) this.audio.play('cut');
+            else if (ev.result === 'player') this.audio.play(this.myHit(ev.target) ? 'hitPlayer' : 'hitOther');
+            else this.audio.play('hitBot');
+            this.audio.play('poof');
+          }
           this.cameras.main.shake(120, 0.008);
           this.hitStop = 60;
         }
@@ -970,12 +1096,19 @@ export class GameScene extends Phaser.Scene {
         if (ev.target === myEid) {
           // «Жёсткий дубль»: вырезал режиссёр — сразу после окна команды, без удара
           const c = this.sim.world.crowd;
-          const byDirector = (roundMod(this.sim.mod) === 'hard' || this.cfg.strictCrowd) && !!c && !c.vote && ev.at > c.windowEnd && ev.at < c.windowEnd + 2000;
-          const sub = byDirector ? this.t.game.cutByCrowd : undefined;
+          const byDirector = !this.byLeshy(ev) && !hasSanity(this.sim.theme) && (roundMod(this.sim.mod) === 'hard' || this.cfg.strictCrowd) && !!c && !c.vote && ev.at > c.windowEnd && ev.at < c.windowEnd + 2000;
+          // «Купальская ночь»: рассудок кончился — сгинул в тумане (удар без нападавшего, как у режиссёра)
+          const leshy = this.byLeshy(ev);
+          const byMadness = !byDirector && !leshy && hasSanity(this.sim.theme) && ev.attacker === undefined && this.lastSanity <= 2;
+          const sub = leshy ? this.themeText()?.leshyTook : byDirector ? this.t.game.cutByCrowd : byMadness ? this.themeText()?.sanityLost : undefined;
           this.outBy = byDirector ? 'director' : 'player';
           // оружием — баннер в момент удара, с кровью на экране и сотрясением (weaponImpact)
           const lk = this.kills.find((k) => k.k.eid === ev.target && !k.hit);
           if (lk) lk.mine = { sub };
+          // Леший: сперва видно, как он бросается и бьёт тебя, потом — его морда во весь экран
+          // (скример; в детском режиме — без него), потом «вырезан»
+          else if (leshy && !this.cfg.kidsMode) this.leshyScreamer(() => this.showDeath(sub));
+          else if (leshy) this.time.delayedCall(900, () => this.showDeath(sub));
           else this.showDeath(sub);
           if (ev.result === 'player' && myEid !== undefined) this.offerDeathClip(myEid, ev.at, ev.attacker);
         }
@@ -984,7 +1117,7 @@ export class GameScene extends Phaser.Scene {
         if (ev.eid === myEid) this.myStarsTaken = Math.min(3, this.myStarsTaken + 1);
         this.audio.play('starTake', ev.eid === myEid ? this.myStarsTaken : 0);
         if (ev.eid === myEid) haptic('success');
-        if (ev.eid !== myEid && this.sim.phase === 'play') this.tip('star');
+        if (ev.eid !== myEid && this.sim.phase === 'play' && !hasSanity(this.sim.theme)) this.tip('star');
         if (themePack(this.sim.theme).starSiren && this.sim.phase === 'play') {
           this.audio.play('siren');
           this.siren = performance.now();
@@ -1130,6 +1263,8 @@ export class GameScene extends Phaser.Scene {
         // присказка темы — только когда нет условия съёмки: его уже прочитали на отсчёте
         const intro = roundMod(this.sim.mod) === 'none' ? this.themeText()?.intro : undefined;
         if (intro) this.time.delayedCall(900, () => this.sim.phase === 'play' && this.showToast(intro, 2400));
+        const hint = roundMod(this.sim.mod) === 'none' ? this.themeText()?.hint : undefined;
+        if (hint) this.time.delayedCall(3500, () => this.sim.phase === 'play' && this.showToast(hint, 2400));
         // новичок без «Пробного дубля»: как ходить — сразу, как искать живого — когда осмотрелся
         if (this.newbie && !this.init0.spectator) {
           this.time.delayedCall(1200, () => this.sim.phase === 'play' && !this.sim.world.isFrozen() && this.tip('move'));
@@ -1144,6 +1279,7 @@ export class GameScene extends Phaser.Scene {
         const s = this.sim.summary!;
         this.replay = makeReplay(this.sim.world, s.replayFrom, this.sim.world.time);
         this.setReplayKills();
+        this.buildReplayWarp(s);
         this.trails.clear();
         this.noteMoment();
         this.upgradeDeathClip();
@@ -1363,6 +1499,110 @@ export class GameScene extends Phaser.Scene {
   }
 
   /** Крупно и сразу понятно: тебя выбили, теперь ты призрак. */
+  /**
+   * Скример «Тебя забрал Леший» — по отметкам звука `scream` (sfx.ts). Вздрагивают от скачка из тишины:
+   * после удара Лешего у себя ни звука (музыка оборвана, лес молчит), мир медленно гаснет (три варианта
+   * ожидания — ниже); потом удар картинки и звука в один кадр — морда с перелётом (×3 → ×2), пасть ходит рывками, морда дрожит и
+   * рвётся полосами; бросок вплотную и обрыв в темноту, где ещё тлеют глаза; сердце и «вырезан».
+   * Без мигания: свет только гаснет. Звук громкий — игрок уже вырезан, ничего не выдаёт.
+   */
+  private leshyScreamer(then: () => void): void {
+    const W = 180;
+    const H = 320;
+    // Каждый раз по-разному, чтобы не привыкнуть: в лоб — мёртвая тишина 0,7–1,1 с, мир гаснет, удар;
+    // ложное облегчение — погасло, тьма начинает отступать (обошлось?) — и тогда удар; из-за края — в тишине
+    // слева медленно заглядывает пол-морды с одним глазом, замирает — и бросается.
+    const r = Math.random();
+    const kind = r < 0.4 ? 'direct' : r < 0.7 ? 'relief' : 'peek';
+    const HIT = kind === 'direct' ? 700 + Math.round(Math.random() * 400) : kind === 'relief' ? 1700 + Math.round(Math.random() * 500) : 1500 + Math.round(Math.random() * 300);
+    const LUNGE = HIT + 690;
+    const CUT = HIT + 800;
+    const dark = this.add.rectangle(0, 0, W, H, hexToInt(PAL.ink), 1).setOrigin(0, 0).setDepth(1800).setAlpha(0);
+    const fadeMs = kind === 'relief' ? 750 : HIT - 250;
+    this.tweens.add({ targets: dark, alpha: 0.88, delay: 150, duration: fadeMs, ease: 'Sine.easeIn' });
+    // ложное облегчение: тьма отступает, будто пронесло
+    if (kind === 'relief') this.tweens.add({ targets: dark, alpha: 0.45, delay: 1100, duration: HIT - 1100, ease: 'Sine.easeOut' });
+    const cx = W / 2;
+    const cy = Math.round(H * 0.46);
+    if (kind === 'peek') {
+      // из-за левого края: видно пол-морды и правый глаз; ползёт по пикселю, на миг замирает
+      const peek = this.add.sprite(-110, cy - 20, 'leshyFace', 0).setScale(2).setDepth(1801);
+      this.tweens.add({
+        targets: peek,
+        x: -22,
+        delay: 300,
+        duration: HIT - 650,
+        ease: 'Sine.easeOut',
+        onUpdate: () => peek.setX(Math.round(peek.x)),
+      });
+      this.time.delayedCall(HIT, () => peek.destroy());
+    }
+    // где глаза морды на экране при масштабе sc (в кадре морды — FACE_EYES)
+    const eyesAt = (sc: number) => FACE_EYES.map(([x, y]) => [cx + (x - FACE_W / 2) * sc, cy + (y - FACE_H / 2) * sc] as const);
+    // морда — тремя полосами (глаза, пасть, челюсть): дрожат каждая по-своему, будто картинку рвёт
+    const bands = [[0, 44], [44, 76], [76, FACE_H]].map(([y0, y1]) =>
+      this.add.sprite(cx, cy, 'leshyFace', 1).setCrop(0, y0, FACE_W, y1 - y0).setDepth(1802).setVisible(false),
+    );
+    let frame = 1;
+    let scale = 3;
+    let shake = 0;
+    const place = () => {
+      for (const b of bands) {
+        b.setFrame(frame).setScale(scale);
+        b.setPosition(cx + Math.round((Math.random() - 0.5) * 2 * shake), cy + Math.round((Math.random() - 0.5) * shake));
+      }
+    };
+    // удар: звук и картинка в один кадр; перелёт ×3, через кадр — ×2 с распахнутой пастью
+    this.time.delayedCall(HIT, () => {
+      this.audio.play('scream');
+      bands.forEach((b) => b.setVisible(true));
+      shake = 6;
+      place();
+      haptic('heavy');
+      navigator.vibrate?.([200, 40, 120, 40, 300]);
+      this.cameras.main.shake(650, 0.035);
+    });
+    this.time.delayedCall(HIT + 60, () => {
+      frame = 2;
+      scale = 2;
+      place();
+    });
+    // пасть ходит рывками, дрожь стихает к броску
+    const chatter = this.time.addEvent({
+      delay: 70,
+      loop: true,
+      paused: true,
+      callback: () => {
+        frame = Math.random() < 0.55 ? 3 : 2;
+        shake = Math.max(2, shake - 0.4);
+        place();
+      },
+    });
+    this.time.delayedCall(HIT + 140, () => (chatter.paused = false));
+    // бросок вплотную
+    this.time.delayedCall(LUNGE, () => {
+      chatter.remove();
+      frame = 3;
+      scale = 3;
+      shake = 4;
+      place();
+      this.cameras.main.shake(220, 0.05);
+      haptic('heavy');
+      navigator.vibrate?.(260);
+    });
+    // обрыв: темнота, в ней ещё тлеют глаза
+    this.time.delayedCall(CUT, () => {
+      bands.forEach((b) => b.destroy());
+      dark.setAlpha(1).setDepth(1680);
+      const glow = eyesAt(3).map(([x, y]) => this.add.rectangle(Math.round(x), Math.round(y), 4, 3, hexToInt(PAL.amber)).setDepth(1681));
+      this.tweens.add({ targets: glow, alpha: 0, duration: 700, ease: 'Quad.easeIn', onComplete: () => glow.forEach((g) => g.destroy()) });
+    });
+    this.time.delayedCall(CUT + 330, () => {
+      then();
+      this.tweens.add({ targets: dark, alpha: 0, delay: 600, duration: 900, onComplete: () => dark.destroy() });
+    });
+  }
+
   private showDeath(subText?: string, bloody = false): void {
     this.clearDeath();
     if (bloody) this.bloodyScreen();
@@ -1790,7 +2030,526 @@ export class GameScene extends Phaser.Scene {
    * Вуали поверх поля: закат/рассвет (золото → лиловый → облик меняется → лиловый тает;
    * рассвет — наоборот), пульсация облика в такт (ночной клуб), мигалка «звёзд розыска».
    */
+  /** Текстура «звезды» на поле: своя у темы (цветок «Купальской ночи») или общая. */
+  private starKey(): string {
+    const th = this.sim.theme;
+    const pack = themePack(th);
+    if (!pack.star || !isThemeLoaded(th)) return 'star';
+    const key = 'star_t' + th;
+    this.addSheet(key, pack.star(), 10, 10);
+    return key;
+  }
+
+  private hudStarKey(): string | null {
+    const th = this.sim.theme;
+    const pack = themePack(th);
+    if (!pack.hudStar || !isThemeLoaded(th)) return null;
+    const key = 'hudstar_t' + th;
+    this.addSheet(key, pack.hudStar(), 10, 10);
+    return key;
+  }
+
+  /** Сколько секунд идёт игра дубля (0 — отсчёт и между дублями). */
+  private playSec(): number {
+    if (this.sim.phase !== 'play') return 0;
+    return Math.max(0, playLenSec(this.cfg, this.sim.theme) - this.sim.timeLeft() / 1000);
+  }
+
+  /**
+   * Ночь темы с `night`: вуаль плавно темнеет от сумерек к ночи, у костра — просвет, пока он горит
+   * (game-core › sanity.ts › nightLevel/fireLevel — те же числа, что у рассудка). В повторе разоблачения
+   * ночи нет: там важно разглядеть, кто что делал.
+   */
+  private renderNight(): void {
+    const ph = this.sim.phase;
+    const after = this.dreadAfter();
+    const on = themePack(this.sim.theme).night && isThemeLoaded(this.sim.theme) && (ph === 'play' || ph === 'countdown' || after);
+    this.torchG.clear();
+    this.renderLeshy();
+    if (!on) {
+      this.nightVeil.setVisible(false);
+      this.giant?.setVisible(false);
+      this.giantShadow?.setVisible(false);
+      return;
+    }
+    if (after) {
+      // после дубля ночь не уходит: в повторе — светлее (надо разглядеть, кто что делал), в итогах — темно,
+      // а из-за деревьев смотрят глаза
+      // «Купальская ночь» с наступившей ночью: повтор — плёнка с той ночи, Леший приходит и в нём
+      const film = ph === 'reveal' && this.replayOn && !!this.replay && this.replayWarp.length > 2;
+      const rt = this.nightVeil.setVisible(true);
+      rt.clear();
+      rt.draw('nightveil', 0, 0, film && this.nightFell ? 0.6 : ph === 'reveal' ? 0.3 : 0.55);
+      this.forestEyes(1);
+      if (film) {
+        this.renderGiant(this.replay!, true);
+        if (this.nightFell) this.renderFilm();
+      } else {
+        this.giant?.setVisible(false);
+        this.giantShadow?.setVisible(false);
+      }
+      return;
+    }
+    const sec = this.playSec();
+    const n = 0.18 + 0.5 * nightLevel(this.cfg, sec);
+    const fire = fireLevel(this.cfg, sec);
+    // костёр мерцает: просвет чуть дышит
+    const flick = fire > 0 ? 0.04 * Math.sin(performance.now() / 90) : 0;
+    const rt = this.nightVeil.setVisible(true);
+    rt.clear();
+    rt.draw('nightveil', 0, 0, Math.max(0, Math.min(1, n + flick)));
+    if (fire < 1) rt.fill(hexToInt(PAL.night), n * (1 - fire) * 0.85);
+    const dark = 1 - (performance.now() - this.stepDarkAt) / 260;
+    if (dark > 0) rt.fill(hexToInt(PAL.ink), 0.28 * dark);
+    // факелы: вокруг носителя ночь отступает (у всех одинаково — факел достают и боты)
+    const w = this.sim.world;
+    const now = performance.now();
+    const g = this.torchG;
+    for (const [eid, until] of this.torches) {
+      const e = w.get(eid);
+      if (!e?.alive || w.time >= until) {
+        this.torches.delete(eid);
+        continue;
+      }
+      const left = until - w.time;
+      // догорает: свет мигает последние 2 с
+      if (left < 2000 && Math.floor(now / 120) % 3 === 0) continue;
+      const r = this.cfg.torchRadius;
+      const x = Math.round(e.x);
+      const y = Math.round(e.y) - 10;
+      rt.erase('torchhole', x - r, y - r);
+      // сам факел в руке — пока не идёт поза «Факел!» (там он над головой)
+      if (e.act === 'jump' && w.time < e.actEnd) continue;
+      const tx = x + 4;
+      const ty = AY + Math.round(e.y) - 9;
+      g.fillStyle(hexToInt(PAL.ink)).fillRect(tx - 1, ty - 1, 3, 6);
+      g.fillStyle(hexToInt(PAL.umber)).fillRect(tx, ty, 1, 4);
+      const fl = Math.floor(now / 110 + eid) % 3;
+      g.fillStyle(hexToInt(PAL.orange)).fillRect(tx - (fl === 1 ? 1 : 0), ty - 3, 2, 3);
+      g.fillStyle(hexToInt(PAL.yellow)).fillRect(tx, ty - 2 - (fl === 2 ? 1 : 0), 1, 2);
+    }
+    this.renderGiant();
+  }
+
+  /**
+   * Леший (как великан в хорроре: громкость шага — это расстояние). Несколько раз за ночь: «Ау» из леса,
+   * песня замолкает, шаги всё ближе, перед его секундой — тишина. Настоящий приход — его «Тсс!»: выходит на
+   * поляну и забирает тех, кто не замер; ложный — шаги уходят. Звук общий: время дубля у всех одно.
+   */
+  private renderLeshy(): void {
+    const L = this.leshy;
+    const sim = this.sim;
+    if (!hasSanity(sim.theme) || sim.phase !== 'play') {
+      if (L.stage !== 'wait' && L.stage !== 'done') this.audio.setHush(false);
+      if (sim.phase !== 'play') L.round = -1;
+      return;
+    }
+    if (L.round !== sim.round) Object.assign(L, { round: sim.round, idx: 0, stage: 'wait', nextAt: 0, steps: 0, warn: -1 });
+    const v = leshyVisits(sim.round)[L.idx];
+    if (!v) {
+      if (L.stage !== 'done') this.audio.setHush(false);
+      L.stage = 'done';
+      return;
+    }
+    L.sec = v.sec;
+    const now = performance.now();
+    const clock = this.playSec();
+    const lead = this.cfg.leshyLeadSec;
+    const c = sim.world.crowd;
+    const next = () => {
+      L.idx++;
+      L.stage = 'wait';
+      this.audio.setHush(false);
+    };
+    if (L.stage === 'wait' && clock >= v.sec - lead - 3) {
+      if (clock > v.sec + 6) {
+        next(); // пропустили (вкладка спала) — ждём следующего
+        return;
+      }
+      // сначала из леса зовут «Ау-у…», музыка смолкает; шаги — следом
+      L.stage = 'near';
+      this.audio.setHush(true);
+      this.audio.play('leshyCall');
+      L.nextAt = now + 3000;
+    }
+    if (L.stage === 'near') {
+      if (v.real && c && c.kind === 'freeze' && !c.vote && sim.world.time >= c.showAt && sim.world.time < c.resumeAt) {
+        L.stage = 'over';
+        L.warn = c.warnAt;
+        this.audio.play('leshyStinger');
+        this.time.delayedCall(700, () => this.audio.play('leshyStep', 10));
+        this.time.delayedCall(1500, () => this.audio.play('leshyBreath'));
+        this.cameras.main.shake(400, 0.012);
+        haptic('heavy');
+      } else if (now >= L.nextAt) {
+        if (clock < v.sec - lead) return;
+        // за полторы секунды до его секунды шаги смолкают: он уже здесь — самая страшная тишина.
+        // Ложный приход: тишина… и шаги уходят. Не знаешь заранее, выйдет ли.
+        if (clock >= v.sec - 1.6) {
+          L.nextAt = now + 200;
+          if ((!v.real && clock >= v.sec + 2.4) || clock > v.sec + 8) {
+            L.stage = 'leave';
+            L.steps = 0;
+            L.nextAt = now;
+          }
+          return;
+        }
+        const k = Math.max(0, Math.min(9, Math.round(((clock - (v.sec - lead)) / lead) * 9)));
+        this.audio.play('leshyStep', k);
+        if (k >= 5) this.cameras.main.shake(120, 0.002 + k * 0.0006);
+        // шаг — толчок в руку и на миг темнеет (у всех разом: время дубля общее)
+        if (k >= 3) haptic(k >= 7 ? 'heavy' : 'light');
+        this.stepDarkAt = now;
+        L.nextAt = now + 1150 - k * 40;
+      }
+    } else if (L.stage === 'over' && c && sim.world.time >= (c.watchUntil ?? c.windowEnd + LAG_GRACE_MS) + 1600) {
+      L.stage = 'leave';
+      L.steps = 0;
+      L.nextAt = now;
+    } else if (L.stage === 'leave' && now >= L.nextAt) {
+      this.audio.play('leshyStep', 6 - L.steps * 2);
+      L.steps++;
+      L.nextAt = now + 1200;
+      if (L.steps >= 3) next();
+    }
+  }
+
+  /** Глаза Лешего за деревьями (k 0–1 — насколько он близко: ниже и ярче), иногда моргают. */
+  private forestEyes(k: number): void {
+    const now = performance.now();
+    if (Math.floor(now / 140) % 17 === 0) return;
+    const ex = 30 + ((this.sim.round * 53 + this.leshy.idx * 47) % 120) + Math.round(Math.sin(now / 1700) * 6);
+    const ey = AY + 4 + Math.round(k * 10);
+    const g = this.torchG;
+    g.fillStyle(hexToInt(PAL.amber)).fillRect(ex - 3, ey, 2, 1).fillRect(ex + 2, ey, 2, 1);
+    if (k > 0.5) g.fillStyle(hexToInt(PAL.yellow)).fillRect(ex - 2, ey, 1, 1).fillRect(ex + 2, ey, 1, 1);
+  }
+
+  /**
+   * Звуки ночного леса «Купальской ночи»: треск ветки, шёпот, далёкое «Ау-у…». Редко и в случайный миг, у каждого
+   * телефона свой — с рассудком игрока не связаны, ничего о нём не выдают. Пока идёт Леший — тихо.
+   */
+  private renderDread(): void {
+    const ph = this.sim.phase;
+    const on = hasSanity(this.sim.theme) && isThemeLoaded(this.sim.theme) && (ph === 'play' || this.dreadAfter());
+    const now = performance.now();
+    if (!on) {
+      this.dreadAt = 0;
+      return;
+    }
+    if (!this.dreadAt) this.dreadAt = now + 5000 + Math.random() * 6000;
+    if (now < this.dreadAt) return;
+    const night = ph === 'play' ? nightLevel(this.cfg, this.playSec()) : 1;
+    // к ночи лес шумит чаще: в сумерках раз в 8–16 с, в глухую ночь — раз в 4–9 с
+    this.dreadAt = now + (8000 - 4000 * night) + Math.random() * (8000 - 3000 * night);
+    const L = this.leshy.stage;
+    if (ph === 'play' && (L === 'near' || L === 'over' || L === 'leave')) return;
+    if (this.time.now - this.screamerAt < 6000) return;
+    const r = Math.random();
+    if (r < 0.2 * night) this.audio.play('leshyCall');
+    else if (r < 0.2 * night + 0.25 + 0.35 * night) {
+      // шёпот; в глухую ночь — иногда второй голос отвечает
+      this.audio.play('whisper');
+      if (night > 0.6 && Math.random() < 0.4) this.time.delayedCall(700 + Math.random() * 600, () => this.audio.play('whisper'));
+    } else this.audio.play('snap');
+  }
+
+  /** Удар без нападавшего сразу после стоп-кадра Лешего — это он забрал того, кто шевельнулся. */
+  private byLeshy(ev: WorldEvent): boolean {
+    if (ev.t !== 'hit' || ev.attacker !== undefined || !hasSanity(this.sim.theme)) return false;
+    const c = this.sim.world.crowd;
+    return !!c && c.warnAt === this.leshy.warn && ev.at > c.windowEnd && ev.at < c.windowEnd + 2000;
+  }
+
+  /**
+   * Леший на поляне: в его долгом стоп-кадре «Тсс!» он выходит из леса сбоку, встаёт посреди поляны,
+   * озирается (голова влево, вправо) и уходит. До этого, пока слышны шаги, из-за деревьев смотрят его
+   * глаза — всё ниже и ближе. Видят все одно и то же: время общее.
+   */
+  private renderGiant(w: World = this.sim.world, replay = false): void {
+    const c = w.crowd;
+    const L = this.leshy;
+    // глаза в лесу, пока он идёт: всё ниже и ярче
+    if (L.stage === 'near' && this.sim.phase === 'play') {
+      const lead = this.cfg.leshyLeadSec;
+      this.forestEyes(Math.max(0, Math.min(1, (this.playSec() - (L.sec - lead)) / lead)));
+    }
+    const end = c ? (c.watchUntil ?? c.windowEnd + LAG_GRACE_MS) + 2600 : 0;
+    const on = replay
+      ? this.sim.phase === 'reveal' && !!c && this.isLeshyCrowd(c) && w.time >= c.showAt && w.time < end
+      : hasSanity(this.sim.theme) && this.sim.phase === 'play' && !!c && c.warnAt === L.warn && w.time >= c.showAt && w.time < end;
+    if (!on || !c) {
+      this.giant?.setVisible(false);
+      this.giantShadow?.setVisible(false);
+      return;
+    }
+    if (!this.giant) {
+      // стоит на земле: тень под ногами, глубина как у толпы (кто ниже — тот перед ним), ночь ложится и на него
+      this.giantShadow = this.add.graphics().setDepth(2);
+      this.giant = this.add.image(0, 0, 'leshy', 0).setOrigin(0.5, 1);
+    }
+    if (this.giantFor !== c.warnAt) {
+      this.giantFor = c.warnAt;
+      this.giantFrame = -1;
+      this.giantStrike = null;
+    }
+    const now = performance.now();
+    // время — мировое: приговор (удар) ядро выносит в judge (после того, как он постоял и посмотрел,
+    // watchUntil), сцена замахивается заранее
+    const wt = w.time - c.showAt;
+    const judge = (c.watchUntil ?? c.windowEnd + LAG_GRACE_MS) - c.showAt;
+    const spot = leshySpot(c.warnAt, 180);
+    const dir = spot.dir; // откуда выходит: 1 — слева направо
+    const from = 90 - dir * 125; // из-за края поля
+    let x: number = spot.x;
+    let feet = spot.y;
+    let frame: number;
+    let walking = false;
+    let flipX = dir < 0;
+    // в повторе удар берём из журнала: с той секунды, когда он случился
+    const rs = replay ? this.replayLeshy.get(c.warnAt) : undefined;
+    const st = replay ? (rs && w.time >= rs.at ? rs : null) : this.giantStrike;
+    const leaveAt = Math.max(judge + 500, st ? st.at - c.showAt + 900 : 0);
+    if (wt < 1600) {
+      // выходит из-за края поля
+      x = from + (spot.x - from) * (wt / 1600);
+      frame = Math.floor(now / 260) % 4;
+      walking = true;
+    } else if (st && wt < leaveAt) {
+      // бросок к тому, кто шевельнулся: в два шага оказывается рядом и бьёт
+      const q = Math.min(1, (w.time - st.at) / 160);
+      const side = st.x >= spot.x ? 1 : -1;
+      x = spot.x + (st.x - side * 20 - spot.x) * q;
+      feet = Math.round(spot.y + (st.y - spot.y) * q);
+      flipX = side < 0;
+      frame = w.time - st.at < 450 ? 7 : 4;
+    } else if (wt < leaveAt) {
+      // стоит и озирается; перед приговором — замах (бьёт ли — не знает никто, пока не ударит)
+      frame = wt >= judge - 800 && wt < judge + 300 ? 6 : Math.floor((wt - 1600) / 700) % 2 ? 5 : 4;
+    } else {
+      const base = st ? { x: st.x - (st.x >= spot.x ? 1 : -1) * 20, y: st.y } : spot;
+      x = base.x + dir * 140 * Math.min(1, (wt - leaveAt) / 1500);
+      feet = base.y;
+      frame = Math.floor(now / 220) % 4;
+      walking = true;
+    }
+    x = Math.round(x);
+    // шаг: нога встала (кадры 0 и 2) — пыль, глухой удар, земля вздрагивает
+    if (walking && frame !== this.giantFrame && (frame === 0 || frame === 2)) {
+      const fx = x + (frame === 0 ? -5 : 5) * (dir < 0 ? -1 : 1);
+      for (let i = 0; i < 6; i++) this.giantDust.push({ x: fx, y: feet, dx: (i - 2.5) * 0.9, t0: now });
+      if (this.time.now - this.screamerAt > 4000) this.audio.play('leshyStep', 7);
+      this.cameras.main.shake(90, 0.004);
+    }
+    this.giantFrame = frame;
+    this.giant
+      .setVisible(true)
+      .setFlipX(flipX)
+      .setPosition(x, AY + feet + 1)
+      .setDepth(AY + feet)
+      .setFrame(frame);
+    const sg = this.giantShadow!.setVisible(true).clear();
+    sg.fillStyle(hexToInt(PAL.ink), 0.55).fillEllipse(x, AY + feet, 30, 6);
+    sg.fillStyle(hexToInt(PAL.ink), 0.35).fillEllipse(x + (dir > 0 ? 8 : -8), AY + feet + 1, 40, 8);
+    // пыль от шагов: клочья оседают за полсекунды
+    this.giantDust = this.giantDust.filter((d) => now - d.t0 < 500);
+    for (const d of this.giantDust) {
+      const q = (now - d.t0) / 500;
+      sg.fillStyle(hexToInt(q < 0.5 ? PAL.steel : PAL.dusk), 0.8 * (1 - q)).fillRect(Math.round(d.x + d.dx * q * 8), Math.round(AY + d.y - 1 - q * 4 * Math.abs(d.dx)), 2, 1);
+    }
+    // глаза горят и сквозь ночь (над вуалью), там, где они на кадре
+    const look = frame === 4 ? -1 : frame === 5 || frame === 7 ? 1 : 0;
+    const flip = flipX ? -1 : 1;
+    const ey = AY + feet + 1 - LESHY_H + 8 + 12 + 6 + (walking && frame % 2 === 1 ? 1 : 0);
+    const g = this.torchG;
+    for (const ox of [-3, 2]) {
+      const exx = x + flip * (ox + look) + (flip < 0 ? -1 : 0);
+      g.fillStyle(hexToInt(PAL.amber), 0.45).fillRect(exx - 1, ey - 1, 3, 3);
+      g.fillStyle(hexToInt(PAL.yellow)).fillRect(exx, ey, 1, 1);
+      g.fillStyle(hexToInt(PAL.white)).fillRect(exx, ey - 1, 1, 1);
+    }
+  }
+
+  /**
+   * Свой рассудок: свеча на панели (чем ниже — тем короче и тусклее, в «Кошмаре» пламя дрожит и синеет),
+   * тьма по краям своего экрана, подпись стадии и «сердце» вибрацией. Только у себя и без звука: звук из
+   * своего телефона выдал бы соседям по комнате, что ты живой и сходишь с ума.
+   */
+  private renderSanity(): void {
+    const me = this.me();
+    const on = hasSanity(this.sim.theme) && !this.init0.spectator && !this.tut && this.sim.phase === 'play' && !!me?.alive;
+    this.candleG.clear();
+    if (!on || !me) {
+      this.madVeil.setVisible(false);
+      if (this.sim.phase !== 'play') {
+        this.sanityStageShown = -1;
+        this.sinsShown = -1;
+      }
+      return;
+    }
+    const v = me.sanity;
+    this.lastSanity = v;
+    const stage = sanityStage(this.cfg, v);
+    const now = performance.now();
+    // мозг: тает сверху вниз и меняет цвет по стадиям, в «Кошмаре» дрожит; рядом — стрелка, куда идёт
+    if (now >= this.sanTrendAt) {
+      this.sanTrend = v - this.sanPrev;
+      this.sanPrev = v;
+      this.sanTrendAt = now + 1000;
+    }
+    const g = this.candleG;
+    const shake = stage >= 3 ? (Math.floor(now / 90) % 3) - 1 : 0;
+    // вверху, на месте таймера: таймера в этой теме нет, а мозг — главное, на что смотреть
+    const bx = 3 + shake;
+    const by = 3;
+    this.hud.timer.setVisible(false);
+    // уровень: от верха полушарий (строка 1) до низа (строка 11); выше уровня — серое, «опустевшее»
+    const level = 1 + Math.round(11 * (1 - v / 100));
+    const full = BRAIN_FULL[Math.min(2, stage)];
+    BRAIN_ROWS.forEach((row, y) => {
+      for (let x = 0; x < row.length; x++) {
+        const ch = row[x];
+        if (ch === '.') continue;
+        const c = ch === 'o' ? PAL.ink : y >= level ? full[ch] : BRAIN_EMPTY[ch];
+        g.fillStyle(hexToInt(c)).fillRect(bx + x, by + y, 1, 1);
+      }
+    });
+    // стрелка: растёт (костёр, цветок) — вверх, падает быстро — вниз
+    const ax = 19;
+    const ay = by + 6;
+    if (this.sanTrend > 0) {
+      g.fillStyle(hexToInt(PAL.green));
+      g.fillRect(ax + 1, ay, 1, 1).fillRect(ax, ay + 1, 3, 1).fillRect(ax + 1, ay + 2, 1, 2);
+    } else if (this.sanTrend <= -2) {
+      g.fillStyle(hexToInt(PAL.coral));
+      g.fillRect(ax + 1, ay, 1, 2).fillRect(ax, ay + 2, 3, 1).fillRect(ax + 1, ay + 3, 1, 1);
+    }
+    // провинности: глаза Лешего рядом с мозгом — пара за каждую; с роковым числом — красные и не моргают.
+    // Только у себя: звука нет, новая провинность — толчок в руку и подпись на своём экране
+    const sins = me.sins;
+    const doom = sins >= this.cfg.leshyDoomSins;
+    for (let i = 0; i < Math.min(3, sins); i++) {
+      const ex = 23;
+      const ey2 = by + 3 + i * 5;
+      if (!doom && Math.floor(now / 150 + i * 7) % 23 === 0) continue; // моргнул
+      const c = doom ? (Math.floor(now / 400) % 2 ? PAL.red : PAL.magenta) : PAL.amber;
+      g.fillStyle(hexToInt(c)).fillRect(ex, ey2, 2, 1).fillRect(ex + 3, ey2, 2, 1);
+      g.fillStyle(hexToInt(doom ? PAL.coral : PAL.yellow)).fillRect(ex + 1, ey2, 1, 1).fillRect(ex + 3, ey2, 1, 1);
+    }
+    if (sins !== this.sinsShown) {
+      const tt = this.themeText();
+      if (sins > this.sinsShown && this.sinsShown >= 0) {
+        haptic(doom ? 'heavy' : 'warning');
+        const line = doom ? tt?.doomed : tt?.sinned;
+        if (line) this.showToast(line, 1800);
+      }
+      this.sinsShown = sins;
+    }
+    // тьма по краям: сильнее с каждой стадией, в «Кошмаре» пульсирует сердцем
+    const beat = stage >= 3 ? 0.12 * Math.max(0, Math.sin(now / 130)) : 0;
+    const a = [0, 0.35, 0.65, 0.9][stage] + beat;
+    this.madVeil.setVisible(a > 0).setAlpha(Math.min(1, a));
+    // смена стадии — подпись; сердце — вибрацией, чаще с каждой стадией
+    if (stage !== this.sanityStageShown) {
+      const lines = this.themeText()?.sanity;
+      if (this.sanityStageShown >= 0 && lines) this.showToast(lines[stage], 1600);
+      if (stage > this.sanityStageShown && this.sanityStageShown >= 0) haptic('warning');
+      this.sanityStageShown = stage;
+    }
+    if (stage >= 2 && now >= this.heartAt) {
+      haptic(stage >= 3 ? 'heavy' : 'light');
+      this.heartAt = now + (stage >= 3 ? 650 : 1200);
+    }
+  }
+
+  /**
+   * Свои кикиморы. Пока `warn` — только рябь на воде там, где вылезет; потом — высокая полупрозрачная
+   * фигура, идёт к тебе. Другим их не видно (приходят личным сообщением): со стороны ты просто шарахаешься
+   * и машешь по пустоте.
+   */
+  private renderKiki(delta: number): void {
+    const me = this.me();
+    const g = this.kikiG;
+    g.clear();
+    const on = hasSanity(this.sim.theme) && this.sim.phase === 'play' && !!me?.alive && !this.init0.spectator;
+    const list = on && me ? me.kiki : [];
+    const now = performance.now();
+    const seen = new Set<number>();
+    for (const k of list) {
+      seen.add(k.id);
+      if (k.warn) {
+        // рябь: два расходящихся кольца
+        for (let i = 0; i < 2; i++) {
+          const ph = ((now / 700 + i / 2) % 1);
+          const r = 2 + ph * 7;
+          g.fillStyle(hexToInt(i ? PAL.mist : PAL.cyan), 0.9 * (1 - ph));
+          for (let a = 0; a < 16; a++) {
+            const ang = (a / 16) * Math.PI * 2;
+            g.fillRect(Math.round(k.x + Math.cos(ang) * r), Math.round(AY + k.y + Math.sin(ang) * r * 0.45), 1, 1);
+          }
+        }
+        continue;
+      }
+      let v = this.kikiViews.get(k.id);
+      if (!v) {
+        v = { spr: this.add.image(k.x, AY + k.y, 'kikimora', 0).setOrigin(0.5, 1).setDepth(946), x: k.x, y: k.y, seen: now };
+        this.kikiViews.set(k.id, v);
+      }
+      // плавно к присланной позиции (по сети она приходит пачками)
+      const f = Math.min(1, delta / 120);
+      v.x += (k.x - v.x) * f;
+      v.y += (k.y - v.y) * f;
+      const born = Math.min(1, (now - v.seen) / 600);
+      const flick = 0.94 + 0.06 * Math.sin(now / 60 + k.id);
+      v.spr
+        .setPosition(Math.round(v.x), Math.round(AY + v.y))
+        .setFrame(Math.floor(now / 200) % 4)
+        .setAlpha(born * flick)
+        .setVisible(true);
+    }
+    // краем глаза: тень у края экрана на долю секунды (только у себя, только картинкой)
+    const stage = on && me ? sanityStage(this.cfg, me.sanity) : 0;
+    if (stage >= 2 && now >= this.glimpseAt) {
+      const left = Math.random() < 0.5;
+      this.glimpse
+        .setPosition(left ? 4 + Math.random() * 6 : 170 - Math.random() * 6, AY + 60 + Math.random() * 180)
+        .setFlipX(!left)
+        .setAlpha(stage >= 3 ? 0.75 : 0.5)
+        .setVisible(true);
+      this.glimpseAt = now + (stage >= 3 ? 2500 : 5000) + Math.random() * 3000;
+      this.glimpseOff = now + 160;
+    } else if (this.glimpse.visible && (now > this.glimpseOff || stage < 2)) this.glimpse.setVisible(false);
+    // галлюцинации: у случайной фигуры рядом на миг вместо лица — тьма и белые глаза (только у себя)
+    if (stage >= 2 && now >= this.hallucAt) {
+      const w = this.sim.world;
+      const mine = me ? w.get(me.eid) : undefined;
+      const near = w.entities
+        .map((e, i) => ({ e, i }))
+        .filter(({ e }) => e.alive && mine && e.eid !== mine.eid && Math.hypot(e.x - mine.x, e.y - mine.y) < 70);
+      if (near.length) this.halluc = { idx: near[Math.floor(Math.random() * near.length)].i, until: now + 260 };
+      this.hallucAt = now + (stage >= 3 ? 1800 : 4000) + Math.random() * 2500;
+    }
+    if (this.halluc && (now > this.halluc.until || stage < 2)) this.halluc = null;
+    if (this.halluc) {
+      const v = this.views[this.halluc.idx];
+      if (v?.spr.visible) {
+        v.spr.setTintFill(hexToInt(PAL.ink));
+        g.fillStyle(hexToInt(PAL.white));
+        g.fillRect(Math.round(v.spr.x) - 3, Math.round(v.spr.y) - 11, 1, 2).fillRect(Math.round(v.spr.x) + 2, Math.round(v.spr.y) - 11, 1, 2);
+      }
+    }
+    for (const [id, v] of this.kikiViews) {
+      if (!seen.has(id) || !on) {
+        // изгнана или растворилась — тает клочьями тумана
+        if (v.spr.visible) this.swingFx.push({ eid: id, x: v.x, y: v.y, t: 0 });
+        v.spr.destroy();
+        this.kikiViews.delete(id);
+      }
+    }
+  }
+
   private renderVeils(): void {
+    this.renderNight();
     const now = performance.now();
     const d = this.dusk;
     if (d) {
@@ -1971,7 +2730,7 @@ export class GameScene extends Phaser.Scene {
     }
     const alpha = Math.min(1, this.acc / TICK_MS);
     const phase = this.sim.phase;
-    if (this.musicResumeAt && this.sim.world.time >= this.musicResumeAt && phase === 'play') {
+    if (this.musicResumeAt && this.sim.world.time >= this.musicResumeAt && phase === 'play' && this.time.now - this.screamerAt > 6500) {
       this.musicResumeAt = 0;
       this.audio.resumeMusic();
     }
@@ -1980,7 +2739,10 @@ export class GameScene extends Phaser.Scene {
       const w = this.sim.world;
       const level = this.sim.timeLeft() <= 10_000 ? 2 : w.zone && w.time >= w.zone.startAt ? 1 : 0;
       this.audio.setIntensity(level);
-    }
+      // ночь у всех одна (по времени дубля) — песня темнеет; свой рассудок в музыку не попадает, его услышали бы соседи
+      this.audio.setDread(hasSanity(this.sim.theme) ? nightLevel(this.cfg, this.playSec()) : 0);
+    } else if (this.dreadAfter()) this.audio.setDread(1);
+    this.renderDread();
 
     this.applyTheme();
     this.tickSubliminal();
@@ -2010,6 +2772,7 @@ export class GameScene extends Phaser.Scene {
     this.renderPigeons(delta);
     this.renderFx(delta);
     this.renderHud();
+    this.renderKiki(delta);
     this.drawUi();
     this.updateOverlay(delta);
     this.syncUiCamera();
@@ -2196,11 +2959,13 @@ export class GameScene extends Phaser.Scene {
       seen.add(s.id);
       let spr = this.starSprites.get(s.id);
       if (!spr) {
-        spr = this.add.image(s.x, AY + s.y, 'star', 0).setOrigin(0.5, 0.8);
+        spr = this.add.image(s.x, AY + s.y, this.starKey(), 0).setOrigin(0.5, 0.8);
         this.starSprites.set(s.id, spr);
       }
       const bob = Math.floor((performance.now() + s.id * 300) / 300) % 2;
-      spr.setPosition(s.x, AY + s.y - bob).setFrame(Math.floor(performance.now() / 140) % 4).setDepth(AY + s.y - 1).setVisible(true);
+      // ночью цветы светятся: поверх вуали ночи, их видно издалека
+      const glow = themePack(this.sim.theme).night ? 942 : AY + s.y - 1;
+      spr.setPosition(s.x, AY + s.y - bob).setFrame(Math.floor(performance.now() / 140) % 4).setDepth(glow).setVisible(true);
     }
     for (const [id, spr] of this.starSprites) {
       if (!seen.has(id)) {
@@ -2214,6 +2979,114 @@ export class GameScene extends Phaser.Scene {
       this.audio.play('step');
       this.stepSoundAt = performance.now() + 330;
     }
+  }
+
+  /** Стоп-кадр Лешего: его «Тсс!» — длинный стоп-кадр (или с watchUntil, где он ещё и смотрит). */
+  private isLeshyCrowd(c: { kind: CrowdKind; vote?: boolean; showAt: number; resumeAt: number; watchUntil?: number }): boolean {
+    return hasSanity(this.sim.theme) && !c.vote && c.kind === 'freeze' && (c.watchUntil !== undefined || c.resumeAt - c.showAt >= this.cfg.leshyPauseMs - TICK_MS);
+  }
+
+  /**
+   * «Купальская ночь»: повтор как найденная плёнка. Из журнала — смерти (и чьи — Лешего), из них — время
+   * повтора: перед каждой смертью замедление, в момент удара — стоп-кадр, между ними — быстрее; общая длина
+   * та же, что у обычного повтора (её задаёт ядро).
+   */
+  private buildReplayWarp(s: RoundSummary): void {
+    const cfg = this.cfg;
+    const from = s.replayFrom;
+    const to = s.replayTo;
+    const dur = (to - from) / cfg.revealSpeed;
+    this.replayWarp = [];
+    this.replayLeshy.clear();
+    this.replayDeaths = [];
+    this.replayDeathIdx = 0;
+    if (!hasSanity(this.sim.theme)) return;
+    let lc: Extract<WorldEvent, { t: 'crowd' }> | null = null;
+    for (const ev of this.sim.world.log) {
+      if (ev.t === 'crowd') lc = this.isLeshyCrowd(ev) ? ev : null;
+      if (ev.t !== 'hit' || ev.result !== 'player') continue;
+      const leshy = !!lc && ev.attacker === undefined && ev.at > lc.windowEnd && ev.at <= (lc.watchUntil ?? lc.windowEnd + LAG_GRACE_MS) + 1000;
+      if (leshy) this.replayLeshy.set(lc!.at, { x: ev.x, y: ev.y, at: ev.at });
+      if (ev.at >= from && ev.at <= to) this.replayDeaths.push({ at: ev.at, leshy });
+    }
+    // у каждой смерти — повтор в живую скорость (обычный повтор вдвое с лишним быстрее); близкие — одним куском
+    const slows: { a: number; b: number; hold: number }[] = [];
+    for (const d of this.replayDeaths) {
+      const a = Math.max(from, d.at - 800);
+      const b = Math.min(to, d.at + 300);
+      const last = slows[slows.length - 1];
+      if (last && a <= last.b + 600) last.b = Math.max(last.b, b);
+      else slows.push({ a, b, hold: Math.min(to, d.at + 100) });
+    }
+    const SLOW = 1; // мировых мс на мс экрана
+    const len = () => slows.reduce((n, x) => n + (x.b - x.a), 0);
+    // не влезает — замедляем только последние смерти
+    while (slows.length && len() / SLOW > dur * 0.6) slows.shift();
+    if (!slows.length) return;
+    const slowLen = len();
+    let holdMs = Math.min(500, (dur * 0.75 - slowLen / SLOW) / slows.length);
+    if (holdMs < 250) holdMs = 0;
+    const wallSlow = slowLen / SLOW + holdMs * slows.length;
+    const v = (to - from - slowLen) / (dur - wallSlow);
+    const k: [number, number][] = [[0, from]];
+    let wall = 0;
+    let world = from;
+    const go = (w2: number, speed: number) => {
+      wall += (w2 - world) / speed;
+      world = w2;
+      k.push([wall, world]);
+    };
+    for (const x of slows) {
+      if (x.a > world) go(x.a, v);
+      go(x.hold, SLOW);
+      if (holdMs) {
+        wall += holdMs;
+        k.push([wall, world]);
+      }
+      go(x.b, SLOW);
+    }
+    if (to > world) go(to, v);
+    this.replayWarp = k;
+  }
+
+  /** Мировое время повтора через wall мс от его начала (replayWarp); попутно — идёт ли стоп-кадр. */
+  private replayAt(wall: number): number {
+    const k = this.replayWarp;
+    this.replayHold = false;
+    for (let i = 1; i < k.length; i++) {
+      const [w0, t0] = k[i - 1];
+      const [w1, t1] = k[i];
+      if (wall <= w1) {
+        if (t1 === t0) this.replayHold = true;
+        return w1 > w0 ? t0 + ((t1 - t0) * (wall - w0)) / (w1 - w0) : t1;
+      }
+    }
+    return k[k.length - 1][1];
+  }
+
+  /** Найденная плёнка: зерно, царапины, тёмные края, мигающая точка записи; в стоп-кадре смерти края темнее. */
+  private renderFilm(): void {
+    const g = this.torchG;
+    const now = performance.now();
+    for (let i = 0; i < 80; i++) {
+      const x = Math.floor(Math.random() * 180);
+      const y = AY + Math.floor(Math.random() * 260);
+      g.fillStyle(hexToInt(i % 3 ? PAL.ink : PAL.steel), 0.4).fillRect(x, y, 1, 1);
+    }
+    // царапина держится несколько кадров и чуть ползёт
+    const slot = Math.floor(now / 350);
+    if ((slot * 7919) % 5 < 2) {
+      const x = ((slot * 2654435761) >>> 0) % 176 + 2 + (Math.floor(now / 90) % 2);
+      g.fillStyle(hexToInt(PAL.sand), 0.25).fillRect(x, AY, 1, 260);
+    }
+    const edge = this.replayHold ? 0.6 : 0.35;
+    g.fillStyle(hexToInt(PAL.ink), edge);
+    g.fillRect(0, AY, 180, 10).fillRect(0, AY + 250, 180, 10).fillRect(0, AY + 10, 8, 240).fillRect(172, AY + 10, 8, 240);
+    if (this.replayHold) {
+      g.fillStyle(hexToInt(PAL.ink), 0.3);
+      g.fillRect(0, AY + 10, 180, 18).fillRect(0, AY + 232, 180, 18).fillRect(8, AY + 28, 16, 204).fillRect(156, AY + 28, 16, 204);
+    }
+    if (Math.floor(now / 600) % 2 === 0) g.fillStyle(hexToInt(PAL.red)).fillRect(168, AY + 14, 3, 3);
   }
 
   private renderReveal(alpha: number): void {
@@ -2232,8 +3105,13 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     this.cameras.main.setScroll(0, 0);
+    this.replayOn = false;
     if (e < drum + replayDur) {
-      const target = s.replayFrom + (e - drum) * cfg.revealSpeed;
+      const warp = this.replayWarp.length > 2;
+      const target = warp ? this.replayAt(e - drum) : s.replayFrom + (e - drum) * cfg.revealSpeed;
+      this.replayOn = true;
+      // плёнка: кадр изредка дёргается на пиксель
+      if (warp && this.nightFell && Math.random() < 0.05) this.cameras.main.setScroll(0, Math.random() < 0.5 ? -1 : 1);
       while (this.replay.time < target && this.replay.time < this.sim.world.time) {
         this.replay.step();
         for (const r of s.reveal) {
@@ -2244,6 +3122,21 @@ export class GameScene extends Phaser.Scene {
           const last = tr[tr.length - 1];
           if (!last || Math.hypot(last.x - en.x, last.y - en.y) >= 2) tr.push({ x: Math.round(en.x), y: Math.round(en.y) });
         }
+      }
+      if (warp) {
+        // смерть в повторе — снова слышно: Леший забрал / вырезан
+        const d = this.replayDeaths[this.replayDeathIdx];
+        if (d && this.replay.time >= d.at) {
+          this.replayDeathIdx++;
+          this.audio.play(d.leshy ? 'leshyTake' : 'cut');
+          this.cameras.main.shake(d.leshy ? 450 : 250, d.leshy ? 0.014 : 0.008);
+          haptic('heavy');
+        }
+        const rt = Math.min(this.replay.time, Math.max(this.replay.time - TICK_MS, target));
+        const a = (rt - (this.replay.time - TICK_MS)) / TICK_MS;
+        this.replayT = rt;
+        this.renderWorld(this.replay, a, 'replay', colors);
+        return;
       }
       this.replayT = this.replay.time - TICK_MS + alpha * TICK_MS;
       this.renderWorld(this.replay, alpha, 'replay', colors);
@@ -2268,10 +3161,28 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  /**
+   * Кострище «Купальской ночи» гаснет постепенно (кадры по 4 на силу огня, kupala.ts › hearth): во всю силу,
+   * слабее, еле теплится, угли и дым. Последнюю минуту перед прогоранием пламя мигает между силами.
+   */
+  private fireBase(): number {
+    const ph = this.sim.phase;
+    if (!hasSanity(this.sim.theme) || (ph !== 'play' && ph !== 'countdown' && !this.dreadAfter())) return 0;
+    const out = this.cfg.sanityFireOutSec;
+    // после дубля — каким был под конец, в повторе — каким был в ту секунду
+    const s = this.sim.summary;
+    const sec = this.dreadAfter() ? this.endPlaySec - (ph === 'reveal' && this.replayOn && this.replayT !== null && s ? (s.replayTo - this.replayT) / 1000 : 0) : this.playSec();
+    let lvl = sec < out * 0.36 ? 3 : sec < out * 0.68 ? 2 : sec < out ? 1 : 0;
+    // на стыке сил огонь то вспыхивает, то никнет
+    const edge = [out * 0.36, out * 0.68, out].find((e) => sec > e - 3 && sec < e);
+    if (edge !== undefined && Math.floor(performance.now() / 230) % 3 === 0) lvl--;
+    return (3 - Math.max(0, lvl)) * 4;
+  }
+
   private renderProps(): void {
     const t = performance.now();
     for (const p of this.props) {
-      if (p.kind === 'fountain') p.spr.setFrame(Math.floor(t / 180) % 4);
+      if (p.kind === 'fountain') p.spr.setFrame(this.fireBase() + (Math.floor(t / 180) % 4));
       if (p.kind === 'lamp') p.spr.setFrame(Math.floor(t / 900) % 2);
     }
   }
@@ -2436,10 +3347,35 @@ export class GameScene extends Phaser.Scene {
     const frozen = playing && this.sim.world.isFrozen();
     if (frozen !== this.wasFrozen) {
       this.wasFrozen = frozen;
+      // стоп-кадр Лешего (он один такой длины): мир не серый, а тёмный и выцветший — его глаза горят в нём
+      const leshyFreeze = frozen && hasSanity(this.sim.theme) && !!cr && cr.resumeAt - cr.showAt >= this.cfg.leshyPauseMs - TICK_MS;
       if (this.grayFx) {
-        if (frozen) this.grayFx.grayscale(1);
+        if (leshyFreeze) {
+          this.grayFx.grayscale(0.55);
+          this.grayFx.brightness(0.72, true);
+        } else if (frozen) this.grayFx.grayscale(1);
         else this.grayFx.reset();
       } else this.freezeVeil.setVisible(frozen);
+    }
+    // «Купальская ночь»: итоги и конец матча — чёрно-белые, как старая фотография с той ночи,
+    // но только если ночь успела наступить: перебили друг друга ещё в сумерках — экран обычный
+    if (playing && this.nightRound !== this.sim.round) {
+      this.nightRound = this.sim.round;
+      this.nightFell = false;
+    }
+    if (playing && hasSanity(this.sim.theme)) {
+      this.endPlaySec = this.playSec();
+      if (nightLevel(this.cfg, this.endPlaySec) >= 1) this.nightFell = true;
+    }
+    // повтор той ночи — выцветшая плёнка (цвета игроков ещё различимы), итоги — уже чёрно-белые
+    const ph = this.sim.phase;
+    const bw = hasSanity(this.sim.theme) && this.nightFell && !this.fernOn ? (ph === 'results' || ph === 'match_end' ? 1 : ph === 'reveal' ? 0.6 : 0) : 0;
+    if (bw !== this.wasBw) {
+      this.wasBw = bw;
+      if (this.grayFx) {
+        if (bw) this.grayFx.grayscale(bw);
+        else this.grayFx.reset();
+      }
     }
     const showCrowd = playing && cr && wt >= cr.showAt && wt <= cr.windowEnd;
     this.crowdIcon.setVisible(!!showCrowd);
@@ -2605,7 +3541,8 @@ export class GameScene extends Phaser.Scene {
     const sim = this.sim;
     const left = sim.timeLeft();
     const sec = Math.ceil(left / 1000);
-    const showTimer = !this.tut && (sim.phase === 'play' || sim.phase === 'accuse' || sim.phase === 'countdown');
+    // с рассудком таймера нет: ночь идёт до последнего живого
+    const showTimer = !this.tut && !(hasSanity(sim.theme) && sim.phase === 'play') && (sim.phase === 'play' || sim.phase === 'accuse' || sim.phase === 'countdown');
     this.hud.timer.setText(this.tut ? '' : showTimer ? `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}` : tp(this.lang, this.t.game.roundShort, sim.round));
     // последние 10 с — coral и мигание в такт секунде
     const hurry = sim.phase === 'play' && sec <= 10 && !this.tut;
@@ -2616,7 +3553,9 @@ export class GameScene extends Phaser.Scene {
     const clip = this.buttons.find((b) => b.id === 'deathclip');
     const mine = !(clip && clip.visible() && clip.y < AY);
     this.hudIcons.forEach((ic, i) => ic.setFrame(me && i < me.attacksLeft ? 0 : 1).setVisible(mine));
-    this.hudStars.forEach((ic, i) => ic.setFrame(me && i < me.stars ? 2 : 3).setVisible(mine));
+    const hk = this.hudStarKey();
+    this.hudStars.forEach((ic, i) => (hk ? ic.setTexture(hk, me && i < me.stars ? 0 : 1) : ic.setTexture('hud', me && i < me.stars ? 2 : 3)).setVisible(mine));
+    this.renderSanity();
     const spec = this.init0.spectator;
     if (spec && this.specL2) {
       const s = spec.watching() ? fmt(this.t.game.spectatorDelay, { n: spec.delaySec }) : this.t.game.spectatorWait;
@@ -2749,14 +3688,20 @@ export class GameScene extends Phaser.Scene {
     this.ovPanel(8, AY + 8, 164, 244);
     // три звезды, но собравшего вычислили — его звёзды сгорели (MatchSim.finishRound)
     const winner = s.starWinner ? s.reveal.find((r) => r.pid === s.starWinner) : undefined;
-    const burned = !!winner && s.accusations.some((a) => a.correct && a.eid === winner.eid);
-    const reason = burned ? this.t.game.starsBurned : this.t.game.endReason[s.endReason];
+    const night = hasSanity(sim.theme) ? this.themeText()?.ends : undefined;
+    const burned = !night && !!winner && s.accusations.some((a) => a.correct && a.eid === winner.eid);
+    // с рассудком: остался один / рассвет / туман забрал всех
+    const left = s.reveal.filter((r) => r.alive).length;
+    const reason = night ? (left === 1 ? night.last : left ? night.dawn : night.none) : burned ? this.t.game.starsBurned : this.t.game.endReason[s.endReason];
     this.ovText(90, AY + 14, tp(this.lang, this.t.game.resultsTitle, s.round), 'yellow');
     this.ovText(90, AY + 25, reason, 'mist');
     const order = [...sim.players].sort((a, b) => sim.scores[b.pid] - sim.scores[a.pid]);
     // цель матча над столбцом счёта (своя строка, не налезает на подзаголовок): дублей будет несколько
-    const goal = this.ovText(0, AY + 36, fmt(this.t.game.toWin, { n: this.cfg.scoreToWin }), 'mist', false);
-    goal.x = 171 - goal.width;
+    // (в «Купальской ночи» матч — одна ночь, цели нет)
+    if (!night) {
+      const goal = this.ovText(0, AY + 36, fmt(this.t.game.toWin, { n: this.cfg.scoreToWin }), 'mist', false);
+      goal.x = 171 - goal.width;
+    }
     order.forEach((p, i) => {
       const y = AY + 46 + i * 16;
       const pts = s.points[p.pid];
@@ -2781,11 +3726,11 @@ export class GameScene extends Phaser.Scene {
     if (!this.init0.spectator) {
       const share: RowButton = { id: 'share', kind: 'secondary', icon: 'share', onTap: () => this.share(), release: true };
       this.addRow(AY + 214, this.amHost()
-        ? [share, { id: 'next', kind: 'primary', flex: true, label: fmt(this.t.game.next, { n }), fill, onTap: () => {
+        ? [share, { id: 'next', kind: 'primary', flex: true, label: night ? this.t.game.toFinal : fmt(this.t.game.next, { n }), fill, onTap: () => {
           this.track('next_tap', { round: sim.round });
           sim.intent({ k: 'next' });
         } }]
-        : [share, { id: 'next', kind: 'plate', flex: true, label: fmt(this.t.game.nextTake, { n, s: Math.ceil(sim.timeLeft() / 1000) }) }]);
+        : [share, { id: 'next', kind: 'plate', flex: true, label: night ? fmt(this.t.game.toFinalIn, { s: Math.ceil(sim.timeLeft() / 1000) }) : fmt(this.t.game.nextTake, { n, s: Math.ceil(sim.timeLeft() / 1000) }) }]);
     }
   }
 
@@ -2880,11 +3825,14 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     this.ovPanel(8, AY + 8, 164, 244);
-    this.ov(this.add.image(90, AY + 22, 'icons', this.icon('crown')).setScale(2), 2100);
+    // в «Купальской ночи» вместо короны — цвет папоротника
+    if (hasSanity(sim.theme) && this.themeText()?.triumph) this.ov(this.add.image(90, AY + 22, 'fern', 3).setScale(2), 2100);
+    else this.ov(this.add.image(90, AY + 22, 'icons', this.icon('crown')).setScale(2), 2100);
     if (m.tooAlive) this.ovText(90, AY + 36, this.t.game.tooAlive, 'yellow');
     else {
       const w = sim.info(m.winners[0])!;
-      this.ovText(90, AY + 36, w.pid === this.sim.selfPid ? this.t.game.youWon : this.t.game.winner, 'yellow');
+      const tr = hasSanity(sim.theme) ? this.themeText()?.triumph : undefined;
+      this.ovText(90, AY + 36, w.pid === this.sim.selfPid ? (tr?.you ?? this.t.game.youWon) : (tr?.other ?? this.t.game.winner), 'yellow');
       if (w.pid !== this.sim.selfPid) this.ovText(90, AY + 48, w.name, COLOR_FONT[w.color]);
     }
     const order = [...sim.players].sort((a, b) => m.scores[b.pid] - m.scores[a.pid]);
@@ -2964,7 +3912,8 @@ export class GameScene extends Phaser.Scene {
       const replayDur = (s.replayTo - s.replayFrom) / this.cfg.revealSpeed;
       const inReplay = e >= drum && e < drum + replayDur;
       const final = e >= drum + replayDur;
-      this.ovDyn.speed?.setVisible(inReplay);
+      // у плёнки той ночи скорость плавает (замедление у смертей) — «×2.5» не пишем
+      this.ovDyn.speed?.setVisible(inReplay && this.replayWarp.length <= 2);
       if (inReplay) this.ovDyn.title?.setText(this.t.game.revealReplay);
       if (final) {
         this.ovDyn.title?.setText(this.t.game.revealFinal);
@@ -3006,7 +3955,8 @@ export class GameScene extends Phaser.Scene {
     const plate = phase === 'results' ? this.buttons.find((b) => b.id === 'next' && b.kind === 'plate') : undefined;
     const pt = plate && this.btnObjs.get('next')?.text;
     if (pt) {
-      const s = fmt(this.t.game.nextTake, { n: sim.round + 1, s: Math.max(0, Math.ceil(sim.timeLeft() / 1000)) });
+      const sec = Math.max(0, Math.ceil(sim.timeLeft() / 1000));
+      const s = hasSanity(sim.theme) ? fmt(this.t.game.toFinalIn, { s: sec }) : fmt(this.t.game.nextTake, { n: sim.round + 1, s: sec });
       if (pt.text !== s) {
         pt.setText(s);
         pt.x = Math.round(plate.x + (plate.w - pt.width) / 2);
@@ -3066,6 +4016,10 @@ export class GameScene extends Phaser.Scene {
    * но не раньше чем через 1,5 с (случайный тап, доигрывавший дубль, не съедает момент).
    */
   private showTriumph(done: () => void): void {
+    if (hasSanity(this.sim.theme) && this.themeText()?.triumph) {
+      this.showFernTriumph(done);
+      return;
+    }
     const sim = this.sim;
     const m = sim.match!;
     const pid = m.winners[0];
@@ -3113,6 +4067,90 @@ export class GameScene extends Phaser.Scene {
       if (finished) return;
       finished = true;
       dance.remove();
+      if (this.sim.phase === 'match_end') done();
+    };
+    this.time.delayedCall(TRIUMPH_MS, finish);
+    this.time.delayedCall(TRIUMPH_SKIP_MS, () => {
+      if (!finished) this.input.once('pointerup', finish);
+    });
+  }
+
+  /**
+   * Триумф «Купальской ночи» — не прожектор с короной, а цвет папоротника: по легенде он цветёт в эту ночь
+   * один миг, и найти его может только тот, кто не побоится леса. Мир ещё чёрно-белый (итоги), цветной
+   * только сам цветок и обводка победителя; победитель (притушенный, серо-синий) поднимает над головой распускающийся цветок,
+   * вокруг поднимаются светлячки, вместо фанфар — музыкальная шкатулка.
+   */
+  private showFernTriumph(done: () => void): void {
+    const sim = this.sim;
+    const m = sim.match!;
+    const pid = m.winners[0];
+    const info = sim.info(pid)!;
+    const tr = this.themeText()!.triumph!;
+    const color = hexToInt(PLAYER_COLORS[info.color]);
+    const eid = sim.summary?.reveal.find((r) => r.pid === pid)?.eid ?? -1;
+    const idx = Math.max(0, sim.world.entities.findIndex((e) => e.eid === eid));
+    const fig = this.charKey(this.lookKey, idx);
+    const cy = AY + 168;
+    // цвет только у цветка: чёрно-белый фильтр итогов на время триумфа снят, вокруг — одни серые
+    this.fernOn = true;
+    const bg = this.add.graphics();
+    bg.fillStyle(hexToInt(PAL.ink), 0.94).fillRect(0, AY, 180, PANEL_Y - AY);
+    // папоротник у ног: тёмные листья-вайи веером
+    for (const [side, len] of [[-1, 30], [1, 28], [-1, 20], [1, 22]] as const) {
+      for (let i = 0; i < len; i++) {
+        const x = 90 + side * (6 + i);
+        const y = cy - Math.round(Math.sin((i / len) * Math.PI) * (len * 0.45));
+        bg.fillStyle(hexToInt(i % 3 === 0 ? PAL.slate : PAL.dusk)).fillRect(x, y, 1, 1);
+        if (i % 3 === 1) bg.fillRect(x, y + 1, 1, 2).fillRect(x - side, y - 2, 1, 2);
+      }
+    }
+    this.ov(bg, 2050);
+    const glow = this.ov(this.add.graphics(), 2051);
+    const ol = this.ov(this.add.image(90, cy, 'ol' + fig, F.JUMP).setOrigin(7 / OL_W, 17 / OL_H).setScale(3).setTint(color), 2052);
+    this.ov(this.add.image(90, cy, 'ch' + fig, F.JUMP).setOrigin(6 / CH_W, 1).setScale(3).setTint(hexToInt(PAL.slate)), 2053);
+    const fy = cy - CH_H * 3 - 24;
+    const flower = this.ov(this.add.image(90, fy, 'fern', 0).setScale(3), 2054);
+    const me = pid === sim.selfPid;
+    this.ovText(90, AY + 30, me ? tr.you : tr.other, 'yellow');
+    this.ovText(90, AY + 42, tr.sub, 'mist');
+    this.ovText(90, cy + 14, info.name, COLOR_FONT[info.color]);
+    this.audio.play('fern');
+    haptic('success');
+    // распускается по кадрам, потом мерцает
+    [0, 1, 2, 3].forEach((f, i) => this.time.delayedCall(250 + i * 320, () => flower.active && flower.setFrame(f)));
+    const flies = Array.from({ length: 22 }, () => ({ x: 10 + Math.random() * 160, y: AY + 60 + Math.random() * 180, v: 0.1 + Math.random() * 0.25, ph: Math.random() * 6 }));
+    let k = 0;
+    const tick = this.time.addEvent({
+      delay: 50,
+      loop: true,
+      callback: () => {
+        k++;
+        glow.clear();
+        const open = k > 26;
+        // свет от цветка: решётка янтаря, дышит
+        const r = open ? 13 + (Math.floor(k / 6) % 2) : Math.min(13, Math.floor(k / 2));
+        for (let y = -r; y <= r; y += 2)
+          for (let x = -r; x <= r; x += 2) {
+            const d = Math.hypot(x, y);
+            if (d <= r && d > 4 && (x + y + k) % 4 !== 2) glow.fillStyle(hexToInt(d < r * 0.6 ? PAL.amber : PAL.brick)).fillRect(90 + x, fy + y, 1, 1);
+          }
+        // светлячки поднимаются, мигают
+        for (const f of flies) {
+          f.y -= f.v;
+          if (f.y < AY + 50) f.y = AY + 250;
+          const on = Math.sin(k * 0.15 + f.ph) > -0.2;
+          if (on) glow.fillStyle(hexToInt(Math.sin(k * 0.15 + f.ph) > 0.6 ? PAL.yellow : PAL.amber)).fillRect(Math.round(f.x + Math.sin(k * 0.05 + f.ph) * 3), Math.round(f.y), 1, 1);
+        }
+        ol.setAlpha(0.75 + 0.25 * Math.sin(k * 0.2));
+      },
+    });
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      tick.remove();
+      this.fernOn = false;
       if (this.sim.phase === 'match_end') done();
     };
     this.time.delayedCall(TRIUMPH_MS, finish);
@@ -3257,3 +4295,332 @@ interface LiveKill {
   mine?: { sub?: string };
 }
 
+
+/**
+ * Вуаль ночи 180×260: тёмно-синяя целиком, у костра (90, 132) — просвет с шахматной кромкой, чтобы свет
+ * костра читался кругом, а не пятном. Прозрачность задаёт сцена (renderNight).
+ */
+function makeNightVeil(): HTMLCanvasElement {
+  const { c, g } = canvas(180, 260);
+  for (let y = 0; y < 260; y++) {
+    for (let x = 0; x < 180; x++) {
+      const d = Math.hypot((x - 90) / 1.1, y - 132);
+      if (d < 30) continue;
+      if (d < 40 && (x + y) % 2 === 0) continue;
+      if (d < 48 && x % 2 === 0 && y % 2 === 0) continue;
+      ppx(g, x, y, PAL.night);
+    }
+  }
+  return c;
+}
+
+/** Тьма по краям своего экрана при потере рассудка: широкая кромка шахматкой, к центру реже. */
+/** Иконка рассудка: мозг сбоку. o — контур, L — блик, M — мякоть, D — тень, F — борозда. */
+const BRAIN_ROWS = [
+  '.....oooooo.......',
+  '...ooLLLLLLoo.....',
+  '..oLLMMFMMLLLoo...',
+  '.oLMMMFMMMFFLMMo..',
+  '.oLMFFMMLMFMMMMDo.',
+  'oLMMLMFMMFMLMFFMDo',
+  'oLMMMMFMMFMMLFMMDo',
+  'oMFFMMLFFMMMMFMMDo',
+  'oMLMFMMLMMFFMMMDDo',
+  '.oMMLFFFMMMLFMDDo.',
+  '.oDMMMMMMoooDDDDo.',
+  '..oDDDDDo.oDFFDo..',
+  '...ooooo..oDDDo...',
+  '...........oDo....',
+  '...........oo.....',
+];
+type BrainPx = 'L' | 'M' | 'D' | 'F';
+/** Цвета мозга по стадиям: ясно/шёпот — розовый, морок — воспалённый, кошмар — тёмный. */
+const BRAIN_FULL: Record<BrainPx | string, string>[] = [
+  { L: PAL.peach, M: PAL.coral, D: PAL.orchid, F: PAL.grape },
+  { L: PAL.coral, M: PAL.orchid, D: PAL.grape, F: PAL.plum },
+  { L: PAL.orchid, M: PAL.grape, D: PAL.plum, F: PAL.ink },
+];
+const BRAIN_EMPTY: Record<BrainPx | string, string> = { L: PAL.slate, M: PAL.steel, D: PAL.dusk, F: PAL.night };
+
+const KIKI_W = 24;
+const KIKI_H = 39;
+
+/**
+ * Кикимора, 4 кадра шага: длинное бледное лицо в проборе мокрых волос с ряской, чёрные глазницы с белыми
+ * точками, отвисшая челюсть, костлявые плечи, руки до земли с когтями, рваное платье, птичьи ступни.
+ * В кадрах 1 и 3 одна рука тянется к тебе, рот раскрыт шире, с волос капает.
+ */
+const KIKI_FRAMES = [
+  [
+    '........oooooooo........',
+    '.......oHHhhHHhgo.......',
+    '......ohHHhhHHhgHo......',
+    '.....ohhHHhhHHhgHHo.....',
+    '....oHhhHHhSSHHgHHho....',
+    '...oHHhhHHhKKSHgHHhho...',
+    '....oHhgHShKKKhhHHho....',
+    '....oHhgHShKKKHhHHho....',
+    '....oHhgHmmKKmHhHHho....',
+    '....oHhhHemKKhmhHHho....',
+    '....oHGhHSKKKHShHHho....',
+    '....oHhhHosKKHohHHho....',
+    '....oKhhHostmhohHHhKo...',
+    '...oSHShHommtHohHHSoSo..',
+    '...oSohSSommmHohSSooSo..',
+    '...oSoHHhSmmmmRShhooSo..',
+    '..oSooHHhRrtmrRHhGo.oSo.',
+    '..oSooHHhRrSSrRHhho.oSo.',
+    '..oSooHHhhRRrRHHhho.oSo.',
+    '.oSo.oHHhhRRrRHHhho..oSo',
+    '.oSo.oHHhhRRrRHHhho..oSo',
+    '.oKo.oHHhhRrRRHHhho..oKo',
+    '.oSo.oHHhhRrRRHHhho..oSo',
+    '.oSo.oHGhhRrRRHHhho..oSo',
+    '.oSo.oHHhhrRRrHHhho..oSo',
+    '.oSo.oHHhhrRRrHHhho..oSo',
+    '..oSooHHhhrRRrHRoho.oSo.',
+    '..oSooHHhrRRrRRroho.oSo.',
+    '..oSo.dHhrRRrRRroho.oSo.',
+    '..oSo.oHRrRRrRRroho.oSo.',
+    '..oso.oHrRRrRRrRod..oso.',
+    '..oso..odRRoRRoRo...oso.',
+    '.ossso.orRsrRorRo..ossso',
+    '.ossso.oRorRorRo...ossso',
+    '.ossso..ooso.oso...ossso',
+    'ocosoco..oso.oso..ocosoc',
+    '.oocoo..oosooosoo..oocoo',
+    '...o...ocssscsssco...o..',
+    '........ooooooooo.......',
+  ],
+  [
+    '........oooooooo........',
+    '.......oHHhhHHhgo.......',
+    '......ohHHhhHHhgHo......',
+    '.....ohhHHhhHHhgHHo.....',
+    '....oHhhHHhSSHHgHHho....',
+    '...oHHhhHHhKKSHgHHhho...',
+    '....oHhgHShKKKhhHHho....',
+    '....oHhgHShKKKHhHHho....',
+    '....oHhgHmmKKmHhHHho....',
+    '....oHhhHmeKKhehHHho....',
+    '....oHGhHSKKKHShHHho....',
+    '....oHhhHosKKHohHHho....',
+    '....oKhhHostmhohHHhKo...',
+    '...oSHShHommtHohHHSoSo..',
+    '...oSohSSommmHohSSooSo..',
+    '..oSooHHhSmmmmRShhooSo..',
+    '.oSo.oHHhRmmmmRHhGo.oSo.',
+    '.oSo.oHHhRrtmrRHhho.oSo.',
+    '.oSo.oHHhhRRrRHHhho.oSo.',
+    'oKo...oHHhhRrRRHHhho.oSo',
+    'oSo...oHHhhRrRRHHhho.oSo',
+    'oSo...oHHhhrRRrHHhho.oKo',
+    'oSo...oHHhhrRRrHHhho.oSo',
+    'oSo...oGHhhrRRrHHhho.oSo',
+    'oSo...oHHhhRRrRHHhho.oSo',
+    'oSo...oHHhhRRrRHHhho.oSo',
+    'oso...oHHhhRRrRHoohooSo.',
+    'ssso..oHHhrRRrRRrohooSo.',
+    'ssso...oHhrRRrRRrohooSo.',
+    'ssso...dHRrRRrRRrohooSo.',
+    'ososo..oHrRRrRRrRohooso.',
+    'osooco..orRorRorRod.oso.',
+    'oco.o....dsRroRro..ossso',
+    '.o.......oRroRrsRo.ossso',
+    '.........oso.ooso..ossso',
+    '.........oso.oosooocosoc',
+    '........oosoocssscooocoo',
+    '.......ocssscooooo...o..',
+    '........ooooo...........',
+  ],
+  [
+    '........oooooooo........',
+    '.......oHHhhHHhgo.......',
+    '......ohHHhhHHhgHo......',
+    '.....ohhHHhhHHhgHHo.....',
+    '....oHhhHHhSSHHgHHho....',
+    '...oHHhhHHhKKSHgHHhho...',
+    '....oHhgHShKKKhhHHho....',
+    '....oHhgHShKKKHhHHho....',
+    '....oHhgHmmKKmHhHHho....',
+    '....oHhhHemKKhmhHHho....',
+    '....oHGhHSKKKHShHHho....',
+    '....oHhhHosKKHohHHho....',
+    '....oKhhHostmhohHHhKo...',
+    '...oSHShHommtHohHHSoSo..',
+    '...oSohSSommmHohSSooSo..',
+    '...oSoHHhSmmmmRShhooSo..',
+    '..oSooHHhRrtmrRHhGo.oSo.',
+    '..oSooHHhRrSSrRHhho.oSo.',
+    '..oSooHHhhRRrRHHhho.oSo.',
+    '.oSo.oHHhhRRrRHHhho..oSo',
+    '.oSo.oHHhhRRrRHHhho..oSo',
+    '.oKo.oHHhhRrRRHHhho..oKo',
+    '.oSo.oHHhhRrRRHHhho..oSo',
+    '.oSo.oHGhhRrRRHHhho..oSo',
+    '.oSo.oHHhhrRRrHHhho..oSo',
+    '.oSo.oHHhhrRRrHHhho..oSo',
+    '..oSooHHhhrRRrHRoho.oSo.',
+    '..oSooHHhrRRrRRroho.oSo.',
+    '..oSo.dHhrRRrRRroho.oSo.',
+    '..oSo.oHRrRRrRRroho.oSo.',
+    '..oso.oHrRRrRRrRod..oso.',
+    '..oso..odoRroRro....oso.',
+    '.ossso..oRRoRRsRo..ossso',
+    '.ossso.oRRsRRoRRo..ossso',
+    '.ossso..oosoooso...ossso',
+    'ocosoco..oso.oso..ocosoc',
+    '.oocoo..oosooosoo..oocoo',
+    '...o...ocssscsssco...o..',
+    '........ooooooooo.......',
+  ],
+  [
+    '........oooooooo........',
+    '.......oHHhhHHhgo.......',
+    '......ohHHhhHHhgHo......',
+    '.....ohhHHhhHHhgHHo.....',
+    '....oHhhHHhSSHHgHHho....',
+    '...oHHhhHHhKKSHgHHhho...',
+    '....oHhgHShKKKhhHHho....',
+    '....oHhgHShKKKHhHHho....',
+    '....oHhgHmmKKmHhHHho....',
+    '....oHhhHmeKKhehHHho....',
+    '....oHGhHSKKKHShHHho....',
+    '....oHhhHosKKHohHHho....',
+    '....oKhhHostmhohHHhKo...',
+    '...oSHShHommtHohHHSoSo..',
+    '...oSohSSommmHohSSooSo..',
+    '...oSoHHhSmmmmRShho.oSo.',
+    '..oSooHHhRmmmmRHhGo..oSo',
+    '..oSooHHhRrtmrRHhho..oSo',
+    '..oSooHHhhRRrRHHhho..oSo',
+    '.oSooHHhhrRRrHHhho....oK',
+    '.oSooHHhhrRRrHHhho....oS',
+    '.oKooHHhhRRrRHHhho....oS',
+    '.oSooHHhhRRrRHHhho....oS',
+    '.oSooHHGhRRrRHHhho....oS',
+    '.oSooHHhhRrRRHHhho....oS',
+    '.oSooHHhhRrRRHHhho....oS',
+    '..oSoHHhhRrRRHRRho....os',
+    '..oSoHHhrRRrRRroho...oss',
+    '..oSooHhrRRrRRroho...oss',
+    '..oSodHRrRRrRRroho...oss',
+    '..osooHrRRrRRrRoho..osos',
+    '..oso.ooRRoRRoRod..ocoos',
+    '.ossso.dRsrRorRo....o.oc',
+    '.osssooRorRorRso.......o',
+    '.ossso.ooso.ooso........',
+    'ocosocooosoo.oso........',
+    '.oocooocssscoosoo.......',
+    '...o...ooooocsssco......',
+    '............ooooo.......',
+  ],
+];
+function makeKikimora(): HTMLCanvasElement {
+  const col: Record<string, string> = {
+    o: PAL.ink, H: PAL.night, h: PAL.dusk, g: PAL.deep, G: PAL.forest, S: PAL.slate, s: PAL.steel, K: PAL.mist,
+    e: PAL.white, m: PAL.ink, t: PAL.mist, R: PAL.plum, r: PAL.umber, c: PAL.sand, d: PAL.cyan,
+  };
+  const { c, g } = canvas(KIKI_W * KIKI_FRAMES.length, KIKI_H);
+  KIKI_FRAMES.forEach((rows, f) =>
+    rows.forEach((r, y) => {
+      for (let x = 0; x < r.length; x++) if (r[x] !== '.') ppx(g, f * KIKI_W + x, y, col[r[x]]);
+    }),
+  );
+  return c;
+}
+
+/** Леший — кадры из leshy-art.ts (буквы → цвета PAL). */
+function makeLeshy(): HTMLCanvasElement {
+  const col: Record<LeshyKey, string> = {
+    o: PAL.ink, n: PAL.night, u: PAL.umber, p: PAL.plum, b: PAL.brick, d: PAL.deep, P: PAL.pine, f: PAL.forest,
+    k: PAL.dusk, s: PAL.slate, m: PAL.mist, y: PAL.yellow, w: PAL.white, a: PAL.amber,
+  };
+  const frames = leshyFrames();
+  const { c, g } = canvas(LESHY_W * frames.length, LESHY_H);
+  frames.forEach((rows, f) =>
+    rows.forEach((r, y) => {
+      for (let x = 0; x < r.length; x++) if (r[x] !== '.') ppx(g, f * LESHY_W + x, y, col[r[x] as LeshyKey]);
+    }),
+  );
+  return c;
+}
+
+/** Цвет папоротника (триумф «Купальской ночи»): 0 — бутон, 1–2 — распускается, 3 — раскрыт и сияет. */
+function makeFern(): HTMLCanvasElement {
+  const { c, g } = canvas(15 * 4, 15);
+  for (let f = 0; f < 4; f++) {
+    const ox = f * 15;
+    const px = (x: number, y: number, col: string) => x >= 0 && y >= 0 && x < 15 && y < 15 && ppx(g, ox + x, y, col);
+    // стебель
+    for (let y = 9; y < 15; y++) px(7, y, PAL.pine);
+    px(6, 12, PAL.forest);
+    px(8, 11, PAL.forest);
+    if (f === 0) {
+      px(7, 7, PAL.red);
+      px(7, 8, PAL.wine);
+      px(6, 8, PAL.forest);
+      px(8, 8, PAL.forest);
+      continue;
+    }
+    const R = [0, 3, 5, 6][f];
+    for (let i = 0; i < 5; i++) {
+      const a = -Math.PI / 2 + (i * Math.PI * 2) / 5;
+      for (let r = 1; r <= R; r++) {
+        const x = Math.round(7 + Math.cos(a) * r);
+        const y = Math.round(7 + Math.sin(a) * r);
+        px(x, y, r === R ? PAL.coral : PAL.red);
+        if (r > 1 && r < R) {
+          px(Math.round(x - Math.sin(a)), Math.round(y + Math.cos(a)), PAL.red);
+          px(Math.round(x + Math.sin(a)), Math.round(y - Math.cos(a)), r > R / 2 ? PAL.wine : PAL.red);
+        }
+      }
+    }
+    px(7, 7, f === 3 ? PAL.white : PAL.yellow);
+    px(6, 7, PAL.yellow);
+    px(8, 7, PAL.yellow);
+    px(7, 6, PAL.yellow);
+    px(7, 8, PAL.amber);
+  }
+  return c;
+}
+
+/** Морда Лешего для скримера — кадры из leshy-art.ts › leshyFace. */
+function makeLeshyFace(): HTMLCanvasElement {
+  const col: Record<LeshyKey, string> = {
+    o: PAL.ink, n: PAL.night, u: PAL.umber, p: PAL.plum, b: PAL.brick, d: PAL.deep, P: PAL.pine, f: PAL.forest,
+    k: PAL.dusk, s: PAL.slate, m: PAL.mist, y: PAL.yellow, w: PAL.white, a: PAL.amber,
+  };
+  const frames = leshyFace();
+  const { c, g } = canvas(FACE_W * frames.length, FACE_H);
+  frames.forEach((rows, f) =>
+    rows.forEach((r, y) => {
+      for (let x = 0; x < r.length; x++) if (r[x] !== '.') ppx(g, f * FACE_W + x, y, col[r[x] as LeshyKey]);
+    }),
+  );
+  return c;
+}
+
+/** Просвет факела в ночи: стирает вуаль — сплошь в середине, решёткой к краю (как вуаль у костра). */
+function makeTorchHole(): HTMLCanvasElement {
+  const R = 24;
+  const { c, g } = canvas(R * 2, R * 2);
+  for (let y = 0; y < R * 2; y++) {
+    for (let x = 0; x < R * 2; x++) {
+      const d = Math.hypot(x - R + 0.5, y - R + 0.5);
+      if (d < 14 || (d < 19 && (x + y) % 2 === 0) || (d < R && x % 2 === 0 && y % 2 === 0)) ppx(g, x, y, PAL.ink);
+    }
+  }
+  return c;
+}
+
+function makeMadVeil(): HTMLCanvasElement {
+  const { c, g } = canvas(180, 260);
+  for (let y = 0; y < 260; y++) {
+    for (let x = 0; x < 180; x++) {
+      const d = Math.min(x, y, 179 - x, 259 - y);
+      if (d < 10 || (d < 22 && (x + y) % 2 === 0) || (d < 36 && x % 2 === 0 && y % 2 === 0)) ppx(g, x, y, PAL.ink);
+    }
+  }
+  return c;
+}

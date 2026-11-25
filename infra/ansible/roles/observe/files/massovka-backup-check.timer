@@ -1,0 +1,7 @@
+[Unit]
+Description=Массовка: проверка копии базы раз в неделю
+[Timer]
+OnCalendar=Mon *-*-* 04:30:00
+Persistent=true
+[Install]
+WantedBy=timers.target
