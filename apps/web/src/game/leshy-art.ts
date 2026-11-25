@@ -3,11 +3,12 @@
  * глазами, борода-лишайник, длинные руки-сучья до колен, ноги-корни. Без DOM: кадры — строки букв
  * (буква → цвет из PAL в scene.ts › makeLeshy), поэтому их можно проверить и вне браузера.
  *
- * Кадры 0–3 — шаг, 4–5 — стоит и смотрит (голова чуть повёрнута влево/вправо).
+ * Кадры 0–3 — шаг, 4–5 — стоит и смотрит (голова чуть повёрнута влево/вправо), 6 — замах (правая рука-сук
+ * над головой), 7 — удар (рука выброшена вперёд и вниз, голова подалась следом).
  */
 export const LESHY_W = 52;
 export const LESHY_H = 96;
-export const LESHY_FRAMES = 6;
+export const LESHY_FRAMES = 8;
 
 /** o ink, n night, u umber, p plum, b brick, d deep, P pine, f forest, k dusk, s slate, m mist, y yellow, w white, a amber */
 export type LeshyKey = 'o' | 'n' | 'u' | 'p' | 'b' | 'd' | 'P' | 'f' | 'k' | 's' | 'm' | 'y' | 'w' | 'a';
@@ -43,7 +44,8 @@ function frame(f: number): string[] {
   const walk = f < 4;
   const s = walk ? [-1, 0, 1, 0][f] : 0; // шаг: −1 левая впереди, 1 — правая
   const bob = walk && f % 2 === 1 ? 1 : 0; // на перекате тело чуть ниже
-  const look = f === 4 ? -1 : f === 5 ? 1 : 0;
+  const strike = f === 6 ? 1 : f === 7 ? 2 : 0;
+  const look = f === 4 ? -1 : f === 5 || f === 7 ? 1 : 0;
   const cx = 26;
 
   // ── ноги-корни ──
@@ -97,6 +99,30 @@ function frame(f: number): string[] {
 
   // ── руки-сучья до колен, качаются против ног ──
   for (const side of [-1, 1]) {
+    if (side === 1 && strike) {
+      // рука для удара: замах — локоть в сторону, кисть-когти над рогами; удар — вперёд и вниз, на всю длину
+      const sx = cx + 7;
+      const sy = tTop + 2;
+      const [ex, ey, hx, hy] = strike === 1 ? [cx + 14, tTop - 8, cx + 11, tTop - 22] : [cx + 14, tTop + 7, cx + 19, tTop + 17];
+      line(sx, sy, ex, ey, 'p', 2);
+      line(sx, sy, ex, ey, 'u');
+      line(ex, ey, hx, hy, 'p', 2);
+      put(ex, ey, 'u');
+      if (strike === 1) {
+        // когти вверх, растопырены
+        line(hx, hy, hx - 3, hy - 6, 'p');
+        line(hx + 1, hy, hx + 1, hy - 7, 'u');
+        line(hx + 1, hy, hx + 4, hy - 5, 'p');
+        line(hx, hy, hx - 4, hy - 2, 'u');
+      } else {
+        // когти вперёд, сжимаются
+        line(hx, hy, hx + 5, hy + 1, 'p');
+        line(hx, hy + 1, hx + 5, hy + 4, 'u');
+        line(hx, hy, hx + 4, hy - 3, 'p');
+        line(hx, hy + 1, hx + 3, hy + 6, 'p');
+      }
+      continue;
+    }
     const swing = side === -1 ? s : -s;
     const sx = cx + side * 7;
     const sy = tTop + 2;

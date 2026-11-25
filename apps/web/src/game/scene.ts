@@ -18,6 +18,7 @@ import {
   nightLevel,
   playLenSec,
   leshyVisits,
+  leshySpot,
   fireLevel,
   LAG_GRACE_MS,
 } from '@kto/game-core';
@@ -233,9 +234,9 @@ export class GameScene extends Phaser.Scene {
   private dreadAt = 0;
   /** Когда грохнул шаг Лешего: ночь на миг темнеет. */
   private stepDarkAt = 0;
-  private giantT0 = 0;
   private giantFrame = -1;
   private giantShadow?: Phaser.GameObjects.Graphics;
+  private giantStrike: { x: number; y: number; at: number } | null = null;
   private giantDust: { x: number; y: number; dx: number; t0: number }[] = [];
   /** Приходы Лешего за ночь (sanity.ts › leshyVisits): «Ау», шаги, тишина; настоящий — выходит и забирает, ложный — уходит. */
   private leshy = { round: -1, idx: 0, sec: 0, stage: 'wait' as 'wait' | 'near' | 'over' | 'leave' | 'done', nextAt: 0, steps: 0, warn: -1 };
@@ -1031,6 +1032,7 @@ export class GameScene extends Phaser.Scene {
         else {
           // вырезали меня — «вырезан»; мой удар по живому — награда; чужой — событие на поле
           if (this.byLeshy(ev)) {
+            this.giantStrike = { x: ev.x, y: ev.y, at: ev.at };
             this.audio.play('leshyTake');
             this.cameras.main.shake(500, 0.016);
           }
@@ -1056,6 +1058,8 @@ export class GameScene extends Phaser.Scene {
           // оружием — баннер в момент удара, с кровью на экране и сотрясением (weaponImpact)
           const lk = this.kills.find((k) => k.k.eid === ev.target && !k.hit);
           if (lk) lk.mine = { sub };
+          // Леший: сперва видно, как он бросается и бьёт тебя, потом — «вырезан»
+          else if (leshy) this.time.delayedCall(900, () => this.showDeath(sub));
           else this.showDeath(sub);
           if (ev.result === 'player' && myEid !== undefined) this.offerDeathClip(myEid, ev.at, ev.attacker);
         }
@@ -1870,6 +1874,8 @@ export class GameScene extends Phaser.Scene {
     this.renderLeshy();
     if (!on) {
       this.nightVeil.setVisible(false);
+      this.giant?.setVisible(false);
+      this.giantShadow?.setVisible(false);
       return;
     }
     if (after) {
@@ -1879,6 +1885,8 @@ export class GameScene extends Phaser.Scene {
       rt.clear();
       rt.draw('nightveil', 0, 0, ph === 'reveal' ? 0.3 : 0.55);
       this.forestEyes(1);
+      this.giant?.setVisible(false);
+      this.giantShadow?.setVisible(false);
       return;
     }
     const sec = this.playSec();
@@ -1993,7 +2001,7 @@ export class GameScene extends Phaser.Scene {
         this.stepDarkAt = now;
         L.nextAt = now + 1150 - k * 40;
       }
-    } else if (L.stage === 'over' && c && sim.world.time >= c.windowEnd + LAG_GRACE_MS + 900) {
+    } else if (L.stage === 'over' && c && sim.world.time >= c.windowEnd + LAG_GRACE_MS + 1600) {
       L.stage = 'leave';
       L.steps = 0;
       L.nextAt = now;
@@ -2017,7 +2025,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   /**
-   * Звуки ночного леса «Купальской ночи»: треск ветки, далёкое «Ау-у…». Редко и в случайный миг, у каждого
+   * Звуки ночного леса «Купальской ночи»: треск ветки, шёпот, далёкое «Ау-у…». Редко и в случайный миг, у каждого
    * телефона свой — с рассудком игрока не связаны, ничего о нём не выдают. Пока идёт Леший — тихо.
    */
   private renderDread(): void {
@@ -2030,12 +2038,18 @@ export class GameScene extends Phaser.Scene {
     }
     if (!this.dreadAt) this.dreadAt = now + 5000 + Math.random() * 6000;
     if (now < this.dreadAt) return;
-    this.dreadAt = now + 7000 + Math.random() * 9000;
+    const night = ph === 'play' ? nightLevel(this.cfg, this.playSec()) : 1;
+    // к ночи лес шумит чаще: в сумерках раз в 8–16 с, в глухую ночь — раз в 4–9 с
+    this.dreadAt = now + (8000 - 4000 * night) + Math.random() * (8000 - 3000 * night);
     const L = this.leshy.stage;
     if (ph === 'play' && (L === 'near' || L === 'over' || L === 'leave')) return;
-    const night = ph === 'play' ? nightLevel(this.cfg, this.playSec()) : 1;
-    if (Math.random() < 0.3 * night) this.audio.play('leshyCall');
-    else this.audio.play('snap');
+    const r = Math.random();
+    if (r < 0.2 * night) this.audio.play('leshyCall');
+    else if (r < 0.2 * night + 0.25 + 0.35 * night) {
+      // шёпот; в глухую ночь — иногда второй голос отвечает
+      this.audio.play('whisper');
+      if (night > 0.6 && Math.random() < 0.4) this.time.delayedCall(700 + Math.random() * 600, () => this.audio.play('whisper'));
+    } else this.audio.play('snap');
   }
 
   /** Удар без нападавшего сразу после стоп-кадра Лешего — это он забрал того, кто шевельнулся. */
@@ -2059,7 +2073,7 @@ export class GameScene extends Phaser.Scene {
       const lead = this.cfg.leshyLeadSec;
       this.forestEyes(Math.max(0, Math.min(1, (this.playSec() - (L.sec - lead)) / lead)));
     }
-    const end = c ? c.windowEnd + LAG_GRACE_MS + 900 : 0;
+    const end = c ? c.windowEnd + LAG_GRACE_MS + 2600 : 0;
     const on = hasSanity(this.sim.theme) && this.sim.phase === 'play' && !!c && c.warnAt === L.warn && w.time >= c.showAt && w.time < end;
     if (!on || !c) {
       this.giant?.setVisible(false);
@@ -2073,30 +2087,45 @@ export class GameScene extends Phaser.Scene {
     }
     if (this.giantFor !== c.warnAt) {
       this.giantFor = c.warnAt;
-      this.giantT0 = performance.now();
       this.giantFrame = -1;
+      this.giantStrike = null;
     }
     const now = performance.now();
-    const dur = Math.max(1200, end - c.showAt);
-    const k = Math.min(1, (now - this.giantT0) / dur);
-    const dir = c.warnAt % 2 ? 1 : -1; // откуда выходит: 1 — слева направо
-    const mid = 90 + dir * 10;
+    // время — мировое: приговор (удар) ядро выносит в judge, сцена замахивается заранее
+    const wt = w.time - c.showAt;
+    const judge = c.windowEnd + LAG_GRACE_MS - c.showAt;
+    const spot = leshySpot(c.warnAt, 180);
+    const dir = spot.dir; // откуда выходит: 1 — слева направо
     const from = 90 - dir * 125; // из-за края поля
-    const feet = 176;
-    let x: number;
+    let x: number = spot.x;
+    let feet = spot.y;
     let frame: number;
-    let walking = true;
-    // выходит из леса сбоку, встаёт посреди толпы, озирается — пока не решит, кого забрать, — и уходит
-    if (k < 0.3) {
-      x = from + (mid - from) * (k / 0.3);
+    let walking = false;
+    let flipX = dir < 0;
+    const st = this.giantStrike;
+    const leaveAt = Math.max(judge + 500, st ? st.at - c.showAt + 900 : 0);
+    if (wt < 1600) {
+      // выходит из-за края поля
+      x = from + (spot.x - from) * (wt / 1600);
       frame = Math.floor(now / 260) % 4;
-    } else if (k < 0.8) {
-      x = mid;
-      frame = k < 0.42 ? 4 : k < 0.56 ? 5 : k < 0.68 ? 4 : 5;
-      walking = false;
+      walking = true;
+    } else if (st && wt < leaveAt) {
+      // бросок к тому, кто шевельнулся: в два шага оказывается рядом и бьёт
+      const q = Math.min(1, (w.time - st.at) / 160);
+      const side = st.x >= spot.x ? 1 : -1;
+      x = spot.x + (st.x - side * 20 - spot.x) * q;
+      feet = Math.round(spot.y + (st.y - spot.y) * q);
+      flipX = side < 0;
+      frame = w.time - st.at < 450 ? 7 : 4;
+    } else if (wt < leaveAt) {
+      // стоит и озирается; перед приговором — замах (бьёт ли — не знает никто, пока не ударит)
+      frame = wt >= judge - 800 && wt < judge + 300 ? 6 : Math.floor((wt - 1600) / 700) % 2 ? 5 : 4;
     } else {
-      x = mid + dir * 125 * ((k - 0.8) / 0.2);
+      const base = st ? { x: st.x - (st.x >= spot.x ? 1 : -1) * 20, y: st.y } : spot;
+      x = base.x + dir * 140 * Math.min(1, (wt - leaveAt) / 1500);
+      feet = base.y;
       frame = Math.floor(now / 220) % 4;
+      walking = true;
     }
     x = Math.round(x);
     // шаг: нога встала (кадры 0 и 2) — пыль, глухой удар, земля вздрагивает
@@ -2109,7 +2138,7 @@ export class GameScene extends Phaser.Scene {
     this.giantFrame = frame;
     this.giant
       .setVisible(true)
-      .setFlipX(dir < 0)
+      .setFlipX(flipX)
       .setPosition(x, AY + feet + 1)
       .setDepth(AY + feet)
       .setFrame(frame);
@@ -2123,8 +2152,8 @@ export class GameScene extends Phaser.Scene {
       sg.fillStyle(hexToInt(q < 0.5 ? PAL.steel : PAL.dusk), 0.8 * (1 - q)).fillRect(Math.round(d.x + d.dx * q * 8), Math.round(AY + d.y - 1 - q * 4 * Math.abs(d.dx)), 2, 1);
     }
     // глаза горят и сквозь ночь (над вуалью), там, где они на кадре
-    const look = frame === 4 ? -1 : frame === 5 ? 1 : 0;
-    const flip = dir < 0 ? -1 : 1;
+    const look = frame === 4 ? -1 : frame === 5 || frame === 7 ? 1 : 0;
+    const flip = flipX ? -1 : 1;
     const ey = AY + feet + 1 - LESHY_H + 8 + 12 + 6 + (walking && frame % 2 === 1 ? 1 : 0);
     const g = this.torchG;
     for (const ox of [-3, 2]) {

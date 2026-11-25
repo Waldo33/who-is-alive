@@ -9,7 +9,7 @@ import type { ActKind, CrowdKind, Dir, EmoteKind, EntitySpawn, WorldEvent } from
 
 import { NavGrid } from './nav';
 import { Rng } from './rng';
-import { fireLevel, leshyVisits, nightLevel, playLenSec, sanityDrain } from './sanity';
+import { fireLevel, leshySpot, leshyVisits, nightLevel, playLenSec, sanityDrain } from './sanity';
 import { ROTATION_THEMES, THEME_COUNT, hasSanity, killerExposed, themeRules, twistEmote } from './themes';
 import { ROUND_MODS, roundMod } from './mods';
 import { World } from './world';
@@ -547,9 +547,20 @@ export class MatchSim {
     if (!c || (c.vote && !c.ghost) || this.hardChecked === c.warnAt || t <= c.windowEnd + LAG_GRACE_MS) return;
     this.hardChecked = c.warnAt;
     const cfg = this.cfg;
-    // Леший: не замер вовремя — забран, как в «Жёстком дубле» (дети — только подсвечены)
+    // Леший: из не замерших вовремя забирает одного — ближайшего к себе (дети — только подсвечены)
     const leshy = c.warnAt === this.leshyWarn && !cfg.kidsMode;
-    const hard = !c.vote && (roundMod(this.mod) === 'hard' || cfg.strictCrowd || leshy);
+    const hard = !c.vote && (roundMod(this.mod) === 'hard' || cfg.strictCrowd);
+    let prey: PlayerRound | null = null;
+    if (leshy) {
+      const spot = leshySpot(c.warnAt, this.arena.width);
+      let best = Infinity;
+      for (const p of this.pr) {
+        if (!p.alive || (p.crowdAnswered === c.warnAt && p.crowdPick === c.kind)) continue;
+        const e = this.world.get(p.eid)!;
+        const d = Math.hypot(e.x - spot.x, e.y - spot.y);
+        if (d < best) [best, prey] = [d, p];
+      }
+    }
     const slips: number[] = [];
     for (const p of this.pr) {
       if (!p.alive) continue;
@@ -565,7 +576,7 @@ export class MatchSim {
       this.addSanity(p, -cfg.sanitySlip);
       const e = this.world.get(p.eid)!;
       // опоздавший всё же повторил жест — его только подсвечивают, вырезают не повторивших
-      if (hard && !(p.crowdAnswered === c.warnAt && p.crowdPick === c.kind)) {
+      if (p === prey || (hard && !(p.crowdAnswered === c.warnAt && p.crowdPick === c.kind))) {
         p.alive = false;
         p.diedAt = t;
         if (p.autopilot) this.bots.remove(p.eid);

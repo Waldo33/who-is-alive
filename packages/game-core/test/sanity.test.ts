@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MatchSim, ROTATION_THEMES, THEME_RULES, leshySec, leshyVisits, makeConfig, sanityStage } from '../src';
+import { MatchSim, ROTATION_THEMES, THEME_RULES, leshySec, leshySpot, leshyVisits, makeConfig, sanityStage } from '../src';
 import type { WorldEvent } from '../src';
 
 const players = ['a', 'b'].map((pid, i) => ({ pid, name: pid, color: i }));
@@ -277,5 +277,32 @@ describe('рассудок («Купальская ночь»)', () => {
       falses += v.filter((x) => !x.real).length;
     }
     expect(falses).toBeGreaterThan(20);
+  });
+  it('Леший бьёт одного — ближайшего к себе из не замерших; дальнего только подсвечивает', () => {
+    const three = ['a', 'b', 'c'].map((pid, i) => ({ pid, name: pid, color: i }));
+    const sim = new MatchSim(makeConfig({ fixedTheme: KUPALA, endWhenLastAlive: false }), three, 13);
+    toPlay(sim);
+    const [a, b, c] = sim.pr;
+    const warn = () => (sim as unknown as { leshyWarn: number }).leshyWarn;
+    for (let i = 0; i < 20 * 120 && warn() < 0; i++) {
+      for (const p of sim.pr) p.sanity = 100;
+      const cr = sim.world.crowd;
+      if (cr && !cr.vote && sim.world.time >= cr.showAt + 100) for (const p of sim.pr) if (p.crowdAnswered !== cr.warnAt) sim.intent(p.pid, { k: 'crowd', kind: cr.kind });
+      sim.tick();
+    }
+    expect(warn()).toBeGreaterThan(0);
+    const spot = leshySpot(warn(), sim.arena.width);
+    const ea = sim.world.get(a.eid)!;
+    const ec = sim.world.get(c.eid)!;
+    [ea.x, ea.y] = [spot.x + 6, spot.y];
+    [ec.x, ec.y] = [spot.x - 60, spot.y - 90];
+    for (let i = 0; i < 20 * 6; i++) {
+      const cr = sim.world.crowd;
+      if (cr && !cr.vote && sim.world.time >= cr.showAt + 100 && b.crowdAnswered !== cr.warnAt) sim.intent('b', { k: 'crowd', kind: cr.kind });
+      sim.tick();
+    }
+    expect(a.alive).toBe(false);
+    expect(b.alive).toBe(true);
+    expect(c.alive).toBe(true);
   });
 });

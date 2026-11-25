@@ -72,6 +72,15 @@ export function leshyVisits(round: number): LeshyVisit[] {
   return out;
 }
 
+/**
+ * Где Леший встаёт на поляне в свой стоп-кадр (warnAt — время его команды): посреди поля, чуть в сторону
+ * того края, к которому уйдёт. Ядро бьёт ближайшего к этой точке, сцена рисует его здесь же.
+ */
+export function leshySpot(warnAt: number, arenaW: number): { x: number; y: number; dir: 1 | -1 } {
+  const dir = Math.floor(warnAt / 50) % 2 ? 1 : -1;
+  return { x: Math.round(arenaW / 2) + dir * 10, y: 176, dir };
+}
+
 /** Первый настоящий приход Лешего (секунда «часов дубля»). */
 export function leshySec(round: number): number {
   return leshyVisits(round).find((v) => v.real)!.sec;

@@ -5,7 +5,7 @@
 export type Sfx =
   | 'step' | 'hitPlayer' | 'hitBot' | 'poof' | 'starTake' | 'starSpawn' | 'crowd' | 'tick'
   | 'click' | 'ready' | 'accuseRight' | 'accuseWrong' | 'fanfare' | 'sad' | 'hedge' | 'pigeon' | 'drum' | 'denied' | 'count' | 'swing' | 'flicker' | 'dusk' | 'siren' | 'whack' | 'clang' | 'stab' | 'knockedOut'
-  | 'hitOther' | 'cut' | 'clap' | 'logo' | 'wrap' | 'unmask' | 'rewind' | 'leshyStep' | 'leshyBreath' | 'leshyStinger' | 'leshyTake' | 'leshyCall' | 'snap';
+  | 'hitOther' | 'cut' | 'clap' | 'logo' | 'wrap' | 'unmask' | 'rewind' | 'leshyStep' | 'leshyBreath' | 'leshyStinger' | 'leshyTake' | 'leshyCall' | 'snap' | 'whisper';
 
 /**
  * Приоритет эффекта (звуковой гайд, план звука): P1 — меняет решение игрока, обязан пробиться
@@ -175,6 +175,25 @@ export class Synth {
           this.formant(300, 228, 1.0, v, 0.3, w + 0.38, [380, 760, 2300], 5);
         }
         break;
+      // шёпот из темноты: без голоса, только дыхание через «гласные» — слоги неразборчивой речи,
+      // шипящие сверху. Каждый раз другой. Общий (лес шепчет всем), со своим рассудком не связан.
+      case 'whisper': {
+        const n = 4 + Math.floor(Math.random() * 5);
+        const vowels: [number, number][] = [[700, 1200], [400, 2000], [550, 900], [350, 800], [500, 1700]];
+        let w = 0;
+        for (let i = 0; i < n; i++) {
+          const v = 0.55 + 0.45 * Math.sin((i / n) * Math.PI); // громче в середине фразы
+          if (Math.random() < 0.6) this.noise(0.06, 0.32 * v, 3600 + Math.random() * 2400, w); // «с», «ш», «ф»
+          const [f1, f2] = vowels[Math.floor(Math.random() * vowels.length)];
+          const d = 0.1 + Math.random() * 0.12;
+          this.swell(d, 0.5 * v, f2, w + 0.04, 0.3);
+          this.swell(d, 0.3 * v, f1 + 600, w + 0.04, 0.3);
+          w += d + 0.03 + (Math.random() < 0.2 ? 0.18 : 0);
+        }
+        // долгий выдох в конце фразы
+        this.swell(0.5, 0.18, 2600, w, 0.2);
+        break;
+      }
       // сухой треск ветки где-то в темноте
       case 'snap':
         this.noise(0.03, 0.55, 3200);
