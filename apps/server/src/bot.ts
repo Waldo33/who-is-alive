@@ -36,12 +36,16 @@ export interface BotOptions {
   fetchImpl?: typeof fetch;
 }
 
+/** Канал игры в Telegram (новости, ролики). */
+const CHANNEL = 'https://t.me/benobody_app';
+
 const T = {
   ru: {
     start: 'Массовка — пиксельная игра для компании: спрячься в толпе ботов и вычисли друзей раньше, чем они тебя.',
     startCasting: ' А каждый день — «Кастинг дня»: найди актёра в массовке.',
     play: '▶ Играть',
     friends: '👥 С друзьями',
+    channel: '📣 Канал игры',
     daily: '🎬 Кастинг дня',
     inviteTitle: 'Позвать в «Массовку»',
     inviteDesc: 'Карточка с кнопкой: друзья откроют игру прямо в Telegram',
@@ -71,6 +75,7 @@ const T = {
     startCasting: ' Plus a daily casting: spot the actor among the extras.',
     play: '▶ Play',
     friends: '👥 With friends',
+    channel: '📣 Game channel',
     daily: '🎬 Daily casting',
     inviteTitle: 'Invite to Be Nobody',
     inviteDesc: 'A card with a button: friends open the game right in Telegram',
@@ -310,12 +315,15 @@ export class Bot {
     // кнопка web_app — только в личке; в группах — прямая ссылка Mini App
     const priv = msg.chat.type === 'private';
     const web = (text: string, p: string) => ({ text, web_app: { url: `${this.o.site}${p}${p.includes('?') ? '&' : '?'}src=tg` } });
+    // канал игры — новости и ролики; кнопка ведёт в канал, игру не загораживает
+    const channel = [{ text: t.channel, url: CHANNEL }];
     const rows = priv
-      ? [[web(t.play, path)], ...(room ? [] : [[web(t.friends, '/?create=1')]]), ...(this.casting ? [[web(t.daily, '/daily')]] : [])]
+      ? [[web(t.play, path)], ...(room ? [] : [[web(t.friends, '/?create=1')]]), ...(this.casting ? [[web(t.daily, '/daily')]] : []), channel]
       : [
           [{ text: t.play, url: await this.link(room ? param : 'play') }],
           ...(room ? [] : [[{ text: t.friends, url: await this.link('friends') }]]),
           ...(this.casting ? [[{ text: t.daily, url: await this.link('daily') }]] : []),
+          channel,
         ];
     await this.api('sendMessage', {
       chat_id: msg.chat.id,
