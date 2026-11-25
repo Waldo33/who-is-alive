@@ -11,16 +11,12 @@ locals {
   media_bucket = "massovka-media"
 }
 
-data "twc_s3_preset" "media" {
-  location      = "ru-1"
-  storage_class = "hot"
-  disk          = 10 * 1024
-}
-
 resource "twc_s3_bucket" "media" {
-  name        = local.media_bucket
-  type        = "private"
-  preset_id   = data.twc_s3_preset.media.id
+  name = local.media_bucket
+  type = "private"
+  # 5137 — Standard 10GB, 79 ₽/мес (ru-1). Поиск через data "twc_s3_preset" (hot, 10 ГБ) находит 5129 —
+  # Premium 10GB за 99 ₽, поэтому id прямо, как у серверов. Тарифы — infra-check.yml
+  preset_id   = 5137
   description = "Массовка: клипы и фильмы матча (2 суток), из Terraform"
 
   # переполнение — не повод молча платить больше: сервер всё равно держит локальную копию
