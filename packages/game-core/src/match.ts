@@ -839,7 +839,7 @@ export class MatchSim {
   }
 
   /**
-   * Рассудок тает сам: быстрее к ночи, вдвое медленнее в толпе, у горящего костра растёт, каждый цветок
+   * Рассудок тает сам: быстрее к ночи, вдвое медленнее в толпе, у горящего костра растёт, у углей держится, каждый цветок
    * в венке замедляет падение. В стоп-кадре время стоит. На нуле — вырезан, как в «Жёстком дубле»: удар
    * без нападавшего (в детском режиме не вырезает). Автопилот (игрок отвалился) рассудок не теряет.
    */
@@ -855,8 +855,11 @@ export class MatchSim {
       if (!p.alive || p.autopilot) continue;
       const e = this.world.get(p.eid)!;
       let rate: number;
-      if (fire > 0 && Math.hypot(e.x - fx, e.y - fy) <= cfg.sanityFireRadius) rate = cfg.sanityFireGain * fire;
+      const dFire = Math.hypot(e.x - fx, e.y - fy);
+      if (fire > 0 && dFire <= cfg.sanityFireRadius) rate = cfg.sanityFireGain * fire;
       else if (t < p.torchUntil) rate = cfg.sanityFireGain;
+      // костёр прогорел, но угли тлеют: у них рассудок держится (не растёт) — только Леший встаёт рядом
+      else if (fire < 1 && dFire <= cfg.sanityEmberRadius) rate = 0;
       else {
         rate = -sanityDrain(cfg, sec) * Math.max(0.4, 1 - cfg.sanityFlowerSlow * p.stars);
         let near = 0;

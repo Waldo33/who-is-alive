@@ -2099,6 +2099,11 @@ export class GameScene extends Phaser.Scene {
     rt.clear();
     rt.draw('nightveil', 0, 0, Math.max(0, Math.min(1, n + flick)));
     if (fire < 1) rt.fill(hexToInt(PAL.night), n * (1 - fire) * 0.85);
+    // угли прогоревшего костра: маленький круг света (у них рассудок держится — sanityEmberRadius)
+    if (fire < 1) {
+      const r = this.cfg.torchRadius;
+      rt.erase('torchhole', 90 - r, 132 - r);
+    }
     const dark = 1 - (performance.now() - this.stepDarkAt) / 260;
     if (dark > 0) rt.fill(hexToInt(PAL.ink), 0.28 * dark);
     // факелы: вокруг носителя ночь отступает (у всех одинаково — факел достают и боты)
