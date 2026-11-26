@@ -40,6 +40,28 @@ const CLERK: CharStyle = {
   },
 };
 
+/**
+ * Шеф (game-core › boss.ts): единственный в тёмном костюме среди белых рубашек — читается сразу.
+ * Седой, с усами, красный галстук. Не сущность толпы: его не бьют и за него не прячутся.
+ */
+const BOSS: CharStyle = {
+  map: {
+    ...BASE_MAP,
+    ...face(0),
+    h: PAL.steel, H: PAL.slate, k: PAL.mist, r: PAL.steel, R: PAL.slate,
+    m: PAL.steel, // усы
+    a: PAL.night, b: PAL.night, B: PAL.ink, v: PAL.white, l: PAL.night, L: PAL.ink,
+    t: PAL.red,
+  },
+  patch: (m, view) => {
+    if (view === 'D') {
+      m[9][5] = 't'; m[9][6] = 't';
+      m[10][5] = 't'; m[10][6] = 't';
+      m[11][5] = 't'; m[11][6] = 't';
+    }
+  },
+};
+
 /** Остальные клерки — те же люди, что бойцы FIGHTERS (по номеру): одежда та же, лица разные. */
 const CLERKS: CharStyle[] = [1, 2, 3, 4].map((i) => ({ map: { ...CLERK.map, ...face(i) }, patch: CLERK.patch }));
 
@@ -865,6 +887,7 @@ const pack: ThemePack = {
   ],
   music: { flavor: { transpose: 0, bpm: 132, swing: 0, lead: 'pulse', bass: 'triangle', arp: false, echo: true }, song },
   subliminal: true,
+  boss: BOSS,
 };
 
 export default pack;
