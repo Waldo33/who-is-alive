@@ -1,0 +1,14 @@
+# Временная проверка: доступны ли окружения GitHub (Environments) в этом репозитории. Удаляется следующим коммитом.
+name: env-probe
+on:
+  push:
+    branches: ['claude/project-thread-qmcc3o']
+    paths: ['.github/workflows/env-probe.yml']
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    environment: probe
+    steps:
+      - run: echo "environment ok, ref=$GITHUB_REF"
