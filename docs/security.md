@@ -85,13 +85,21 @@ GitHub Actions ──SSH (ключ из TWC_TOKEN)──> обе машины
 |---|---|---|
 | `TELEGRAM_BOT_TOKEN` (игровой бот) | GitHub, сервер в Нидерландах | BotFather › `/revoke` → новый в секрет → `game-deploy` (вебхук и его секрет перепривяжутся сами) |
 | `ALERTS_BOT_TOKEN` (бот тревог) | GitHub, `/etc/massovka` в Нидерландах | так же в BotFather → секрет → `game-deploy` |
-| `TWC_TOKEN` | GitHub | панель Timeweb › API → новый токен, старый удалить → секрет. SSH-ключ выкладки выводится из токена и сменится: старый ключ убрать из `authorized_keys` машин, новый добавить через консоль Timeweb (`docs/server-migration.md`) |
+| `TWC_TOKEN` | GitHub (окружение `production`) | панель Timeweb › API → новый токен → секрет в `production` → `game-deploy` → старый токен удалить в панели. SSH-ключ выкладки выводится из токена: первая задача выкладки (`keys`, `infra/game/keys.py`) сама ставит новый ключ на оба сервера через API Timeweb и убирает старые ключи выкладки с серверов и из аккаунта |
 | `S3_ACCESS_KEY`/`S3_SECRET_KEY` | GitHub, `secrets.env` в Европе | панель Timeweb › хранилище › ключи → секреты → `game-deploy` |
 | `GRAFANA_PASSWORD` | GitHub, Grafana | новый секрет → `game-deploy` (пароль admin перезапишется) |
 | `AUTH_SIGNING_KEY` (токены игроков) | `/etc/massovka/secrets.env` в Европе | удалить строку и перезапустить выкладку — родится новый; все игроки молча получат новые токены |
 | пароль базы, `LOAD_KEY` | `secrets.env` | удалить строку → выкладка родит новый |
 
 После любой смены — `infra-check` и живой прогон (`game-deploy` гоняет его сам).
+
+**Смена `TWC_TOKEN` по шагам** (так прошла 26.11.2026, после неё и появилась задача `keys`):
+1. Timeweb › API — выпустить новый токен (старый пока не трогать).
+2. Settings › Environments › `production` — заменить `TWC_TOKEN`.
+3. Actions › game-deploy › Run workflow. Задача `keys`: «новый ключ отправлен на сервер» для каждого сервера,
+   «старых ключей выкладки убрано: 1», дальше выкладка как обычно.
+4. Timeweb › API — удалить старый токен. Нового значения старого токена не бывает: перевыпуск — это новый ключ.
+Если Timeweb не поставил ключ — сервер › SSH-ключи в панели, ключ `massovka-actions-<дата>`, и снова выкладка.
 
 ## 6. Что сознательно оставлено
 
