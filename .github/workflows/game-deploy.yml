@@ -369,6 +369,7 @@ jobs:
         continue-on-error: true
         env:
           HOST: ${{ steps.addr.outputs.host }}
+          IP: ${{ steps.srv.outputs.ip }}
           HAS_TG: ${{ secrets.TELEGRAM_BOT_TOKEN != '' }}
         run: |
           if [ "$HAS_TG" != true ]; then echo "TELEGRAM_BOT_TOKEN не задан в GitHub Secrets — бот остаётся в Supabase"; exit 0; fi
@@ -378,8 +379,9 @@ jobs:
           for i in $(seq 1 6); do info=$(curl -fsS "https://$HOST/tg/info") && break; sleep 5; done
           if [ -z "$info" ]; then echo "::warning::бот не отвечает (api.telegram.org?) — вебхук не трогаю"; exit 0; fi
           echo "бот: $info"
-          curl -fsS "https://$HOST/tg/setup"; echo
-          curl -fsS "https://$HOST/tg/status"; echo
+          # /tg/setup и /tg/status снаружи закрыты (server.ts) — изнутри машины, через внутренний вход Caddy
+          ssh $SSH_OPTS root@$IP 'curl -fsS http://127.0.0.1:8080/tg/setup'; echo
+          ssh $SSH_OPTS root@$IP 'curl -fsS http://127.0.0.1:8080/tg/status'; echo
 
       - name: Игровой сервер → бот (/tg/* проксируется на сервер бота)
         if: matrix.role == 'game' && steps.infra.outputs.host != ''

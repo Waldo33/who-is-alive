@@ -65,8 +65,13 @@ $HOST${ALT_HOST:+, $ALT_HOST} {
 $(if [ -n "${BOT_UPSTREAM:-}" ]; then cat <<BOT
 	# Telegram-бот живёт на сервере за границей (из России api.telegram.org закрыт):
 	# телефоны ходят сюда, в Москву, а мы пересылаем туда
+	# адрес игрока — в X-Massovka-Client (перезаписываем: снаружи не подделать); вход :8080 на сервере бота
+	# кладёт его в X-Forwarded-For. Иначе бот видит всех как 127.0.0.1 туннеля: общий лимит на всех
+	# и «запрос изнутри машины» для любого внешнего
 	handle /tg/* {
-		reverse_proxy $BOT_UPSTREAM
+		reverse_proxy $BOT_UPSTREAM {
+			header_up X-Massovka-Client {remote_host}
+		}
 	}
 BOT
 fi)
@@ -143,6 +148,10 @@ http://:8080 {
 	bind 127.0.0.1
 	reverse_proxy $A $B {
 $(proxy_opts)
+		# запрос игрока, пересланный с /tg/* игрового сервера по туннелю: его адрес — из X-Massovka-Client
+		# (нет заголовка — свой запрос изнутри машины, адреса клиента нет)
+		header_up X-Forwarded-For {http.request.header.X-Massovka-Client}
+		header_up -X-Massovka-Client
 	}
 }
 FRONT
