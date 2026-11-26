@@ -28,8 +28,8 @@ export const en: Dict = {
   themeText: {
     office: {
       intro: 'Rule 1: blend in',
-      twistOn: 'Boss is out. Fight!',
-      twistOff: 'Boss is back!',
+      twistOn: 'Basement! Fists up!',
+      twistOff: 'Back to the office',
       crowd: { freeze: 'Boss is coming!', jump: 'Coffee break!', dance: 'Smoke break!' },
       twistCrowd: { freeze: 'Guard up!', jump: 'Jump rope!', dance: 'Shadowbox!' },
     },
