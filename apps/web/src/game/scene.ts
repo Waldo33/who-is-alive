@@ -550,7 +550,7 @@ export class GameScene extends Phaser.Scene {
       ay: AY,
       txt: (x, y, str, color) => this.txt(x, y, str, color),
       t: this.t.slot,
-      play: (sfx) => this.audio.play(sfx),
+      play: (sfx, step) => this.audio.play(sfx, step),
       haptic: (k) => haptic(k),
     });
     this.buildButtons();
@@ -4435,7 +4435,12 @@ export class GameScene extends Phaser.Scene {
     stars.forEach((st, i) => this.time.delayedCall(300 + i * 350, () => {
       if (!st.active) return;
       st.setVisible(true);
-      this.audio.play(i < 2 ? 'tick' : 'fanfare');
+      this.audio.play('slotStop', i);
+      haptic('light');
+      if (i === 2) this.time.delayedCall(120, () => {
+        this.audio.play('slotJackpot');
+        haptic('success');
+      });
     }));
     const coins = Array.from({ length: 40 }, () => ({ x: 4 + Math.random() * 172, y: AY - Math.random() * 240, v: 0.8 + Math.random() * 1.2, ph: Math.floor(Math.random() * 4) }));
     let k = 0;

@@ -19,6 +19,7 @@ const SFX: Sfx[] = [
   'flicker', 'dusk', 'siren', 'whack', 'clang', 'stab', 'knockedOut', 'hitOther', 'cut', 'clap', 'logo', 'wrap', 'unmask', 'rewind',
   'leshyStep', 'leshyBreath', 'leshyStinger', 'leshyTake', 'leshyCall', 'snap', 'whisper', 'scream', 'fern',
   'bossAhem', 'bossStamp',
+  'slotLever', 'slotSpin', 'slotStop', 'slotJackpot', 'slotCoins', 'slotTease', 'slotSkull',
 ];
 
 // ── поддельные часы: Music планирует ноты по setInterval, в офлайне его крутим сами ──
@@ -150,7 +151,7 @@ void (async () => {
       out['sfx:' + s] = measure(x);
     }
     // детский режим: мягкие удары вместо треска и звона
-    for (const s of ['hitPlayer', 'hitOther', 'hitBot', 'cut', 'knockedOut', 'whack'] as Sfx[]) {
+    for (const s of ['hitPlayer', 'hitOther', 'hitBot', 'cut', 'knockedOut', 'whack', 'slotSkull'] as Sfx[]) {
       if (!want('kids:' + s)) continue;
       const x = await render(3.5, { setup: (a) => (a.setKids(true), a.play(s)) });
       out['kids:' + s] = measure(x);

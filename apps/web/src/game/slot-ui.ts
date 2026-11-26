@@ -27,8 +27,9 @@ export interface SlotHost {
   ay: number;
   txt: (x: number, y: number, s: string, color?: FontColor) => Phaser.GameObjects.BitmapText;
   t: Dict['slot'];
-  play: (s: Sfx) => void;
-  haptic: (k: 'select' | 'success' | 'error') => void;
+  play: (s: Sfx, step?: number) => void;
+  /** Вибрация: личное — тут (звук слышат соседи по комнате), все важные исходы дублируются ею. */
+  haptic: (k: 'select' | 'light' | 'medium' | 'heavy' | 'success' | 'warning' | 'error') => void;
 }
 
 /** Имя в строке автомата — до 6 знаков (i18n.test.ts проверяет строки с таким именем). */
@@ -61,6 +62,10 @@ export class SlotScreen {
   private picked = -1;
   private pickedPull = false;
   private leverAt = 0;
+  /** Сколько барабанов уже встало в текущем вращении (щелчок и вибрация на каждый). */
+  private stopped = 3;
+  /** Круг, о начале выбора в котором уже напомнили вибрацией. */
+  private nudged = -1;
   private flashSeat = new Map<number, number>();
   private bigFlash: { color: number; at: number } | null = null;
   private readonly bx = 4;
@@ -143,8 +148,9 @@ export class SlotScreen {
     this.pressAt = performance.now();
     if (pull) {
       this.leverAt = performance.now();
-      this.h.play('swing');
-    }
+      this.h.play('slotLever');
+      this.h.haptic('medium');
+    } else this.h.haptic('select');
     return true;
   }
 
@@ -160,8 +166,17 @@ export class SlotScreen {
     const now = performance.now();
     if (st.turn !== this.lastTurn) this.onTurn(v, st, now);
     if (this.spinning && now - this.spinAt >= STOP_MS[2]) this.spinning = false;
-    // остановка барабана — щелчок
-    if (this.spinning) for (const ms of STOP_MS) if (now - this.spinAt >= ms && now - this.spinAt < ms + 17) this.h.play('tick');
+    // остановка барабана — «клак» (каждый следующий выше) и лёгкая вибрация
+    while (this.stopped < 3 && now - this.spinAt >= STOP_MS[this.stopped]) {
+      this.h.play('slotStop', this.stopped);
+      this.h.haptic('light');
+      this.stopped++;
+    }
+    // выбор открылся — лёгкий толчок, если телефон в руке, а глаза на соседях
+    if (st.turn !== this.nudged && this.canChoose(v)) {
+      this.nudged = st.turn;
+      this.h.haptic('light');
+    }
     if (!this.spinning && !this.revealed && this.pending) this.reveal(v, this.pending);
     this.drawReels(now);
     this.g.clear();
@@ -185,6 +200,8 @@ export class SlotScreen {
       this.result = [...mine.reels];
       this.spinAt = now;
       this.spinning = true;
+      this.stopped = 0;
+      this.h.play('slotSpin');
     } else {
       this.spinning = false;
       this.spinAt = now - STOP_MS[2];
@@ -202,10 +219,12 @@ export class SlotScreen {
     let other = '';
     let sfx: Sfx | null = null;
     const mine = seat >= 0 ? st.spins[seat] : null;
+    let buzz: Parameters<SlotHost['haptic']>[0] | null = null;
     if (mine?.outcome === 'tease') {
       main = t.tease;
       mainColor = 'mist';
-      sfx = 'denied';
+      sfx = 'slotTease';
+      buzz = 'warning';
     } else if (mine?.outcome === 'miss') {
       main = t.miss;
       mainColor = 'mist';
@@ -216,29 +235,29 @@ export class SlotScreen {
       if (ef.k === 'star' || ef.k === 'half') this.flashSeat.set(ef.seat, now);
       switch (ef.k) {
         case 'star':
-          if (me) [main, mainColor, sfx] = [t.jackpot, 'yellow', 'starTake'];
+          if (me) [main, mainColor, sfx, buzz] = [t.jackpot, 'yellow', 'slotJackpot', 'success'];
           else other = fmt(t.otherStar, { name: name(ef.seat) });
           if (me) this.bigFlash = { color: hexToInt(PAL.yellow), at: now };
           break;
         case 'half':
-          if (me) [main, mainColor, sfx] = [t.half, 'amber', 'starSpawn'];
+          if (me) [main, mainColor, sfx, buzz] = [t.half, 'amber', 'slotCoins', 'light'];
           break;
         case 'mask':
-          if (me) [main, mainColor, sfx] = [t.mask, 'blue', 'ready'];
+          if (me) [main, mainColor, sfx, buzz] = [t.mask, 'blue', 'ready', 'light'];
           break;
         case 'saved':
-          if (me) [main, mainColor, sfx] = [t.saved, 'blue', 'unmask'];
+          if (me) [main, mainColor, sfx, buzz] = [t.saved, 'blue', 'unmask', 'heavy'];
           break;
         case 'clap':
           if (me) [main, mainColor, sfx] = [t.clap, 'amber', 'clap'];
           break;
         case 'spot':
           if (me) [main, mainColor, sfx] = [fmt(t.spot, { name: name(ef.target) }), 'amber', 'flicker'];
-          else if (ef.target === seat) [main, mainColor, sfx] = [t.spotMe, 'coral', 'flicker'];
+          else if (ef.target === seat) [main, mainColor, sfx, buzz] = [t.spotMe, 'coral', 'flicker', 'warning'];
           break;
         case 'steal':
-          if (me) [main, mainColor, sfx] = [fmt(t.steal, { name: name(ef.from) }), 'amber', 'starSpawn'];
-          else if (ef.from === seat) [main, mainColor, sfx] = [t.stolen, 'coral', 'hitOther'];
+          if (me) [main, mainColor, sfx, buzz] = [fmt(t.steal, { name: name(ef.from) }), 'amber', 'slotCoins', 'light'];
+          else if (ef.from === seat) [main, mainColor, sfx, buzz] = [t.stolen, 'coral', 'hitOther', 'warning'];
           break;
         case 'reel':
           if (me) [main, mainColor, sfx] = [t.reel, 'mist', 'rewind'];
@@ -246,25 +265,26 @@ export class SlotScreen {
         case 'cut':
           this.flashSeat.set(ef.seat, now);
           if (me) {
-            [main, mainColor, sfx] = [t.cut, 'red', 'cut'];
+            [main, mainColor, sfx, buzz] = [t.cut, 'red', 'slotSkull', 'error'];
             this.bigFlash = { color: hexToInt(PAL.red), at: now };
-            this.h.haptic('error');
           } else other = fmt(t.otherCut, { name: name(ef.seat) });
           break;
         case 'burn':
-          if (me) [main, mainColor, sfx] = [t.burn, 'coral', 'sad'];
+          if (me) [main, mainColor, sfx, buzz] = [t.burn, 'coral', 'sad', 'error'];
           break;
       }
     }
     if (st.over) {
       const w = st.over.winners;
-      if (w.includes(seat)) [main, mainColor, sfx] = [t.win, 'yellow', 'fanfare'];
+      if (w.includes(seat)) [main, mainColor, sfx, buzz] = [t.win, 'yellow', 'slotJackpot', 'success'];
       else if (w.length && st.over.reason === 'stars') other = fmt(t.otherWin, { name: name(w[0]) });
     }
     this.line2.setText(main).setFont('px-' + mainColor);
     this.line3.setText(other);
+    // чужой джекпот слышен звоном монет, если у самого ничего не выпало
+    if (!sfx && other && st.effects.some((ef) => ef.k === 'star' && ef.seat !== seat)) sfx = 'slotCoins';
     if (sfx) this.h.play(sfx);
-    if (sfx === 'starTake' || sfx === 'fanfare') this.h.haptic('success');
+    if (buzz) this.h.haptic(buzz);
   }
 
   private drawReels(now: number): void {
