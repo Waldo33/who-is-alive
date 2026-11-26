@@ -52,6 +52,11 @@ describe('i18n', () => {
         expect(pr.length).toBe(2);
         for (const x of pr) expect(x.length, `${lang}: «${x}»`).toBeLessThanOrEqual(21);
       }
+      // экран автомата «Казино»: имена — до 6 знаков (slot-ui.ts › short)
+      for (const v of Object.values(t.slot)) {
+        const s = fmt(v, { name: 'Ш'.repeat(6), n: 15, m: 15 });
+        expect(s.length, `${lang}: «${s}»`).toBeLessThanOrEqual(21);
+      }
       // у каждой темы есть название
       expect(t.themes.length).toBe(THEME_COUNT);
       for (const s of flat) expect(s.length, `${lang}: «${s}»`).toBeLessThanOrEqual(21);

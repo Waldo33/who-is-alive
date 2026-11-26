@@ -34,7 +34,12 @@ import {
   BOSS_RANGE,
   BOSS_SPREAD,
   WALK_TOP,
+  hasSlots,
+  isLastLap,
+  casinoSeats,
 } from '@kto/game-core';
+import { SlotScreen } from './slot-ui';
+import { makeFieldMachine } from './slot-art';
 import type { AwardId, ClientSession, CrowdKind, Dict, Entity, GameConfig, Lang, Moment, Notice, RoundSummary, ThemeText, World, WorldEvent } from '@kto/game-core';
 import { resultCardFile } from './card';
 import { Tutorial, tutorialDone } from './tutorial';
@@ -217,6 +222,9 @@ export class GameScene extends Phaser.Scene {
   private starSprites = new Map<number, Phaser.GameObjects.Image>();
   private hedges: Phaser.GameObjects.TileSprite[] = [];
   private props: { spr: Phaser.GameObjects.Image; kind: string }[] = [];
+  /** «Казино»: автоматы на поле (по местам casinoSeats) и экран автомата на весь дубль. */
+  private machines: Phaser.GameObjects.Image[] = [];
+  private slotScreen: SlotScreen | null = null;
   private ground!: Phaser.GameObjects.Image;
   /** Тема, под которую сейчас одеты земля, предметы, стенка зоны и зверьки. */
   /** Текущий облик на поле: «тема_облик» (облик 1 — изнанка темы). */
@@ -428,6 +436,8 @@ export class GameScene extends Phaser.Scene {
     this.torches.clear();
     this.hedges = [];
     this.props = [];
+    this.machines = [];
+    this.slotScreen = null;
     this.pigeons = [];
     this.buttons = [];
     this.btnObjs.clear();
@@ -491,6 +501,10 @@ export class GameScene extends Phaser.Scene {
       const spr = this.add.image(p.x, AY + p.y, `prop-${p.kind}-0_0`, 0).setOrigin(0.5, 1).setDepth(AY + p.y);
       this.props.push({ spr, kind: p.kind });
     }
+    if (!this.textures.exists('slotm')) this.addSheet('slotm', makeFieldMachine(), 12, 20);
+    for (const st of casinoSeats(arena)) {
+      this.machines.push(this.add.image(st.x, AY + st.y - 5, 'slotm', 0).setOrigin(0.5, 1).setDepth(AY + st.y - 1).setVisible(false));
+    }
     for (let i = 0; i < 4; i++) this.hedges.push(this.add.tileSprite(0, 0, 8, 8, 'hedge0_0').setOrigin(0, 0).setDepth(900).setVisible(false));
 
     for (let i = 0; i < this.cfg.entitiesTotal; i++) {
@@ -531,6 +545,14 @@ export class GameScene extends Phaser.Scene {
     this.spotG = this.add.graphics().setDepth(955);
     this.ui = this.add.graphics().setDepth(1000);
     this.buildHud();
+    this.slotScreen = new SlotScreen({
+      scene: this,
+      ay: AY,
+      txt: (x, y, str, color) => this.txt(x, y, str, color),
+      t: this.t.slot,
+      play: (sfx) => this.audio.play(sfx),
+      haptic: (k) => haptic(k),
+    });
     this.buildButtons();
     this.crowdIcon = this.add.image(90, AY + 46, 'icons', 0).setScale(3).setDepth(1500).setVisible(false);
     this.crowdText = this.txt(90, AY + 64, '', 'yellow').setOrigin(0.5, 0).setDepth(1500).setVisible(false);
@@ -806,10 +828,25 @@ export class GameScene extends Phaser.Scene {
         },
       });
     });
+    // «Казино»: «Крутить» и «Пас» в нижней панели, пока автомат ждёт выбора
+    const slotOpen = () => !!this.slotScreen?.canChoose(this.sim);
+    const slotBtn = (id: string, x: number, w: number, label: string, pull: boolean, accent?: string) => {
+      const b: Button = {
+        id, x, y: PANEL_Y + 3, w, h: 30, label, accent, visible: slotOpen, keep: true,
+        onDown: () => {
+          if (this.slotScreen?.pick(this.sim, pull)) this.sim.intent({ k: 'slot', pull });
+        },
+      };
+      this.buttons.push(b);
+      const text = this.txt(x + w / 2, b.y + 10, label, accent ? 'yellow' : 'white').setOrigin(0.5, 0).setDepth(2100);
+      this.btnObjs.set(id, { text });
+    };
+    slotBtn('slot-pull', 3, 116, this.t.slot.pull, true, PAL.amber);
+    slotBtn('slot-pass', 123, 54, this.t.slot.pass, false);
     // «Хлопушка» вырезанного: подать команду толпе — справа в панели, рядом с пометкой «за кадром»
     const clapVis = () => {
       const me = this.me();
-      return this.sim.phase === 'play' && !!me && !me.alive && me.clapsLeft > 0;
+      return this.sim.phase === 'play' && !!me && !me.alive && me.clapsLeft > 0 && !hasSlots(this.sim.theme);
     };
     kinds.forEach(([kind, icon], i) => {
       this.buttons.push({
@@ -987,6 +1024,7 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     if (p.y < AY || p.y >= PANEL_Y) return;
+    if (this.slotScreen?.visible) return;
     this.tapArena(p.x, p.y - AY, true);
   }
 
@@ -2774,7 +2812,8 @@ export class GameScene extends Phaser.Scene {
     if (phase === 'play') {
       // напряжение: изгородь сжимается — 1, последние 10 секунд — 2
       const w = this.sim.world;
-      const level = this.sim.timeLeft() <= 10_000 ? 2 : w.zone && w.time >= w.zone.startAt ? 1 : 0;
+      const slot = hasSlots(this.sim.theme) ? w.slot : null;
+      const level = slot ? (isLastLap(this.cfg, slot.turn) ? 2 : 0) : this.sim.timeLeft() <= 10_000 ? 2 : w.zone && w.time >= w.zone.startAt ? 1 : 0;
       this.audio.setIntensity(level);
       // ночь у всех одна (по времени дубля) — песня темнеет; свой рассудок в музыку не попадает, его услышали бы соседи
       this.audio.setDread(hasSanity(this.sim.theme) ? nightLevel(this.cfg, this.playSec()) : 0);
@@ -2793,7 +2832,7 @@ export class GameScene extends Phaser.Scene {
     this.renderCoach();
     this.dim.setVisible(false);
     // в обучении подсказку «за кадром» даёт сам шаг сверху, а внизу слева — «Пропустить»
-    const ghost = phase === 'play' && !!this.me() && !this.me()!.alive && !this.tut;
+    const ghost = phase === 'play' && !!this.me() && !this.me()!.alive && !this.tut && !hasSlots(this.sim.theme);
     for (const o of this.ghostUi) (o as Phaser.GameObjects.Image).setVisible(ghost);
     if (ghost) {
       // справа «Хлопушка» — подписи короче, чтобы не налезали на кнопки
@@ -2805,6 +2844,8 @@ export class GameScene extends Phaser.Scene {
       if (l2.text !== b) l2.setText(b);
     }
     this.renderProps();
+    this.renderMachines();
+    this.slotScreen?.update(this.sim);
     this.renderHedge(phase === 'reveal' && this.replay ? this.replay : this.sim.world);
     this.renderPigeons(delta);
     this.renderFx(delta);
@@ -3341,6 +3382,16 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  /** Автоматы «Казино» на поле — только в этой теме; лампочки мигают вразнобой. */
+  private renderMachines(): void {
+    const on = hasSlots(this.sim.theme);
+    const t = Math.floor(performance.now() / 400);
+    this.machines.forEach((m, i) => {
+      m.setVisible(on);
+      if (on) m.setFrame((t + i) % 3 === 0 ? 1 : 0);
+    });
+  }
+
   private renderHedge(w: World): void {
     const z = w.zoneRect();
     const full = this.sim.arena.walk;
@@ -3677,7 +3728,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private tip(key: 'vote' | 'spot' | 'star' | 'move' | 'crowd' | 'hunt'): void {
-    if (this.tut) return;
+    if (this.tut || hasSlots(this.sim.theme)) return;
     let seen: string[] = [];
     try {
       seen = JSON.parse(localStorage.getItem('kto:tips') ?? '[]') as string[];
@@ -3717,7 +3768,7 @@ export class GameScene extends Phaser.Scene {
       this.hudIcons.forEach((ic, i) => ic.setFrame(lit ? 0 : 1).setVisible(mine && i === 0));
       this.hud.atkNum?.setText(String(n)).setFont(lit ? 'px-sand' : 'px-mist').setVisible(mine);
     } else {
-      this.hudIcons.forEach((ic, i) => ic.setFrame(me && i < me.attacksLeft ? 0 : 1).setVisible(mine));
+      this.hudIcons.forEach((ic, i) => ic.setFrame(me && i < me.attacksLeft ? 0 : 1).setVisible(mine && !hasSlots(sim.theme)));
       this.hud.atkNum?.setVisible(false);
     }
     const hk = this.hudStarKey();
