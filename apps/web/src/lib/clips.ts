@@ -6,6 +6,9 @@
  * Одно видео — одна загрузка (обещание запоминается на сам файл): сколько ни нажимай, второй
  * загрузки и второго окна не будет. Грузить начинаем заранее — как только игрок захотел клип
  * и тот записан, — так что к нажатию «Отправить» ссылка обычно уже готова.
+ *
+ * Файл идёт прямо в хранилище S3 (сервер выдаёт только подписанную ссылку на загрузку — `/v1/clips/direct`);
+ * не вышло (у сервера нет S3, хранилище не ответило) — по-старому, через сам сервер.
  */
 import { ensureGameUser } from './game-server';
 import { GAME_API } from './env';
@@ -39,8 +42,46 @@ async function post(path: string, body: Blob, type: string, ms: number): Promise
   }
 }
 
+/** PUT файла по подписанной ссылке S3 (тип — ровно тот, что в подписи). */
+async function putSigned(url: string, body: Blob, type: string, ms: number): Promise<boolean> {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), ms);
+  try {
+    return (await fetch(url, { method: 'PUT', headers: { 'Content-Type': type }, body, signal: ctl.signal })).ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+const json = (o: unknown) => new Blob([JSON.stringify(o)], { type: 'application/json' });
+
+/** Прямо в S3: null — этот путь не сработал (тогда грузим через сервер). */
+async function uploadDirect(file: Blob, ext: string, thumb?: Promise<Blob | null>): Promise<SharedClip | null> {
+  const r = await post('/v1/clips/direct', json({ ext, size: file.size }), 'application/json', 15_000);
+  if (!r?.ok) return null;
+  const d = (await r.json().catch(() => null)) as { id: string; ext: string; put: string; type: string } | null;
+  if (!d?.put) return null;
+  // одна повторная попытка: мобильная сеть рвётся
+  if (!(await putSigned(d.put, file, d.type, 45_000)) && !(await putSigned(d.put, file, d.type, 45_000))) return null;
+  const th = thumb ? await thumb.catch(() => null) : null;
+  let ok = false;
+  if (th) {
+    const t = await post(`/v1/clips/${d.id}/thumb-url`, json({ size: th.size }), 'application/json', 15_000);
+    const u = t?.ok ? ((await t.json().catch(() => null)) as { put: string; type: string } | null) : null;
+    ok = !!u?.put && (await putSigned(u.put, th, u.type, 15_000));
+  }
+  return { id: d.id, ext: d.ext, url: `${GAME_API}/v1/clips/${d.id}.${d.ext}`, thumb: ok };
+}
+
 async function upload(file: Blob, thumb?: Promise<Blob | null>): Promise<SharedClip | null> {
   const type = file.type.split(';')[0];
+  const kind = type === 'video/mp4' ? 'mp4' : type === 'video/webm' ? 'webm' : null;
+  if (kind) {
+    const d = await uploadDirect(file, kind, thumb);
+    if (d) return d;
+  }
   // одна повторная попытка: мобильная сеть рвётся
   let r = await post('/v1/clips', file, type, 45_000);
   if (!r || r.status >= 500) r = await post('/v1/clips', file, type, 45_000);

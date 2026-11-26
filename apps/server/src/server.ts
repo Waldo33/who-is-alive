@@ -727,7 +727,7 @@ export class GameServer {
     lines.push(`game_clips_bytes ${c.bytes}`, `game_clips_count ${c.count}`, `game_clips_limit_bytes ${c.limit}`);
     if (this.clips.hasRemote) {
       const r = this.clips.remoteStats;
-      lines.push(`game_clips_s3_uploaded_total ${r.uploaded}`, `game_clips_s3_failed_total ${r.failed}`, `game_clips_s3_redirects_total ${r.redirects}`);
+      lines.push(`game_clips_s3_uploaded_total ${r.uploaded}`, `game_clips_s3_failed_total ${r.failed}`, `game_clips_s3_redirects_total ${r.redirects}`, `game_clips_s3_direct_total ${r.direct}`);
     }
     // фильм матча: сколько смонтировано, неудач, очередь, время последнего (тревога, если монтаж встал)
     const f = this.o.film;
@@ -766,6 +766,19 @@ export class GameServer {
       const user = await this.bearer(req);
       if (!user) return this.reply(res, 401, { error: 'bad_token' });
       const r = await this.clips.upload(user, req);
+      return this.reply(res, r.status, r.body);
+    }
+    // телефон кладёт клип прямо в S3: здесь — только id и подписанные ссылки PUT (clips.ts › direct)
+    if (p === '/v1/clips/direct' && req.method === 'POST') {
+      const user = await this.bearer(req);
+      if (!user) return this.reply(res, 401, { error: 'bad_token' });
+      const r = this.clips.direct(user, (await readJson(req, 1024)) as { ext?: unknown; size?: unknown } | null);
+      return this.reply(res, r.status, r.body);
+    }
+    const thumbUrl = /^\/v1\/clips\/([0-9a-f]{20})\/thumb-url$/.exec(p);
+    if (thumbUrl && req.method === 'POST') {
+      if (!(await this.bearer(req))) return this.reply(res, 401, { error: 'bad_token' });
+      const r = this.clips.directThumb(thumbUrl[1], (await readJson(req, 1024)) as { size?: unknown } | null);
       return this.reply(res, r.status, r.body);
     }
     const thumb = /^\/v1\/clips\/([0-9a-f]{20})\/thumb$/.exec(p);
