@@ -168,8 +168,15 @@ jobs:
         env:
           IP: ${{ steps.srv.outputs.ip }}
         run: |
+          attached=
           for i in $(seq 1 30); do
-            if ssh $SSH_OPTS root@$IP true 2>/dev/null; then echo "SSH есть"; exit 0; fi
+            out=$(ssh $SSH_OPTS root@$IP true 2>&1) && { echo "SSH есть"; exit 0; }
+            # сервер жив, но ключа не знает (сменили TWC_TOKEN, docs/security.md › 5) — один раз попросить
+            # Timeweb поставить новый ключ, дальше ждать как обычно
+            if [ -z "$attached" ] && echo "$out" | grep -q 'Permission denied'; then
+              attached=1
+              ATTACH_KEY=1 /tmp/py/bin/python infra/game/provision.py || echo "::warning::ключ через API не поставился — добавьте его в панели Timeweb (сервер › SSH-ключи)"
+            fi
             sleep 10
           done
           echo "::error::SSH не ответил"; exit 1
