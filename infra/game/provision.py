@@ -26,7 +26,11 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 API = 'https://api.timeweb.cloud/api/v1'
 TOKEN = os.environ['TWC_TOKEN']
-NAME = os.environ.get('SERVER_NAME', 'massovka-game')
+# имя — только явно: 26.11.2026 проверка сети без SERVER_NAME по старому умолчанию «massovka-game»
+# создала заново уже удалённый московский сервер
+NAME = os.environ.get('SERVER_NAME', '')
+# выведенные из работы машины — только найти (для кнопки удаления), никогда не создавать
+RETIRED = {'massovka-game'}
 # по очереди, пока не найдётся свободный: Cloud KZN 50 (Казань), Cloud EKB 50 (Екатеринбург) — 2 vCPU, 4 ГБ,
 # 50 ГБ, 1000 ₽; дальше Москва (решение владельца 22.11.2026: в Казани и Екатеринбурге мест нет) —
 # Cloud MSK 30 (1 vCPU, 2 ГБ, 1940 ₽), Cloud MSK 15 (1/1, 1180 ₽), MSK Ultra 15 и 30 (1720 и 2800 ₽).
@@ -157,11 +161,26 @@ def port_open(ip, port, seconds):
 
 
 def main():
+    if not NAME:
+        print('::error::не задано имя сервера (SERVER_NAME)')
+        sys.exit(1)
     pub = ssh_key()
     # открытый ключ — не секрет: им шифруют данные для переноса на сервер (infra/game/import.py)
     print('ключ сервера (открытый):', pub)
     key_id = ensure_key(pub)
     servers = [s for s in api('GET', '/servers').get('servers', []) if s.get('name') == NAME]
+    # сменили TWC_TOKEN — сменился и ключ выкладки, а на сервере старый: попросить Timeweb поставить новый
+    # ключ на живой сервер (зовёт шаг «Дождаться SSH», только если сервер ответил «Permission denied»)
+    if os.environ.get('ATTACH_KEY') == '1':
+        if not servers:
+            print(f'::error::{NAME}: нет такого сервера')
+            sys.exit(1)
+        r = api('POST', f'/servers/{servers[0]["id"]}/ssh-keys', {'ssh_key_ids': [key_id]}, soft=True)
+        if '_error' in r:
+            print(f'::error::Timeweb не поставил ключ на {NAME}: HTTP {r["_error"]}: {r["_msg"][:200]}')
+            sys.exit(1)
+        print(f'{NAME}: ключ {key_id} отправлен на сервер')
+        return
     # только узнать адрес другого сервера (Москве — адрес сервера бота); нет его — пустой вывод
     if os.environ.get('FIND_ONLY') == '1':
         ip = ipv4(servers[0]) if servers else None
@@ -191,6 +210,9 @@ def main():
             servers = []
         else:
             print(f'::warning::у {NAME} тариф {servers[0].get("preset_id")}, а в SERVER_PRESETS {PRESETS} — сервер живой, не трогаю (тариф — infra/terraform/servers.tf)')
+    if not servers and NAME in RETIRED:
+        print(f'::error::{NAME} выведен из работы — создавать его нельзя (docs/server-migration.md › 15)')
+        sys.exit(1)
     created = False
     if servers:
         s = servers[0]

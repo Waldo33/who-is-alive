@@ -51,6 +51,7 @@ jobs:
       - run: for f in infra/*.sh infra/game/*.sh infra/test/*.sh; do bash -n "$f" || exit 1; done
       # правила безопасности workflows: actions по SHA, секреты только в окружении production (docs/security.md)
       - run: python3 infra/test/workflows-check.py
+      - run: python3 infra/test/keys-test.py
       - name: Caddy
         env:
           GH_TOKEN: ${{ github.token }}
