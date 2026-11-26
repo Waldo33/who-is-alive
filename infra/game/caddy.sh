@@ -154,6 +154,23 @@ $(proxy_opts)
 		header_up -X-Massovka-Client
 	}
 }
+
+# вход для туннеля из Нидерландов (метрики, аналитика и ошибки сервера бота) — только эти пути, а не вся игра
+# изнутри: иначе через Grafana там (источник данных на 127.0.0.1:28080) дотянулись бы до /internal/drain
+# и /internal/import (ревью безопасности, M5)
+http://:8079 {
+	bind 127.0.0.1
+	@allowed path /metrics /v1/events /internal/errors
+	handle @allowed {
+		reverse_proxy $A $B {
+$(proxy_opts)
+			header_up -X-Massovka-Client
+		}
+	}
+	handle {
+		respond 404
+	}
+}
 FRONT
 fi)
 $(if [ -n "$active" ] && [ -n "${RELAY_FRONT:-}" ]; then cat <<RFRONT

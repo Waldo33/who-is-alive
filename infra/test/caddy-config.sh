@@ -35,6 +35,12 @@ for mode in legacy colors web eu relay; do
   # внутренние входы обязаны принимать любой Host (иначе через туннель — пустые ответы)
   if [ "$mode" != legacy ] && grep -q '^http://127.0.0.1:80[89]0' "$t/caddy/Caddyfile"; then echo "$mode: внутренний вход привязан к имени 127.0.0.1"; exit 1; fi
   [ "$mode" = relay ] && grep -q 'reverse_proxy 127.0.0.1:18090' "$t/caddy/Caddyfile"
+  # вход туннеля из Нидерландов (:8079) — только метрики, аналитика и ошибки, остальное 404 (M5)
+  if [ "$mode" != legacy ]; then
+    blk=$(sed -n '/^http:\/\/:8079 {/,/^}/p' "$t/caddy/Caddyfile")
+    echo "$blk" | grep -q '@allowed path /metrics /v1/events /internal/errors$' && echo "$blk" | grep -q 'respond 404' \
+      || { echo "$mode: вход :8079 пускает не только метрики, аналитику и ошибки"; exit 1; }
+  fi
   grep -q 'reverse_proxy' "$t/caddy/Caddyfile"
   [ -x "$CADDY_BIN" ] && echo "$mode: конфиг прошёл caddy validate" || echo "$mode: конфиг собран"
   # if, а не &&: без SHOW последней командой скрипта было бы «ложь» — и выход с кодом 1

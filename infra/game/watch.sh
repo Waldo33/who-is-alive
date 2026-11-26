@@ -13,7 +13,8 @@ G=$(cat /etc/massovka/game-site 2>/dev/null || echo eu)
 case "$G" in eu) GW="в Европе" ;; *) G=msk; GW="в Москве" ;; esac
 
 send() {
-  curl -s -m 15 -X POST "https://api.telegram.org/bot${ALERTS_BOT_TOKEN}/sendMessage" \
+  # адрес с ключом бота — через конфиг на stdin, а не в командной строке: её видно в ps (ревью, L7)
+  printf 'url = "https://api.telegram.org/bot%s/sendMessage"\n' "$ALERTS_BOT_TOKEN" | curl -s -m 15 -X POST -K - \
     -H 'Content-Type: application/json' \
     -d "$(jq -nc --arg c "$ALERTS_CHAT" --arg t "$1" '{chat_id: $c, text: $t, disable_web_page_preview: true}')" >/dev/null || true
 }
@@ -174,14 +175,33 @@ SQL
       n=$((n + 1))
       echo "$r" | jq -r .ts > "$STATE/errors_since"
       [ "$n" -gt 5 ] && continue
+      # ошибки с телефонов присылает кто угодно (POST /v1/errors без входа): их текст и поля — чужие.
+      # В чат — без ссылок, доменов и @упоминаний, поля — только знакомого вида, и не больше 10 групп в час
+      # (ревью безопасности, N1: иначе чат тревог засыпают фальшивыми «ошибками» со ссылками)
+      if [ "$(echo "$r" | jq -r .src)" = web ]; then
+        hour=$(date -u +%Y%m%d%H); read -r h c < "$STATE/web_errors_hour" 2>/dev/null || { h=; c=0; }
+        [ "$h" = "$hour" ] || c=0
+        c=$((c + 1)); echo "$hour $c" > "$STATE/web_errors_hour"
+        if [ "$c" -gt 10 ]; then
+          [ "$c" -eq 11 ] && send "🐞 С телефонов больше 10 новых ошибок за час — остальные только в Grafana: ${GRAF}d/massovka-errors/"
+          continue
+        fi
+      fi
       send "$(echo "$r" | jq -r --arg g "$GRAF" '
-        ({web: "телефоны", server: "игровой сервер", bot: "бот", film: "монтаж"}[.src] // .src) as $w
-        | (.ctx // {}) as $c
+        def plain: gsub("(?i)[a-z][a-z0-9+.-]*://\\S*"; "…") | gsub("(?i)\\b(?:[a-z0-9-]+\\.)+[a-z]{2,}\\S*"; "…") | gsub("@[A-Za-z0-9_]+"; "@…") | gsub("[\u200b-\u200f\u202a-\u202e\u2066-\u2069]"; "");
+        def known($re): if type == "string" and test($re) then . else null end;
+        (.src == "web") as $ext
+        | ({web: "телефоны", server: "игровой сервер", bot: "бот", film: "монтаж"}[.src] // .src) as $w
+        | (if $ext then (.ctx // {}) | {theme: (.theme | known("^[0-9]{1,3}$")), phase: (.phase | known("^[a-z_]{1,20}$")),
+             os: (.os | known("^[A-Za-z0-9 _-]{1,24}$")), br: (.br | known("^[A-Za-z0-9 _-]{1,24}$")), app: (.app | known("^[a-z_-]{1,16}$")),
+             room: (.room | known("^[A-Z]{4}$")), host: (.host | known("^((api[.])?benobody[.]app|[0-9-]+[.]sslip[.]io|[a-z0-9-]{1,30})$"))}
+           else (.ctx // {}) end) as $c
+        | (if $ext then (.title | plain | .[0:160]) else (.title | .[0:300]) end) as $title
         | ([($c.theme | select(.) | "тема " + .), ($c.phase | select(.) | "фаза " + .), ([$c.os, $c.br] | map(select(.)) | join(" ") | select(. != "")), $c.app, ($c.room | select(.) | "комната " + .), ($c.host | select(.) | "сервер " + .)]
            | map(select(. != null and . != "")) | join(" · ")) as $where
         | (if .back then "🐞 Ошибка вернулась" else "🐞 Новая ошибка" end) + " · " + $w + "\n"
-          + (.title | .[0:300]) + "\n"
-          + (if .culprit != "" then "📍 " + .culprit + "\n" else "" end)
+          + $title + "\n"
+          + (if .culprit != "" then "📍 " + (if $ext then (.culprit | plain | .[0:120]) else .culprit end) + "\n" else "" end)
           + (if $where != "" then $where + "\n" else "" end)
           + "случаев: \(.n)" + (if .build != "" then " · версия " + .build else "" end)
           + (if $g != "" then "\n" + $g + "d/massovka-errors/?var-fp=" + .fp else "" end)')"
