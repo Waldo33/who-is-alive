@@ -81,7 +81,12 @@ export class ClipStore {
     if (!r) return false;
     const key = `clips/${id}.${ext}`;
     try {
-      await r.s3.putFile(key, join(this.dir, `${id}.${ext}`), CLIP_MIME[ext]);
+      // открыт по прямой ссылке (бот отдаёт её Telegram — без нашего сервера посередине); бакет не принял
+      // public-read — кладём закрытым, отдаёт наш сервер
+      await r.s3.putFile(key, join(this.dir, `${id}.${ext}`), CLIP_MIME[ext], undefined, { publicRead: true }).catch((e: unknown) => {
+        r.log?.('warn', 's3_public_put_failed', { key, err: String(e).slice(0, 300) });
+        return r.s3.putFile(key, join(this.dir, `${id}.${ext}`), CLIP_MIME[ext]);
+      });
     } catch (e) {
       this.remoteStats.failed++;
       r.log?.('warn', 's3_put_failed', { key, err: String(e).slice(0, 300) });
@@ -169,8 +174,9 @@ export class ClipStore {
     this.issued.set(id, this.now());
     if (this.issued.size > 20_000) for (const [k, t] of this.issued) if (this.now() - t > 3600_000) this.issued.delete(k);
     this.remoteStats.direct++;
-    const put = r.s3.presignPut(`clips/${id}.${ext}`, REMOTE_PUT_TTL_S, { type: CLIP_MIME[ext], length: size });
-    return { status: 200, body: { id, ext, put, type: CLIP_MIME[ext] } };
+    const put = r.s3.presignPut(`clips/${id}.${ext}`, REMOTE_PUT_TTL_S, { type: CLIP_MIME[ext], length: size, publicRead: true });
+    // headers — ровно те, что в подписи: телефон шлёт их с PUT как есть
+    return { status: 200, body: { id, ext, put, type: CLIP_MIME[ext], headers: { 'Content-Type': CLIP_MIME[ext], 'x-amz-acl': 'public-read' } } };
   }
 
   /** Обложка к клипу, который телефон грузит прямо в S3: ссылка PUT на JPEG (выдаётся в течение часа). */
@@ -180,7 +186,14 @@ export class ClipStore {
     if (!r || t === undefined || this.now() - t > 3600_000) return { status: 404, body: { error: 'no_clip' } };
     const size = typeof b?.size === 'number' && Number.isInteger(b.size) ? b.size : 0;
     if (size < 100 || size > THUMB_MAX) return { status: 400, body: { error: 'bad_thumb' } };
-    return { status: 200, body: { put: r.s3.presignPut(`clips/${id}.jpg`, REMOTE_PUT_TTL_S, { type: 'image/jpeg', length: size }), type: 'image/jpeg' } };
+    return {
+      status: 200,
+      body: {
+        put: r.s3.presignPut(`clips/${id}.jpg`, REMOTE_PUT_TTL_S, { type: 'image/jpeg', length: size, publicRead: true }),
+        type: 'image/jpeg',
+        headers: { 'Content-Type': 'image/jpeg', 'x-amz-acl': 'public-read' },
+      },
+    };
   }
 
   /** Клип из тела запроса. */

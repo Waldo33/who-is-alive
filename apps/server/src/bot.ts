@@ -34,6 +34,11 @@ export interface BotOptions {
   log: Logger;
   /** Где лежат клипы (игровой сервер в Москве, `clips.ts`): https://api.benobody.app. */
   clipBase?: string;
+  /**
+   * Прямые ссылки на клипы в S3 (`https://s3.twcstorage.ru/massovka-media/clips`): файл открыт для чтения —
+   * Telegram берёт его из бакета, мимо игрового сервера. Нет файла по прямой ссылке — ссылка на сервер.
+   */
+  clipPublic?: string;
   /** Подмена api.telegram.org (тесты). */
   fetchImpl?: typeof fetch;
 }
@@ -586,7 +591,7 @@ export class Bot {
       e.at = Date.now();
     }
     const caption = this.filmCaption(t, card.lang, n);
-    const video = `${this.o.clipBase}/v1/clips/${n.id}.mp4`;
+    const video = await this.clipUrl(n.id, 'mp4');
     const again = { text: t.filmAgain, url: await this.link(`g_${n.invite}`) };
     // загадка из этого фильма — для тех в чате, кто не играл
     const puzzle = n.puzzle && /^[A-Z2-9]{5}$/.test(n.puzzle) ? { text: t.filmPuzzle, url: await this.link(`c_${n.puzzle}`) } : null;
@@ -637,15 +642,33 @@ export class Bot {
 
   // ───────────── клипы ─────────────
 
-  /** Видео-карточка: клип (mp4 в Москве — его забирает сервер Telegram), подпись и кнопка «Играть». */
+  /**
+   * Адрес клипа для Telegram: прямая ссылка в S3, если файл там открыт (проверка HEAD, 4 с), иначе — игровой
+   * сервер (`/v1/clips`, отдаёт с диска или из бакета). Без перенаправлений: по 302 Telegram видео не взял (26.11).
+   */
+  private async clipUrl(id: string, ext: 'mp4' | 'jpg'): Promise<string> {
+    const server = `${this.o.clipBase}/v1/clips/${id}.${ext}`;
+    if (!this.o.clipPublic) return server;
+    const url = `${this.o.clipPublic}/${id}.${ext}`;
+    try {
+      const r = await this.f(url, { method: 'HEAD', signal: AbortSignal.timeout(4000) });
+      if (r.ok) return url;
+      this.o.log('warn', 'clip_public_miss', { id, ext, status: r.status });
+    } catch (e) {
+      this.o.log('warn', 'clip_public_miss', { id, ext, err: String(e).slice(0, 200) });
+    }
+    return server;
+  }
+
+  /** Видео-карточка: клип (его забирает сервер Telegram — из S3 или с игрового сервера), подпись и кнопка «Играть». */
   private async clipCard(t: Texts, id: string, text: string, thumb: boolean, again = '') {
-    const base = `${this.o.clipBase}/v1/clips/${id}`;
+    const [video, cover] = await Promise.all([this.clipUrl(id, 'mp4'), thumb ? this.clipUrl(id, 'jpg') : null]);
     return {
       type: 'video',
       id: 'clip-' + id,
-      video_url: `${base}.mp4`,
+      video_url: video,
       mime_type: 'video/mp4',
-      thumbnail_url: thumb ? `${base}.jpg` : `${this.o.site}/icons/icon-192.png`,
+      thumbnail_url: cover ?? `${this.o.site}/icons/icon-192.png`,
       title: t.clipTitle,
       caption: text || t.inviteText,
       reply_markup: { inline_keyboard: [[again ? { text: t.filmAgain, url: await this.link(again) } : { text: t.play, url: await this.link('play') }]] },

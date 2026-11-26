@@ -57,7 +57,7 @@ describe('подпись S3 (SigV4)', () => {
 
 /** S3 в памяти: принимает PUT/HEAD/PUT ?lifecycle, проверяет, что запрос подписан. */
 function fakeS3() {
-  const objects = new Map<string, { body: Buffer; type: string }>();
+  const objects = new Map<string, { body: Buffer; type: string; acl?: string }>();
   const configs = new Map<string, string>();
   let failPut = false;
   const f = (async (input: string | URL | Request, init?: RequestInit) => {
@@ -73,7 +73,7 @@ function fakeS3() {
     }
     if (method === 'PUT') {
       if (failPut) return new Response('nope', { status: 500 });
-      objects.set(key, { body: Buffer.from(init!.body as Uint8Array), type: h.get('content-type') ?? '' });
+      objects.set(key, { body: Buffer.from(init!.body as Uint8Array), type: h.get('content-type') ?? '', acl: h.get('x-amz-acl') ?? undefined });
       return new Response('', { status: 200 });
     }
     if (method === 'HEAD') return new Response(null, { status: objects.has(key) ? 200 : 404, headers: objects.has(key) ? { 'content-length': String(objects.get(key)!.body.length) } : {} });
@@ -118,6 +118,8 @@ describe('клипы в S3', () => {
     await store.flushRemote();
     expect(s3.objects.get(`clips/${id}.mp4`)?.body.equals(video)).toBe(true);
     expect(s3.objects.get(`clips/${id}.mp4`)?.type).toBe('video/mp4');
+    // открыт по прямой ссылке — её бот отдаёт Telegram
+    expect(s3.objects.get(`clips/${id}.mp4`)?.acl).toBe('public-read');
 
     // фильм с сервера: mp4 и обложка
     const tmp = join(dir, 'film.mp4');
@@ -181,12 +183,13 @@ describe('клипы в S3', () => {
     expect(store.direct('u1', { ext: 'mp4', size: 13 * 1024 * 1024 }).status).toBe(413);
     const r = store.direct('u1', { ext: 'webm', size: 5000 });
     expect(r.status).toBe(200);
-    const d = r.body as { id: string; ext: string; put: string; type: string };
+    const d = r.body as { id: string; ext: string; put: string; type: string; headers: Record<string, string> };
     expect(d.type).toBe('video/webm');
+    expect(d.headers).toEqual({ 'Content-Type': 'video/webm', 'x-amz-acl': 'public-read' });
     const put = new URL(d.put);
     expect(put.host).toBe('s3.example');
     expect(put.pathname).toBe(`/bucket/clips/${d.id}.webm`);
-    expect(put.searchParams.get('X-Amz-SignedHeaders')).toBe('content-length;content-type;host');
+    expect(put.searchParams.get('X-Amz-SignedHeaders')).toBe('content-length;content-type;host;x-amz-acl');
     expect(put.searchParams.get('X-Amz-Expires')).toBe('600');
     // обложка — только к выданному клипу
     expect(store.directThumb('0'.repeat(20), { size: 2000 }).status).toBe(404);

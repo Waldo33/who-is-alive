@@ -92,6 +92,8 @@ const bot = env.TELEGRAM_BOT_TOKEN
       log,
       // клипы лежат на игровом сервере в Москве (clips.ts), бот только оформляет карточку
       clipBase: env.CLIP_BASE || env.PUBLIC_API_BASE || undefined,
+      // клипы в S3 открыты по прямой ссылке (clips.ts) — Telegram берёт их оттуда; CLIP_PUBLIC_BASE=off — только сервер
+      clipPublic: env.CLIP_PUBLIC_BASE === 'off' ? undefined : env.CLIP_PUBLIC_BASE || 'https://s3.twcstorage.ru/massovka-media/clips',
     })
   : undefined;
 if (!bot) log('warn', 'TELEGRAM_BOT_TOKEN не задан — бота нет');
@@ -110,6 +112,17 @@ if (s3) {
     ])
     .then(() => s3.putCors())
     .then(() => log('info', 's3_ready', { bucket: s3cfg?.bucket }))
+    // открывает ли бакет файлы с public-read по прямой ссылке (на это опирается бот): итог — в журнал выкладки
+    .then(async () => {
+      const key = 'clips/_public-check.txt';
+      try {
+        await s3.putBytes(key, Buffer.from('ok'), 'text/plain', 'no-store', { publicRead: true });
+        const r = await fetch(s3.publicUrl(key), { signal: AbortSignal.timeout(10_000) });
+        log(r.ok ? 'info' : 'warn', r.ok ? 's3_public_ok' : 's3_public_failed', { status: r.status });
+      } catch (e) {
+        log('warn', 's3_public_failed', { err: String(e).slice(0, 300) });
+      }
+    })
     .catch((e: unknown) => log('warn', 's3_rules_failed', { err: String(e).slice(0, 300) }));
 } else log('info', 's3_off');
 
