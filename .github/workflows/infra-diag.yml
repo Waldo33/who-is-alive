@@ -79,9 +79,10 @@ jobs:
             from analytics_events where created_at > now() - interval '2 days' group by 1 order by 1 desc limit 48" || true
           echo "── клипы Telegram"
           ls -ld /var/lib/massovka-clips 2>&1; ls /var/lib/massovka-clips | wc -l
-          echo "── туннель в Европу (:28080 → вход :8079 там): метрики да, внутренние маршруты нет"
+          echo "── туннель в Европу (:28080 → вход :8079 там): метрики да, остальное нет"
           printf '/metrics: '; curl -s -m5 -o /dev/null -w '%{http_code}\n' http://127.0.0.1:28080/metrics
-          printf '/internal/drain (ждём 404): '; curl -s -m5 -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1:28080/internal/drain
+          # безопасная проба: /healthz игра отдаёт всегда, а вход :8079 его не пускает (как и /internal/*)
+          printf '/healthz (ждём 404): '; curl -s -m5 -o /dev/null -w '%{http_code}\n' http://127.0.0.1:28080/healthz
           curl -s -m5 http://127.0.0.1:8428/api/v1/targets | jq -r '.data.activeTargets[] | "\(.labels.job // "?") \(.labels.server // "-") \(.scrapeUrl) \(.health) \(.lastError)"'
           echo "── сторож"
           systemctl list-timers massovka-watch.timer --no-pager | head -3
