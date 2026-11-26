@@ -200,13 +200,24 @@ export function makeSlotBackdrop(): HTMLCanvasElement {
 }
 
 /** Размеры корпуса большого автомата и окна барабанов (в его координатах). */
-export const BODY_W = 140;
-export const BODY_H = 176;
-export const REELS_X = 14;
-export const REELS_Y = 40;
-export const REEL_W = 36;
-export const REEL_GAP = 2;
-export const REELS_H = 44;
+export const BODY_W = 162;
+export const BODY_H = 254;
+/** Высота светового короба сверху. */
+export const TOP_H = 44;
+export const REEL_W = 46;
+export const REEL_GAP = 3;
+export const REELS_X = (BODY_W - (REEL_W * 3 + REEL_GAP * 2)) / 2;
+export const REELS_Y = 58;
+export const REELS_H = 64;
+/** Масштаб символа на барабане. */
+export const SYM_K = 3;
+/** Табло: верх и высота (в координатах корпуса). */
+export const PANEL_TOP = 132;
+export const PANEL_H = 74;
+/** окошко счёта под табло */
+export const SCORE_X = 46;
+export const SCORE_W = 78;
+export const SCORE_Y = PANEL_TOP + PANEL_H + 2;
 
 /** Хромовая рамка: свет сверху-слева, тень снизу-справа (толщина t). */
 function chrome(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, t = 3): void {
@@ -228,24 +239,24 @@ function knob(g: CanvasRenderingContext2D, x: number, y: number, c: string, dark
 }
 
 /**
- * Корпус большого автомата 140×176, как настоящий: световой короб сверху с лучами и звездой,
- * хромовые рамки, красный корпус с объёмом, окно барабанов, экран-табло, кнопки, щель и лоток.
+ * Корпус большого автомата во весь экран (162×254), как настоящий: световой короб сверху с лучами и
+ * звездой, хромовые рамки, красный корпус с объёмом, окно барабанов, табло, кнопки, щель, лоток, дверца.
  */
 export function makeSlotBody(): HTMLCanvasElement {
   const { c, g } = canvas(BODY_W, BODY_H);
   const W = BODY_W;
   // световой короб: хромовая рамка, внутри — лучи от звезды
-  chrome(g, 6, 0, W - 12, 34, 2);
+  chrome(g, 6, 0, W - 12, TOP_H, 2);
   const cx = W / 2;
-  const cy = 18;
-  for (let y = 3; y < 31; y++) for (let x = 9; x < W - 9; x++) {
+  const cy = TOP_H / 2;
+  for (let y = 3; y < TOP_H - 3; y++) for (let x = 9; x < W - 9; x++) {
     const a = Math.atan2(y - cy, (x - cx) / 1.6);
     const ray = Math.floor(((a + Math.PI) / (Math.PI * 2)) * 24) % 2;
     const d = Math.hypot((x - cx) / 1.6, y - cy);
-    px(g, x, y, d < 9 ? PAL.yellow : ray ? (d < 22 ? PAL.amber : PAL.orange) : d < 22 ? PAL.yellow : PAL.amber);
+    px(g, x, y, d < 11 ? PAL.yellow : ray ? (d < 28 ? PAL.amber : PAL.orange) : d < 28 ? PAL.yellow : PAL.amber);
   }
-  // звезда в центре короба
-  grid(g, cx - 8, 9, [
+  // звезда в центре короба, вдвое крупнее
+  const star = [
     '.......oo.......',
     '......oyyo......',
     '......oyyo......',
@@ -258,49 +269,71 @@ export function makeSlotBody(): HTMLCanvasElement {
     '...oyyyooyyyo...',
     '..oyyoo..ooyyo..',
     '..ooo......ooo..',
-  ], { o: PAL.ink, y: PAL.yellow, w: PAL.white });
+  ];
+  star.forEach((row, y) => [...row].forEach((ch, x) => {
+    if (ch === '.') return;
+    px(g, cx - 16 + x * 2, cy - 12 + y * 2, ch === 'o' ? PAL.ink : ch === 'w' ? PAL.white : PAL.yellow, 2, 2);
+  }));
   // корпус: объём — свет слева, тень справа
-  px(g, 0, 34, PAL.ink, W, BODY_H - 34);
+  px(g, 0, TOP_H, PAL.ink, W, BODY_H - TOP_H);
   for (let x = 1; x < W - 1; x++) {
     const col = x < 3 ? PAL.coral : x < 6 ? PAL.red : x > W - 4 ? PAL.plum : x > W - 9 ? PAL.wine : PAL.red;
-    px(g, x, 35, col, 1, BODY_H - 36);
+    px(g, x, TOP_H + 1, col, 1, BODY_H - TOP_H - 2);
   }
-  // хромовая полоса под коробом
-  px(g, 1, 34, PAL.mist, W - 2, 1);
-  px(g, 1, 35, PAL.slate, W - 2, 1);
+  px(g, 1, TOP_H, PAL.mist, W - 2, 1);
+  px(g, 1, TOP_H + 1, PAL.slate, W - 2, 1);
   // окно барабанов в хромовой рамке
   const rw = REEL_W * 3 + REEL_GAP * 2;
   chrome(g, REELS_X - 5, REELS_Y - 5, rw + 10, REELS_H + 10, 3);
   px(g, REELS_X - 2, REELS_Y - 2, PAL.ink, rw + 4, REELS_H + 4);
-  // линия выигрыша: красные метки слева и справа
-  grid(g, REELS_X - 10, REELS_Y + REELS_H / 2 - 3, ['oo..', 'oro.', 'orro', 'orrr', 'orro', 'oro.', 'oo..'], { o: PAL.ink, r: PAL.red });
-  grid(g, REELS_X + rw + 6, REELS_Y + REELS_H / 2 - 3, ['..oo', '.oro', 'orro', 'rrro', 'orro', '.oro', '..oo'], { o: PAL.ink, r: PAL.red });
+  // линия выигрыша: красные метки на рамке слева и справа
+  grid(g, REELS_X - 5, REELS_Y + REELS_H / 2 - 3, ['oo..', 'oro.', 'orro', 'orrr', 'orro', 'oro.', 'oo..'], { o: PAL.ink, r: PAL.red });
+  grid(g, REELS_X + rw + 1, REELS_Y + REELS_H / 2 - 3, ['..oo', '.oro', 'orro', 'rrro', 'orro', '.oro', '..oo'], { o: PAL.ink, r: PAL.red });
   // хромовая полка под окном
-  px(g, 4, 89, PAL.ink, W - 8, 3);
-  px(g, 5, 89, PAL.white, W - 10, 1);
-  px(g, 5, 90, PAL.slate, W - 10, 1);
+  const shelf = REELS_Y + REELS_H + 6;
+  px(g, 4, shelf, PAL.ink, W - 8, 3);
+  px(g, 5, shelf, PAL.white, W - 10, 1);
+  px(g, 5, shelf + 1, PAL.slate, W - 10, 1);
   // табло: тёмное стекло со строками
-  chrome(g, 7, 92, W - 14, 62, 2);
-  px(g, 10, 95, PAL.ink, W - 20, 56);
-  for (let y = 96; y < 150; y += 2) px(g, 10, y, PAL.night, W - 20, 1);
+  chrome(g, 4, PANEL_TOP, W - 8, PANEL_H, 2);
+  px(g, 7, PANEL_TOP + 3, PAL.ink, W - 14, PANEL_H - 6);
+  for (let y = PANEL_TOP + 4; y < PANEL_TOP + PANEL_H - 4; y += 2) px(g, 7, y, PAL.night, W - 14, 1);
   // кнопки и щель для монет
-  knob(g, 12, 157, PAL.red, PAL.wine);
-  knob(g, 22, 157, PAL.amber, PAL.orange);
-  knob(g, 32, 157, PAL.green, PAL.forest);
-  px(g, W - 30, 157, PAL.ink, 18, 7);
-  px(g, W - 29, 158, PAL.slate, 16, 5);
-  px(g, W - 29, 158, PAL.mist, 16, 1);
-  px(g, W - 22, 159, PAL.ink, 2, 3);
-  px(g, W - 21, 159, PAL.amber, 1, 3);
+  const ky = PANEL_TOP + PANEL_H + 5;
+  knob(g, 12, ky, PAL.red, PAL.wine);
+  knob(g, 22, ky, PAL.amber, PAL.orange);
+  knob(g, 32, ky, PAL.green, PAL.forest);
+  px(g, W - 30, ky, PAL.ink, 18, 7);
+  px(g, W - 29, ky + 1, PAL.slate, 16, 5);
+  px(g, W - 29, ky + 1, PAL.mist, 16, 1);
+  px(g, W - 22, ky + 2, PAL.ink, 2, 3);
+  px(g, W - 21, ky + 2, PAL.amber, 1, 3);
+  // окошко счёта между кнопками и щелью: очки матча
+  px(g, SCORE_X - 1, ky - 3, PAL.ink, SCORE_W + 2, 13);
+  px(g, SCORE_X, ky - 2, PAL.night, SCORE_W, 11);
+  px(g, SCORE_X, ky - 2, PAL.dusk, SCORE_W, 1);
   // лоток для монет: хромовая чаша
-  px(g, 14, 165, PAL.ink, W - 28, 9);
-  px(g, 15, 166, PAL.white, W - 30, 1);
-  px(g, 15, 167, PAL.mist, W - 30, 1);
-  px(g, 16, 168, PAL.steel, W - 32, 4);
-  px(g, 16, 172, PAL.dusk, W - 32, 1);
-  for (const x of [30, 34, 41, 90, 97]) {
-    px(g, x, 170, PAL.amber, 3, 1);
-    px(g, x, 171, PAL.orange, 3, 1);
+  const ty = ky + 10;
+  px(g, 14, ty, PAL.ink, W - 28, 10);
+  px(g, 15, ty + 1, PAL.white, W - 30, 1);
+  px(g, 15, ty + 2, PAL.mist, W - 30, 1);
+  px(g, 16, ty + 3, PAL.steel, W - 32, 5);
+  px(g, 16, ty + 8, PAL.dusk, W - 32, 1);
+  for (const x of [30, 34, 41, 100, 107, 120]) {
+    px(g, x, ty + 6, PAL.amber, 3, 1);
+    px(g, x, ty + 7, PAL.orange, 3, 1);
+  }
+  // нижняя дверца с хромовой каймой и ромбом
+  const dy = ty + 14;
+  chrome(g, 10, dy, W - 20, BODY_H - dy - 3, 1);
+  px(g, 12, dy + 2, PAL.wine, W - 24, BODY_H - dy - 7);
+  const mx = W / 2;
+  const my = dy + Math.floor((BODY_H - dy - 3) / 2);
+  for (let k = 0; k < 5; k++) {
+    px(g, mx - k, my - 4 + k, PAL.amber, 1, 1);
+    px(g, mx + k, my - 4 + k, PAL.amber, 1, 1);
+    px(g, mx - k, my + 4 - k, PAL.amber, 1, 1);
+    px(g, mx + k, my + 4 - k, PAL.amber, 1, 1);
   }
   return c;
 }

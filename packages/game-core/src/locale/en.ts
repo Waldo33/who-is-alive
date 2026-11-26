@@ -59,11 +59,15 @@ export const en: Dict = {
       doomed: 'The Leshy will come',
       triumph: { you: 'Fern flower is yours', other: 'Fern flower found:', sub: 'Longest in the night' },
     },
+    casino: {
+      triumph: { you: 'Jackpot is yours!', other: 'Match jackpot:', sub: 'The top prize' },
+    },
   } as Partial<Record<ThemeId, ThemeText>>,
   slot: {
     title: 'REEL-SLOT',
     pull: 'SPIN',
     pass: 'PASS',
+    score: 'Pts {n}',
     turn: 'Round {n} of {m}',
     lastLap: 'Final round!',
     choose: 'Spin or pass?',

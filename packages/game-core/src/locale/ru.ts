@@ -100,12 +100,16 @@ export const ru = {
       doomed: 'Леший придёт за тобой',
       triumph: { you: 'Цвет папоротника твой', other: 'Цвет папоротника:', sub: 'Дольше всех в ночи' },
     },
+    casino: {
+      triumph: { you: 'Джекпот твой!', other: 'Джекпот матча:', sub: 'Главный выигрыш' },
+    },
   } as Partial<Record<ThemeId, ThemeText>>,
   /** «Казино» (slots.ts, slot-ui.ts): экран автомата. Строки на canvas — ≤ 21 знака, имя — до 6. */
   slot: {
     title: 'КИНО-СЛОТ',
     pull: 'КРУТИТЬ',
     pass: 'ПАС',
+    score: 'Очки {n}',
     turn: 'Круг {n} из {m}',
     lastLap: 'Последний круг!',
     choose: 'Крутишь или пас?',

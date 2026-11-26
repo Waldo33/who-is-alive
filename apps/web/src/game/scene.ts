@@ -794,7 +794,7 @@ export class GameScene extends Phaser.Scene {
     }
     // Чужие — без цветов и имён, по убыванию, под общей пометкой «?»: видно, что кто-то близок
     // к победе (звёздочка мигает), но не видно, кто именно (раздел 5).
-    this.txt(108, 7, '?', 'mist').setDepth(1100);
+    this.hud.q = this.txt(108, 7, '?', 'mist').setDepth(1100);
     this.hudThreat = this.add.image(114, 7, 'hud', 2).setOrigin(0, 0).setDepth(1100).setAlpha(0.45);
     for (let i = 1; i < this.sim.players.length; i++) {
       this.hud['starsOther' + i] = this.txt(116 + i * 10, 7, '0', 'mist').setDepth(1100);
@@ -3963,11 +3963,11 @@ export class GameScene extends Phaser.Scene {
     if (!this.init0.spectator) {
       const share: RowButton = { id: 'share', kind: 'secondary', icon: 'share', onTap: () => this.share(), release: true };
       this.addRow(AY + 214, this.amHost()
-        ? [share, { id: 'next', kind: 'primary', flex: true, label: night ? this.t.game.toFinal : fmt(this.t.game.next, { n }), fill, onTap: () => {
+        ? [share, { id: 'next', kind: 'primary', flex: true, label: night || hasSlots(sim.theme) ? this.t.game.toFinal : fmt(this.t.game.next, { n }), fill, onTap: () => {
           this.track('next_tap', { round: sim.round });
           sim.intent({ k: 'next' });
         } }]
-        : [share, { id: 'next', kind: 'plate', flex: true, label: night ? fmt(this.t.game.toFinalIn, { s: Math.ceil(sim.timeLeft() / 1000) }) : fmt(this.t.game.nextTake, { n, s: Math.ceil(sim.timeLeft() / 1000) }) }]);
+        : [share, { id: 'next', kind: 'plate', flex: true, label: night || hasSlots(sim.theme) ? fmt(this.t.game.toFinalIn, { s: Math.ceil(sim.timeLeft() / 1000) }) : fmt(this.t.game.nextTake, { n, s: Math.ceil(sim.timeLeft() / 1000) }) }]);
     }
   }
 
@@ -4064,11 +4064,12 @@ export class GameScene extends Phaser.Scene {
     this.ovPanel(8, AY + 8, 164, 244);
     // в «Купальской ночи» вместо короны — цвет папоротника
     if (hasSanity(sim.theme) && this.themeText()?.triumph) this.ov(this.add.image(90, AY + 22, 'fern', 3).setScale(2), 2100);
+    else if (hasSlots(sim.theme) && this.themeText()?.triumph) this.ov(this.add.image(90, AY + 22, 'slotsyms', 0).setScale(2), 2100);
     else this.ov(this.add.image(90, AY + 22, 'icons', this.icon('crown')).setScale(2), 2100);
     if (m.tooAlive) this.ovText(90, AY + 36, this.t.game.tooAlive, 'yellow');
     else {
       const w = sim.info(m.winners[0])!;
-      const tr = hasSanity(sim.theme) ? this.themeText()?.triumph : undefined;
+      const tr = hasSanity(sim.theme) || hasSlots(sim.theme) ? this.themeText()?.triumph : undefined;
       this.ovText(90, AY + 36, w.pid === this.sim.selfPid ? (tr?.you ?? this.t.game.youWon) : (tr?.other ?? this.t.game.winner), 'yellow');
       if (w.pid !== this.sim.selfPid) this.ovText(90, AY + 48, w.name, COLOR_FONT[w.color]);
     }
@@ -4197,7 +4198,7 @@ export class GameScene extends Phaser.Scene {
     const pt = plate && this.btnObjs.get('next')?.text;
     if (pt) {
       const sec = Math.max(0, Math.ceil(sim.timeLeft() / 1000));
-      const s = hasSanity(sim.theme) ? fmt(this.t.game.toFinalIn, { s: sec }) : fmt(this.t.game.nextTake, { n: sim.round + 1, s: sec });
+      const s = hasSanity(sim.theme) || hasSlots(sim.theme) ? fmt(this.t.game.toFinalIn, { s: sec }) : fmt(this.t.game.nextTake, { n: sim.round + 1, s: sec });
       if (pt.text !== s) {
         pt.setText(s);
         pt.x = Math.round(plate.x + (plate.w - pt.width) / 2);
@@ -4259,6 +4260,10 @@ export class GameScene extends Phaser.Scene {
   private showTriumph(done: () => void): void {
     if (hasSanity(this.sim.theme) && this.themeText()?.triumph) {
       this.showFernTriumph(done);
+      return;
+    }
+    if (hasSlots(this.sim.theme) && this.themeText()?.triumph) {
+      this.showJackpotTriumph(done);
       return;
     }
     const sim = this.sim;
@@ -4392,6 +4397,89 @@ export class GameScene extends Phaser.Scene {
       finished = true;
       tick.remove();
       this.fernOn = false;
+      if (this.sim.phase === 'match_end') done();
+    };
+    this.time.delayedCall(TRIUMPH_MS, finish);
+    this.time.delayedCall(TRIUMPH_SKIP_MS, () => {
+      if (!finished) this.input.once('pointerup', finish);
+    });
+  }
+
+  /**
+   * Триумф «Казино» — джекпот: за спиной победителя горит световой короб автомата (лучи), над головой
+   * три звезды загораются по одной, как барабаны, сверху сыплются монеты, звенит выигрыш.
+   */
+  private showJackpotTriumph(done: () => void): void {
+    const sim = this.sim;
+    const m = sim.match!;
+    const pid = m.winners[0];
+    const info = sim.info(pid)!;
+    const tr = this.themeText()!.triumph!;
+    const color = hexToInt(PLAYER_COLORS[info.color]);
+    const eid = sim.summary?.reveal.find((r) => r.pid === pid)?.eid ?? -1;
+    const idx = Math.max(0, sim.world.entities.findIndex((e) => e.eid === eid));
+    const fig = this.charKey(this.lookKey, idx);
+    const cy = AY + 176;
+    const bg = this.ov(this.add.graphics(), 2050);
+    const ol = this.ov(this.add.image(90, cy, 'ol' + fig, F.JUMP).setOrigin(7 / OL_W, 17 / OL_H).setScale(3).setTint(color), 2052);
+    const body = this.ov(this.add.image(90, cy, 'ch' + fig, F.JUMP).setOrigin(6 / CH_W, 1).setScale(3), 2053);
+    const stars = [0, 1, 2].map((i) => this.ov(this.add.image(62 + i * 28, cy - CH_H * 3 - 18, 'slotsyms', 0).setScale(2).setVisible(false), 2054));
+    const me = pid === sim.selfPid;
+    const title = this.ovText(90, AY + 26, me ? tr.you : tr.other, 'yellow');
+    if (title.width * 2 <= 170) {
+      title.setScale(2);
+      this.centerScaled(title);
+    }
+    this.ovText(90, AY + 46, tr.sub, 'sand');
+    this.ovText(90, cy + 14, info.name, COLOR_FONT[info.color]);
+    haptic('success');
+    // звёзды загораются по одной — как останавливаются барабаны
+    stars.forEach((st, i) => this.time.delayedCall(300 + i * 350, () => {
+      if (!st.active) return;
+      st.setVisible(true);
+      this.audio.play(i < 2 ? 'tick' : 'fanfare');
+    }));
+    const coins = Array.from({ length: 40 }, () => ({ x: 4 + Math.random() * 172, y: AY - Math.random() * 240, v: 0.8 + Math.random() * 1.2, ph: Math.floor(Math.random() * 4) }));
+    let k = 0;
+    const tick = this.time.addEvent({
+      delay: 50,
+      loop: true,
+      callback: () => {
+        k++;
+        bg.clear();
+        bg.fillStyle(hexToInt(PAL.ink), 0.9).fillRect(0, AY, 180, PANEL_Y - AY);
+        // лучи светового короба вращаются за победителем
+        const ox = 90;
+        const oy = cy - 30;
+        for (let y = AY + 60; y < PANEL_Y - 20; y += 2) for (let x = 0; x < 180; x += 2) {
+          const a = Math.atan2(y - oy, x - ox) + k * 0.02;
+          const ray = Math.floor(((a + Math.PI) / (Math.PI * 2)) * 20) % 2;
+          const d = Math.hypot(x - ox, y - oy);
+          if (ray && d < 80 && (x + y) % 4 === 0) bg.fillStyle(hexToInt(d < 40 ? PAL.amber : PAL.umber)).fillRect(x, y, 2, 2);
+        }
+        // монеты сыплются, переворачиваются
+        for (const c of coins) {
+          c.y += c.v;
+          if (c.y > PANEL_Y - 4) c.y = AY - 4;
+          if (c.y < AY) continue;
+          const f = (Math.floor(k / 3) + c.ph) % 4;
+          const w = f === 0 ? 4 : f === 2 ? 1 : 2;
+          bg.fillStyle(hexToInt(PAL.ink)).fillRect(Math.round(c.x - w / 2) - 1, Math.round(c.y) - 1, w + 2, 6);
+          bg.fillStyle(hexToInt(f === 2 ? PAL.orange : PAL.yellow)).fillRect(Math.round(c.x - w / 2), Math.round(c.y), w, 4);
+          if (w === 4) bg.fillStyle(hexToInt(PAL.amber)).fillRect(Math.round(c.x - w / 2) + 1, Math.round(c.y) + 1, 2, 2);
+        }
+        // победитель подпрыгивает, звёзды мигают
+        const hop = Math.floor(k / 4) % 2 ? -4 : 0;
+        body.setY(cy + hop);
+        ol.setY(cy + hop);
+        stars.forEach((st, i) => st.setAlpha(Math.floor(k / 5 + i) % 3 === 0 ? 0.6 : 1));
+      },
+    });
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      tick.remove();
       if (this.sim.phase === 'match_end') done();
     };
     this.time.delayedCall(TRIUMPH_MS, finish);

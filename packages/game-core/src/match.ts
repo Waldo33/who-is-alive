@@ -17,8 +17,11 @@ import { ROUND_MODS, roundMod } from './mods';
 import { World } from './world';
 import { BOSS_SPEED_MUL, bossDoor, bossLooking, bossWatching, inBossCone, pathInBossCone } from './boss';
 
-/** «Купальская ночь» — тема-финал при матч-боле (nightFinale). */
-const NIGHT_THEME = THEME_RULES.findIndex((r) => r.id === 'kupala');
+/**
+ * Темы-финалы: выпав, заканчивают матч — «Купальская ночь» (рассудок) и «Казино» (автоматы).
+ * При матч-боле одна из них (если она в очереди) может стать последним дублем (finaleTheme).
+ */
+const FINALE_THEMES = THEME_RULES.map((r, i) => (r.sanity || r.slots ? i : -1)).filter((i) => i >= 0);
 const EMOTES: EmoteKind[] = ['wave', 'dance', 'jump'];
 
 export interface PlayerInfo {
@@ -213,7 +216,11 @@ export class MatchSim {
   /** Порядок тем в матче — свой в каждом матче и реванше. */
   themeOrder: number[] = [];
   /** В этом матче (реванше) ночь станет финалом при матч-боле — решается при тасовке тем. */
-  nightFinale = false;
+  finaleTheme = -1;
+  /** Старое имя: финал в этом матче будет (какой — finaleTheme). */
+  get nightFinale(): boolean {
+    return this.finaleTheme >= 0;
+  }
   /** Свой генератор для решения о финале: основной `rng` не трогаем, чтобы матчи по зерну не менялись. */
   private readonly finaleRng: Rng;
   scores: Record<string, number> = {};
@@ -380,7 +387,7 @@ export class MatchSim {
   private startRound(): void {
     this.round++;
     this.theme = this.themeOrder[(this.round - 1) % this.themeOrder.length];
-    if (this.nightFinale && this.round > 1 && Math.max(...Object.values(this.scores)) >= this.cfg.nightFinaleScore) this.theme = NIGHT_THEME;
+    if (this.finaleTheme >= 0 && this.round > 1 && Math.max(...Object.values(this.scores)) >= this.cfg.nightFinaleScore) this.theme = this.finaleTheme;
     this.pickMod();
     this.bountyPid = bountyLeader(this.scores);
     this.summary = null;
@@ -1510,8 +1517,8 @@ export class MatchSim {
    */
   get lastRound(): boolean {
     const top = Math.max(...Object.values(this.scores));
-    // «Купальская ночь» — матч в одну ночь: до смерти всех, без повторов между дублями
-    return top >= this.cfg.scoreToWin || this.round >= this.cfg.maxRounds || hasSanity(this.theme);
+    // темы-финалы («Купальская ночь», «Казино») — последний дубль матча
+    return top >= this.cfg.scoreToWin || this.round >= this.cfg.maxRounds || hasSanity(this.theme) || hasSlots(this.theme);
   }
 
   /** Итоги матча по уже начисленным очкам — те же, что будут на match_end. */
@@ -1547,7 +1554,11 @@ export class MatchSim {
     const fixed = this.cfg.fixedTheme;
     // решаем всегда (и при fixedTheme), чтобы последовательность finaleRng не зависела от настроек
     const finale = this.finaleRng.next() < this.cfg.nightFinaleChance;
-    this.nightFinale = finale && !(fixed >= 0 && fixed < THEME_COUNT) && ROTATION_THEMES.includes(NIGHT_THEME);
+    // кандидаты — темы-финалы из обычной очереди; из нескольких выбираем вторым числом (при одной — не тянем,
+    // чтобы матчи по зерну не менялись)
+    const pool = FINALE_THEMES.filter((i) => ROTATION_THEMES.includes(i));
+    const pick = pool.length > 1 ? pool[Math.floor(this.finaleRng.next() * pool.length)] : pool[0];
+    this.finaleTheme = finale && !(fixed >= 0 && fixed < THEME_COUNT) && pick !== undefined ? pick : -1;
     if (fixed >= 0 && fixed < THEME_COUNT) {
       this.themeOrder = Array.from({ length: THEME_COUNT }, () => fixed);
       return;

@@ -5,7 +5,7 @@ import { SLOT_SYMBOLS, fmt, hasSlots, isLastLap } from '@kto/game-core';
 import type { Sfx } from './audio';
 import type { FontColor } from './font';
 import {
-  BODY_W, REELS_H, REELS_X, REELS_Y, REEL_GAP, REEL_W, SYM_W,
+  BODY_W, PANEL_H, PANEL_TOP, SCORE_W, SCORE_X, SCORE_Y, REELS_H, REELS_X, REELS_Y, REEL_GAP, REEL_W, SYM_K, SYM_W, TOP_H,
   makeSlotBackdrop, makeSlotBody, makeSlotStars, makeSlotSymbols,
 } from './slot-art';
 
@@ -19,7 +19,7 @@ import {
 
 /** Барабаны: от броска до остановки каждого, мс (весь показ укладывается в cfg.slotSpinMs). */
 const STOP_MS = [650, 1000, 1400];
-const ROW = 26; // шаг символов на ленте барабана (символ ×2 = 24 + зазор)
+const ROW = SYM_W * SYM_K + 4; // шаг символов на ленте барабана
 
 export interface SlotHost {
   scene: Phaser.Scene;
@@ -41,11 +41,10 @@ export class SlotScreen {
   private reelsTex: Phaser.Textures.CanvasTexture;
   private symImg: HTMLCanvasElement;
   private turnT: Phaser.GameObjects.BitmapText;
+  private scoreT: Phaser.GameObjects.BitmapText;
   private line1: Phaser.GameObjects.BitmapText;
   private line2: Phaser.GameObjects.BitmapText;
   private line3: Phaser.GameObjects.BitmapText;
-  private names: Phaser.GameObjects.BitmapText[] = [];
-  private stars: Phaser.GameObjects.Image[][] = [];
   private shown = false;
   private lastTurn = -1;
   /** Своё вращение: когда начато, что выпадет (null — не крутил). */
@@ -60,7 +59,7 @@ export class SlotScreen {
   private leverAt = 0;
   private flashSeat = new Map<number, number>();
   private bigFlash: { color: number; at: number } | null = null;
-  private readonly bx = 20;
+  private readonly bx = 4;
   private readonly by: number;
 
   constructor(private h: SlotHost) {
@@ -73,9 +72,11 @@ export class SlotScreen {
       tex.addSpriteSheet('slotstars', c as unknown as HTMLImageElement, { frameWidth: 7, frameHeight: 7 });
     }
     this.symImg = makeSlotSymbols();
+    // символы отдельными кадрами — для триумфа и итогов матча
+    if (!tex.exists('slotsyms')) tex.addSpriteSheet('slotsyms', makeSlotSymbols() as unknown as HTMLImageElement, { frameWidth: SYM_W, frameHeight: SYM_W });
     const rw = REEL_W * 3 + REEL_GAP * 2;
     this.reelsTex = tex.exists('slotreels') ? (tex.get('slotreels') as Phaser.Textures.CanvasTexture) : tex.createCanvas('slotreels', rw, REELS_H)!;
-    this.by = h.ay + 42;
+    this.by = h.ay + 3;
     const D = 1050;
     const add = <T extends Phaser.GameObjects.GameObject>(o: T, d = D): T => {
       (o as unknown as { setDepth: (n: number) => void }).setDepth(d);
@@ -86,16 +87,16 @@ export class SlotScreen {
     add(s.add.image(this.bx, this.by, 'slotbody').setOrigin(0, 0), D + 1);
     add(s.add.image(this.bx + REELS_X, this.by + REELS_Y, 'slotreels').setOrigin(0, 0), D + 2);
     this.g = add(s.add.graphics(), D + 3);
-    this.turnT = add(h.txt(90, this.by + 96, '', 'mist').setOrigin(0.5, 0), D + 4);
-    this.line1 = add(h.txt(90, this.by + 108, '', 'white').setOrigin(0.5, 0), D + 4);
-    this.line2 = add(h.txt(90, this.by + 120, '', 'yellow').setOrigin(0.5, 0), D + 4);
-    this.line3 = add(h.txt(90, this.by + 132, '', 'sand').setOrigin(0.5, 0), D + 4);
-    for (let i = 0; i < 4; i++) {
-      const x = i % 2 ? 92 : 4;
-      const y = h.ay + 5 + Math.floor(i / 2) * 17;
-      this.names.push(add(h.txt(x + 3, y, '', 'white'), D + 4));
-      this.stars.push([0, 1, 2].map((k) => add(s.add.image(x + 60 + k * 8, y + 1, 'slotstars', 0).setOrigin(0, 0), D + 4)));
-    }
+    const px0 = this.by + PANEL_TOP;
+    const cxm = this.bx + BODY_W / 2;
+    this.turnT = add(h.txt(cxm, px0 + 6, '', 'mist').setOrigin(0.5, 0), D + 4);
+    // очки матча — крутить бесплатно, но видно, за что играешь
+    this.scoreT = add(h.txt(this.bx + SCORE_X + SCORE_W / 2, this.by + SCORE_Y + 1, '', 'yellow').setOrigin(0.5, 0), D + 4);
+    this.line1 = add(h.txt(cxm, px0 + 20, '', 'white').setOrigin(0.5, 0), D + 4);
+    this.line2 = add(h.txt(cxm, px0 + 33, '', 'yellow').setOrigin(0.5, 0), D + 4);
+    this.line3 = add(h.txt(cxm, px0 + 46, '', 'sand').setOrigin(0.5, 0), D + 4);
+    // табло уже экрана: шаг букв 7 px (обычно 8), чтобы строка в 21 знак влезала целиком
+    for (const o of [this.turnT, this.line1, this.line2, this.line3]) o.setLetterSpacing(-3);
     this.setVisible(false);
     this.drawReels(performance.now());
   }
@@ -151,7 +152,7 @@ export class SlotScreen {
     if (this.spinning) for (const ms of STOP_MS) if (now - this.spinAt >= ms && now - this.spinAt < ms + 17) this.h.play('tick');
     if (!this.spinning && !this.revealed && this.pending) this.reveal(v, this.pending);
     this.drawReels(now);
-    this.drawStrip(v, st, now);
+    this.g.clear();
     this.drawInfo(v, st, now);
   }
 
@@ -276,8 +277,8 @@ export class SlotScreen {
         const idx = running
           ? (((Math.floor(off / ROW) - k + r * 3) % SLOT_SYMBOLS.length) + SLOT_SYMBOLS.length) % SLOT_SYMBOLS.length
           : k === 0 ? centerIdx : (centerIdx + k * 3 + r + 8) % SLOT_SYMBOLS.length;
-        const y = Math.round(REELS_H / 2 - SYM_W + k * ROW + (running ? off % ROW : 0));
-        c.drawImage(this.symImg, idx * SYM_W, 0, SYM_W, SYM_W, x0 + (REEL_W - SYM_W * 2) / 2, y, SYM_W * 2, SYM_W * 2);
+        const y = Math.round(REELS_H / 2 - (SYM_W * SYM_K) / 2 + k * ROW + (running ? off % ROW : 0));
+        c.drawImage(this.symImg, idx * SYM_W, 0, SYM_W, SYM_W, x0 + (REEL_W - SYM_W * SYM_K) / 2, y, SYM_W * SYM_K, SYM_W * SYM_K);
       }
       // барабан круглый: к верху и низу темнеет полосами, середина — светлая
       const band = (y: number, col: string, step: number) => {
@@ -287,9 +288,9 @@ export class SlotScreen {
           c.fillRect(x0 + x, REELS_H - 1 - y, 1, 1);
         }
       };
-      for (let y = 0; y < 3; y++) band(y, PAL.dusk, 1);
-      for (let y = 3; y < 6; y++) band(y, PAL.steel, 1 + (y - 3));
-      for (let y = 6; y < 9; y++) band(y, PAL.slate, 2 + (y - 6) * 2);
+      for (let y = 0; y < 4; y++) band(y, PAL.dusk, 1);
+      for (let y = 4; y < 8; y++) band(y, PAL.steel, 1 + (y - 4));
+      for (let y = 8; y < 12; y++) band(y, PAL.slate, 2 + (y - 8) * 2);
       // боковины барабана
       c.fillStyle = PAL.slate;
       c.fillRect(x0, 3, 1, REELS_H - 6);
@@ -297,58 +298,13 @@ export class SlotScreen {
     }
     // стекло: косые блики поверх всех барабанов
     c.fillStyle = PAL.white;
-    for (const sx of [10, 16, 70]) {
+    for (const sx of [12, 22, 92]) {
       for (let y = 4; y < REELS_H - 4; y++) {
         const x = sx + Math.floor((REELS_H - y) / 2);
-        if (y % 2 === 0) c.fillRect(x, y, sx === 16 ? 1 : 2, 1);
+        if (y % 2 === 0) c.fillRect(x, y, sx === 22 ? 1 : 2, 1);
       }
     }
     this.reelsTex.refresh();
-  }
-
-  private drawStrip(v: ClientView, st: SlotState, now: number): void {
-    const g = this.g;
-    g.clear();
-    const seat = this.seatOf(v);
-    for (let i = 0; i < 4; i++) {
-      const s = st.seats[i];
-      const n = this.names[i];
-      const x = i % 2 ? 92 : 4;
-      const y = this.h.ay + 3 + Math.floor(i / 2) * 17;
-      if (!s) {
-        n.setText('');
-        this.stars[i].forEach((im) => im.setVisible(false));
-        continue;
-      }
-      const fl = this.flashSeat.get(i);
-      const flashing = fl !== undefined && now - fl < 1200 && Math.floor((now - fl) / 150) % 2 === 0;
-      g.fillStyle(hexToInt(PAL.ink)).fillRect(x, y, 84, 15);
-      g.fillStyle(hexToInt(flashing ? PAL.grape : i === seat ? PAL.dusk : PAL.night)).fillRect(x + 1, y + 1, 82, 13);
-      if (i === seat) g.fillStyle(hexToInt(PAL.amber)).fillRect(x + 1, y + 1, 82, 1);
-      const name = short(v.players[i]?.name ?? '?');
-      n.setText(name).setFont(s.alive ? 'px-white' : 'px-mist');
-      this.stars[i].forEach((im, k) => {
-        const h = s.halves - k * 2;
-        im.setVisible(s.alive).setFrame(h >= 2 ? 2 : h === 1 ? 1 : 0);
-      });
-      if (!s.alive) {
-        // вырезан: имя перечёркнуто, череп вместо звёзд
-        g.fillStyle(hexToInt(PAL.coral)).fillRect(x + 3, y + 8, n.width, 1);
-        this.drawSym(g, 'skull', x + 64, y + 2);
-      } else {
-        // метки: маска, прожектор, плёнка
-        let mx = x + 52;
-        if (s.mask) {
-          this.dot(g, mx, y + 4, PAL.amber);
-          mx -= 4;
-        }
-        if (s.spot) {
-          this.dot(g, mx, y + 4, PAL.yellow);
-          mx -= 4;
-        }
-        if (s.skip > 0) this.dot(g, mx, y + 4, PAL.steel);
-      }
-    }
   }
 
   private dot(g: Phaser.GameObjects.Graphics, x: number, y: number, c: string): void {
@@ -382,9 +338,9 @@ export class SlotScreen {
     // лампочки по рамке светового короба бегут по кругу
     const bulbs: [number, number][] = [];
     for (let x = 10; x <= BODY_W - 12; x += 8) bulbs.push([x, 0]);
-    for (let y = 8; y <= 26; y += 9) bulbs.push([BODY_W - 8, y]);
-    for (let x = BODY_W - 12; x >= 10; x -= 8) bulbs.push([x, 32]);
-    for (let y = 26; y >= 8; y -= 9) bulbs.push([6, y]);
+    for (let y = 9; y <= TOP_H - 9; y += 9) bulbs.push([BODY_W - 8, y]);
+    for (let x = BODY_W - 12; x >= 10; x -= 8) bulbs.push([x, TOP_H - 2]);
+    for (let y = TOP_H - 9; y >= 9; y -= 9) bulbs.push([6, y]);
     bulbs.forEach(([x, y], k) => {
       const lit = (k + step) % 3 === 0;
       g.fillStyle(hexToInt(PAL.ink)).fillRect(bx + x - 1, by + y - 1, 4, 4);
@@ -393,12 +349,14 @@ export class SlotScreen {
     // рычаг справа: дёрнули — опускается и возвращается
     const lk = Math.min(1, (now - this.leverAt) / 450);
     const down = lk < 1 ? Math.sin(lk * Math.PI) : 0;
-    const lx = bx + BODY_W + 2;
-    const top = by + 46 + Math.round(down * 30);
-    g.fillStyle(hexToInt(PAL.ink)).fillRect(lx, by + 78, 9, 14);
-    g.fillStyle(hexToInt(PAL.steel)).fillRect(lx + 1, by + 79, 7, 12);
-    g.fillStyle(hexToInt(PAL.ink)).fillRect(lx + 3, Math.min(top, by + 80), 3, Math.abs(by + 82 - top) + 1);
-    g.fillStyle(hexToInt(PAL.mist)).fillRect(lx + 4, Math.min(top, by + 80), 1, Math.abs(by + 82 - top));
+    const lx = bx + BODY_W;
+    const piv = by + REELS_Y + REELS_H / 2 + 6;
+    const top = by + REELS_Y + 2 + Math.round(down * 34);
+    g.fillStyle(hexToInt(PAL.ink)).fillRect(lx, piv - 2, 9, 16);
+    g.fillStyle(hexToInt(PAL.steel)).fillRect(lx + 1, piv - 1, 7, 14);
+    g.fillStyle(hexToInt(PAL.mist)).fillRect(lx + 1, piv - 1, 7, 1);
+    g.fillStyle(hexToInt(PAL.ink)).fillRect(lx + 3, Math.min(top, piv), 3, Math.abs(piv + 2 - top) + 1);
+    g.fillStyle(hexToInt(PAL.mist)).fillRect(lx + 4, Math.min(top, piv), 1, Math.abs(piv + 2 - top));
     g.fillStyle(hexToInt(PAL.ink)).fillRect(lx + 1, top - 4, 7, 9).fillRect(lx, top - 3, 9, 7);
     g.fillStyle(hexToInt(PAL.wine)).fillRect(lx + 1, top - 3, 7, 7);
     g.fillStyle(hexToInt(PAL.red)).fillRect(lx + 1, top - 3, 5, 5);
@@ -408,6 +366,8 @@ export class SlotScreen {
     const turnN = Math.min(cfg.slotTurns, st.turn + 1);
     const turnS = last ? t.lastLap : fmt(t.turn, { n: turnN, m: cfg.slotTurns });
     this.turnT.setText(turnS).setFont(last ? 'px-coral' : 'px-mist');
+    const sc = fmt(t.score, { n: v.scores[v.selfPid] ?? 0 });
+    if (this.scoreT.text !== sc) this.scoreT.setText(sc);
     let l1 = '';
     let l1c: FontColor = 'white';
     const wt = v.world.time;
@@ -422,9 +382,10 @@ export class SlotScreen {
     // полоска времени на выбор
     if (me?.alive && !st.over && wt >= st.openAt && this.picked !== st.turn && me.skip === 0) {
       const k = Math.max(0, Math.min(1, (st.deadline - wt) / Math.max(1, st.deadline - st.openAt)));
-      const w = Math.round(110 * k);
-      g.fillStyle(hexToInt(PAL.ink)).fillRect(35, by + 145, 110, 4);
-      g.fillStyle(hexToInt(k < 0.3 ? PAL.coral : PAL.amber)).fillRect(35, by + 146, w, 2);
+      const w = Math.round(98 * k);
+      const yb = by + PANEL_TOP + PANEL_H - 12;
+      g.fillStyle(hexToInt(PAL.dusk)).fillRect(bx + 14, yb, 98, 4);
+      g.fillStyle(hexToInt(k < 0.3 ? PAL.coral : PAL.amber)).fillRect(bx + 14, yb + 1, w, 2);
     }
     // свои метки на панели автомата: маска, хлопушка, прожектор
     if (me?.alive) {
@@ -432,7 +393,7 @@ export class SlotScreen {
       if (me.mask) marks.push('mask');
       if (me.clap) marks.push('clap');
       if (me.spot) marks.push('spot');
-      marks.forEach((m, i) => this.drawSym(g, m, bx + 12 + i * 8, by + 95));
+      marks.forEach((m, i) => this.drawSym(g, m, bx + BODY_W - 34 + i * 8, by + PANEL_TOP + PANEL_H - 14));
     }
     // вырезан: автомат гаснет
     if (me && !me.alive && !this.spinning) {
