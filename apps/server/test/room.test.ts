@@ -209,6 +209,10 @@ describe('комната', () => {
   it('имя: без управляющих символов, до 14 знаков, пустое — запасное', () => {
     expect(cleanName('  Вася\u0000\u0007 ', 'X')).toBe('Вася');
     expect(cleanName('   ', 'Player')).toBe('Player');
+    // N6: невидимые и «переворачивающие» символы не проходят, эмодзи с ZWJ — проходят
+    expect(cleanName('Оля\u202Eрогом\u200B', 'X')).toBe('Олярогом');
+    expect(cleanName('\u200B\u2066', 'Player')).toBe('Player');
+    expect(cleanName('Я👨\u200D👩', 'X')).toBe('Я👨\u200D👩');
     expect(cleanName('абвгдеёжзийклмноп', 'X')).toHaveLength(14);
   });
 });

@@ -10,6 +10,7 @@ import { CLIP_MIME, ClipStore } from './clips';
 import type { FilmService } from './film';
 import { PUZZLE_CODE, PuzzleStore } from './puzzles';
 import { join } from 'node:path';
+import { networkInterfaces } from 'node:os';
 import type { AddressInfo } from 'node:net';
 import { WebSocketServer } from 'ws';
 import type { WebSocket } from 'ws';
@@ -109,6 +110,16 @@ const EVENTS_PER_IP_MIN = 600;
 const ERRORS_PER_IP_MIN = 30;
 // на сервере бота все запросы телефонов приходят через Москву (один адрес) — лимит с запасом
 const BOT_PER_IP_MIN = 600;
+/**
+ * Коды комнат (4 буквы, ~280 тысяч): GET /v1/rooms/<код> и вход по коду. Обычному игроку хватает пары
+ * запросов на комнату, промахи (опечатка, старая ссылка) редки — их лимит строже: перебрать все коды
+ * с одного адреса нельзя (ревью безопасности, M1). Свои запросы машины (превью ссылок сайта) — без лимита.
+ */
+const ROOM_LOOKUPS_PER_IP_MIN = 120;
+const ROOM_MISSES_PER_IP = 30;
+const ROOM_MISS_WINDOW_MS = 10 * 60_000;
+/** Загрузок клипов с одного адреса за 10 минут: игроку — пара клипов на матч, за одним адресом бывает компания. */
+const CLIPS_PER_IP = 60;
 /** Загадка: открыть и тапнуть — на зрителя десяток запросов. */
 const PUZZLE_PER_IP_MIN = 120;
 /** Лобби без действий — закрыть; комната старше — закрыть; без единого игрока на связи — закрыть. */
@@ -162,6 +173,9 @@ export class GameServer {
   private readonly errorsRate = new RateWindow(ERRORS_PER_IP_MIN, 60_000);
   private readonly botRate = new RateWindow(BOT_PER_IP_MIN, 60_000);
   private readonly puzzleRate = new RateWindow(PUZZLE_PER_IP_MIN, 60_000);
+  private readonly clipIpRate = new RateWindow(CLIPS_PER_IP, 10 * 60_000);
+  private readonly roomLookupRate = new RateWindow(ROOM_LOOKUPS_PER_IP_MIN, 60_000);
+  private readonly roomMissRate = new RateWindow(ROOM_MISSES_PER_IP, ROOM_MISS_WINDOW_MS);
   readonly puzzles: PuzzleStore;
   readonly store: Store;
   private readonly emptySince = new Map<Room, number>();
@@ -253,6 +267,9 @@ export class GameServer {
     this.authRate.sweep(now);
     this.eventsRate.sweep(now);
     this.botRate.sweep(now);
+    this.roomLookupRate.sweep(now);
+    this.clipIpRate.sweep(now);
+    this.roomMissRate.sweep(now);
   }
 
   private bindInvite(r: Room, invite: string): void {
@@ -333,10 +350,16 @@ export class GameServer {
       }
       const m = /^\/v1\/rooms\/([A-Za-z]{4})$/.exec(p);
       if (m && req.method === 'GET') {
+        const ip = this.ip(req);
+        const free = this.internal(req) || this.isLoad(req) || this.ownMachine(ip);
+        if (!free && (this.roomMissRate.full(ip, this.now()) || !this.roomLookupRate.take(ip, this.now()))) {
+          return this.reply(res, 429, { error: 'rate_limited' });
+        }
         const r = this.rooms.get(m[1].toUpperCase());
         if (!r) {
           // комната могла переехать или жить у соседа (выкладка): спросить его, если вопрос не от него же
-          const far = req.headers['x-kto-peer'] ? null : await this.peerRoom(m[1].toUpperCase());
+          const far = req.headers['x-kto-peer'] && this.internal(req) ? null : await this.peerRoom(m[1].toUpperCase());
+          if (!far && !free) this.roomMissRate.take(ip, this.now());
           return far ? this.reply(res, 200, far) : this.reply(res, 404, { error: 'room_not_found' });
         }
         return this.reply(res, 200, {
@@ -771,6 +794,11 @@ export class GameServer {
 
   /** Клипы для Telegram (`clips.ts`): загрузка — с токеном игрока, файл — по ссылке. */
   private async clipRoute(req: IncomingMessage, res: ServerResponse, p: string): Promise<void> {
+    // загрузки клипов: кроме лимита на игрока (clips.ts) — и по адресу: токенов можно взять сколько угодно,
+    // без этого хранилище становится бесплатным файлообменником (ревью безопасности, M3)
+    if ((p === '/v1/clips' || p === '/v1/clips/direct') && req.method === 'POST' && !this.isLoad(req) && !this.clipIpRate.take(this.ip(req), this.now())) {
+      return this.reply(res, 429, { error: 'rate_limited' });
+    }
     if (p === '/v1/clips' && req.method === 'POST') {
       const user = await this.bearer(req);
       if (!user) return this.reply(res, 401, { error: 'bad_token' });
@@ -786,14 +814,16 @@ export class GameServer {
     }
     const thumbUrl = /^\/v1\/clips\/([0-9a-f]{20})\/thumb-url$/.exec(p);
     if (thumbUrl && req.method === 'POST') {
-      if (!(await this.bearer(req))) return this.reply(res, 401, { error: 'bad_token' });
-      const r = this.clips.directThumb(thumbUrl[1], (await readJson(req, 1024)) as { size?: unknown } | null);
+      const user = await this.bearer(req);
+      if (!user) return this.reply(res, 401, { error: 'bad_token' });
+      const r = this.clips.directThumb(thumbUrl[1], (await readJson(req, 1024)) as { size?: unknown } | null, user);
       return this.reply(res, r.status, r.body);
     }
     const thumb = /^\/v1\/clips\/([0-9a-f]{20})\/thumb$/.exec(p);
     if (thumb && req.method === 'POST') {
-      if (!(await this.bearer(req))) return this.reply(res, 401, { error: 'bad_token' });
-      const r = await this.clips.thumb(thumb[1], req);
+      const user = await this.bearer(req);
+      if (!user) return this.reply(res, 401, { error: 'bad_token' });
+      const r = await this.clips.thumb(thumb[1], req, user);
       return this.reply(res, r.status, r.body);
     }
     const f = /^\/v1\/clips\/([0-9a-f]{20})\.(mp4|webm|jpg)$/.exec(p);
@@ -838,13 +868,16 @@ export class GameServer {
     }
     if (m[2] && req.method === 'POST') {
       const b = (await readJson(req, 1024)) as { eid?: unknown; n?: unknown; d?: unknown } | null;
-      const r = await this.puzzles.tap(code, Number(b?.eid), Number(b?.n));
+      const ip = this.ip(req);
+      const device = typeof b?.d === 'string' && /^[A-Za-z0-9-]{8,64}$/.test(b.d) ? b.d : null;
+      // попытки считает сервер — по устройству, без него — по адресу (M4)
+      const r = await this.puzzles.tap(code, Number(b?.eid), Number(b?.n), device ?? `ip:${ip}`);
       if (!r) return this.reply(res, 404, { error: 'no_puzzle' });
       const out = r.res;
       if (out.status === 200 && out.body.done) {
-        const device = typeof b?.d === 'string' && /^[A-Za-z0-9-]{8,64}$/.test(b.d) ? b.d : null;
         try {
-          if (device) await this.store.savePuzzleResult({ code, device, found: out.body.hit, tries: Number(b?.n) });
+          // итог — один раз (первый тап, закончивший загадку) и не больше 5 устройств с адреса
+          if (device && r.first && this.puzzles.resultAllowed(code, ip, device)) await this.store.savePuzzleResult({ code, device, found: out.body.hit, tries: r.tries });
           out.body.stats = await this.store.puzzleStats(code);
         } catch (e) {
           this.log('warn', 'puzzle_stats', { err: String(e).slice(0, 200) });
@@ -877,6 +910,21 @@ export class GameServer {
     if (!origin) return true;
     return allowed.includes(origin);
   }
+
+  /** Адрес — сама эта машина (сайт рядом ходит в игру по публичному адресу) или петля. */
+  private ownMachine(ip: string): boolean {
+    if (ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1') return true;
+    if (!this.ownIps) {
+      this.ownIps = new Set(
+        Object.values(networkInterfaces())
+          .flat()
+          .map((a) => a?.address ?? '')
+          .filter(Boolean),
+      );
+    }
+    return this.ownIps.has(ip.replace(/^::ffff:/, ''));
+  }
+  private ownIps: Set<string> | null = null;
 
   private ip(req: IncomingMessage): string {
     if (this.o.trustProxy) {
@@ -938,6 +986,8 @@ export class GameServer {
       if (m.v !== WIRE_VERSION) return this.fail(peer, 'bad_version', true, ws);
       const userId = await this.auth.verify(m.token);
       if (!userId) return this.fail(peer, 'bad_token', true, ws);
+      // перебор кодов через вход: тот же лимит промахов, что у GET /v1/rooms/<код>
+      if (this.roomMissRate.full(st.ip, this.now()) && !this.ownMachine(st.ip)) return this.fail(peer, 'rate_limited', true, ws);
       const room = this.rooms.get(m.code.toUpperCase());
       if (!room || room.closed) {
         // комната переехала к соседу (или переезжает прямо сейчас): «переезжай» вместо «не найдена»
@@ -946,6 +996,7 @@ export class GameServer {
           ws.close(4005, 'moved');
           return;
         }
+        if (!this.ownMachine(st.ip)) this.roomMissRate.take(st.ip, this.now());
         return this.fail(peer, 'room_not_found', true, ws);
       }
       const err = room.join(userId, m.name, peer, { seat: !!m.seat });

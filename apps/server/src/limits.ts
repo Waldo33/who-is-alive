@@ -22,6 +22,11 @@ export class RateWindow {
     return true;
   }
 
+  /** Лимит уже исчерпан (не тратит попытку). */
+  full(key: string, now: number): boolean {
+    return (this.hits.get(key) ?? []).filter((t) => now - t < this.windowMs).length >= this.max;
+  }
+
   /** Убрать старые ключи (раз в минуту). */
   sweep(now: number): void {
     for (const [k, list] of this.hits) if (!list.some((t) => now - t < this.windowMs)) this.hits.delete(k);
