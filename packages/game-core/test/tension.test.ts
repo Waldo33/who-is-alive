@@ -1,16 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { AiPlayer, MatchSim, bossDoor, bossWatching, hasSanity, inBossCone, makeConfig, roundMod } from '../src';
+import { AiPlayer, MatchSim, bossDoor, bossWatching, hasSanity, hasSlots, inBossCone, makeConfig, roundMod } from '../src';
 import type { GameConfig } from '../src';
 import type { CrowdKind, WorldEvent } from '../src';
 
 const players = ['a', 'b', 'c', 'd'].map((pid, i) => ({ pid, name: pid, color: i }));
 const KINDS: CrowdKind[] = ['freeze', 'jump', 'dance'];
 
-/** Матч, который начинается обычным дублем (не «Купальской ночью» — она занимает весь матч). */
-function dayMatch(cfg: GameConfig, seed: number): MatchSim {
+/**
+ * Матч, который начинается обычным дублем: не «Купальской ночью» (она занимает весь матч)
+ * и не «Казино» (вместо жестов там «Крутка»).
+ */
+function dayMatch(cfg: GameConfig, seed: number, ps = players): MatchSim {
   for (let s = seed; ; s++) {
-    const sim = new MatchSim(cfg, players, s);
-    if (!hasSanity(sim.theme)) return sim;
+    const sim = new MatchSim(cfg, ps, s);
+    if (!hasSanity(sim.theme) && !hasSlots(sim.theme)) return sim;
   }
 }
 
@@ -41,7 +44,7 @@ describe('Напряжение: новые механики', () => {
 
   it('три звезды не сгорают, даже если собравшего вычислили: у него крадут очко', () => {
     const play = (caught: boolean) => {
-      const sim = new MatchSim(makeConfig({ roundMods: false }), players.slice(0, 3), 42);
+      const sim = dayMatch(makeConfig({ roundMods: false }), 42, players.slice(0, 3));
       runUntil(sim, () => sim.phase === 'play');
       sim.tick();
       const a = sim.playerRound('a')!;
@@ -145,7 +148,7 @@ describe('Напряжение: новые механики', () => {
   });
 
   it('прожектор: над не повторившим жест — круг со смещённым центром; повторившие вовремя — без него', () => {
-    const sim = new MatchSim(makeConfig({ roundMods: false, botQuirkPerMin: 0 }), players, 52);
+    const sim = dayMatch(makeConfig({ roundMods: false, botQuirkPerMin: 0 }), 52, players);
     runUntil(sim, () => sim.phase === 'play');
     const spots: Extract<WorldEvent, { t: 'spot' }>[] = [];
     sim.world.listeners.push((ev) => ev.t === 'spot' && spots.push(ev));
@@ -161,7 +164,7 @@ describe('Напряжение: новые механики', () => {
   });
 
   it('«Жёсткий дубль»: не повторил или ошибся — вырезан, опоздавший — только подсвечен', () => {
-    const sim = new MatchSim(makeConfig({ roundMods: false }), players, 63);
+    const sim = dayMatch(makeConfig({ roundMods: false }), 63, players);
     runUntil(sim, () => sim.phase === 'play');
     inner(sim).mod = 1; // hard
     runUntil(sim, () => !!sim.world.crowd);
@@ -179,7 +182,7 @@ describe('Напряжение: новые механики', () => {
   });
 
   it('«Жёсткие съёмки» (strictCrowd): весь матч не повторил названный жест — вырезан, даже без «Жёсткого дубля»', () => {
-    const sim = new MatchSim(makeConfig({ roundMods: false, strictCrowd: true }), players, 7);
+    const sim = dayMatch(makeConfig({ roundMods: false, strictCrowd: true }), 7, players);
     runUntil(sim, () => sim.phase === 'play');
     const a = sim.playerRound('a')!;
     runUntil(sim, () => !!sim.world.crowd && !sim.world.crowd.vote);

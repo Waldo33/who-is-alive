@@ -357,8 +357,10 @@ describe('сетевая игра', () => {
   });
 
   it('нагрузка: не больше 35 доставленных сообщений в секунду на комнату', () => {
-    // зерно задаёт тему дубля; у всех тем нагрузка около 35 (34–37 на разных зёрнах — запас исчерпан)
-    const rig = makeRig([50, 100], 0, 4);
+    // зерно задаёт тему дубля; у всех тем нагрузка около 35 (34–37 на разных зёрнах — запас исчерпан).
+    // Порядок тем сменился, когда «Казино» встало в очередь: прежнее зерно 4 теперь даёт другой дубль (36 в секунду);
+    // до этого из зёрен 1–8 укладывались в 35 тоже только два — берём одно из таких сейчас
+    const rig = makeRig([50, 100], 0, 2);
     const rng = new Rng(4);
     const before = rig.hub.delivered;
     let ticks = 0;
@@ -368,6 +370,44 @@ describe('сетевая игра', () => {
     }
     const perSec = (rig.hub.delivered - before) / (ticks / 20);
     expect(perSec).toBeLessThanOrEqual(35);
+  });
+
+  it('«Казино»: своё вращение приходит гостю лично и раньше, чем мир замрёт', () => {
+    const rig = makeRig([50, 100], 0, 6, { fixedTheme: THEME_RULES.findIndex((r) => r.id === 'casino') });
+    const rng = new Rng(4);
+    let checked = 0;
+    for (let i = 0; i < 20 * 60 && !checked; i++) {
+      rig.step();
+      botFingers(rig, rng);
+      const c = rig.host.world.crowd;
+      if (!c?.slot || rig.host.world.time < c.showAt) continue;
+      for (const g of rig.guests) {
+        const mine = g.me()?.slot;
+        expect(mine?.at).toBe(c.warnAt);
+        expect(mine).toEqual(rig.host.sim.playerRound(g.selfPid)!.slot);
+      }
+      checked++;
+    }
+    expect(checked).toBe(1);
+    // чужие вращения в чужие личные сообщения не попадают: у каждого — только своё
+    for (const { to, msg } of rig.privLog) {
+      const m = msg as { t: string; me?: { sl?: number[] } };
+      if (m.t !== 'me' || !m.me?.sl) continue;
+      const own = rig.host.sim.playerRound(to)!;
+      expect(m.me.sl[0]).toBeLessThanOrEqual(own.slot!.at);
+    }
+  });
+
+  it('нагрузка в «Казино» не выше обычной: «Крутка» — одно событие и личное сообщение', () => {
+    const rig = makeRig([50, 100], 0, 6, { fixedTheme: THEME_RULES.findIndex((r) => r.id === 'casino') });
+    const rng = new Rng(4);
+    const before = rig.hub.delivered;
+    let ticks = 0;
+    for (; ticks < 20 * 60; ticks++) {
+      rig.step();
+      botFingers(rig, rng);
+    }
+    expect((rig.hub.delivered - before) / (ticks / 20)).toBeLessThanOrEqual(35);
   });
 
   it('потери 5%: ключевые кадры возвращают гостей к хосту', () => {

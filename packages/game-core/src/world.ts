@@ -5,7 +5,6 @@ import type { NavGrid } from './nav';
 import { TICK_MS } from './config';
 import type { BossState } from './boss';
 import { BOSS_SPEED_MUL } from './boss';
-import type { SlotState } from './slots';
 
 export interface Entity {
   eid: number;
@@ -29,6 +28,10 @@ export interface Entity {
   /** Пройденное расстояние — фаза анимации шага. */
   walk: number;
   moving: boolean;
+  /** «Крутка»: скорость ×spdMul с spdFrom до spdUntil (нет полей — обычная). */
+  spdMul?: number;
+  spdFrom?: number;
+  spdUntil?: number;
 }
 
 export interface Star {
@@ -57,6 +60,8 @@ export interface CrowdState {
   windowEnd: number;
   /** Леший («Купальская ночь»): смотрит до этого момента — замершие держат позу, шевельнувшийся — его. */
   watchUntil?: number;
+  /** «Крутка» «Казино» (slots.ts): не жест, а автомат — с warnAt мигают лампы, с showAt мир стоит. */
+  slot?: boolean;
 }
 
 export interface WorldSnapshot {
@@ -69,8 +74,6 @@ export interface WorldSnapshot {
   twist?: boolean;
   /** Шеф в офисе (необязательно — для снимков старых версий). */
   boss?: BossState | null;
-  /** Стол «Казино» (необязательно — для снимков старых версий). */
-  slot?: SlotState | null;
   pending: WorldEvent[];
 }
 
@@ -89,8 +92,6 @@ export class World {
   twist = false;
   /** Шеф в офисе (boss.ts); null — в теме его нет. */
   boss: BossState | null = null;
-  /** Стол «Казино» (slots.ts); null — в теме его нет. */
-  slot: SlotState | null = null;
   private pending: WorldEvent[] = [];
   /** Журнал применённых событий (для повтора и клипа). */
   log: WorldEvent[] = [];
@@ -132,7 +133,6 @@ export class World {
     this.crowd = null;
     this.twist = false;
     this.boss = null;
-    this.slot = null;
     this.pending = [];
     this.log = [];
     this.keyframes = [];
@@ -173,7 +173,7 @@ export class World {
         }
         continue;
       }
-      if (e.pi < e.path.length) this.advance(e, this.speed * dt);
+      if (e.pi < e.path.length) this.advance(e, this.speed * this.speedMul(e) * dt);
     }
     const b = this.boss;
     if (b) {
@@ -183,6 +183,11 @@ export class World {
       if (!b.out && !frozen && b.pi < b.path.length) this.advance(b, this.speed * BOSS_SPEED_MUL * dt);
     }
     this.time += TICK_MS;
+  }
+
+  /** Множитель скорости сущности сейчас («Крутка»: молния, гиря). */
+  speedMul(e: Entity, t = this.time): number {
+    return e.spdUntil !== undefined && t >= (e.spdFrom ?? 0) && t < e.spdUntil ? (e.spdMul ?? 1) : 1;
   }
 
   private advance(e: Pick<Entity, 'x' | 'y' | 'path' | 'pi' | 'dir' | 'walk' | 'moving'>, dist: number): void {
@@ -277,7 +282,7 @@ export class World {
         this.zone = { startAt: ev.startAt, endAt: ev.endAt, from: ev.from, to: ev.to };
         break;
       case 'crowd':
-        this.crowd = { kind: ev.kind, warnAt: ev.at, showAt: ev.showAt, resumeAt: ev.resumeAt, windowEnd: ev.windowEnd, ...(ev.vote ? { vote: true } : {}), ...(ev.ghost ? { ghost: true } : {}), ...(ev.watchUntil !== undefined ? { watchUntil: ev.watchUntil } : {}) };
+        this.crowd = { kind: ev.kind, warnAt: ev.at, showAt: ev.showAt, resumeAt: ev.resumeAt, windowEnd: ev.windowEnd, ...(ev.vote ? { vote: true } : {}), ...(ev.ghost ? { ghost: true } : {}), ...(ev.watchUntil !== undefined ? { watchUntil: ev.watchUntil } : {}), ...(ev.slot ? { slot: true } : {}) };
         break;
       case 'twist':
         this.twist = ev.on;
@@ -285,11 +290,12 @@ export class World {
       case 'boss':
         this.applyBoss(ev);
         break;
-      case 'slot': {
-        const { t: _t, at: _at, ...state } = ev;
-        void _t;
-        void _at;
-        this.slot = cloneSlot(state);
+      case 'speed': {
+        const e = this.byEid.get(ev.eid);
+        if (!e) break;
+        e.spdMul = ev.mul;
+        e.spdFrom = ev.from;
+        e.spdUntil = ev.until;
         break;
       }
       case 'hit':
@@ -361,7 +367,6 @@ export class World {
       crowd: this.crowd ? { ...this.crowd } : null,
       twist: this.twist,
       boss: this.boss ? { ...this.boss, path: this.boss.path.slice(), look: this.boss.look ? { ...this.boss.look } : null } : null,
-      slot: this.slot ? cloneSlot(this.slot) : null,
       pending: this.pending.slice(),
     };
   }
@@ -375,19 +380,8 @@ export class World {
     this.crowd = s.crowd ? { ...s.crowd } : null;
     this.twist = !!s.twist;
     this.boss = s.boss ? { ...s.boss, path: s.boss.path.slice(), look: s.boss.look ? { ...s.boss.look } : null } : null;
-    this.slot = s.slot ? cloneSlot(s.slot) : null;
     this.pending = s.pending.slice();
   }
-}
-
-function cloneSlot(s: SlotState): SlotState {
-  return {
-    ...s,
-    seats: s.seats.map((x) => ({ ...x })),
-    spins: s.spins.map((x) => (x ? { outcome: x.outcome, reels: [...x.reels] } : null)),
-    effects: s.effects.map((x) => ({ ...x })),
-    over: s.over ? { reason: s.over.reason, winners: [...s.over.winners] } : null,
-  };
 }
 
 /**

@@ -1,4 +1,4 @@
-import { AiPlayer, LocalSession, MatchSim, TICK_MS, hasSanity, makeConfig } from '@kto/game-core';
+import { AiPlayer, LocalSession, MatchSim, TICK_MS, hasSanity, makeConfig, slotOutcomeIndex, slotSymbolIndex } from '@kto/game-core';
 import type { ClientSession, GameConfig, Intent, Notice, PlayerInfo, WorldEvent } from '@kto/game-core';
 import { GuestMsg, SNAP_SCALE } from './protocol';
 import type { MeMsg, PrivateMsg, RoomMsg } from './protocol';
@@ -231,6 +231,8 @@ export class HostSession implements ClientSession {
       clapsLeft: p.clapsLeft,
       clapAt: p.clapAt,
       ...(hasSanity(this.sim.theme) ? { sanity: Math.ceil(p.sanity), sins: p.sins } : {}),
+      ...(p.slot ? { sl: [p.slot.at, slotOutcomeIndex(p.slot.outcome), ...p.slot.reels.map(slotSymbolIndex)] as [number, number, number, number, number] } : {}),
+      ...(p.peek && this.sim.world.time < p.peek.until ? { pk: [p.peek.eid, p.peek.until] as [number, number] } : {}),
       ...(p.kiki.length ? { km: p.kiki.map((k) => [k.id, Math.round(k.x), Math.round(k.y), this.sim.world.time < k.at ? 1 : 0] as [number, number, number, number]) } : {}),
     };
   }
