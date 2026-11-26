@@ -16,6 +16,8 @@ permissions:
 jobs:
   timeweb:
     runs-on: ubuntu-latest
+    # секреты прода — только в окружении production, а оно пускает только ветку main (docs/security.md)
+    environment: production
     timeout-minutes: 5
     env:
       TWC_TOKEN: ${{ secrets.TWC_TOKEN }}

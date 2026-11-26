@@ -1,0 +1,25 @@
+# Обновления зависимостей (ревью безопасности, N2 и L5): PR раз в неделю, CI проверяет их как обычно.
+# Секретов прода у таких PR нет (окружение production — только для main), выкладку они не трогают до слияния.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: 'CI'
+    groups:
+      actions:
+        patterns: ['*']
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    # только исправления безопасности и патчи — крупные версии (Next, Phaser) обновляем вручную
+    groups:
+      patches:
+        update-types: ['patch']
+    ignore:
+      - dependency-name: '*'
+        update-types: ['version-update:semver-major', 'version-update:semver-minor']

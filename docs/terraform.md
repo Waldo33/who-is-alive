@@ -7,8 +7,9 @@ Terraform отвечает за саму машину: имя, тариф (vCPU,
 
 ## Как пользоваться
 
-- **Поменять тариф** — `preset` в `infra/terraform/servers.tf`. PR → прогон `infra-terraform` показывает план
-  (Summary прогона: «`preset_id`: 6807 → 6809»). После слияния — Actions › `infra-terraform` › Run workflow,
+- **Поменять тариф** — `preset` в `infra/terraform/servers.tf`. Push в `main` → прогон `infra-terraform` показывает план
+  (Summary прогона: «`preset_id`: 6807 → 6809»; на PR план не строится — секреты прода есть только у `main`,
+  `docs/security.md`). Затем — Actions › `infra-terraform` › Run workflow,
   `apply` = true. Смена тарифа **перезагружает сервер**: матчи и сайт рвутся до ~10 минут (25.11 NL-30 → NL-40: 9 минут) — применять ночью.
   После применения workflow сам запускает `game-deploy`: `setup.sh` пересчитывает потолок комнат и память под новую машину.
 - **Новый сервер** — запись в `local.servers`. План покажет «создать» (и заказ IPv4 в Нидерландах).

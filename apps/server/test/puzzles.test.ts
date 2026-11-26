@@ -85,11 +85,25 @@ describe('загадки из фильма: хранилище и маршрут
       expect(r1.answer).toBeUndefined();
       const r2 = await tap(answer[0], 2, 'device-0001');
       expect(r2).toMatchObject({ hit: true, done: true, answer, stats: { played: 1, found: 1 } });
-      // второй зритель не нашёл за три попытки
+      // второй зритель не нашёл за три попытки (время вышло трижды)
+      for (let n = 1; n < PUZZLE_TRIES; n++) expect(await tap(-1, n, 'device-0002')).toMatchObject({ hit: false, done: false });
       const r3 = await tap(-1, PUZZLE_TRIES, 'device-0002');
       expect(r3).toMatchObject({ hit: false, done: true, stats: { played: 2, found: 1 } });
-      // повтор с того же телефона не накручивает итоги
-      expect(await tap(answer[0], 1, 'device-0002')).toMatchObject({ stats: { played: 2, found: 1 } });
+      // повтор с того же телефона не накручивает итоги и не даёт новых попыток
+      expect(await tap(answer[0], 1, 'device-0002')).toMatchObject({ hit: false, done: true, stats: { played: 2, found: 1 } });
+
+      // M4: номер попытки считает сервер. «Третья попытка» первым же тапом ответа не даёт…
+      const s1 = await tap(miss, PUZZLE_TRIES, 'device-0003');
+      expect(s1).toMatchObject({ hit: false, done: false });
+      expect(s1.answer).toBeUndefined();
+      // …повтор того же тапа (сеть моргнула) отвечает так же, а перебор «первой попыткой» — это вторая и третья
+      expect(await tap(miss, 1, 'device-0003')).toMatchObject({ hit: false, done: false });
+      expect(await tap(miss + 1000, 1, 'device-0003')).toMatchObject({ done: false });
+      // третья (последняя) попытка может попасть, но четвёртой нет
+      expect(await tap(answer[0], 1, 'device-0003')).toMatchObject({ hit: true, done: true, stats: { played: 3, found: 2 } });
+      // повтор того же тапа с номером страницы — тот же ответ, итоги не удваиваются
+      expect(await tap(answer[0], 3, 'device-0003')).toMatchObject({ hit: true, done: true, stats: { played: 3, found: 2 } });
+      expect(await tap(answer[1] ?? answer[0], 2, 'device-0003')).toMatchObject({ hit: false, done: true });
     } finally {
       await srv.close();
     }

@@ -30,6 +30,10 @@ const TTL_MS = 30 * 86_400_000;
 const DIR_MAX = 200 * 1024 * 1024;
 /** Сколько загадок держать в памяти (каждая ~30 КБ в разобранном виде). */
 const CACHE_MAX = 64;
+/** Ход попыток и устройства в итогах — сутки, не больше TAPS_MAX записей в памяти. */
+const TAP_TTL_MS = 86_400_000;
+const TAPS_MAX = 50_000;
+const RESULT_DEVICES_PER_IP = 5;
 
 const gz = promisify(gzip);
 const gunz = promisify(gunzip);
@@ -68,6 +72,14 @@ export class PuzzleStore {
   readonly dir: string;
   private readonly cache = new Map<string, StoredPuzzle>();
   private readonly pending = new Set<Promise<void>>();
+  /**
+   * Ход попыток зрителя (код|устройство → сущности по порядку) — на сервере, а не со слов страницы:
+   * иначе номер попытки присылал бы телефон и мог бы перебирать всех 32 человечков «первой попыткой»
+   * (ревью безопасности, M4). Только в памяти, сутки: после перезапуска счёт начинается заново.
+   */
+  private readonly taps = new Map<string, { eids: number[]; at: number }>();
+  /** Сколько разных устройств с одного адреса попало в итоги загадки (накрутка «доли нашедших»). */
+  private readonly ipDevices = new Map<string, { devices: Set<string>; at: number }>();
 
   constructor(
     dir?: string,
@@ -128,18 +140,58 @@ export class PuzzleStore {
   }
 
   /**
-   * Тап зрителя: `eid` — сущность под пальцем (или -1 — время вышло), `n` — номер попытки (1…3).
-   * Сервер не хранит ход попыток (их хранит страница): номер нужен для подсказки и конца.
+   * Тап зрителя: `eid` — сущность под пальцем (или -1 — время вышло), `n` — номер попытки по счёту страницы
+   * (1…3), `viewer` — устройство (или адрес). Номер попытки считает сервер: повтор того же тапа (сеть
+   * моргнула) отвечает так же, любой другой — следующая попытка. `tries` в ответе — номер по счёту сервера.
    */
-  async tap(code: string, eid: number, n: number): Promise<{ doc: StoredPuzzle; res: TapResult } | null> {
+  async tap(code: string, eid: number, n: number, viewer = ''): Promise<{ doc: StoredPuzzle; res: TapResult; tries: number; first: boolean } | null> {
     const doc = await this.get(code);
     if (!doc) return null;
-    if (!Number.isInteger(eid) || !Number.isInteger(n) || n < 1 || n > PUZZLE_TRIES) return { doc, res: { status: 400, body: { error: 'bad_tap' } } };
+    if (!Number.isInteger(eid) || !Number.isInteger(n) || n < 1 || n > PUZZLE_TRIES) return { doc, res: { status: 400, body: { error: 'bad_tap' } }, tries: 0, first: false };
+    const now = this.now();
+    const key = `${code}|${viewer}`;
+    let st = this.taps.get(key);
+    if (!st || now - st.at > TAP_TTL_MS) {
+      st = { eids: [], at: now };
+      this.taps.set(key, st);
+      if (this.taps.size > TAPS_MAX) for (const [k, v] of this.taps) if (now - v.at > TAP_TTL_MS || this.taps.size > TAPS_MAX) this.taps.delete(k);
+    }
+    const replay = n <= st.eids.length && st.eids[n - 1] === eid;
+    let first = false;
+    if (!replay && st.eids.length >= PUZZLE_TRIES) {
+      // попытки кончились — только ответ, без новой проверки
+      return { doc, res: { status: 200, body: { hit: false, done: true, answer: doc.secret.answer } }, tries: st.eids.length, first: false };
+    } else if (!replay) {
+      st.eids.push(eid);
+      n = st.eids.length;
+      first = true;
+    }
     const hit = doc.secret.answer.includes(eid);
     const done = hit || n >= PUZZLE_TRIES;
-    if (done) return { doc, res: { status: 200, body: { hit, done, answer: doc.secret.answer } } };
+    // угадал — дальше попыток нет: повторный «первый тап» другим человечком не пройдёт
+    if (hit && first) while (st.eids.length < PUZZLE_TRIES) st.eids.push(eid);
+    if (done) return { doc, res: { status: 200, body: { hit, done, answer: doc.secret.answer } }, tries: n, first };
     const hint = puzzleHint(doc.pub, doc.secret, n) ?? undefined;
-    return { doc, res: { status: 200, body: { hit, done, hint } } };
+    return { doc, res: { status: 200, body: { hit, done, hint } }, tries: n, first };
+  }
+
+  /**
+   * Можно ли записать итог этого устройства в «долю нашедших»: с одного адреса — не больше
+   * RESULT_DEVICES_PER_IP разных устройств на загадку (иначе долю накручивают, меняя id устройства).
+   */
+  resultAllowed(code: string, ip: string, device: string): boolean {
+    const now = this.now();
+    const key = `${code}|${ip}`;
+    let e = this.ipDevices.get(key);
+    if (!e || now - e.at > TAP_TTL_MS) {
+      e = { devices: new Set(), at: now };
+      this.ipDevices.set(key, e);
+      if (this.ipDevices.size > TAPS_MAX) for (const [k, v] of this.ipDevices) if (now - v.at > TAP_TTL_MS || this.ipDevices.size > TAPS_MAX) this.ipDevices.delete(k);
+    }
+    if (e.devices.has(device)) return true;
+    if (e.devices.size >= RESULT_DEVICES_PER_IP) return false;
+    e.devices.add(device);
+    return true;
   }
 
   /** Дождаться фоновых загрузок в S3 (тесты). */

@@ -66,6 +66,12 @@ export class ClipStore {
   readonly remoteStats = { uploaded: 0, failed: 0, redirects: 0, direct: 0 };
   /** Клипы, которые телефон грузит прямо в S3: id → когда выдали ссылку (для обложки к нему). */
   private readonly issued = new Map<string, number>();
+  /**
+   * Чей клип: id → игрок, которому выдали id. Обложку меняет только он — id виден в каждой расшаренной
+   * ссылке, и без этой проверки любой подменил бы обложку чужой видео-карточки (ревью безопасности, M2).
+   * Только в памяти: после перезапуска обложку к старому клипу не поменять (её шлют сразу после клипа).
+   */
+  private readonly owners = new Map<string, { user: string; at: number }>();
 
   constructor(dir?: string, private readonly now: () => number = Date.now, private readonly remote?: ClipRemote) {
     this.dir = dir ?? join(tmpdir(), 'massovka-clips');
@@ -172,6 +178,7 @@ export class ClipStore {
     if (!this.rateOk(user)) return { status: 429, body: { error: 'rate_limited' } };
     const id = randomBytes(10).toString('hex');
     this.issued.set(id, this.now());
+    this.own(id, user);
     if (this.issued.size > 20_000) for (const [k, t] of this.issued) if (this.now() - t > 3600_000) this.issued.delete(k);
     this.remoteStats.direct++;
     const put = r.s3.presignPut(`clips/${id}.${ext}`, REMOTE_PUT_TTL_S, { type: CLIP_MIME[ext], length: size, publicRead: true });
@@ -179,11 +186,23 @@ export class ClipStore {
     return { status: 200, body: { id, ext, put, type: CLIP_MIME[ext], headers: { 'Content-Type': CLIP_MIME[ext], 'x-amz-acl': 'public-read' } } };
   }
 
-  /** Обложка к клипу, который телефон грузит прямо в S3: ссылка PUT на JPEG (выдаётся в течение часа). */
-  directThumb(id: string, b: { size?: unknown } | null): ClipResult {
+  /** Запомнить автора клипа (держим час: обложка приходит сразу за клипом). */
+  private own(id: string, user: string): void {
+    this.owners.set(id, { user, at: this.now() });
+    if (this.owners.size > 20_000) for (const [k, o] of this.owners) if (this.now() - o.at > 3600_000) this.owners.delete(k);
+  }
+
+  /** Клип этого игрока и выдан не больше часа назад. */
+  private owns(id: string, user: string): boolean {
+    const o = this.owners.get(id);
+    return !!o && o.user === user && this.now() - o.at <= 3600_000;
+  }
+
+  /** Обложка к клипу, который телефон грузит прямо в S3: ссылка PUT на JPEG (выдаётся в течение часа, только автору). */
+  directThumb(id: string, b: { size?: unknown } | null, user: string): ClipResult {
     const r = this.remote;
     const t = this.issued.get(id);
-    if (!r || t === undefined || this.now() - t > 3600_000) return { status: 404, body: { error: 'no_clip' } };
+    if (!r || t === undefined || this.now() - t > 3600_000 || !this.owns(id, user)) return { status: 404, body: { error: 'no_clip' } };
     const size = typeof b?.size === 'number' && Number.isInteger(b.size) ? b.size : 0;
     if (size < 100 || size > THUMB_MAX) return { status: 400, body: { error: 'bad_thumb' } };
     return {
@@ -212,6 +231,7 @@ export class ClipStore {
       await rm(join(this.dir, `${id}.${ext}`), { force: true });
       return { status: size < 0 ? 413 : 400, body: { error: size < 0 ? 'too_big' : 'bad_clip' } };
     }
+    this.own(id, user);
     this.mirror(id, ext);
     return { status: 200, body: { id, ext } };
   }
@@ -235,8 +255,9 @@ export class ClipStore {
     return { id, thumb: hasThumb };
   }
 
-  /** Обложка к уже загруженному клипу. */
-  async thumb(id: string, req: IncomingMessage): Promise<ClipResult> {
+  /** Обложка к уже загруженному клипу (только автору). */
+  async thumb(id: string, req: IncomingMessage, user: string): Promise<ClipResult> {
+    if (!this.owns(id, user)) return { status: 404, body: { error: 'no_clip' } };
     if (!(await this.file(id, 'mp4')) && !(await this.file(id, 'webm'))) return { status: 404, body: { error: 'no_clip' } };
     const path = join(this.dir, `${id}.jpg`);
     const size = await this.save(req, path, THUMB_MAX, (head) => head[0] === 0xff && head[1] === 0xd8);

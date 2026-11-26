@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Rng, THEME_RULES, killerExposed } from '@kto/game-core';
 import type { GameConfig, PlayerInfo } from '@kto/game-core';
-import { DelayedTransport, HostSession, LoopbackHub, RemoteSession } from '../src';
+import { DelayedTransport, HostSession, LoopbackHub, RESYNC_MIN_MS, RemoteSession } from '../src';
 import type { RoomMsg } from '../src';
 
 /**
@@ -80,6 +80,27 @@ beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
 
 describe('сетевая игра', () => {
+  it('полный снимок мира — не чаще раза в 2 с на игрока, но просьба не теряется (M6)', () => {
+    const rig = makeRig([20, 20], 0, 5);
+    // дубль уже идёт (как в тесте перезагрузки страницы)
+    for (let i = 0; i < 20 * 25; i++) rig.step();
+    // гость шлёт resync каждый шаг (20 в секунду) три секунды подряд
+    const t = rig.hub.join({ userId: 'g2', name: 'g2', color: 2, joinedAt: 9 });
+    const got: number[] = [];
+    t.onMessage((ch, msg) => {
+      if (ch === 'private' && (msg as { t?: string }).t === 'resync') got.push(rig.now());
+    });
+    for (let i = 0; i < 20 * 3; i++) {
+      void t.send('host', { t: 'resync' });
+      rig.step();
+    }
+    for (let i = 0; i < 20 * 3; i++) rig.step();
+    // 60 просьб за 3 с → снимки в 0, 2, 4 с: не больше трёх, и последний пришёл после конца просьб
+    expect(got.length).toBeGreaterThanOrEqual(2);
+    expect(got.length).toBeLessThanOrEqual(3);
+    for (let i = 1; i < got.length; i++) expect(got[i] - got[i - 1]).toBeGreaterThanOrEqual(RESYNC_MIN_MS);
+  });
+
   it('позиции у гостей совпадают с хостом (кроме своего предсказанного персонажа)', () => {
     const rig = makeRig([80, 200], 0, 3);
     const rng = new Rng(9);

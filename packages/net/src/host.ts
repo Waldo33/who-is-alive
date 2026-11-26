@@ -4,6 +4,9 @@ import { GuestMsg, SNAP_SCALE } from './protocol';
 import type { MeMsg, PrivateMsg, RoomMsg } from './protocol';
 import type { Transport } from './transport';
 
+/** Полный снимок мира одному игроку — не чаще, мс (M6). */
+export const RESYNC_MIN_MS = 2000;
+
 export interface HostOptions {
   transport: Transport;
   players: PlayerInfo[];
@@ -40,6 +43,13 @@ export class HostSession implements ClientSession {
   private lastKm = new Map<string, string>();
   private lastKmN = new Map<string, number>();
   private lastMeAt = new Map<string, number>();
+  /**
+   * Полный снимок мира по просьбе гостя — не чаще раза в RESYNC_MIN_MS на игрока: иначе 30 просьб в секунду
+   * от одного клиента грузят канал и процессор сервера (ревью безопасности, M6). Просьба раньше срока не
+   * теряется — снимок уйдёт, как только срок выйдет.
+   */
+  private lastResyncAt = new Map<string, number>();
+  private resyncDue = new Set<string>();
   private lastSentWt = -1;
   private unsub: (() => void) | null = null;
   private readonly cfgOverrides: Partial<GameConfig>;
@@ -190,7 +200,18 @@ export class HostSession implements ClientSession {
     const m = parsed.data;
     if (m.t === 'i') this.sim.intent(from, m.i as Intent);
     else if (m.t === 'ping') this.sendTo(from, { t: 'pong', c: m.c, wt: this.sim.world.time });
-    else if (m.t === 'resync') this.sendResync(from);
+    else if (m.t === 'resync') this.askResync(from);
+  }
+
+  private askResync(pid: string): void {
+    const last = this.lastResyncAt.get(pid);
+    if (last !== undefined && this.sim.now - last < RESYNC_MIN_MS) {
+      this.resyncDue.add(pid);
+      return;
+    }
+    this.lastResyncAt.set(pid, this.sim.now);
+    this.resyncDue.delete(pid);
+    this.sendResync(pid);
   }
 
   private meFor(pid: string): MeMsg | null {
@@ -265,6 +286,7 @@ export class HostSession implements ClientSession {
     s.notices = [];
 
     const now = s.now;
+    for (const pid of this.resyncDue) if (now - (this.lastResyncAt.get(pid) ?? 0) >= RESYNC_MIN_MS) this.askResync(pid);
     // новый раунд: мир только что создан — отправить расстановку (без указания, кто игрок)
     if (s.round !== this.lastRound) {
       this.lastRound = s.round;

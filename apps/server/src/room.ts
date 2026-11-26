@@ -949,7 +949,11 @@ export class Room {
 
 /** Имя: без лишних пробелов и управляющих символов, до 14 знаков (как в Supabase). */
 export function cleanName(raw: string, fallback: string): string {
-  // eslint-disable-next-line no-control-regex
-  const s = raw.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 14);
-  return s || fallback;
+  // управляющие, невидимые и «переворачивающие» символы (U+202E, U+200B…) — вон: иначе можно выдать себя за
+  // другого игрока в лобби, карточке Telegram и фильме (ревью безопасности, N6). ZWJ оставляем — им склеены эмодзи
+  const s = raw
+    .normalize('NFKC')
+    .replace(/[\p{Cc}\p{Cf}\p{Co}\p{Cs}]/gu, (c) => (c === '\u200d' ? c : ''))
+    .trim();
+  return [...s].slice(0, 14).join('').trim() || fallback;
 }

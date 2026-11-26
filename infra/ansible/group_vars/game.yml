@@ -3,7 +3,7 @@ tunnels_retired: [massovka-relay]
 # ключ туннеля сервера бота (Нидерланды): открыть у себя 9090 (бот) и 9428 (логи), пройти к базе, метрикам игры и машины
 # (сам ключ роль читает с сервера в Нидерландах — /etc/massovka/tunnel_ed25519.pub)
 tunnel_keys: "{{ [infra_tunnel_prefix ~ ' ' ~ infra_tunnel_pub] if infra_tunnel_pub | default('') != '' else [] }}"
-infra_tunnel_prefix: 'restrict,port-forwarding,permitlisten="127.0.0.1:9090",permitlisten="127.0.0.1:9428",permitopen="127.0.0.1:5432",permitopen="127.0.0.1:8080",permitopen="127.0.0.1:9100"'
+infra_tunnel_prefix: 'restrict,port-forwarding,permitlisten="127.0.0.1:9090",permitlisten="127.0.0.1:9428",permitopen="127.0.0.1:5432",permitopen="127.0.0.1:8079",permitopen="127.0.0.1:9100"'
 
 # адреса игрового сервера (как vars для setup.sh в game-deploy, Европа)
 app_host: api.benobody.app

@@ -628,7 +628,7 @@ export class Bot {
       if (!this.o.clipBase) return { status: 503, body: { error: 'no_clips' } };
       // фильм матча из комнаты — кнопка «Реванш» туда же (по метке карточки или по коду комнаты)
       const again = INVITE_TAG.test(body.invite ?? '') ? `g_${body.invite}` : /^[A-Z]{4}$/.test(body.code ?? '') ? `r_${body.code}` : '';
-      result = await this.clipCard(t, body.clip!, typeof body.text === 'string' ? body.text.slice(0, 300) : '', body.thumb === true, again);
+      result = await this.clipCard(t, body.clip!, typeof body.text === 'string' ? safeCaption(body.text.slice(0, 300), this.o.site) : '', body.thumb === true, again);
     } else result = await this.inviteCard(t);
     const msg = await this.api<{ id: string }>('savePreparedInlineMessage', {
       user_id: init.user.id,
@@ -713,6 +713,31 @@ export class Bot {
     const rows = await this.o.store.dailyBoard(chat, n);
     return { status: 200, body: { board: rows.map((r) => ({ name: r.name, tries: r.tries, won: r.won, me: r.userId === init.user.id })), chat: true } };
   }
+}
+
+/**
+ * Подпись видео-карточки приходит с телефона, а карточка уходит в чаты «через бота»: без чистки это обёртка
+ * для спама и фишинга под брендом игры (ревью безопасности, M3). Оставляем только ссылки на свой сайт;
+ * чужие адреса, домены и @упоминания вырезаем, невидимые и «переворачивающие» символы — тоже.
+ */
+export function safeCaption(text: string, site: string): string {
+  let own = '';
+  try {
+    own = new URL(site).hostname.toLowerCase();
+  } catch {
+    /* сайт не задан — свои ссылки тоже вырезаются */
+  }
+  const ok = (host: string) => !!own && (host === own || host.endsWith('.' + own));
+  return text
+    // ZWJ (U+200D) оставляем: им склеены составные эмодзи
+    .replace(/[\p{Cc}\p{Cf}\p{Co}]/gu, (c) => (c === '\n' || c === '\u200d' ? c : ''))
+    .replace(/(?:[a-z][a-z0-9+.-]*:\/\/)?(?:[\p{L}\p{N}-]+\.)+[\p{L}]{2,}(?::\d+)?(?:[/?#]\S*)?/giu, (m) => {
+      const host = m.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '').split(/[/?#:]/)[0].toLowerCase();
+      return ok(host) ? m : '';
+    })
+    .replace(/(^|[^\p{L}\p{N}_])@[\p{L}\p{N}_]{3,}/gu, '$1')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
 }
 
 function safeEqual(a: string, b: string): boolean {

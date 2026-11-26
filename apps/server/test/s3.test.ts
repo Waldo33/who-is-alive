@@ -191,10 +191,11 @@ describe('клипы в S3', () => {
     expect(put.pathname).toBe(`/bucket/clips/${d.id}.webm`);
     expect(put.searchParams.get('X-Amz-SignedHeaders')).toBe('content-length;content-type;host;x-amz-acl');
     expect(put.searchParams.get('X-Amz-Expires')).toBe('600');
-    // обложка — только к выданному клипу
-    expect(store.directThumb('0'.repeat(20), { size: 2000 }).status).toBe(404);
-    expect(store.directThumb(d.id, { size: 999_999 }).status).toBe(400);
-    expect(new URL((store.directThumb(d.id, { size: 2000 }).body as { put: string }).put).pathname).toBe(`/bucket/clips/${d.id}.jpg`);
+    // обложка — только к выданному клипу и только его автору (M2: id виден в каждой ссылке)
+    expect(store.directThumb('0'.repeat(20), { size: 2000 }, 'u1').status).toBe(404);
+    expect(store.directThumb(d.id, { size: 2000 }, 'u2').status).toBe(404);
+    expect(store.directThumb(d.id, { size: 999_999 }, 'u1').status).toBe(400);
+    expect(new URL((store.directThumb(d.id, { size: 2000 }, 'u1').body as { put: string }).put).pathname).toBe(`/bucket/clips/${d.id}.jpg`);
     // телефон положил файл — GET ведёт в бакет
     s3.objects.set(`clips/${d.id}.webm`, { body: Buffer.alloc(5000), type: 'video/webm' });
     expect(new URL((await store.remoteUrl(d.id, 'webm'))!).pathname).toBe(`/bucket/clips/${d.id}.webm`);

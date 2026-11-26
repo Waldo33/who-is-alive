@@ -44,6 +44,8 @@ jobs:
     # стоп-кран: переменная репозитория DEPLOY_FREEZE=1 — push не выкладывает, только запуск вручную
     if: vars.DEPLOY_FREEZE != '1' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    # секреты прода — только в окружении production, а оно пускает только ветку main (docs/security.md)
+    environment: production
     timeout-minutes: 30
     strategy:
       max-parallel: 1
@@ -74,9 +76,9 @@ jobs:
       ALERTS_CHAT: '-5387784292'
       SSH_OPTS: -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=20 -o ServerAliveInterval=15 -o LogLevel=ERROR
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: pnpm
@@ -88,7 +90,7 @@ jobs:
       - name: Сборка
         run: pnpm --filter @kto/server build
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             ~/.cargo/registry
@@ -191,31 +193,30 @@ jobs:
           HAVE_GEOIP: ${{ steps.have.outputs.geoip }}
         run: |
           mkdir -p deploy
-          # Node 22 — последняя версия ветки, проверка контрольной суммы
-          curl -fsSL https://nodejs.org/dist/latest-v22.x/SHASUMS256.txt -o /tmp/node.sums
-          file=$(grep -oE 'node-v22\.[0-9]+\.[0-9]+-linux-x64\.tar\.xz' /tmp/node.sums | head -1)
-          ver=$(echo "$file" | grep -oE 'v22\.[0-9]+\.[0-9]+')
+          # версии и суммы закреплены в infra/game/versions.env — «последнюю версию» выкладка не берёт
+          . infra/game/versions.env
+          # Node 22, проверка контрольной суммы из репозитория
+          ver=$NODE_VERSION; file="node-$ver-linux-x64.tar.xz"
           if [ "$ver" != "$HAVE_NODE" ]; then
             echo "Node: $HAVE_NODE → $ver"
-            curl -fsSL "https://nodejs.org/dist/latest-v22.x/$file" -o "deploy/$file"
-            (cd deploy && grep " $file\$" /tmp/node.sums | sha256sum -c -)
-            mv "deploy/$file" deploy/node.tar.xz
+            curl -fsSL "https://nodejs.org/dist/$ver/$file" -o deploy/node.tar.xz
+            echo "$NODE_SHA256  deploy/node.tar.xz" | sha256sum -c -
             echo "$ver" > deploy/node.version
           else echo "Node $ver уже стоит"; fi
-          # Caddy — последний релиз с GitHub, проверка контрольной суммы
-          tag=$(gh release view --repo caddyserver/caddy --json tagName -q .tagName)
+          # Caddy — релиз с GitHub, проверка контрольной суммы из репозитория
+          tag=$CADDY_VERSION
           if [ "$tag" != "$HAVE_CADDY" ]; then
             echo "Caddy: $HAVE_CADDY → $tag"
             v=${tag#v}
-            gh release download "$tag" --repo caddyserver/caddy -p "caddy_${v}_linux_amd64.tar.gz" -p "caddy_${v}_checksums.txt" -D /tmp/caddy
-            (cd /tmp/caddy && grep " caddy_${v}_linux_amd64.tar.gz\$" "caddy_${v}_checksums.txt" | sha512sum -c -)
+            gh release download "$tag" --repo caddyserver/caddy -p "caddy_${v}_linux_amd64.tar.gz" -D /tmp/caddy
+            echo "$CADDY_SHA256  /tmp/caddy/caddy_${v}_linux_amd64.tar.gz" | sha256sum -c -
             tar -xzf "/tmp/caddy/caddy_${v}_linux_amd64.tar.gz" -C /tmp/caddy caddy
             mv /tmp/caddy/caddy deploy/caddy
             echo "$tag" > deploy/caddy.version
           else echo "Caddy $tag уже стоит"; fi
           # страна по адресу для замера доступности (apps/server/src/geo.ts): DB-IP Country Lite (CC BY 4.0)
           # из npm — db-ip.com из наших сред закрыт. Привозим, только если на сервере старая версия
-          gv=$(npm view @ip-location-db/dbip-country-mmdb version 2>/dev/null || true)
+          gv=$GEOIP_VERSION
           if [ -n "$gv" ] && [ "$gv" != "$HAVE_GEOIP" ]; then
             echo "GeoIP: $HAVE_GEOIP → $gv"
             (cd /tmp && npm pack "@ip-location-db/dbip-country-mmdb@$gv" >/dev/null && tar -xzf ip-location-db-dbip-country-mmdb-*.tgz package/dbip-country.mmdb)
@@ -235,28 +236,32 @@ jobs:
         run: |
           set -e
           d=$(mktemp -d)
+          # версии и суммы закреплены в infra/game/versions.env
+          . infra/game/versions.env
           # node_exporter — обоим серверам
-          tag=$(gh release view --repo prometheus/node_exporter --json tagName -q .tagName)
+          tag=$NODE_EXPORTER_VERSION
           if [ "$tag" != "$HAVE_NE" ]; then
             v=${tag#v}
-            gh release download "$tag" --repo prometheus/node_exporter -p "node_exporter-$v.linux-amd64.tar.gz" -p sha256sums.txt -D "$d"
-            (cd "$d" && grep " node_exporter-$v.linux-amd64.tar.gz\$" sha256sums.txt | sha256sum -c -)
+            gh release download "$tag" --repo prometheus/node_exporter -p "node_exporter-$v.linux-amd64.tar.gz" -D "$d"
+            echo "$NODE_EXPORTER_SHA256  $d/node_exporter-$v.linux-amd64.tar.gz" | sha256sum -c -
             tar -xzf "$d/node_exporter-$v.linux-amd64.tar.gz" -C "$d"
             cp "$d/node_exporter-$v.linux-amd64/node_exporter" deploy/node_exporter; echo "$tag" > deploy/node_exporter.version
             echo "node_exporter: $HAVE_NE → $tag"
           fi
           [ "$ROLE" = infra ] || exit 0
           # VictoriaMetrics и VictoriaLogs — однофайловые, из релизов GitHub
-          tag=$(gh release view --repo VictoriaMetrics/VictoriaMetrics --json tagName -q .tagName)
+          tag=$VICTORIA_METRICS_VERSION
           if [ "$tag" != "$HAVE_VM" ]; then
             gh release download "$tag" --repo VictoriaMetrics/VictoriaMetrics -p "victoria-metrics-linux-amd64-$tag.tar.gz" -D "$d"
+            echo "$VICTORIA_METRICS_SHA256  $d/victoria-metrics-linux-amd64-$tag.tar.gz" | sha256sum -c -
             tar -xzf "$d/victoria-metrics-linux-amd64-$tag.tar.gz" -C "$d"
             cp "$d/victoria-metrics-prod" deploy/victoria-metrics; echo "$tag" > deploy/victoria-metrics.version
             echo "VictoriaMetrics: $HAVE_VM → $tag"
           fi
-          tag=$(gh release view --repo VictoriaMetrics/VictoriaLogs --json tagName -q .tagName 2>/dev/null || true)
-          if [ -n "$tag" ] && [ "$tag" != "$HAVE_VL" ]; then
+          tag=$VICTORIA_LOGS_VERSION
+          if [ "$tag" != "$HAVE_VL" ]; then
             if gh release download "$tag" --repo VictoriaMetrics/VictoriaLogs -p "victoria-logs-linux-amd64-$tag.tar.gz" -D "$d"; then
+              echo "$VICTORIA_LOGS_SHA256  $d/victoria-logs-linux-amd64-$tag.tar.gz" | sha256sum -c -
               tar -xzf "$d/victoria-logs-linux-amd64-$tag.tar.gz" -C "$d"
               cp "$d/victoria-logs-prod" deploy/victoria-logs; echo "$tag" > deploy/victoria-logs.version
               echo "VictoriaLogs: $HAVE_VL → $tag"
@@ -265,11 +270,14 @@ jobs:
             fi
           fi
           # Grafana OSS
-          tag=$(gh release view --repo grafana/grafana --json tagName -q .tagName)
+          tag=$GRAFANA_VERSION
           if [ "$tag" != "$HAVE_GF" ]; then
             v=${tag#v}
             curl -fsSL "https://dl.grafana.com/oss/release/grafana-$v.linux-amd64.tar.gz" -o deploy/grafana.tar.gz
-            curl -fsSL "https://dl.grafana.com/oss/release/grafana-$v.linux-amd64.tar.gz.sha256" -o "$d/gf.sha256" && echo "$(cat "$d/gf.sha256")  deploy/grafana.tar.gz" | sha256sum -c -
+            sum=$GRAFANA_SHA256
+            [ -n "$sum" ] || sum=$(curl -fsSL "https://dl.grafana.com/oss/release/grafana-$v.linux-amd64.tar.gz.sha256" | grep -oE '^[0-9a-f]{64}')
+            echo "Grafana $tag sha256: $sum"
+            echo "$sum  deploy/grafana.tar.gz" | sha256sum -c -
             echo "$tag" > deploy/grafana.version
             echo "Grafana: $HAVE_GF → $tag"
           fi
