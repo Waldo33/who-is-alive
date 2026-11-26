@@ -128,6 +128,13 @@ if (s3) {
 
 // клипы для Telegram и фильмы матча: systemd StateDirectory=massovka-clips (/var/lib/massovka-clips)
 const clips = new ClipStore(env.CLIP_DIR || env.STATE_DIRECTORY || undefined, undefined, s3 ? { s3, log } : undefined);
+// клипы с дисковых времён — в бакет и с диска долой (папка 1 ГБ больше не копится)
+if (s3) {
+  void clips
+    .drainLocal()
+    .then((r) => log('info', 's3_drain', r))
+    .catch((e: unknown) => log('warn', 's3_drain_failed', { err: String(e).slice(0, 300) }));
+}
 // загадки из фильма (/v1/puzzles): в подпапке клипов (общая у синего и зелёного), 30 суток, копия в S3
 const puzzles = new PuzzleStore(join(clips.dir, 'puzzles'), undefined, s3 ? { s3, log } : undefined);
 

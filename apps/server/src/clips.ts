@@ -107,7 +107,8 @@ export class ClipStore {
   /** Копия в S3 в фоне (клип, пришедший с телефона через сервер): локальный файл остаётся. */
   private mirror(id: string, ext: string): void {
     if (!this.remote) return;
-    const job = this.put(id, ext).then(() => undefined).finally(() => this.pending.delete(job));
+    // ушёл в бакет — с диска долой (отдаёт S3 или сервер из S3); не ушёл — остаётся на диске
+    const job = this.moveToRemote(id, ext).finally(() => this.pending.delete(job));
     this.pending.add(job);
   }
 
@@ -258,7 +259,9 @@ export class ClipStore {
   /** Обложка к уже загруженному клипу (только автору). */
   async thumb(id: string, req: IncomingMessage, user: string): Promise<ClipResult> {
     if (!this.owns(id, user)) return { status: 404, body: { error: 'no_clip' } };
-    if (!(await this.file(id, 'mp4')) && !(await this.file(id, 'webm'))) return { status: 404, body: { error: 'no_clip' } };
+    // клип мог уже уехать в S3 (mirror убирает его с диска) — обложка к нему всё равно принимается
+    const inS3 = this.inRemote.has(`clips/${id}.mp4`) || this.inRemote.has(`clips/${id}.webm`);
+    if (!inS3 && !(await this.file(id, 'mp4')) && !(await this.file(id, 'webm'))) return { status: 404, body: { error: 'no_clip' } };
     const path = join(this.dir, `${id}.jpg`);
     const size = await this.save(req, path, THUMB_MAX, (head) => head[0] === 0xff && head[1] === 0xd8);
     if (size <= 0) {
@@ -267,6 +270,31 @@ export class ClipStore {
     }
     this.mirror(id, 'jpg');
     return { status: 200, body: { ok: true } };
+  }
+
+  /**
+   * Перевезти в S3 всё, что лежит в папке с дисковых времён (до S3 или когда бакет не отвечал), и убрать
+   * с диска. По одному файлу, в фоне при старте; свежие (моложе минуты) — не трогаем, их везёт загрузка.
+   */
+  async drainLocal(): Promise<{ moved: number; left: number }> {
+    let moved = 0;
+    let left = 0;
+    if (!this.remote) return { moved, left };
+    for (const name of await readdir(this.dir).catch(() => [] as string[])) {
+      const m = /^([0-9a-f]{20})\.(mp4|webm|jpg)$/.exec(name);
+      if (!m) continue;
+      const st = await stat(join(this.dir, name)).catch(() => null);
+      if (!st?.isFile() || this.now() - st.mtimeMs < 60_000) continue;
+      if (await this.put(m[1], m[2])) {
+        await rm(join(this.dir, name), { force: true });
+        moved++;
+      } else {
+        // бакет не принял — остальное не трогаем (не сыпать сбоями), доедет при следующем старте
+        left++;
+        break;
+      }
+    }
+    return { moved, left };
   }
 
   /** Путь к файлу клипа или null. */
