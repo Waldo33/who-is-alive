@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
@@ -121,6 +121,17 @@ describe('клипы в S3', () => {
     // открыт по прямой ссылке — её бот отдаёт Telegram
     expect(s3.objects.get(`clips/${id}.mp4`)?.acl).toBe('public-read');
 
+    // клип с телефона через сервер: после загрузки в бакет на диске его не остаётся
+    expect(await store.file(id, 'mp4')).toBeNull();
+    // старые клипы с дисковых времён переезжают в бакет
+    const old = 'a'.repeat(20);
+    await writeFile(join(dir, `${old}.mp4`), Buffer.alloc(2000, 5));
+    const past = new Date(Date.now() - 3600_000);
+    await utimes(join(dir, `${old}.mp4`), past, past);
+    expect(await store.drainLocal()).toEqual({ moved: 1, left: 0 });
+    expect(s3.objects.has(`clips/${old}.mp4`)).toBe(true);
+    expect(await store.file(old, 'mp4')).toBeNull();
+
     // фильм с сервера: mp4 и обложка
     const tmp = join(dir, 'film.mp4');
     await writeFile(tmp, Buffer.alloc(3000, 1));
@@ -133,11 +144,6 @@ describe('клипы в S3', () => {
 
     srv = new GameServer({ authSecret: 'test-secret-test-secret-test-secret!!', log: silentLogger, clips: store });
     const http = `http://127.0.0.1:${await srv.listen(0, '127.0.0.1')}`;
-    // пока файл на диске — отдаём сами, как раньше
-    const local = await fetch(`${http}/v1/clips/${id}.mp4`, { redirect: 'manual' });
-    expect(local.status).toBe(200);
-    // диск почистили — ссылка в S3
-    await rm(join(dir, `${id}.mp4`));
     // без перенаправления: Telegram не отправил карточку по 302 на S3 (26.11)
     const moved = await fetch(`${http}/v1/clips/${id}.mp4`, { redirect: 'manual' });
     expect(moved.status).toBe(200);
