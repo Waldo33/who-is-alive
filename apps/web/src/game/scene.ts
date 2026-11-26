@@ -828,21 +828,19 @@ export class GameScene extends Phaser.Scene {
         },
       });
     });
-    // «Казино»: «Крутить» и «Пас» в нижней панели, пока автомат ждёт выбора
+    // «Казино»: «Крутить» и «Пас» нарисованы на самом автомате (slot-ui), сцена только ловит нажатия
     const slotOpen = () => !!this.slotScreen?.canChoose(this.sim);
-    const slotBtn = (id: string, x: number, w: number, label: string, pull: boolean, accent?: string) => {
-      const b: Button = {
-        id, x, y: PANEL_Y + 3, w, h: 30, label, accent, visible: slotOpen, keep: true,
+    const slotHit = (id: string, pull: boolean) => {
+      const r = this.slotScreen?.hitRects()[pull ? 'pull' : 'pass'] ?? [0, 0, 0, 0];
+      this.buttons.push({
+        id, x: r[0], y: r[1], w: r[2], h: r[3], visible: slotOpen, keep: true,
         onDown: () => {
           if (this.slotScreen?.pick(this.sim, pull)) this.sim.intent({ k: 'slot', pull });
         },
-      };
-      this.buttons.push(b);
-      const text = this.txt(x + w / 2, b.y + 10, label, accent ? 'yellow' : 'white').setOrigin(0.5, 0).setDepth(2100);
-      this.btnObjs.set(id, { text });
+      });
     };
-    slotBtn('slot-pull', 3, 116, this.t.slot.pull, true, PAL.amber);
-    slotBtn('slot-pass', 123, 54, this.t.slot.pass, false);
+    slotHit('slot-pull', true);
+    slotHit('slot-pass', false);
     // «Хлопушка» вырезанного: подать команду толпе — справа в панели, рядом с пометкой «за кадром»
     const clapVis = () => {
       const me = this.me();
@@ -959,7 +957,7 @@ export class GameScene extends Phaser.Scene {
       o?.text?.setVisible(vis);
       // шестерёнка без рамки: при нажатии чуть проседает, как кнопки
       if (b.id === 'sound' && o?.icon) o.icon.y = b.y + b.h / 2 + (b.pressed ? 1 : 0);
-      if (!vis || b.id === 'sound') continue;
+      if (!vis || b.id === 'sound' || b.id.startsWith('slot-')) continue;
       if (b.id.startsWith('clap-')) {
         const ready = this.clapReady();
         this.drawPanel(b.x, b.y, b.w, b.h, PAL.dusk, b.pressed, ready ? b.accent : PAL.steel, this.crowdG);

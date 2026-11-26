@@ -5,14 +5,15 @@ import { SLOT_SYMBOLS, fmt, hasSlots, isLastLap } from '@kto/game-core';
 import type { Sfx } from './audio';
 import type { FontColor } from './font';
 import {
-  BODY_W, PANEL_H, PANEL_TOP, REELS_H, REELS_X, REELS_Y, REEL_GAP, REEL_W, SYM_K, SYM_W, TOP_H,
+  BODY_W, BTN_H, BTN_PASS, BTN_PULL, BTN_Y, CANDLE_Y, DECK_H, DECK_Y, PANEL_H, PANEL_TOP, REELS_H, REELS_X, REELS_Y,
+  REEL_GAP, REEL_W, SYM_K, SYM_W, TOP_H, TOP_Y,
   makeSlotBackdrop, makeSlotBody, makeSlotStars, makeSlotSymbols,
 } from './slot-art';
 
 /**
- * Экран автомата «Казино» (game-core › slots.ts) поверх поля на весь дубль: сверху — полоса мест
- * (имена и звёзды всех игроков: стол публичный, а какая фигура чья — нет), посередине — автомат
- * с тремя барабанами, внизу (в панели сцены) — «Крутить» и «Пас».
+ * Экран автомата «Казино» (game-core › slots.ts) поверх поля на весь дубль: автомат от шапки до низа
+ * экрана — фонарь-свеча, короб, три барабана, табло, наклонная панель с кнопками «Крутить» и «Пас»
+ * (нажатия ловит сцена по `hitRects`), лоток и расписное нижнее стекло.
  *
  * Состояние стола берётся из мира (`World.slot`), поэтому одинаково в песочнице и по сети.
  */
@@ -44,6 +45,10 @@ export class SlotScreen {
   private line1: Phaser.GameObjects.BitmapText;
   private line2: Phaser.GameObjects.BitmapText;
   private line3: Phaser.GameObjects.BitmapText;
+  private pullT: Phaser.GameObjects.BitmapText;
+  private passT: Phaser.GameObjects.BitmapText;
+  /** Когда нажата кнопка на панели — крышка проседает. */
+  private pressAt = 0;
   private shown = false;
   private lastTurn = -1;
   /** Своё вращение: когда начато, что выпадет (null — не крутил). */
@@ -94,8 +99,17 @@ export class SlotScreen {
     this.line3 = add(h.txt(cxm, px0 + 46, '', 'sand').setOrigin(0.5, 0), D + 4);
     // табло уже экрана: шаг букв 7 px (обычно 8), чтобы строка в 21 знак влезала целиком
     for (const o of [this.turnT, this.line1, this.line2, this.line3]) o.setLetterSpacing(-3);
+    this.pullT = add(h.txt(this.bx + BTN_PULL.x + BTN_PULL.w / 2, 0, h.t.pull, 'ink').setOrigin(0.5, 0), D + 4);
+    this.passT = add(h.txt(this.bx + BTN_PASS.x + BTN_PASS.w / 2, 0, h.t.pass, 'ink').setOrigin(0.5, 0), D + 4);
     this.setVisible(false);
     this.drawReels(performance.now());
+  }
+
+  /** Зоны нажатия кнопок на панели автомата (экранные координаты), не меньше 30 px в высоту. */
+  hitRects(): { pull: [number, number, number, number]; pass: [number, number, number, number] } {
+    const y = this.by + DECK_Y;
+    const mid = this.bx + BTN_PASS.x - 3;
+    return { pull: [0, y, mid, DECK_H + 4], pass: [mid, y, 180 - mid, DECK_H + 4] };
   }
 
   get visible(): boolean {
@@ -126,6 +140,7 @@ export class SlotScreen {
     if (!st || !this.canChoose(v)) return false;
     this.picked = st.turn;
     this.pickedPull = pull;
+    this.pressAt = performance.now();
     if (pull) {
       this.leverAt = performance.now();
       this.h.play('swing');
@@ -334,15 +349,17 @@ export class SlotScreen {
     const step = Math.floor(now / (last ? 90 : 160));
     // лампочки по рамке светового короба бегут по кругу
     const bulbs: [number, number][] = [];
-    for (let x = 10; x <= BODY_W - 12; x += 8) bulbs.push([x, 0]);
-    for (let y = 9; y <= TOP_H - 9; y += 9) bulbs.push([BODY_W - 8, y]);
-    for (let x = BODY_W - 12; x >= 10; x -= 8) bulbs.push([x, TOP_H - 2]);
-    for (let y = TOP_H - 9; y >= 9; y -= 9) bulbs.push([6, y]);
+    for (let x = 10; x <= BODY_W - 12; x += 8) bulbs.push([x, TOP_Y]);
+    for (let y = TOP_Y + 9; y <= TOP_Y + TOP_H - 9; y += 9) bulbs.push([BODY_W - 8, y]);
+    for (let x = BODY_W - 12; x >= 10; x -= 8) bulbs.push([x, TOP_Y + TOP_H - 2]);
+    for (let y = TOP_Y + TOP_H - 9; y >= TOP_Y + 9; y -= 9) bulbs.push([6, y]);
     bulbs.forEach(([x, y], k) => {
       const lit = (k + step) % 3 === 0;
       g.fillStyle(hexToInt(PAL.ink)).fillRect(bx + x - 1, by + y - 1, 4, 4);
       g.fillStyle(hexToInt(lit ? (last ? PAL.red : PAL.white) : last ? PAL.wine : PAL.amber)).fillRect(bx + x, by + y, 2, 2);
     });
+    this.drawCandle(g, now, last);
+    this.drawButtons(g, v, st, now);
     // рычаг справа: дёрнули — опускается и возвращается
     const lk = Math.min(1, (now - this.leverAt) / 450);
     const down = lk < 1 ? Math.sin(lk * Math.PI) : 0;
@@ -378,7 +395,7 @@ export class SlotScreen {
     if (me?.alive && !st.over && wt >= st.openAt && this.picked !== st.turn && me.skip === 0) {
       const k = Math.max(0, Math.min(1, (st.deadline - wt) / Math.max(1, st.deadline - st.openAt)));
       const w = Math.round(98 * k);
-      const yb = by + PANEL_TOP + PANEL_H - 12;
+      const yb = by + PANEL_TOP + PANEL_H - 9;
       g.fillStyle(hexToInt(PAL.dusk)).fillRect(bx + 14, yb, 98, 4);
       g.fillStyle(hexToInt(k < 0.3 ? PAL.coral : PAL.amber)).fillRect(bx + 14, yb + 1, w, 2);
     }
@@ -388,7 +405,7 @@ export class SlotScreen {
       if (me.mask) marks.push('mask');
       if (me.clap) marks.push('clap');
       if (me.spot) marks.push('spot');
-      marks.forEach((m, i) => this.drawSym(g, m, bx + BODY_W - 34 + i * 8, by + PANEL_TOP + PANEL_H - 14));
+      marks.forEach((m, i) => this.drawSym(g, m, bx + BODY_W - 34 + i * 8, by + PANEL_TOP + PANEL_H - 11));
     }
     // вырезан: автомат гаснет
     if (me && !me.alive && !this.spinning) {
@@ -399,7 +416,65 @@ export class SlotScreen {
     const f = this.bigFlash;
     if (f && now - f.at < 600) {
       const a = 0.45 * (1 - (now - f.at) / 600);
-      g.fillStyle(f.color, a).fillRect(0, this.h.ay, 180, 260);
+      g.fillStyle(f.color, a).fillRect(0, this.h.ay, 180, 296);
+    }
+  }
+
+  /**
+   * Фонарь-«свеча» на макушке, как у настоящих автоматов: в покое тлеет, на «Последнем круге»
+   * пульсирует красным, на своём джекпоте или победе — мигает белым и красным.
+   */
+  private drawCandle(g: Phaser.GameObjects.Graphics, now: number, last: boolean): void {
+    const x = this.bx + BODY_W / 2 - 4;
+    const y = this.by + CANDLE_Y - 13;
+    const f = this.bigFlash;
+    const party = !!f && f.color === hexToInt(PAL.yellow) && now - f.at < 2400;
+    const blink = Math.floor(now / 120) % 2 === 0;
+    const pulse = Math.floor(now / 400) % 2 === 0;
+    const topC = party ? (blink ? PAL.white : PAL.red) : last && pulse ? PAL.red : PAL.wine;
+    const botC = party ? (blink ? PAL.red : PAL.white) : PAL.slate;
+    g.fillStyle(hexToInt(PAL.ink)).fillRect(x, y, 8, 11);
+    g.fillStyle(hexToInt(PAL.mist)).fillRect(x + 1, y, 6, 1);
+    g.fillStyle(hexToInt(topC)).fillRect(x + 1, y + 1, 6, 4);
+    g.fillStyle(hexToInt(PAL.ink)).fillRect(x + 1, y + 5, 6, 1);
+    g.fillStyle(hexToInt(botC)).fillRect(x + 1, y + 6, 6, 4);
+    // блик на стекле колпака
+    g.fillStyle(hexToInt(PAL.white), 0.7).fillRect(x + 2, y + 2, 1, 2).fillRect(x + 2, y + 7, 1, 2);
+    if (party || (last && pulse)) {
+      // ореол
+      g.fillStyle(hexToInt(topC), 0.25).fillRect(x - 3, y - 2, 14, 14);
+    }
+  }
+
+  /**
+   * Крышки кнопок на наклонной панели: горят, когда можно выбирать, проседают при нажатии;
+   * выбранная остаётся утопленной и тлеет до следующего круга.
+   */
+  private drawButtons(g: Phaser.GameObjects.Graphics, v: ClientView, st: SlotState, now: number): void {
+    const open = this.canChoose(v);
+    const chose = this.picked === st.turn && !st.over;
+    const pressing = now - this.pressAt < 160;
+    const blink = open && Math.floor(now / 500) % 2 === 0;
+    const caps = [
+      { b: BTN_PULL, t: this.pullT, pull: true, hi: PAL.yellow, cap: PAL.amber, side: PAL.orange },
+      { b: BTN_PASS, t: this.passT, pull: false, hi: PAL.white, cap: PAL.mist, side: PAL.slate },
+    ];
+    for (const c of caps) {
+      const mine = chose && this.pickedPull === c.pull;
+      const down = mine ? (pressing ? 3 : 2) : 0;
+      const lit = open || mine;
+      const x = this.bx + c.b.x;
+      const y = this.by + BTN_Y + down;
+      const side = 4 - Math.min(down, 3);
+      // боковина (толщина крышки) и сама крышка
+      g.fillStyle(hexToInt(PAL.ink)).fillRect(x - 1, y - 1, c.b.w + 2, BTN_H + side + 2);
+      g.fillStyle(hexToInt(lit ? c.side : PAL.plum)).fillRect(x, y + BTN_H, c.b.w, side);
+      g.fillStyle(hexToInt(lit ? c.cap : PAL.umber)).fillRect(x, y, c.b.w, BTN_H);
+      g.fillStyle(hexToInt(lit ? c.hi : PAL.brick)).fillRect(x, y, c.b.w, 2);
+      g.fillStyle(hexToInt(lit ? c.hi : PAL.brick)).fillRect(x, y, 1, BTN_H);
+      // подсветка изнутри: светлое пятно посередине, мигает, пока ждём выбора
+      if (lit && (blink || mine)) g.fillStyle(hexToInt(c.hi), 0.45).fillRect(x + 3, y + 3, c.b.w - 6, BTN_H - 5);
+      c.t.setY(y + 3).setFont(lit ? 'px-ink' : 'px-sand').setAlpha(lit ? 1 : 0.5);
     }
   }
 
