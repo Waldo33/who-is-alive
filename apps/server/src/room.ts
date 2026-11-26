@@ -217,7 +217,7 @@ export class MatchRunner {
     if (h.phase !== 'reveal' || !s || !this.armed) return;
     this.armed = false;
     this.takes.push({
-      rec: recordRound(h.world, { round: h.round, theme: h.theme, players: s.reveal, playEnd: s.replayTo, kills: s.kills }),
+      rec: recordRound(h.world, { round: h.round, theme: h.theme, players: s.reveal, playEnd: s.replayTo, kills: s.kills, slots: s.slots }),
       summary: s,
       arena: h.arena,
     });

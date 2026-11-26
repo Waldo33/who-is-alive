@@ -22,6 +22,7 @@ import {
   isLeshyCrowd,
   nightDeaths,
   nightCause,
+  skullSpin,
   fireLevel,
   LAG_GRACE_MS,
   bountyLeader,
@@ -37,7 +38,7 @@ import {
   hasSlots,
 } from '@kto/game-core';
 import { SlotScreen } from './slot-ui';
-import type { AwardId, ClientSession, CrowdKind, Dict, Entity, GameConfig, Lang, Moment, Notice, RoundSummary, ThemeText, World, WorldEvent } from '@kto/game-core';
+import type { AwardId, ClientSession, CrowdKind, Dict, Entity, GameConfig, Lang, Moment, Notice, RoundSummary, SlotRecord, ThemeText, World, WorldEvent } from '@kto/game-core';
 import { resultCardFile } from './card';
 import { Tutorial, tutorialDone } from './tutorial';
 import { mildOn } from '../ui/topbar';
@@ -2024,8 +2025,12 @@ export class GameScene extends Phaser.Scene {
     const me = this.sim.info(this.sim.selfPid);
     const s = this.sim.summary;
     const known = dc.killer !== undefined && !!s;
+    // «Казино»: вырезали черепа — в кадре вся «Крутка» со своим автоматом (своё вращение телефон знает)
+    const ms = this.me()?.slot;
+    const mine: SlotRecord[] = s?.slots?.filter((r) => r.eid === dc.eid) ?? (ms ? [{ eid: dc.eid, at: ms.at, outcome: ms.outcome, reels: ms.reels }] : []);
+    const skull = dc.killer === undefined ? skullSpin(mine, dc.eid, dc.at, this.cfg) : undefined;
     // с известным нападавшим показываем его подход целиком (до 4,5 с), иначе — 6 с до развязки
-    const from = Math.max(start, known ? dc.at - 4500 : to - 6000);
+    const from = Math.max(start, skull ? skull.at + this.cfg.slotWarnMs - 300 : known ? dc.at - 4500 : to - 6000);
     if (!me || to - from < 1500) return;
     dc.status = 'rendering';
     this.updateDeathClipLabel();
@@ -2038,9 +2043,9 @@ export class GameScene extends Phaser.Scene {
           return { eid: r.eid, name: info.name, color: info.color };
         })
       : [{ eid: dc.eid, name: me.name, color: me.color }];
-    const rec = recordRound(w, { round: this.sim.round, theme: this.sim.theme, players: known ? s!.reveal : [], playEnd: to, kills: s?.kills });
+    const rec = recordRound(w, { round: this.sim.round, theme: this.sim.theme, players: known ? s!.reveal : [], playEnd: to, kills: s?.kills, slots: known ? s!.slots : mine });
     // «Купальская ночь»: забрал Леший или туман — подпись про них, а не «кто вырезал»
-    const by = hasSanity(this.sim.theme) && dc.killer === undefined ? nightCause(this.cfg, w.log, dc.eid, dc.at, s?.kills) : undefined;
+    const by = skull ? 'slot' : hasSanity(this.sim.theme) && dc.killer === undefined ? nightCause(this.cfg, w.log, dc.eid, dc.at, s?.kills) : undefined;
     const moment: Moment = { from, to, score: 0, kind: 'knockout', at: dc.at, victim: dc.eid, attacker: dc.killer, selfRole: 'victim', ...(by ? { by } : {}) };
     const local = () => recordClipInBackground(
       {
@@ -4478,7 +4483,7 @@ export class GameScene extends Phaser.Scene {
     const s = this.sim.summary;
     if (!s) return;
     try {
-      const rec = recordRound(this.sim.world, { round: s.round, theme: this.sim.theme, players: s.reveal, playEnd: s.replayTo, kills: s.kills });
+      const rec = recordRound(this.sim.world, { round: s.round, theme: this.sim.theme, players: s.reveal, playEnd: s.replayTo, kills: s.kills, slots: s.slots });
       this.takes.push({ rec, summary: s, arena: this.sim.arena });
     } catch {
       /* фильм — не главное: при сбое просто будет без этого дубля */

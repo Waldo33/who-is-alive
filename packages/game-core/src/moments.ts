@@ -4,6 +4,8 @@ import { World, makeReplay } from './world';
 import { makeConfig } from './config';
 import { nightDeaths } from './sanity';
 import { hasSanity } from './themes';
+import { skullSpin } from './slots';
+import type { SlotRecord } from './slots';
 import type { WorldSnapshot } from './world';
 
 /** Всё, что нужно, чтобы позже проиграть кусок раунда (журнал мира сохраняется после смены раунда). */
@@ -19,6 +21,8 @@ export interface RoundRecording {
   playEnd: number;
   /** Кто кого выбил — из итогов раунда (если есть, нападавшего не нужно угадывать по месту удара). */
   kills?: { by: number; victim: number; at: number }[];
+  /** «Казино»: вращения игроков (из итогов дубля; в клипе выбывшего посреди дубля — только своё). */
+  slots?: SlotRecord[];
 }
 
 export interface Moment {
@@ -34,8 +38,11 @@ export interface Moment {
   /** Участники главного события: кто действовал (выбил, ударил, собрал) и над кем. Для камеры и подписей клипа. */
   attacker?: number;
   victim?: number;
-  /** «Купальская ночь»: выбил не игрок — забрал Леший или сгинул в тумане (рассудок, кикимора). */
-  by?: 'leshy' | 'mist';
+  /**
+   * Выбил не игрок. «Купальская ночь»: забрал Леший или сгинул в тумане (рассудок, кикимора).
+   * «Казино»: выпали три черепа (slot) — в окне вся «Крутка».
+   */
+  by?: 'leshy' | 'mist' | 'slot';
 }
 
 /** Окно момента: обычно ~6 с, но может растянуться, чтобы целиком вместить два события подряд или долгий подход. */
@@ -52,8 +59,8 @@ const TRIM_PENALTY = 1;
 
 /** С какого момента событие нельзя резать: подход — не короче MOMENT_CORE_MS. */
 export function coreFrom(e: { from: number; at: number; by?: Moment['by'] }): number {
-  // удар Лешего читается только целиком: выход на поляну, замах, удар
-  if (e.by === 'leshy') return e.from;
+  // удар Лешего читается только целиком: выход на поляну, замах, удар; черепа — вся «Крутка»
+  if (e.by === 'leshy' || e.by === 'slot') return e.from;
   return Math.max(e.from, e.at - MOMENT_CORE_MS);
 }
 const STEP_MS = 250;
@@ -200,6 +207,13 @@ export function momentEvents(rec: RoundRecording, selfEid?: number): MomentEvent
         else add(ev.at, 5 + (role ? SELF_BONUS : 0), 'knockout', APPROACH_MIN_MS, role, undefined, ev.target, 'mist');
         continue;
       }
+      const skull = ev.result === 'player' && ev.attacker === undefined && !rec.kills?.some((k) => k.victim === ev.target) ? skullSpin(rec.slots, ev.target, ev.at, NIGHT_CFG) : undefined;
+      if (skull) {
+        // «Казино»: вырезали черепа — показываем автомат с начала вращения (без ламп предупреждения)
+        const role = selfEid !== undefined && ev.target === selfEid ? 'victim' : undefined;
+        add(ev.at, 6 + (role ? SELF_BONUS : 0), 'knockout', ev.at - (skull.at + NIGHT_CFG.slotWarnMs) + 300, role, undefined, ev.target, 'slot');
+        continue;
+      }
       if (ev.result === 'player') {
         const known = rec.kills?.find((k) => k.victim === ev.target);
         const attacker = ev.attacker ?? known?.by ?? attackerOf(ev.target, ev.at, ev.x, ev.y);
@@ -311,7 +325,7 @@ export function worldOf(rec: RoundRecording): World {
 /** Снять запись раунда с мира, пока следующий раунд её не сбросил (init создаёт новые массивы). */
 export function recordRound(
   world: World,
-  info: { round: number; theme: number; players: { pid: string; eid: number }[]; playEnd: number; kills?: { by: number; victim: number; at: number }[] },
+  info: { round: number; theme: number; players: { pid: string; eid: number }[]; playEnd: number; kills?: { by: number; victim: number; at: number }[]; slots?: SlotRecord[] },
 ): RoundRecording {
   return { ...info, nav: world.nav, speed: world.speed, log: world.log, keyframes: world.keyframes };
 }

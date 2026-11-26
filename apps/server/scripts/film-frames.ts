@@ -53,7 +53,7 @@ for (let i = 0; i < 20 * 60 * 20 && s.phase !== 'match_end'; i++) {
   const sum = s.summary;
   if (s.phase === 'reveal' && sum && armed) {
     armed = false;
-    takes.push({ rec: recordRound(s.world, { round: s.round, theme: s.theme, players: sum.reveal, playEnd: sum.replayTo, kills: sum.kills }), summary: sum, arena: s.arena });
+    takes.push({ rec: recordRound(s.world, { round: s.round, theme: s.theme, players: sum.reveal, playEnd: sum.replayTo, kills: sum.kills, slots: sum.slots }), summary: sum, arena: s.arena });
   }
 }
 const inp = filmInput(takes, players, s.match!, {

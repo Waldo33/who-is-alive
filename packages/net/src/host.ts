@@ -88,6 +88,8 @@ export class HostSession implements ClientSession {
   get now() { return this.local.now; }
   get scores() { return this.local.scores; }
   get summary() { return this.local.summary; }
+  /** «Казино»: вращения игроков этого дубля — только для сервера (клип выбывшего), в сеть не уходят. */
+  get spins() { return this.sim.spins; }
   get match() { return this.local.match; }
   get roundsPlayed() { return this.local.roundsPlayed; }
   get myMatchKills() { return this.local.myMatchKills; }
