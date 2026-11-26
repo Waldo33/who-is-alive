@@ -69,8 +69,8 @@ export const ru = {
   themeText: {
     office: {
       intro: 'Правило 1: не светись',
-      twistOn: 'Шеф ушёл. Подвал!',
-      twistOff: 'Шеф вернулся!',
+      twistOn: 'Подвал! Можно драться',
+      twistOff: 'Обратно в офис',
       crowd: { freeze: 'Шеф идёт!', jump: 'Кофе-брейк!', dance: 'Перекур!' },
       twistCrowd: { freeze: 'В стойку!', jump: 'Скакалка!', dance: 'Бой с тенью!' },
     },
