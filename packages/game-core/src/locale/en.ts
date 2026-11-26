@@ -24,7 +24,7 @@ export const en: Dict = {
     noun: ['Pixel', 'Toaster', 'Pigeon', 'Raccoon', 'Penguin', 'Gizmo', 'Noodle', 'Sprite', 'Bagel', 'Cactus'],
   },
   colors: ['Red', 'Blue', 'Yellow', 'Green'],
-  themes: ['Caps', 'Chefs', 'Penguins', 'Astronauts', 'Clerks', 'Tourists', 'Office Party', 'Foragers'],
+  themes: ['Caps', 'Chefs', 'Penguins', 'Astronauts', 'Clerks', 'Tourists', 'Office Party', 'Foragers', 'Casino'],
   themeText: {
     office: {
       intro: 'Rule 1: blend in',

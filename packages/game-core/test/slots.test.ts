@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  AiPlayer,
+  DAILY_THEMES,
+  MatchSim,
+  ROTATION_THEMES,
+  THEME_RULES,
+  casinoSeats,
+  hasSlots,
   Rng,
   SLOT_OUTCOMES,
   classifyReels,
@@ -13,7 +20,7 @@ import {
   slotOutcomeOf,
   slotWeights,
 } from '../src';
-import type { SlotChoice, SlotOutcome, SlotTable } from '../src';
+import type { SlotChoice, SlotOutcome, SlotTable, WorldEvent } from '../src';
 
 const cfg = makeConfig();
 const pull = (t: SlotTable): SlotChoice[] => t.seats.map(() => 'pull');
@@ -330,5 +337,100 @@ describe('слот-машина: баланс (Монте-Карло)', () => {
     t2.seats[0].spot = true;
     for (let i = 0; i < 50; i++) expect(slotAiChoice(cfg, t2, 0, rng)).toBe('pull');
     void pull;
+  });
+});
+
+describe('«Казино» в матче', () => {
+  const CASINO = THEME_RULES.findIndex((r) => r.id === 'casino');
+  const players = ['a', 'b', 'c', 'd'].map((pid, i) => ({ pid, name: pid, color: i }));
+  const run = (seed: number, extra: Parameters<typeof makeConfig>[0] = {}) => {
+    const sim = new MatchSim(makeConfig({ fixedTheme: CASINO, ...extra }), players, seed);
+    players.forEach((p, i) => sim.addAgent(new AiPlayer(p.pid, seed * 31 + i)));
+    const events: WorldEvent[] = [];
+    sim.world.listeners.push((ev) => events.push(ev));
+    const phases: string[] = [];
+    for (let i = 0; i < 20 * 60 * 3 && sim.round === 1; i++) {
+      if (phases[phases.length - 1] !== sim.phase) phases.push(sim.phase);
+      if (sim.phase === 'results') break;
+      sim.tick();
+    }
+    return { sim, events, phases };
+  };
+
+  it('тема скрыта: только по fixedTheme, в загадке дня её нет', () => {
+    expect(CASINO).toBe(THEME_RULES.length - 1);
+    expect(hasSlots(CASINO)).toBe(true);
+    expect(ROTATION_THEMES).not.toContain(CASINO);
+    expect(DAILY_THEMES).not.toContain(CASINO);
+  });
+
+  it('дубль: все сидят, никто не ходит и не выбывает с поля; обвинения нет; стол дошёл до конца', () => {
+    const { sim, events, phases } = run(5);
+    expect(phases).toEqual(['countdown', 'play', 'reveal', 'results']);
+    expect(events.some((e) => e.t === 'move' || e.t === 'remove' || e.t === 'crowd' || e.t === 'star_spawn' || e.t === 'zone')).toBe(false);
+    expect(sim.world.entities.every((e) => e.alive)).toBe(true);
+    // все сидят на местах из рядов автоматов
+    const seats = casinoSeats(sim.arena);
+    for (const e of sim.world.entities) expect(seats.some((s) => s.x === e.x && s.y === e.y)).toBe(true);
+    const slotEv = events.filter((e) => e.t === 'slot');
+    expect(slotEv.length).toBeGreaterThan(2);
+    expect(sim.slots?.over).not.toBeNull();
+    expect(sim.world.slot?.over).toEqual(sim.slots?.over);
+    // в событиях стола нет сущностей — только места по порядку игроков
+    for (const e of slotEv) expect(JSON.stringify(e)).not.toMatch(/eid/);
+  });
+
+  it('очки: победитель стола — за звёзды, живые — за то, что выжили; вырезанный черепом — не жив', () => {
+    let checked = 0;
+    for (let seed = 1; seed <= 30; seed++) {
+      const { sim } = run(seed);
+      const over = sim.slots!.over!;
+      const pts = sim.summary!.points;
+      sim.pr.forEach((p, i) => {
+        expect(p.alive).toBe(sim.slots!.seats[i].alive);
+        expect(p.stars).toBe(Math.floor(sim.slots!.seats[i].halves / 2));
+        expect(pts[p.pid].stars).toBe(over.winners.includes(i) ? sim.cfg.points.stars : 0);
+        expect(pts[p.pid].survive).toBe(p.alive ? sim.cfg.points.survive : 0);
+        expect(pts[p.pid].accuse + pts[p.pid].kill).toBe(0);
+      });
+      checked++;
+    }
+    expect(checked).toBe(30);
+  });
+
+  it('одно зерно — один и тот же дубль', () => {
+    const a = run(12);
+    const b = run(12);
+    expect(JSON.stringify(a.sim.slots)).toBe(JSON.stringify(b.sim.slots));
+    expect(a.sim.scores).toEqual(b.sim.scores);
+  });
+
+  it('выбор принимается только у живого, один раз за круг, после открытия', () => {
+    const sim = new MatchSim(makeConfig({ fixedTheme: CASINO }), players.slice(0, 2), 3);
+    while (sim.phase !== 'play') sim.tick();
+    sim.intent('a', { k: 'slot', pull: false });
+    sim.intent('a', { k: 'slot', pull: true }); // второй раз не меняет
+    sim.intent('b', { k: 'move', x: 10, y: 10 }); // ходить нельзя
+    sim.intent('b', { k: 'slot', pull: false });
+    sim.tick();
+    sim.tick();
+    expect(sim.slots!.turn).toBe(1);
+    expect(sim.world.slot!.spins).toEqual([null, null]);
+    expect(sim.world.entities.every((e) => !e.moving)).toBe(true);
+    // пока крутятся барабаны, выбор не принимается; потом не выбрал — автомат крутит сам
+    sim.intent('a', { k: 'slot', pull: false });
+    for (let i = 0; i < (sim.cfg.slotSpinMs + sim.cfg.slotDecideMs) / 50 + 2; i++) sim.tick();
+    expect(sim.slots!.turn).toBe(2);
+    const spun = sim.world.slot!.spins;
+    expect(spun.filter(Boolean).length).toBe(2);
+  });
+
+  it('детский режим: череп сжигает звёзды, но не вырезает', () => {
+    const t = newSlotTable(2);
+    t.seats[0].halves = 3;
+    const r = turn(t, ['skull', null], 1, makeConfig({ kidsMode: true }));
+    expect(r.effects).toEqual([{ k: 'burn', seat: 0, lost: 3 }]);
+    expect(t.seats[0].alive).toBe(true);
+    expect(t.seats[0].halves).toBe(0);
   });
 });

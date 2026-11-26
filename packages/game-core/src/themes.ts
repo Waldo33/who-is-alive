@@ -12,7 +12,7 @@ import type { EmoteKind } from './events';
  * название в `themes` словарей, пакет в клиенте. См. docs/architecture.md › «Темы».
  */
 
-export type ThemeId = 'caps' | 'chefs' | 'penguins' | 'cosmonauts' | 'office' | 'miami' | 'party' | 'kupala';
+export type ThemeId = 'caps' | 'chefs' | 'penguins' | 'cosmonauts' | 'office' | 'miami' | 'party' | 'kupala' | 'casino';
 
 export interface TwistRules {
   /** Когда изнанка включается впервые, с начала игры, сек [от, до]. */
@@ -65,6 +65,11 @@ export interface ThemeRules {
    * настройка комнаты): пока владелец её пробует.
    */
   hidden?: boolean;
+  /**
+   * «Казино» (slots.ts): все сидят за автоматами, ходить и бить нельзя, команд толпы нет —
+   * всё решает автомат: звезда за «три звезды», череп — вырезан.
+   */
+  slots?: boolean;
 }
 
 export const THEME_RULES: readonly ThemeRules[] = [
@@ -88,6 +93,8 @@ export const THEME_RULES: readonly ThemeRules[] = [
   },
   // Купальская ночь: болото, грибники, сумерки плавно уходят в ночь; рассудок тает, цветы вместо звёзд
   { id: 'kupala', sanity: true },
+  // Казино: все за автоматами, решает автомат (пока скрыта — только ?dev&theme=8)
+  { id: 'casino', slots: true, hidden: true },
 ];
 
 export const THEME_COUNT = THEME_RULES.length;
@@ -99,7 +106,7 @@ export const ROTATION_THEMES: readonly number[] = THEME_RULES.map((r, i) => (r.h
  * Темы загадки дня: обычная очередь без тем-режимов (рассудок — своя механика, кастингу не подходит).
  * Список тот же, что был до того, как «Купальская ночь» встала в очередь, — загадки прошлых дней не меняются.
  */
-export const DAILY_THEMES: readonly number[] = ROTATION_THEMES.filter((i) => !THEME_RULES[i].sanity);
+export const DAILY_THEMES: readonly number[] = ROTATION_THEMES.filter((i) => !THEME_RULES[i].sanity && !THEME_RULES[i].slots);
 
 /** Новогодний сезон: с 1 декабря по 14 января (месяц с нуля, как в Date). */
 export function isNewYearSeason(month0: number, day: number): boolean {
@@ -113,6 +120,11 @@ export function seasonLeadTheme(month0: number, day: number): number {
 
 export function themeRules(theme: number): ThemeRules {
   return THEME_RULES[theme] ?? THEME_RULES[0];
+}
+
+/** Дубль этой темы — за слот-автоматами (slots.ts). */
+export function hasSlots(theme: number): boolean {
+  return !!themeRules(theme).slots;
 }
 
 /** В дубле этой темы тает рассудок. */

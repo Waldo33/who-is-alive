@@ -2,7 +2,8 @@ import type { AiAgent, MatchSim } from './match';
 import type { CrowdKind, WorldEvent } from './events';
 import { Rng } from './rng';
 import { aiLevel } from './config';
-import { canFight } from './themes';
+import { canFight, hasSlots } from './themes';
+import { slotAiChoice } from './slots';
 import { bossLooking, pathInBossCone } from './boss';
 
 export interface AiPersona {
@@ -43,6 +44,9 @@ export class AiPlayer implements AiAgent {
   private bossSlip = false;
   private persona: AiPersona;
   private bound = false;
+  /** «Казино»: на какой круг уже выбрал и когда «дожмёт» кнопку. */
+  private slotTurn = -1;
+  private slotAt = 0;
 
   constructor(readonly pid: string, seed: number, persona?: AiPersona) {
     this.rng = new Rng(seed);
@@ -58,10 +62,27 @@ export class AiPlayer implements AiAgent {
     this.lastCrowdSeen = -1;
     this.freezeChecked = -1;
     this.accuseAt = 0;
+    this.slotTurn = -1;
+    this.slotAt = 0;
     if (!this.bound) {
       this.bound = true;
       sim.world.listeners.push((ev) => this.observe(sim, ev));
     }
+  }
+
+  /** «Казино»: подумать полсекунды-две и нажать «Крутить» или «Пас». */
+  private slotUpdate(sim: MatchSim, alive: boolean, t: number): void {
+    const st = sim.world.slot;
+    const table = sim.slots;
+    if (sim.phase !== 'play' || !alive || !st || !table || table.over) return;
+    if (st.turn === this.slotTurn || t < st.openAt) return;
+    if (!this.slotAt) this.slotAt = t + this.rng.range(500, 2500);
+    if (t < this.slotAt) return;
+    this.slotAt = 0;
+    this.slotTurn = st.turn;
+    const seat = sim.pr.findIndex((p) => p.pid === this.pid);
+    if (table.seats[seat]?.skip) return;
+    sim.intent(this.pid, { k: 'slot', pull: slotAiChoice(sim.cfg, table, seat, this.rng) === 'pull' });
   }
 
   private bump(eid: number, v: number): void {
@@ -86,6 +107,10 @@ export class AiPlayer implements AiAgent {
     if (!me) return;
     const w = sim.world;
     const t = w.time;
+    if (hasSlots(sim.theme)) {
+      this.slotUpdate(sim, me.alive, t);
+      return;
+    }
 
     // вырезанный ИИ иногда подаёт «Хлопушку» — в песочнице тоже видно, как это работает
     if (sim.phase === 'play' && !me.alive) {

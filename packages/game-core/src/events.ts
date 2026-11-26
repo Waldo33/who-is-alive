@@ -1,4 +1,5 @@
 import type { Rect } from './arena';
+import type { SlotState } from './slots';
 
 /** Направление взгляда: вниз, вверх, влево, вправо. */
 export type Dir = 0 | 1 | 2 | 3;
@@ -47,7 +48,12 @@ export type WorldEvent =
   | { t: 'boss'; act: 'walk'; path: number[]; at: number }
   | { t: 'boss'; act: 'look'; dir: Dir; from: number; until: number; at: number }
   | { t: 'boss'; act: 'out'; at: number }
-  | { t: 'boss'; act: 'catch'; eid: number; at: number };
+  | { t: 'boss'; act: 'catch'; eid: number; at: number }
+  /**
+   * «Казино» (slots.ts): стол после круга — места по порядку игроков, без сущностей. Одинаково у всех,
+   * поэтому и вырезанный черепом остаётся сидеть на поле: по полю не видно, кто это был.
+   */
+  | ({ t: 'slot'; at: number } & SlotState);
 
 export interface EntitySpawn {
   eid: number;

@@ -99,6 +99,7 @@ export const IntentMsg = z.discriminatedUnion('k', [
   z.object({ k: z.literal('clap'), kind: z.enum(['freeze', 'jump', 'dance']) }),
   z.object({ k: z.literal('autopilot'), on: z.boolean() }),
   z.object({ k: z.literal('accuse'), eid: z.number().int() }),
+  z.object({ k: z.literal('slot'), pull: z.boolean() }),
   z.object({ k: z.literal('next') }),
   z.object({ k: z.literal('rematch') }),
 ]);

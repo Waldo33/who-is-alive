@@ -1,5 +1,6 @@
+import type { ArenaDef, Point } from './arena';
 import type { GameConfig } from './config';
-import { Rng } from './rng';
+import type { Rng } from './rng';
 
 /**
  * «Казино»: игроки сидят за автоматами и не могут встать, бить и угадывать нельзя — всё решает автомат.
@@ -77,7 +78,9 @@ export type SlotEffect =
   | { k: 'clap'; seat: number }
   | { k: 'reel'; seat: number }
   | { k: 'saved'; seat: number }
-  | { k: 'cut'; seat: number; lost: number };
+  | { k: 'cut'; seat: number; lost: number }
+  /** Детский режим: череп сжигает звёзды, но не вырезает. */
+  | { k: 'burn'; seat: number; lost: number };
 
 export interface SlotTurnReport {
   /** По местам: вращение или null (пропустил, «Плёнка», вырезан). */
@@ -280,6 +283,11 @@ export function resolveTurn(
       effects.push({ k: 'saved', seat: i });
       return;
     }
+    if (cfg.kidsMode) {
+      effects.push({ k: 'burn', seat: i, lost: s.halves });
+      s.halves = 0;
+      return;
+    }
     effects.push({ k: 'cut', seat: i, lost: s.halves });
     s.alive = false;
     s.halves = 0;
@@ -331,4 +339,40 @@ export function slotAiChoice(cfg: GameConfig, t: SlotTable, seat: number, rng: R
   if (s.spot && rng.chance(0.6)) return 'pass';
   if (s.halves >= slotGoal(cfg) - 2 && !behind && rng.chance(0.35)) return 'pass';
   return rng.chance(0.08) ? 'pass' : 'pull';
+}
+
+/**
+ * Стол «Казино» в мире (World.slot): приходит всем событием `slot` после каждого круга.
+ * Места — по порядку игроков матча (имена видны всем); какая сущность у кого — не сообщается.
+ */
+export interface SlotState {
+  turn: number;
+  /** С какого времени мира принимается выбор этого круга (до — крутятся барабаны прошлого). */
+  openAt: number;
+  /** До какого времени мира ждём выбора; потом автомат крутит сам. */
+  deadline: number;
+  seats: SlotSeat[];
+  /** Вращения прошлого круга (что показать на барабанах). */
+  spins: (SlotSpin | null)[];
+  effects: SlotEffect[];
+  over: SlotResult | null;
+}
+
+/**
+ * Где сидят все в «Казино»: ряды автоматов на площади, по одному месту на сущность.
+ * Автомат — над местом (человечек смотрит вверх, на экран автомата); места не задевают предметы.
+ */
+export function casinoSeats(arena: ArenaDef): Point[] {
+  const out: Point[] = [];
+  const w = arena.walk;
+  const blocked = (x: number, y: number): boolean =>
+    arena.props.some((p) =>
+      [p.foot, p.cover].some((r) => r && x + 7 > r.x && x - 7 < r.x + r.w && y + 3 > r.y && y - 22 < r.y + r.h),
+    );
+  for (let y = w.y + 22; y <= w.y + w.h - 2; y += 26) {
+    for (let x = w.x + 8; x <= w.x + w.w - 8; x += 14) {
+      if (!blocked(x, y)) out.push({ x, y });
+    }
+  }
+  return out;
 }
