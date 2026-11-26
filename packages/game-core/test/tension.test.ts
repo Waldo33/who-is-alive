@@ -392,7 +392,7 @@ describe('Напряжение: новые механики', () => {
   });
 
   it('шеф: подвал начинается, когда он у двери, в подвале его нет, вернулся — офис', () => {
-    const sim = new MatchSim(makeConfig({ fixedTheme: 4 }), players, 95);
+    const sim = new MatchSim(makeConfig({ fixedTheme: 4, boss: true }), players, 95);
     runUntil(sim, () => sim.phase === 'play');
     sim.tick();
     sim.tick();
@@ -411,7 +411,7 @@ describe('Напряжение: новые механики', () => {
   });
 
   it('шеф: шевельнулся в конусе — выговор (метка у всех) и минус 2 удара на подвал', () => {
-    const sim = new MatchSim(makeConfig({ fixedTheme: 4 }), players, 96);
+    const sim = new MatchSim(makeConfig({ fixedTheme: 4, boss: true }), players, 96);
     runUntil(sim, () => sim.phase === 'play');
     runUntil(sim, () => bossWatching(sim.world.boss, sim.world.time + 50));
     const b = sim.world.boss!;
@@ -433,6 +433,15 @@ describe('Напряжение: новые механики', () => {
     runUntil(sim, () => sim.world.twist);
     expect(a.attacksLeft).toBe(10 - 2 * a.reprimands);
     expect(sim.playerRound('b')!.attacksLeft).toBe(10 - 2 * sim.playerRound('b')!.reprimands);
+  });
+
+  it('шеф: выключен по умолчанию — в офисе его нет, удары подвала как обычно', () => {
+    const sim = new MatchSim(makeConfig({ fixedTheme: 4 }), players, 98);
+    runUntil(sim, () => sim.phase === 'play');
+    for (let i = 0; i < 200; i++) sim.tick();
+    expect(sim.world.boss).toBeNull();
+    runUntil(sim, () => sim.world.twist || sim.phase !== 'play');
+    if (sim.world.twist) expect(sim.playerRound('a')!.attacksLeft).toBe(10);
   });
 
   it('шеф: в других темах его нет', () => {

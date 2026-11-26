@@ -527,7 +527,9 @@ export class MatchSim {
     this.twistLeft = tw ? tw.max : 0;
     this.fightArmed = false;
     // шеф: выходит на «Мотор!», обход — через секунду-другую
-    this.bossRng = hasBoss(this.theme) ? new Rng(this.rng.fork()) : null;
+    // зерно шефа берётся и при выключенном шефе: остальной матч от флага не меняется
+    const bossSeed = hasBoss(this.theme) ? this.rng.fork() : null;
+    this.bossRng = bossSeed !== null && this.cfg.boss ? new Rng(bossSeed) : null;
     this.bossCaught.clear();
     this.bossLookNext = false;
     if (this.bossRng) {
