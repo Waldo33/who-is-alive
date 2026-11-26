@@ -12,7 +12,7 @@ import { Rng } from './rng';
 import { LESHY_HUNT_SEC, fireLevel, leshySpot, leshyVisits, nightLevel, playLenSec, sanityDrain } from './sanity';
 import { ROTATION_THEMES, THEME_COUNT, THEME_RULES, canFight, fightAttacks, hasBoss, hasSanity, hasSlots, killerExposed, themeRules, twistEmote } from './themes';
 import type { SlotMine, SlotOutcome, SlotRecord } from './slots';
-import { botSlotEffect, rollSlot } from './slots';
+import { botSlotEffects, rollSpins, slotWindow, visibleOf } from './slots';
 import { ROUND_MODS, roundMod } from './mods';
 import { World } from './world';
 import { BOSS_SPEED_MUL, bossDoor, bossLooking, bossWatching, inBossCone, pathInBossCone } from './boss';
@@ -292,7 +292,9 @@ export class MatchSim {
   neighbors = new Map<string, { a: string; b: string; cur: number; max: number; hit: boolean }>();
   private intents: { pid: string; it: Intent }[] = [];
   /** «Казино»: что выпало на «Крутке» и применится, когда мир отомрёт (resumeAt). */
-  private slotDue: { at: number; spins: { pid: string; outcome: SlotOutcome }[]; bots: { eid: number; outcome: SlotOutcome }[] } | null = null;
+  private slotDue: { at: number; spins: { pid: string; outcomes: SlotOutcome[] }[]; bots: { eid: number; outcomes: SlotOutcome[] }[] } | null = null;
+  /** «Казино»: кого вырезают черепа и когда — в конце окна того вращения, прямо в стоп-кадре. */
+  private slotKills: { pid: string; at: number }[] = [];
 
   /** Сценарий (обучение, тесты): исход следующей «Крутки» у всех игроков. */
   private forcedSlot: SlotOutcome | null = null;
@@ -465,6 +467,7 @@ export class MatchSim {
     const countdownMs = (this.cfg.countdownSec + (this.mod ? 2 : 0)) * 1000;
     for (const s of spawns) if (!pset.has(s.eid)) this.bots.add(s.eid, t0 + countdownMs);
     this.slotDue = null;
+    this.slotKills = [];
     this.crowdShowTimes = [];
     this.zoneStarted = false;
     this.starSpawnQueue = [];
@@ -628,9 +631,9 @@ export class MatchSim {
     const cfg = this.cfg;
     const span = (cfg.roundSec - cfg.zoneStartBeforeEndSec) * 1000;
     const k = Math.min(1, Math.max(0, (from - this.playStart) / span));
-    // «Казино»: «Крутки» реже команд и без нарастания — каждая длинная
+    // «Казино»: «Крутки» реже команд (каждая длинная — три вращения), но так же учащаются к концу дубля
     const [a0, b0] = hasSlots(this.theme) ? cfg.slotEverySec : cfg.crowdCmdIntervalSec;
-    const [a1, b1] = hasSlots(this.theme) ? cfg.slotEverySec : cfg.crowdCmdIntervalEndSec;
+    const [a1, b1] = hasSlots(this.theme) ? cfg.slotEveryEndSec : cfg.crowdCmdIntervalEndSec;
     // «Купальская ночь»: обычные команды реже — главное в ночи Леший, жесты не должны его заслонять
     const mul = (roundMod(this.mod) === 'rush' ? 0.5 : 1) * (hasSanity(this.theme) ? cfg.nightCrowdMul : 1);
     const sec = this.rng.range(a0 + (a1 - a0) * k, b0 + (b1 - b0) * k) * mul;
@@ -993,6 +996,7 @@ export class MatchSim {
       else this.fireCrowd(this.forcedKind ?? this.rng.pick<CrowdKind>(['freeze', 'jump', 'dance']), false);
     }
     this.judgeTick(t);
+    if (this.slotKills.length) this.slotSkullTick(t);
     if (this.slotDue && t >= this.slotDue.at) this.applySlot();
     // нажавшие во время стоп-кадра выполняют команду вместе с толпой, с тем же разбросом, что у ботов
     for (const p of this.pr) {
@@ -1145,19 +1149,24 @@ export class MatchSim {
     for (const e of this.world.entities) {
       if (!e.alive) continue;
       const p = players.get(e.eid);
-      let outcome: SlotOutcome | null;
+      let outcomes: SlotOutcome[];
       if (p) {
-        const spin = rollSlot(cfg, this.rng, this.forcedSlot ?? undefined);
-        p.slot = { at: t, outcome: spin.outcome, reels: spin.reels };
-        this.roundSpins.push({ eid: p.eid, at: t, outcome: spin.outcome, reels: spin.reels });
-        due.spins.push({ pid: p.pid, outcome: spin.outcome });
-        outcome = spin.outcome;
+        const spins = rollSpins(cfg, this.rng, this.forcedSlot ?? undefined);
+        p.slot = { at: t, spins };
+        spins.forEach((sp, n) => this.roundSpins.push({ eid: p.eid, at: t, n, outcome: sp.outcome, reels: sp.reels }));
+        outcomes = spins.map((sp) => sp.outcome);
+        due.spins.push({ pid: p.pid, outcomes });
+        // три черепа вырезают сразу, как барабаны встали (конец окна вращения), — не дожидаясь конца «Крутки»
+        const n = outcomes.indexOf('skull');
+        if (n >= 0 && !cfg.kidsMode) this.slotKills.push({ pid: p.pid, at: slotWindow(showAt, n).to });
       } else {
-        outcome = botSlotEffect(cfg, this.rng);
-        if (outcome) due.bots.push({ eid: e.eid, outcome });
+        outcomes = botSlotEffects(cfg, this.rng);
+        if (outcomes.length) due.bots.push({ eid: e.eid, outcomes });
       }
-      if (outcome === 'bolt' || outcome === 'weight') {
-        const mul = outcome === 'bolt' ? cfg.slotFastMul : cfg.slotSlowMul;
+      // скорость — по перевесу молний над гирями (у игрока и у статиста одинаково)
+      const speed = visibleOf(outcomes).speed;
+      if (speed) {
+        const mul = speed === 'bolt' ? cfg.slotFastMul : cfg.slotSlowMul;
         this.emit({ t: 'speed', eid: e.eid, mul, from: resumeAt, until: resumeAt + cfg.slotBuffSec * 1000, at: t });
       }
     }
@@ -1170,6 +1179,7 @@ export class MatchSim {
   private applySlot(): void {
     const due = this.slotDue!;
     this.slotDue = null;
+    this.slotKills = [];
     const t = this.world.time;
     const cfg = this.cfg;
     const spotOn = (eid: number) => {
@@ -1181,56 +1191,64 @@ export class MatchSim {
       const y = Math.round(Math.min(this.arena.walk.y + this.arena.walk.h, Math.max(this.arena.walk.y, e.y + Math.sin(a) * d)));
       this.emit({ t: 'spot', x, y, r: cfg.spotRadius, until: t + cfg.slotSpotSec * 1000, at: t });
     };
-    for (const { pid, outcome } of due.spins) {
+    for (const { pid, outcomes } of due.spins) {
       const p = this.playerRound(pid);
-      if (!p || !p.alive) continue;
-      switch (outcome) {
-        case 'seven':
-          p.slotPts++;
-          break;
-        case 'star':
-          p.stars++;
-          if (p.stars >= cfg.starsToWin && !this.starWinner) {
-            this.starWinner = p.pid;
-            this.endReason = 'stars';
-          }
-          break;
-        case 'fist':
-          p.attacksLeft++;
-          break;
-        case 'reel':
-          p.attacksLeft = Math.max(0, p.attacksLeft - 1);
-          break;
-        case 'peek': {
-          const others = this.pr.filter((o) => o !== p && o.alive);
-          if (others.length) p.peek = { eid: this.rng.pick(others).eid, until: t + cfg.slotPeekSec * 1000 };
-          break;
-        }
-        case 'spot':
-          spotOn(p.eid);
-          break;
-        case 'skull': {
-          // лёгкая сложность: череп не вырезает, а сжигает звезду
-          if (cfg.kidsMode) {
-            p.stars = Math.max(0, p.stars - 1);
+      if (!p) continue;
+      if (visibleOf(outcomes).spot) spotOn(p.eid);
+      for (const outcome of outcomes) {
+        if (!p.alive) break;
+        switch (outcome) {
+          case 'seven':
+            p.slotPts++;
+            break;
+          case 'star':
+            p.stars++;
+            if (p.stars >= cfg.starsToWin && !this.starWinner) {
+              this.starWinner = p.pid;
+              this.endReason = 'stars';
+            }
+            break;
+          case 'fist':
+            p.attacksLeft++;
+            break;
+          case 'reel':
+            p.attacksLeft = Math.max(0, p.attacksLeft - 1);
+            break;
+          case 'peek': {
+            const others = this.pr.filter((o) => o !== p && o.alive);
+            if (others.length && !(p.peek && p.peek.until > t)) p.peek = { eid: this.rng.pick(others).eid, until: t + cfg.slotPeekSec * 1000 };
             break;
           }
-          const e = this.world.get(p.eid)!;
-          p.alive = false;
-          p.diedAt = t;
-          if (p.autopilot) this.bots.remove(p.eid);
-          this.emit({ t: 'hit', target: p.eid, result: 'player', x: e.x, y: e.y, at: t });
-          this.emit({ t: 'remove', eid: p.eid, cause: 'player', at: t });
-          break;
+          case 'skull':
+            // лёгкая сложность: череп не вырезает, а сжигает звезду (вырезает — slotSkullTick, раньше)
+            if (cfg.kidsMode) p.stars = Math.max(0, p.stars - 1);
+            break;
         }
       }
     }
-    for (const b of due.bots) if (b.outcome === 'spot') spotOn(b.eid);
+    for (const b of due.bots) if (visibleOf(b.outcomes).spot) spotOn(b.eid);
   }
 
   /** Вращения игроков в этом дубле (сервер и песочница — для клипа выбывшего посреди дубля). */
   get spins(): readonly SlotRecord[] {
     return this.roundSpins;
+  }
+
+  /** Три черепа: актёра вырезает в стоп-кадре, как только встали барабаны (конец окна вращения). */
+  private slotSkullTick(t: number): void {
+    const due = this.slotKills.filter((k) => t >= k.at);
+    if (!due.length) return;
+    this.slotKills = this.slotKills.filter((k) => t < k.at);
+    for (const k of due) {
+      const p = this.playerRound(k.pid);
+      if (!p || !p.alive) continue;
+      const e = this.world.get(p.eid)!;
+      p.alive = false;
+      p.diedAt = t;
+      if (p.autopilot) this.bots.remove(p.eid);
+      this.emit({ t: 'hit', target: p.eid, result: 'player', x: e.x, y: e.y, at: t });
+      this.emit({ t: 'remove', eid: p.eid, cause: 'player', at: t });
+    }
   }
 
   /** Сценарий (обучение, тесты): исход следующей «Крутки» у всех игроков. */

@@ -6,17 +6,26 @@ import {
   MatchSim,
   ROTATION_THEMES,
   Rng,
+  SLOT_BRAKE_MS,
   SLOT_OUTCOMES,
+  SLOT_PAUSE_NEED,
+  SLOT_SPINS,
+  SLOT_STOP_MS,
+  SLOT_TEASE_MS,
   SLOT_VISIBLE,
   THEME_RULES,
   botSlotEffect,
   classifyReels,
   hasSlots,
   makeConfig,
+  findBestMoment,
   momentEvents,
   recordRound,
   reelsFor,
   rollOutcome,
+  rollSpins,
+  slotWindow,
+  visibleOf,
   skullChance,
   slotWeights,
 } from '../src';
@@ -27,6 +36,22 @@ const CASINO = THEME_RULES.findIndex((r) => r.id === 'casino');
 const players = ['a', 'b', 'c', 'd'].map((pid, i) => ({ pid, name: pid, color: i }));
 
 describe('автомат: шансы и барабаны', () => {
+  it('три вращения влезают в стоп-кадр; после черепа не крутят (на лёгкой — крутят дальше)', () => {
+    expect(SLOT_PAUSE_NEED).toBeLessThanOrEqual(cfg.slotPauseMs);
+    const w = slotWindow(0, SLOT_SPINS - 1);
+    expect(w.to).toBe(SLOT_PAUSE_NEED);
+    for (let k = 0; k < SLOT_SPINS; k++) {
+      const wk = slotWindow(0, k);
+      expect(wk.auto + SLOT_STOP_MS[2] + SLOT_TEASE_MS + SLOT_BRAKE_MS).toBeLessThanOrEqual(wk.to);
+    }
+    const rng = new Rng(5);
+    expect(rollSpins(cfg, rng, 'skull').length).toBe(1);
+    expect(rollSpins(makeConfig({ kidsMode: true }), rng, 'skull').length).toBe(SLOT_SPINS);
+    expect(rollSpins(cfg, rng, 'fist').length).toBe(SLOT_SPINS);
+    expect(visibleOf(['bolt', 'weight', 'bolt']).speed).toBe('bolt');
+    expect(visibleOf(['bolt', 'weight']).speed).toBeNull();
+  });
+
   it('веса — ровно 1, «мимо» — остаток; череп зависит от сложности', () => {
     for (const c of [cfg, makeConfig({ kidsMode: true }), makeConfig({ strictCrowd: true })]) {
       const w = slotWeights(c);
@@ -96,13 +121,15 @@ describe('«Казино» в матче', () => {
     expect(THEME_RULES[CASINO].finaleOnly).toBeFalsy();
   });
 
-  it('обычный дубль: ходят и бьют, есть обвинение; вместо жестов — 2–3 «Крутки» со стоп-кадром', () => {
+  it('обычный дубль: ходят и бьют, есть обвинение; вместо жестов — 3–5 «Круток» со стоп-кадром', () => {
     const { events, phases } = run(5);
     expect(phases).toContain('accuse');
     expect(events.some((e) => e.t === 'move')).toBe(true);
     const crowd = events.filter((e): e is Extract<WorldEvent, { t: 'crowd' }> => e.t === 'crowd');
-    expect(crowd.length).toBeGreaterThanOrEqual(2);
-    expect(crowd.length).toBeLessThanOrEqual(4);
+    expect(crowd.length).toBeGreaterThanOrEqual(3);
+    expect(crowd.length).toBeLessThanOrEqual(5);
+    // к концу дубля «Крутки» чаще
+    expect(crowd[crowd.length - 1].at - crowd[crowd.length - 2].resumeAt).toBeLessThan(crowd[1].at - crowd[0].resumeAt);
     for (const c of crowd) {
       expect(c.slot).toBe(true);
       expect(c.showAt - c.at).toBe(cfg.slotWarnMs);
@@ -123,7 +150,9 @@ describe('«Казино» в матче', () => {
       mine = s.me()?.slot ?? null;
     }
     expect(mine).not.toBeNull();
-    expect(classifyReels(mine!.reels)).toBe(mine!.outcome);
+    expect(mine!.spins.length).toBeGreaterThan(0);
+    expect(mine!.spins.length).toBeLessThanOrEqual(SLOT_SPINS);
+    for (const sp of mine!.spins) expect(classifyReels(sp.reels)).toBe(sp.outcome);
     expect(mine!.at).toBe(sim.world.crowd!.warnAt);
     for (const e of events) expect(JSON.stringify(e)).not.toMatch(/outcome|reels|seven|skull/);
   });
@@ -158,7 +187,10 @@ describe('«Казино» в матче', () => {
     const ko = momentEvents(rec, victim).find((m) => m.victim === victim)!;
     expect(ko.by).toBe('slot');
     expect(ko.attacker).toBeUndefined();
-    expect(ko.from).toBeLessThanOrEqual(crowd[0].showAt);
+    // вращение с черепами целиком, и вырезан ещё в стоп-кадре
+    expect(ko.from).toBeLessThanOrEqual(slotWindow(crowd[0].showAt, 0).from);
+    expect(ko.at).toBeLessThan(crowd[0].resumeAt);
+    expect(findBestMoment(rec, victim)?.by).toBe('slot');
   });
 
   it('«777» — очко в итогах дубля; три звезды на «Крутке» — звезда', () => {

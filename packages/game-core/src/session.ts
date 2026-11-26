@@ -161,7 +161,7 @@ export class LocalSession implements ClientSession {
       sanity: Math.ceil(p.sanity),
       sins: p.sins,
       kiki: p.kiki.map((k) => ({ id: k.id, x: k.x, y: k.y, warn: this.sim.world.time < k.at })),
-      slot: p.slot ? { ...p.slot, reels: [...p.slot.reels] } : null,
+      slot: p.slot ? { at: p.slot.at, spins: p.slot.spins.map((s) => ({ outcome: s.outcome, reels: [...s.reels] })) } : null,
       peek: p.peek && this.sim.world.time < p.peek.until ? { ...p.peek } : null,
     };
   }

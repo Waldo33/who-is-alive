@@ -13,6 +13,7 @@ import type {
   Phase,
   PlayerInfo,
   RoundSummary,
+  SlotMine,
   Star,
   WorldEvent,
 } from '@kto/game-core';
@@ -594,7 +595,7 @@ export class RemoteSession implements ClientSession {
       sanity: m.sanity ?? this.cfg.sanityStart,
       sins: m.sins ?? 0,
       kiki: (m.km ?? []).map(([id, x, y, w]) => ({ id, x, y, warn: w === 1 })),
-      slot: m.sl ? { at: m.sl[0], outcome: slotOutcomeAt(m.sl[1]), reels: [slotSymbolAt(m.sl[2]), slotSymbolAt(m.sl[3]), slotSymbolAt(m.sl[4])] } : null,
+      slot: decodeSlot(m.s3 ?? m.sl),
       peek: m.pk && this.world.time < m.pk[1] ? { eid: m.pk[0], until: m.pk[1] } : null,
     };
   }
@@ -723,4 +724,12 @@ export class RemoteSession implements ClientSession {
     if (this.pingTimer) clearInterval(this.pingTimer);
     this.world.listeners.length = 0;
   }
+}
+
+/** Свои вращения «Крутки» из MeMsg: [warnAt, (исход, три символа)×n]. */
+function decodeSlot(a: readonly number[] | undefined): SlotMine | null {
+  if (!a || a.length < 5) return null;
+  const spins: SlotMine['spins'] = [];
+  for (let i = 1; i + 3 < a.length; i += 4) spins.push({ outcome: slotOutcomeAt(a[i]), reels: [slotSymbolAt(a[i + 1]), slotSymbolAt(a[i + 2]), slotSymbolAt(a[i + 3])] });
+  return { at: a[0], spins };
 }

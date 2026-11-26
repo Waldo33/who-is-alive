@@ -1,7 +1,7 @@
 import * as Phaser from 'phaser';
 import { PAL, hexToInt } from '@kto/assets';
-import type { ClientView, Dict, SlotMine, SlotOutcome, SlotSymbol } from '@kto/game-core';
-import { SLOT_SYMBOLS, isTease } from '@kto/game-core';
+import type { ClientView, Dict, SlotMine, SlotOutcome, SlotSpin, SlotSymbol } from '@kto/game-core';
+import { SLOT_DROP_MS, SLOT_SPINS, SLOT_STOP_MS, SLOT_SYMBOLS, SLOT_TEASE_MS, fmt, isTease, slotWindow } from '@kto/game-core';
 import type { Haptic } from '../lib/telegram';
 import type { Sfx } from './audio';
 import type { FontColor } from './font';
@@ -24,14 +24,9 @@ import {
  * гиря, прожектор), — без своего звука: соседи по комнате не должны узнать, чей человечек побежал.
  */
 
-/** Падение автомата сверху и подъём обратно, мс. */
-const DROP_MS = 400;
+/** Падение автомата сверху и подъём обратно, мс; окна вращений и торможение — общие (game-core › slots.ts). */
+const DROP_MS = SLOT_DROP_MS;
 const RISE_MS = 300;
-/** Сколько ждать рычага после падения автомата, мс мира; потом автомат дёргает сам. */
-const AUTO_MS = 2000;
-/** Барабаны: от рывка до начала торможения каждого, мс; «чуть-чуть» — третий дольше. */
-const STOP_AT = [800, 1250, 1700];
-const TEASE_MS = 700;
 /** Скорость ленты, px/мс (символ проходит каждые ~80 мс) и разгон. */
 const SPEED = 0.5;
 const ACCEL_MS = 160;
@@ -84,6 +79,9 @@ export class SlotScreen {
   private auto = false;
   private reels: Reel[] = [];
   private result: SlotMine | null = null;
+  /** Какое вращение идёт (0…SLOT_SPINS−1) и кончились ли вращения (все три или вырезал череп). */
+  private spinK = 0;
+  private over = false;
   private revealed = false;
   private resultText: [string, FontColor] = ['', 'white'];
   private flash: { color: number; at: number } | null = null;
@@ -152,8 +150,11 @@ export class SlotScreen {
     return y >= y0 && y < y0 + DECK_H + 4;
   }
 
+  /** Окно текущего вращения открыто (мир), рычаг ещё не дёрнут. */
+  private windowOpen = false;
+
   private canPull(): boolean {
-    return this.shown && this.key >= 0 && !this.pullAt && this.oy === 0;
+    return this.shown && this.key >= 0 && !this.pullAt && !this.over && this.windowOpen && this.oy === 0;
   }
 
   /** Касание: true — автомат забрал его себе (на поле не уходит). */
@@ -212,7 +213,8 @@ export class SlotScreen {
       return;
     }
     if (c.warnAt !== this.key) this.begin(c.warnAt);
-    const alive = !!me?.alive;
+    // вырезали черепа прямо в стоп-кадре — свой автомат с тремя черепами остаётся до конца «Крутки»
+    const alive = !!me?.alive || (this.over && !!this.result?.spins.some((sp) => sp.outcome === 'skull'));
     // лампы: от звонка до падения автомата (у вырезанных — всю «Крутку»: им крутить нечего)
     const warn = wt < c.showAt || !alive;
     this.drawWarn(warn, wt < c.showAt ? this.h.t.warn : this.h.t.ghost, now);
@@ -233,11 +235,15 @@ export class SlotScreen {
     for (const { o, y } of this.objs) o.y = y + (o === this.objs[0].o ? 0 : oy);
     (this.objs[0].o as unknown as Phaser.GameObjects.Image).setAlpha(0.85 * Math.max(0, Math.min(1, td / DROP_MS)) * (wt >= c.resumeAt ? 1 - Math.min(1, (wt - c.resumeAt) / RISE_MS) : 1));
 
-    // своё вращение пришло (личное сообщение) — запоминаем, барабаны встанут на него
+    // свои вращения пришли (личное сообщение) — запоминаем, барабаны встанут на них
     if (me?.slot && me.slot.at === c.warnAt && !this.result) this.result = me.slot;
-    // не дёрнул за AUTO_MS — автомат дёргает сам (рычаг всё равно опускается)
-    if (!this.pullAt && td >= DROP_MS + AUTO_MS && !this.drag) this.pull(true);
-    if (this.pullAt) this.spin(now, wt, c.resumeAt);
+    // следующее вращение: итог прошлого показан, его окно открылось — лента снова готова к рывку
+    if (this.revealed && !this.over && this.spinK + 1 < SLOT_SPINS && wt >= slotWindow(c.showAt, this.spinK + 1).from) this.next();
+    const win = slotWindow(c.showAt, this.spinK);
+    this.windowOpen = wt >= win.from;
+    // не дёрнул — автомат дёргает сам (рычаг всё равно опускается)
+    if (!this.pullAt && !this.over && wt >= win.auto && !this.drag) this.pull(true);
+    if (this.pullAt) this.spin(now, wt, win.to);
     if (!this.pullAt && !this.drag) this.leverK = 0;
     else if (this.pullAt && !this.drag) {
       // рычаг сам доходит до низа и пружинит обратно
@@ -248,8 +254,21 @@ export class SlotScreen {
     this.drawPanel(now, td);
   }
 
+  /** К следующему вращению: лента стоит, где встала; итог прошлого остаётся на табло до нового. */
+  private next(): void {
+    this.spinK++;
+    this.pullAt = 0;
+    this.auto = false;
+    this.revealed = false;
+    this.drag = null;
+    this.leverK = 0;
+    for (const r of this.reels) Object.assign(r, { from: r.p, to: r.p, stopAt: null, dur: 0, landed: false, lastK: Math.round(r.p / ROW), targetK: -1 });
+  }
+
   private begin(key: number): void {
     this.key = key;
+    this.spinK = 0;
+    this.over = false;
     this.pullAt = 0;
     this.auto = false;
     this.result = null;
@@ -268,22 +287,22 @@ export class SlotScreen {
   }
 
   /** Лента крутится; торможение каждого барабана — как только известен итог и подошло его время. */
-  private spin(now: number, wt: number, resumeAt: number): void {
+  private spin(now: number, wt: number, windowTo: number): void {
     const t = now - this.pullAt;
-    // сколько времени осталось до конца стоп-кадра (по часам мира) — все барабаны должны успеть встать
-    const left = resumeAt - wt;
-    const res = this.result;
+    // сколько осталось до конца окна вращения (по часам мира) — все барабаны должны успеть встать
+    const left = windowTo - wt;
+    const res = this.result?.spins[this.spinK];
     const tease = !!res && isTease(res.reels);
     this.reels.forEach((r, i) => {
       if (r.landed) return;
       if (r.stopAt === null && res) {
-        let at = this.pullAt + STOP_AT[i] + (i === 2 && tease ? TEASE_MS : 0);
+        let at = this.pullAt + SLOT_STOP_MS[i] + (i === 2 && tease ? SLOT_TEASE_MS : 0);
         // итог пришёл поздно — встаём по очереди от «сейчас»
         const prev = this.reels[i - 1];
-        if (prev && prev.stopAt !== null) at = Math.max(at, prev.stopAt + 300);
+        if (prev && prev.stopAt !== null) at = Math.max(at, prev.stopAt + 200);
         at = Math.max(at, now);
-        // не успеть до конца стоп-кадра нельзя: сжимаем
-        at = Math.min(at, now + Math.max(0, left - 900 - (2 - i) * 150));
+        // не успеть до конца окна нельзя: сжимаем
+        at = Math.min(at, now + Math.max(0, left - 700 - (2 - i) * 120));
         if (now >= at - 1) this.brake(r, res.reels[i], now);
       }
       if (r.stopAt === null) {
@@ -336,8 +355,11 @@ export class SlotScreen {
     r.stopAt = now;
   }
 
-  private reveal(res: SlotMine, now: number): void {
+  private reveal(res: SlotSpin, now: number): void {
     this.revealed = true;
+    // вырезал череп или вращения кончились — дальше не крутим
+    const total = this.result?.spins.length ?? SLOT_SPINS;
+    if (this.spinK + 1 >= total) this.over = true;
     const t = this.h.t;
     const TEXT: Record<SlotOutcome, [string, FontColor, Haptic | null, Sfx | null]> = {
       seven: [t.seven, 'yellow', 'success', 'slotJackpot'],
@@ -471,9 +493,11 @@ export class SlotScreen {
     // табло: что делать сейчас и что выпало
     let l1 = '';
     let l1c: FontColor = 'mist';
-    if (!this.pullAt) [l1, l1c] = [t.pullHint, Math.floor(now / 300) % 2 ? 'white' : 'yellow'];
-    else if (!this.revealed) [l1, l1c] = [this.auto ? t.auto : t.spinning, 'mist'];
-    else if (this.auto) [l1, l1c] = [t.auto, 'mist'];
+    const nth = fmt(t.spinOf, { n: this.spinK + 1, m: SLOT_SPINS });
+    if (this.over) [l1, l1c] = [nth, 'mist'];
+    else if (!this.pullAt) [l1, l1c] = this.windowOpen ? [t.pullHint, Math.floor(now / 300) % 2 ? 'white' : 'yellow'] : [nth, 'mist'];
+    else if (!this.revealed) [l1, l1c] = [this.auto ? t.auto : nth, 'mist'];
+    else [l1, l1c] = [nth, 'mist'];
     if (this.line1.text !== l1) this.line1.setText(l1);
     this.line1.setFont('px-' + l1c);
     const [l2, l2c] = this.resultText;
@@ -505,7 +529,7 @@ export class SlotScreen {
 
   /** Кнопка «Крутить» на наклонной панели: горит и мигает, пока ждём рывка; нажата — проседает. */
   private drawButton(g: Phaser.GameObjects.Graphics, now: number, bx: number, by: number): void {
-    const open = !this.pullAt;
+    const open = !this.pullAt && !this.over && this.windowOpen;
     const down = now - this.pressAt < 160 ? 3 : this.pullAt && !this.auto && this.pressAt >= this.pullAt - 5 ? 2 : 0;
     const x = bx + BTN_PULL.x;
     const y = by + BTN_Y + down;
@@ -537,7 +561,7 @@ export class SlotScreen {
     g.fillStyle(hexToInt(PAL.coral)).fillRect(lx + 2, top - 3, 2, 2);
     g.fillStyle(hexToInt(PAL.white)).fillRect(lx + 2, top - 2, 1, 1);
     // подсказка: стрелка вниз у рычага, бежит сверху вниз
-    if (!this.pullAt && td >= DROP_MS) {
+    if (!this.pullAt && !this.over && this.windowOpen && td >= DROP_MS) {
       const k = (now % 700) / 700;
       const ay = by + REELS_Y + 14 + Math.round(k * 22);
       const ax = lx - 10;

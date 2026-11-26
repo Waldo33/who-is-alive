@@ -6,7 +6,7 @@
  * сущность самого просящего; до разоблачения дубля в кадре подсвечен и подписан только он,
  * остальные живые — обычная толпа (как в клипе с телефона).
  */
-import { hasSanity, makeConfig, nightCause, recordRound, skullSpin } from '@kto/game-core';
+import { hasSanity, makeConfig, nightCause, recordRound, skullClipFrom, skullSpin } from '@kto/game-core';
 import type { ArenaDef, Moment, RoundSummary, SlotRecord, World } from '@kto/game-core';
 import type { ClipJob } from './film-render';
 
@@ -44,7 +44,7 @@ export function deathClipJob(
   const mine = (s?.slots ?? v.spins ?? []).filter((r) => r.eid === eid);
   const skull = killer === undefined ? skullSpin(mine, eid, at, cfg) : undefined;
   // с известным нападавшим — его подход целиком (до 4,5 с), иначе — 6 с до развязки
-  const from = Math.max(start, skull ? skull.at + cfg.slotWarnMs - 300 : known ? at - 4500 : to - 6000);
+  const from = Math.max(start, skull ? skullClipFrom(skull, cfg) : known ? at - 4500 : to - 6000);
   if (to - from < 1500) return null;
   const players = known
     ? s.reveal.flatMap((r) => {
