@@ -128,6 +128,63 @@ export function rollSlot(cfg: GameConfig, rng: Rng, forced?: SlotOutcome): SlotS
   return { outcome, reels: reelsFor(outcome, rng) };
 }
 
+/** Вращений за одну «Крутку». */
+export const SLOT_SPINS = 3;
+/** Ход «Крутки» от стоп-кадра (мс мира): автомат падает, потом окна вращений одно за другим. */
+export const SLOT_DROP_MS = 400;
+/** Окно каждого вращения: первое длиннее — успеть понять, что происходит. */
+export const SLOT_WIN_MS: readonly number[] = [2500, 2100, 2100];
+/** Через сколько от начала окна автомат дёргает рычаг сам. */
+export const SLOT_AUTO_MS: readonly number[] = [700, 300, 300];
+/**
+ * Барабаны (от рывка): когда начинает тормозить каждый; при паре третий дразнит дольше. Торможение —
+ * не дольше SLOT_BRAKE_MS. Всё влезает в окно вращения.
+ */
+export const SLOT_STOP_MS: readonly number[] = [250, 500, 750];
+export const SLOT_TEASE_MS = 350;
+export const SLOT_BRAKE_MS = 650;
+
+/** Окно вращения k: с какого мига можно дёргать, когда автомат дёрнет сам, когда окно кончится. */
+export function slotWindow(showAt: number, k: number): { from: number; auto: number; to: number } {
+  let from = showAt + SLOT_DROP_MS;
+  for (let i = 0; i < k; i++) from += SLOT_WIN_MS[i];
+  return { from, auto: from + SLOT_AUTO_MS[k], to: from + SLOT_WIN_MS[k] };
+}
+
+/** Сколько стоит мир на «Крутке»: падение и все окна вращений (cfg.slotPauseMs должен быть не меньше). */
+export const SLOT_PAUSE_NEED = SLOT_DROP_MS + SLOT_WIN_MS.reduce((a, b) => a + b, 0);
+
+/**
+ * Все вращения игрока на одной «Крутке». Череп вырезает — после него не крутят (на лёгкой он сжигает
+ * звезду, и вращения идут дальше).
+ */
+export function rollSpins(cfg: GameConfig, rng: Rng, forced?: SlotOutcome): SlotSpin[] {
+  const out: SlotSpin[] = [];
+  for (let k = 0; k < SLOT_SPINS; k++) {
+    const s = rollSlot(cfg, rng, forced);
+    out.push(s);
+    if (s.outcome === 'skull' && !cfg.kidsMode) break;
+  }
+  return out;
+}
+
+/** Что видно на поле после всех вращений: молния против гири (перевес), прожектор — если выпал хоть раз. */
+export function visibleOf(outcomes: readonly SlotOutcome[]): { speed: 'bolt' | 'weight' | null; spot: boolean } {
+  let d = 0;
+  for (const o of outcomes) d += o === 'bolt' ? 1 : o === 'weight' ? -1 : 0;
+  return { speed: d > 0 ? 'bolt' : d < 0 ? 'weight' : null, spot: outcomes.includes('spot') };
+}
+
+/** Статисту — столько же «вращений», сколько игроку: только видимые исходы с теми же шансами. */
+export function botSlotEffects(cfg: GameConfig, rng: Rng): SlotOutcome[] {
+  const out: SlotOutcome[] = [];
+  for (let k = 0; k < SLOT_SPINS; k++) {
+    const o = botSlotEffect(cfg, rng);
+    if (o) out.push(o);
+  }
+  return out;
+}
+
 /** Что достаётся статисту на «Крутке»: видимые исходы с теми же шансами, что у игрока, иначе ничего. */
 export function botSlotEffect(cfg: GameConfig, rng: Rng): SlotOutcome | null {
   const w = slotWeights(cfg);
@@ -154,25 +211,34 @@ export function slotSymbolAt(i: number): SlotSymbol {
 }
 
 /**
- * Своё вращение на «Крутке» (MeView.slot): к какой «Крутке» (warnAt), что выпало и что на барабанах.
- * Знает только сам игрок.
+ * Свои вращения на «Крутке» (MeView.slot): к какой «Крутке» (warnAt) и что выпало в каждом (их меньше
+ * SLOT_SPINS, если вырезал череп). Знает только сам игрок.
  */
 export interface SlotMine {
   at: number;
-  outcome: SlotOutcome;
-  reels: [SlotSymbol, SlotSymbol, SlotSymbol];
+  spins: SlotSpin[];
 }
 
-/** Вращение в итогах дубля и в записи для клипа: чьё (сущность), к какой «Крутке» (warnAt), что выпало. */
+/** Вращение в итогах дубля и в записи для клипа: чьё (сущность), к какой «Крутке» (warnAt), какое по счёту, что выпало. */
 export interface SlotRecord {
   eid: number;
   at: number;
+  /** Номер вращения в «Крутке», с 0 (в записях до трёх вращений — нет: 0). */
+  n?: number;
   outcome: SlotOutcome;
   reels: [SlotSymbol, SlotSymbol, SlotSymbol];
 }
 
 /** Череп вырезал: вращение с черепом у этой сущности, после которого её выбили в `hitAt`. */
 export function skullSpin(slots: readonly SlotRecord[] | undefined, eid: number, hitAt: number, cfg: GameConfig): SlotRecord | undefined {
-  const due = cfg.slotWarnMs + cfg.slotPauseMs;
-  return slots?.find((s) => s.eid === eid && s.outcome === 'skull' && hitAt >= s.at + due && hitAt <= s.at + due + 200);
+  return slots?.find((s) => {
+    if (s.eid !== eid || s.outcome !== 'skull') return false;
+    const due = slotWindow(s.at + cfg.slotWarnMs, s.n ?? 0).to;
+    return hitAt >= due && hitAt <= due + 200;
+  });
+}
+
+/** С какого мига клип показывает гибель от черепов: окно того вращения (рывок, барабаны, три черепа). */
+export function skullClipFrom(s: SlotRecord, cfg: GameConfig): number {
+  return slotWindow(s.at + cfg.slotWarnMs, s.n ?? 0).from - 300;
 }

@@ -970,16 +970,16 @@ export class ClipPlayerScene {
     out.globalAlpha = 1;
   }
 
-  /** Чьё вращение показать на «Крутке»: героя, иначе участника момента (вырезанного, нападавшего). */
-  private spinAt(warnAt: number): SlotRecord | undefined {
+  /** Чьи вращения показать на «Крутке»: героя, иначе участника момента (вырезанного, нападавшего). */
+  private spinsAt(warnAt: number): SlotRecord[] {
     const all = this.inp.rec.slots?.filter((r) => r.at === warnAt);
-    if (!all?.length) return undefined;
+    if (!all?.length) return [];
     const m = this.inp.moment;
     for (const eid of [this.inp.hero, m.victim, m.attacker]) {
-      const r = eid !== undefined ? all.find((x) => x.eid === eid) : undefined;
-      if (r) return r;
+      const rs = eid !== undefined ? all.filter((x) => x.eid === eid) : [];
+      if (rs.length) return rs.sort((a, b) => (a.n ?? 0) - (b.n ?? 0));
     }
-    return undefined;
+    return [];
   }
 
   /** «Казино»: «Крутка» в кадре — тот же автомат, что у игрока (clip-slot.ts). */
@@ -997,7 +997,7 @@ export class ClipPlayerScene {
       showAt: c.showAt,
       resumeAt: c.resumeAt,
       now: t,
-      spin: this.spinAt(c.warnAt),
+      spins: this.spinsAt(c.warnAt),
       sound: snd
         ? (key, sfx, step) => {
             // часть ролика в ключе: загадка и разбор проигрывают одну «Крутку» дважды — звук в каждой

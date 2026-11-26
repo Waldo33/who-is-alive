@@ -233,7 +233,12 @@ export class HostSession implements ClientSession {
       clapsLeft: p.clapsLeft,
       clapAt: p.clapAt,
       ...(hasSanity(this.sim.theme) ? { sanity: Math.ceil(p.sanity), sins: p.sins } : {}),
-      ...(p.slot ? { sl: [p.slot.at, slotOutcomeIndex(p.slot.outcome), ...p.slot.reels.map(slotSymbolIndex)] as [number, number, number, number, number] } : {}),
+      ...(p.slot
+        ? {
+            sl: [p.slot.at, slotOutcomeIndex(p.slot.spins[0].outcome), ...p.slot.spins[0].reels.map(slotSymbolIndex)] as [number, number, number, number, number],
+            s3: [p.slot.at, ...p.slot.spins.flatMap((s) => [slotOutcomeIndex(s.outcome), ...s.reels.map(slotSymbolIndex)])],
+          }
+        : {}),
       ...(p.peek && this.sim.world.time < p.peek.until ? { pk: [p.peek.eid, p.peek.until] as [number, number] } : {}),
       ...(p.kiki.length ? { km: p.kiki.map((k) => [k.id, Math.round(k.x), Math.round(k.y), this.sim.world.time < k.at ? 1 : 0] as [number, number, number, number]) } : {}),
     };

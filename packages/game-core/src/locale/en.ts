@@ -67,6 +67,7 @@ export const en: Dict = {
     pullHint: 'Pull the lever down!',
     auto: 'The machine pulled',
     spinning: 'Spinning…',
+    spinOf: 'Spin {n} of {m}',
     seven: '777! +1 match point',
     star: 'Three stars: +star',
     fist: 'Fists: +1 hit',

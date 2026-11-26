@@ -4,7 +4,7 @@ import { World, makeReplay } from './world';
 import { makeConfig } from './config';
 import { nightDeaths } from './sanity';
 import { hasSanity } from './themes';
-import { skullSpin } from './slots';
+import { skullClipFrom, skullSpin } from './slots';
 import type { SlotRecord } from './slots';
 import type { WorldSnapshot } from './world';
 
@@ -209,9 +209,9 @@ export function momentEvents(rec: RoundRecording, selfEid?: number): MomentEvent
       }
       const skull = ev.result === 'player' && ev.attacker === undefined && !rec.kills?.some((k) => k.victim === ev.target) ? skullSpin(rec.slots, ev.target, ev.at, NIGHT_CFG) : undefined;
       if (skull) {
-        // «Казино»: вырезали черепа — показываем автомат с начала вращения (без ламп предупреждения)
+        // «Казино»: вырезали черепа — показываем это вращение целиком: рывок, барабаны, три черепа
         const role = selfEid !== undefined && ev.target === selfEid ? 'victim' : undefined;
-        add(ev.at, 6 + (role ? SELF_BONUS : 0), 'knockout', ev.at - (skull.at + NIGHT_CFG.slotWarnMs) + 300, role, undefined, ev.target, 'slot');
+        add(ev.at, 6 + (role ? SELF_BONUS : 0), 'knockout', ev.at - skullClipFrom(skull, NIGHT_CFG), role, undefined, ev.target, 'slot');
         continue;
       }
       if (ev.result === 'player') {

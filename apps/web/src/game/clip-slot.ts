@@ -1,6 +1,6 @@
 import { PAL } from '@kto/assets';
 import type { Dict, SlotOutcome, SlotRecord } from '@kto/game-core';
-import { SLOT_SYMBOLS } from '@kto/game-core';
+import { SLOT_SPINS, SLOT_STOP_MS, SLOT_SYMBOLS, SLOT_TEASE_MS, fmt, slotWindow } from '@kto/game-core';
 import { text } from './art';
 import { canvas } from './pixels';
 import {
@@ -18,19 +18,14 @@ import type { Sfx } from './audio';
  * Время — мировое (от World.crowd), поэтому замедление разбора замедляет и автомат.
  */
 
-/** Как в slot-ui.ts: падение и подъём, когда рычаг дёргается (в клипе — сам), торможение барабанов. */
+/** Как в slot-ui.ts: падение и подъём; рычаг в клипе дёргается, когда автомат дёрнул бы сам (окна — slots.ts). */
 const DROP_MS = 400;
 const RISE_MS = 300;
-const PULL_MS = DROP_MS + 350;
 const LEVER_MS = 220;
-const STOP_AT = [800, 1250, 1700];
-const TEASE_MS = 700;
 const SPEED = 0.5;
 const ROW = SYM_W * SYM_K + 4;
 const N = SLOT_SYMBOLS.length;
 const strip = (r: number, k: number): number => (((k * 5 + r * 4) % N) + N) % N;
-/** Торможение начинается за столько до остановки барабана (3 символа с замедлением — ~0,5 с). */
-const BRAKE_LEAD = 560;
 /** Цвета итога на табло — как в игре. */
 const RESULT: Record<SlotOutcome, string> = {
   seven: PAL.yellow,
@@ -92,8 +87,7 @@ function getArt(): Art {
 }
 
 /** Ход одного барабана: где лента (px) в момент e (мс от рывка) и встал ли он. */
-function reelPos(e: number, stop: number): { p: number; targetK: number; landedAt: number } {
-  const b = Math.max(0, stop - BRAKE_LEAD);
+function reelPos(e: number, b: number): { p: number; targetK: number; landedAt: number } {
   const from = SPEED * b;
   const targetK = Math.ceil(from / ROW) + 3;
   const to = targetK * ROW;
@@ -117,20 +111,20 @@ export interface ClipSlotFrame {
   resumeAt: number;
   /** Мировое время кадра. */
   now: number;
-  /** Чьё вращение показать; нет — только лампы и «КРУТКА!». */
-  spin: SlotRecord | undefined;
+  /** Чьи вращения показать (по порядку); пусто — только лампы и «КРУТКА!». */
+  spins: readonly SlotRecord[];
   /** Звук (один раз на ключ — повтор кадра не повторяет звук). */
   sound?: (key: string, sfx: Sfx, step?: number) => void;
 }
 
 /** Нарисовать «Крутку» в кадре клипа. Вызывать каждый кадр, пока мир внутри [warnAt, resumeAt + RISE_MS). */
 export function drawClipSlot(f: ClipSlotFrame): void {
-  const { g, ay, py, now, spin } = f;
+  const { g, ay, py, now } = f;
   if (now < f.warnAt || now >= f.resumeAt + RISE_MS) return;
   const a = getArt();
   const ts = f.t.slot;
   // лампы и «КРУТКА!» — до автомата (и всю паузу, если чьё вращение неизвестно)
-  if (now < f.showAt || !spin) {
+  if (now < f.showAt || !f.spins.length) {
     if (now < f.resumeAt) drawWarn(f, ts.warn);
     return;
   }
@@ -145,13 +139,19 @@ export function drawClipSlot(f: ClipSlotFrame): void {
   g.globalAlpha = 1;
   g.drawImage(a.body, bx, by);
 
-  // рычаг дёргается сам, барабаны — от рывка
-  const pe = e - PULL_MS;
+  // какое вращение идёт: следующее начинается с рывка в своём окне, до него видно, где встало прошлое
+  let k = 0;
+  for (let j = 1; j < f.spins.length; j++) if (now >= slotWindow(f.showAt, j).auto) k = j;
+  const spin = f.spins[k];
+  const win = slotWindow(f.showAt, k);
+  const pe = now - win.auto;
   const tease = spin.reels[0] === spin.reels[1];
-  const stops = STOP_AT.map((s, i) => s + (i === 2 && tease ? TEASE_MS : 0));
+  const stops = SLOT_STOP_MS.map((s, i) => s + (i === 2 && tease ? SLOT_TEASE_MS : 0));
   const reels = stops.map((s) => reelPos(pe, s));
   const done = pe >= reels[2].landedAt;
-  const key = `${f.warnAt}:`;
+  const nextWin = k + 1 < f.spins.length ? slotWindow(f.showAt, k + 1) : null;
+  const btnOpen = pe < 0 || (!!nextWin && now >= nextWin.from);
+  const key = `${f.warnAt}:${k}:`;
   if (pe >= 0) f.sound?.(key + 'lever', 'slotLever');
   reels.forEach((r, i) => pe >= r.landedAt && f.sound?.(key + 'r' + i, 'slotStop', i));
   if (done) {
@@ -205,18 +205,19 @@ export function drawClipSlot(f: ClipSlotFrame): void {
   });
   const party = done && (spin.outcome === 'seven' || spin.outcome === 'star') && pe - reels[2].landedAt < 2400;
   drawCandle(g, now, bx, by, spinning, party);
-  drawButton(g, f, bx, by, pe);
+  drawButton(g, f, bx, by, btnOpen);
   const lk = pe < 0 ? 0 : pe < LEVER_MS ? pe / LEVER_MS : pe < LEVER_MS * 2 ? 1 - (pe - LEVER_MS) / LEVER_MS : 0;
   drawLever(g, bx, by, lk);
 
-  // табло: «Крутится…», потом что выпало
+  // табло: «Вращение 2 из 3» и что выпало в последнем вставшем
   const px0 = by + PANEL_TOP;
   const cx = bx + BODY_W / 2;
-  if (!done) {
-    if (pe >= 0) text(g, ts.spinning, cx, px0 + 12, PAL.mist, f.font, { outline: null, maxWidth: BODY_W - 16 });
-  } else {
-    const label = spin.outcome === 'miss' && tease ? ts.tease : ts[spin.outcome];
-    text(g, label, cx, px0 + 22, RESULT[spin.outcome], f.font, { outline: null, maxWidth: BODY_W - 16 });
+  if (pe >= 0 || k > 0) text(g, fmt(ts.spinOf, { n: k + 1, m: SLOT_SPINS }), cx, px0 + 10, PAL.mist, f.font, { outline: null, maxWidth: BODY_W - 16 });
+  const shown = done ? spin : k > 0 ? f.spins[k - 1] : null;
+  if (shown) {
+    const st = shown.reels[0] === shown.reels[1];
+    const label = shown.outcome === 'miss' && st ? ts.tease : ts[shown.outcome];
+    text(g, label, cx, px0 + 22, RESULT[shown.outcome], f.font, { outline: null, maxWidth: BODY_W - 16 });
   }
   // вспышка итога: 777 и звезда — золотом, череп — красным
   const since = pe - reels[2].landedAt;
@@ -279,9 +280,8 @@ function drawCandle(g: CanvasRenderingContext2D, now: number, bx: number, by: nu
   if (party || spin) fill(g, x - 3, y - 2, 14, 14, topC, 0.25);
 }
 
-/** Кнопка «Крутить»: до рывка горит, потом погашена (автомат уже крутит). */
-function drawButton(g: CanvasRenderingContext2D, f: ClipSlotFrame, bx: number, by: number, pe: number): void {
-  const open = pe < 0;
+/** Кнопка «Крутить»: горит, пока окно вращения ждёт рывка, потом погашена. */
+function drawButton(g: CanvasRenderingContext2D, f: ClipSlotFrame, bx: number, by: number, open: boolean): void {
   const x = bx + BTN_PULL.x;
   const y = by + BTN_Y;
   const side = 4;

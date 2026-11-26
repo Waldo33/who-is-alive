@@ -22,6 +22,7 @@ import {
   isLeshyCrowd,
   nightDeaths,
   nightCause,
+  skullClipFrom,
   skullSpin,
   fireLevel,
   LAG_GRACE_MS,
@@ -2027,10 +2028,10 @@ export class GameScene extends Phaser.Scene {
     const known = dc.killer !== undefined && !!s;
     // «Казино»: вырезали черепа — в кадре вся «Крутка» со своим автоматом (своё вращение телефон знает)
     const ms = this.me()?.slot;
-    const mine: SlotRecord[] = s?.slots?.filter((r) => r.eid === dc.eid) ?? (ms ? [{ eid: dc.eid, at: ms.at, outcome: ms.outcome, reels: ms.reels }] : []);
+    const mine: SlotRecord[] = s?.slots?.filter((r) => r.eid === dc.eid) ?? (ms ? ms.spins.map((sp, n) => ({ eid: dc.eid, at: ms.at, n, outcome: sp.outcome, reels: sp.reels })) : []);
     const skull = dc.killer === undefined ? skullSpin(mine, dc.eid, dc.at, this.cfg) : undefined;
     // с известным нападавшим показываем его подход целиком (до 4,5 с), иначе — 6 с до развязки
-    const from = Math.max(start, skull ? skull.at + this.cfg.slotWarnMs - 300 : known ? dc.at - 4500 : to - 6000);
+    const from = Math.max(start, skull ? skullClipFrom(skull, this.cfg) : known ? dc.at - 4500 : to - 6000);
     if (!me || to - from < 1500) return;
     dc.status = 'rendering';
     this.updateDeathClipLabel();

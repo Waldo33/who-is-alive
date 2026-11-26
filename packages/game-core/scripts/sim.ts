@@ -2,7 +2,7 @@
  * Безголовая симуляция: N раундов с ботами и ИИ-игроками, проверка инвариантов.
  * Запуск: pnpm sim -- --rounds 1000
  */
-import { AiPlayer, MatchSim, ROUND_MODS, fightAttacks, hasSanity, makeConfig, rectContains } from '../src/index';
+import { AiPlayer, MatchSim, ROUND_MODS, fightAttacks, hasSanity, makeConfig, rectContains, SLOT_SPINS } from '../src/index';
 import type { WorldEvent } from '../src/index';
 
 const argi = process.argv.indexOf('--rounds');
@@ -75,8 +75,8 @@ while (rounds < target) {
       for (const p of sim.pr) {
         tally.kills += p.kills;
         tally.botHits += p.botHits;
-        // «Казино»: «три кулака» на «Крутке» — +1 удар, не больше одного за «Крутку»
-        const spins = sim.world.log.filter((ev) => ev.t === 'crowd' && ev.slot).length;
+        // «Казино»: «три кулака» — +1 удар за вращение, вращений SLOT_SPINS за «Крутку»
+        const spins = sim.world.log.filter((ev) => ev.t === 'crowd' && ev.slot).length * SLOT_SPINS;
         check(p.attacksLeft >= 0 && p.attacksLeft <= (fightAttacks(sim.theme) || sim.cfg.attacksPerRound) + spins, 'лимит ударов нарушен');
       }
       if (hasSanity(sim.theme)) {
