@@ -2,6 +2,9 @@ import { createServer } from 'node:http';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import { createHash, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
 import { createReadStream } from 'node:fs';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
+import type { ReadableStream as WebStream } from 'node:stream/web';
 import { stat } from 'node:fs/promises';
 import { CLIP_MIME, ClipStore } from './clips';
 import type { FilmService } from './film';
@@ -797,11 +800,21 @@ export class GameServer {
     if (f && (req.method === 'GET' || req.method === 'HEAD')) {
       const path = await this.clips.file(f[1], f[2]);
       if (!path) {
-        // на диске уже нет (папка переполнилась, клип снят соседней машиной) — копия в S3, если есть
-        const url = await this.clips.remoteUrl(f[1], f[2]);
-        if (!url) return this.reply(res, 404, { error: 'no_clip' });
-        res.writeHead(302, { location: url, 'access-control-allow-origin': '*', 'cache-control': 'no-store' });
-        return void res.end();
+        // на диске нет (видео живёт в S3) — тянем из бакета потоком и отдаём с этого же адреса:
+        // Telegram не отправил карточку с фильмом, когда здесь было 302 на подписанную ссылку S3 (26.11)
+        const r = await this.clips.remoteOpen(f[1], f[2], req.method ?? 'GET');
+        if (!r) return this.reply(res, 404, { error: 'no_clip' });
+        const len = r.headers.get('content-length');
+        res.writeHead(200, {
+          'content-type': CLIP_MIME[f[2]],
+          ...(len ? { 'content-length': len } : {}),
+          'content-disposition': `attachment; filename="massovka-${f[1].slice(0, 6)}.${f[2]}"`,
+          'access-control-allow-origin': '*',
+          'cache-control': 'public, max-age=86400',
+        });
+        if (req.method === 'HEAD' || !r.body) return void res.end();
+        await pipeline(Readable.fromWeb(r.body as WebStream<Uint8Array>), res).catch(() => res.destroy());
+        return;
       }
       return this.sendFile(req, res, { path, mime: CLIP_MIME[f[2]], name: `massovka-${f[1].slice(0, 6)}.${f[2]}` });
     }

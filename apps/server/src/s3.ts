@@ -164,6 +164,11 @@ export class S3Client {
     return Buffer.from(await r.arrayBuffer());
   }
 
+  /** Открыть объект потоком (GET или HEAD): ответ S3 как есть — статус, длина, тело. */
+  open(key: string, method: 'GET' | 'HEAD' = 'GET'): Promise<Response> {
+    return this.request(method, key);
+  }
+
   /** Есть ли объект. */
   async has(key: string): Promise<boolean> {
     const r = await this.request('HEAD', key);
