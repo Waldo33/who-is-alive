@@ -8,9 +8,9 @@ import type { CharStyle, Look, Pose, PropSet, ThemePack } from './types';
 import { centerDist, hash, tile } from './util';
 
 /**
- * «Казино»: гости в вечернем стоят у слот-автоматов (автоматы рисует сцена по местам `casinoSeats`),
- * ковёр с золотой решёткой, рулетка в центре (пока неактивна), бар, пальмы в кадках, бархатные диваны.
- * Механика — game-core › slots.ts; экран автомата — `slot-ui.ts`. Музыка — лаунж-свинг.
+ * «Казино»: гости в вечернем бродят по залу — ковёр с золотой решёткой, рулетка в центре, бар, пальмы
+ * в кадках, бархатные диваны. Вместо жестов толпы — «Крутка»: автомат опускается на экран (game-core ›
+ * slots.ts, экран — `slot-ui.ts`). Музыка — лаунж-свинг.
  */
 
 const set = (m: string[][], x: number, y: number, ch: string) => {
@@ -52,11 +52,11 @@ const GUESTS: CharStyle[] = [
   tux(4, PAL.wine),
 ];
 
-/** Позы спиной к нам (лицом к автомату): дёрнул рычаг, вскинул руки. */
+/** Свои позы: дёрнул воображаемый рычаг, вскинул руки (выигрыш!). */
 const POSES: Pose[] = [
-  { view: 'U', arms: 'rightUp' },
-  { view: 'U', arms: 'down' },
-  { view: 'U', arms: 'up' },
+  { view: 'D', arms: 'rightUp' },
+  { view: 'D', arms: 'down' },
+  { view: 'D', arms: 'up', face: 'happy' },
   { view: 'D', arms: 'up', face: 'happy' },
 ];
 const ACTS: Look['acts'] = {

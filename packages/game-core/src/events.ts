@@ -1,5 +1,4 @@
 import type { Rect } from './arena';
-import type { SlotState } from './slots';
 
 /** Направление взгляда: вниз, вверх, влево, вправо. */
 export type Dir = 0 | 1 | 2 | 3;
@@ -32,7 +31,11 @@ export type WorldEvent =
    * vote — «Толпа решает»: жест не называется, kind — жест большинства (часть ботов делает другой).
    */
   /** `vote` — жест не назван (угадай по толпе); `ghost` — его тайно загадал вырезанный «Хлопушкой» (вырезанные и так известны всем). */
-  | { t: 'crowd'; kind: CrowdKind; showAt: number; resumeAt: number; windowEnd: number; at: number; vote?: boolean; ghost?: boolean; watchUntil?: number }
+  /**
+   * `slot` — не команда, а «Крутка» «Казино» (slots.ts): с `at` мигают лампы, с showAt мир стоит и у каждого
+   * живого игрока свой автомат; kind не важен, жест не нужен. Что выпало, знает только сам игрок.
+   */
+  | { t: 'crowd'; kind: CrowdKind; showAt: number; resumeAt: number; windowEnd: number; at: number; vote?: boolean; ghost?: boolean; watchUntil?: number; slot?: boolean }
   /**
    * Прожектор режиссёра: кто-то в круге не повторил жест (игрок или зазевавшийся бот).
    * Центр смещён от ошибившегося, в круге несколько человечков — это улика, а не указатель.
@@ -50,10 +53,10 @@ export type WorldEvent =
   | { t: 'boss'; act: 'out'; at: number }
   | { t: 'boss'; act: 'catch'; eid: number; at: number }
   /**
-   * «Казино» (slots.ts): стол после круга — места по порядку игроков, без сущностей. Одинаково у всех,
-   * поэтому и вырезанный черепом остаётся сидеть на поле: по полю не видно, кто это был.
+   * Скорость человечка с `from` до `until` умножена на `mul` («Крутка»: молния, гиря). Бывает и у статистов
+   * с теми же шансами, что у игроков, — по скорости живого не вычислить.
    */
-  | ({ t: 'slot'; at: number } & SlotState);
+  | { t: 'speed'; eid: number; mul: number; from: number; until: number; at: number };
 
 export interface EntitySpawn {
   eid: number;

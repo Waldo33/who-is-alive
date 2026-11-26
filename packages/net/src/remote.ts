@@ -1,4 +1,4 @@
-import { CROWD_ACT, NavGrid, TICK_MS, World, clampToRect, crowdHoldDur, emoteDur, ghostClapOpenView, killerExposed, makeConfig, planPath, plazaArena, twistEmote } from '@kto/game-core';
+import { CROWD_ACT, NavGrid, TICK_MS, World, clampToRect, crowdHoldDur, emoteDur, ghostClapOpenView, killerExposed, makeConfig, planPath, plazaArena, slotOutcomeAt, slotSymbolAt, twistEmote } from '@kto/game-core';
 import type {
   ArenaDef,
   AwardCard,
@@ -594,6 +594,8 @@ export class RemoteSession implements ClientSession {
       sanity: m.sanity ?? this.cfg.sanityStart,
       sins: m.sins ?? 0,
       kiki: (m.km ?? []).map(([id, x, y, w]) => ({ id, x, y, warn: w === 1 })),
+      slot: m.sl ? { at: m.sl[0], outcome: slotOutcomeAt(m.sl[1]), reels: [slotSymbolAt(m.sl[2]), slotSymbolAt(m.sl[3]), slotSymbolAt(m.sl[4])] } : null,
+      peek: m.pk && this.world.time < m.pk[1] ? { eid: m.pk[0], until: m.pk[1] } : null,
     };
   }
 
@@ -612,15 +614,17 @@ export class RemoteSession implements ClientSession {
   timeLeft(): number {
     if (this.phase === 'play') {
       const c = this.world.crowd;
-      const pause = c && this.world.isFrozen() ? c.resumeAt - this.world.time : 0;
-      return Math.max(0, this.ppe - this.world.time - pause);
+      const t = this.world.time;
+      // «Крутка» прибавила паузу к плану уже на лампах — таймер не прыгает
+      const pause = c && this.world.isFrozen() ? c.resumeAt - t : c?.slot && t >= c.warnAt && t < c.showAt ? c.resumeAt - c.showAt : 0;
+      return Math.max(0, this.ppe - t - pause);
     }
     return Math.max(0, this.tl - (this.clock() - this.tlAt));
   }
 
   crowdWindowOpen(t = this.world.time): boolean {
     const c = this.world.crowd;
-    return !!c && t >= c.showAt && t <= c.windowEnd;
+    return !!c && !c.slot && t >= c.showAt && t <= c.windowEnd;
   }
 
   ghostClapOpen(t = this.world.time): boolean {

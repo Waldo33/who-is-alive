@@ -537,7 +537,8 @@ export class ClipPlayerScene {
         if (themePack(this.inp.rec.theme).starSiren) s.play('siren');
         break;
       case 'crowd':
-        s.play('crowd');
+        // «Крутка» «Казино» — звонок автомата вместо сигнала команды
+        s.play(ev.slot ? 'slotBell' : 'crowd');
         s.pause();
         this.musicResumeAt = ev.resumeAt;
         break;

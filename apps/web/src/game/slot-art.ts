@@ -4,12 +4,68 @@ import { SLOT_SYMBOLS } from '@kto/game-core';
 import { canvas, dither, grid, px } from './pixels';
 
 /**
- * Арт «Казино» (game-core › slots.ts): символы барабанов, автомат на поле, корпус большого автомата.
+ * Арт «Казино» (game-core › slots.ts): символы барабанов и корпус автомата «Крутки».
  * Без DOM — холсты из фабрики `pixels.ts`, поэтому тот же арт может нарисовать и сервер.
  */
 
 /** Символ барабана 12×12 (буквы → цвета SYM_MAP). */
 const SYM: Record<SlotSymbol, string[]> = {
+  seven: [
+    '............',
+    '.oooooooooo.',
+    '.orrrrrrrro.',
+    '.orwwwwwrro.',
+    '.oooooorrro.',
+    '.....orrro..',
+    '....orrro...',
+    '....orrro...',
+    '...orrro....',
+    '...orrro....',
+    '...ooooo....',
+    '............',
+  ],
+  fist: [
+    '............',
+    '..oooooooo..',
+    '.osssossssoo',
+    '.osssossssso',
+    '.oooooooooso',
+    '.ossssssssso',
+    '.owsssssssso',
+    '..ossssssso.',
+    '...osssssso.',
+    '...oaaaaaao.',
+    '...oaaaaaao.',
+    '...oooooooo.',
+  ],
+  bolt: [
+    '.......ooo..',
+    '......oyyo..',
+    '.....oyyo...',
+    '....oywo....',
+    '...oyyyoooo.',
+    '..oyyyyyyyo.',
+    '..ooooyyyo..',
+    '.....oyyo...',
+    '....oywo....',
+    '...oyyo.....',
+    '...oyo......',
+    '...oo.......',
+  ],
+  weight: [
+    '....oooo....',
+    '...od..do...',
+    '...od..do...',
+    '..oooooooo..',
+    '.odmmdddddo.',
+    'odmddddddddo',
+    'oddddddddddo',
+    'oddddddddddo',
+    'oddddddddddo',
+    'oddddddddddo',
+    '.oddddddddo.',
+    '..oooooooo..',
+  ],
   star: [
     '.....oo.....',
     '....oyyo....',
@@ -156,36 +212,6 @@ export function makeSlotStars(): HTMLCanvasElement {
   return c;
 }
 
-/**
- * Автомат на поле 12×20, 2 кадра (лампочки мигают). Ставится низом над местом: человечек стоит
- * перед ним спиной к нам. Экран светится, сверху — лампа.
- */
-export function makeFieldMachine(): HTMLCanvasElement {
-  const { c, g } = canvas(24, 20);
-  for (let f = 0; f < 2; f++) {
-    const ox = f * 12;
-    px(g, ox + 1, 2, PAL.ink, 10, 18);
-    px(g, ox + 2, 3, PAL.wine, 8, 16);
-    px(g, ox + 2, 3, PAL.red, 8, 1);
-    px(g, ox + 9, 3, PAL.plum, 1, 16);
-    // экран с тремя окошками
-    px(g, ox + 2, 6, PAL.ink, 8, 6);
-    px(g, ox + 3, 7, PAL.white, 6, 4);
-    const sy = [PAL.yellow, PAL.red, PAL.cyan];
-    for (let k = 0; k < 3; k++) px(g, ox + 3 + k * 2, 8, sy[(k + f) % 3], 1, 2);
-    // золотая полка и низ
-    px(g, ox + 1, 12, PAL.amber, 10, 1);
-    px(g, ox + 2, 13, PAL.plum, 8, 5);
-    px(g, ox + 4, 14, PAL.amber, 4, 1);
-    // лампа наверху и рычаг справа
-    px(g, ox + 4, 0, PAL.ink, 4, 3);
-    px(g, ox + 5, 1, f ? PAL.yellow : PAL.orange, 2, 1);
-    px(g, ox + 11, 6, PAL.ink, 1, 6);
-    px(g, ox + 11, 5, PAL.red, 1, 1);
-  }
-  return c;
-}
-
 /** Фон экрана автомата 180×260: бархат с золотым узором. */
 export function makeSlotBackdrop(): HTMLCanvasElement {
   const { c, g } = canvas(180, 296);
@@ -201,7 +227,7 @@ export function makeSlotBackdrop(): HTMLCanvasElement {
 
 /** Размеры корпуса большого автомата и окна барабанов (в его координатах). */
 export const BODY_W = 162;
-/** До самого низа экрана: кнопки «Крутить» и «Пас» — на корпусе, отдельной панели нет. */
+/** До самого низа экрана: кнопка «Крутить» — на корпусе, отдельной панели нет. */
 export const BODY_H = 290;
 /** Фонарь-«свеча» на макушке: центр по x, низ по y. */
 export const CANDLE_Y = 12;
@@ -221,9 +247,8 @@ export const PANEL_H = 68;
 /** Наклонная панель с кнопками: верх и высота. */
 export const DECK_Y = 213;
 export const DECK_H = 30;
-/** Кнопки на панели: x, ширина (y и высота — общие, крышка без боковины). */
-export const BTN_PULL = { x: 12, w: 96 };
-export const BTN_PASS = { x: 114, w: 36 };
+/** Кнопка «Крутить» на панели: x, ширина (y и высота — общие, крышка без боковины). Рычаг — справа от корпуса. */
+export const BTN_PULL = { x: 12, w: 138 };
 export const BTN_Y = DECK_Y + 6;
 export const BTN_H = 14;
 /** Нижнее расписное стекло. */
@@ -377,7 +402,7 @@ export function makeSlotBody(): HTMLCanvasElement {
     px(g, inset + 1, DECK_Y + y, col, W - inset * 2 - 2, 1);
   }
   // глубокие лунки под кнопками
-  for (const b of [BTN_PULL, BTN_PASS]) {
+  for (const b of [BTN_PULL]) {
     px(g, b.x - 2, BTN_Y - 2, PAL.ink, b.w + 4, BTN_H + 7);
     px(g, b.x - 1, BTN_Y - 1, PAL.plum, b.w + 2, BTN_H + 5);
   }

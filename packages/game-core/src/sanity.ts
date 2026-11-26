@@ -1,6 +1,6 @@
 import type { GameConfig } from './config';
 import { TICK_MS } from './config';
-import { hasSanity, hasSlots } from './themes';
+import { hasSanity } from './themes';
 
 /**
  * Рассудок («Купальская ночь», themes.ts › sanity). Шкала 0–100 у каждого живого игрока, у ботов её нет.
@@ -37,7 +37,6 @@ export function nightLevel(cfg: GameConfig, sec: number): number {
  * `nightMaxSec` — только потолок на всякий случай (тогда к концу сужается изгородь).
  */
 export function playLenSec(cfg: GameConfig, theme: number): number {
-  if (hasSlots(theme)) return Math.ceil((cfg.slotTurns * (cfg.slotSpinMs + cfg.slotDecideMs) + 3000) / 1000);
   return hasSanity(theme) ? cfg.nightMaxSec : cfg.roundSec;
 }
 

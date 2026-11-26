@@ -75,7 +75,9 @@ while (rounds < target) {
       for (const p of sim.pr) {
         tally.kills += p.kills;
         tally.botHits += p.botHits;
-        check(p.attacksLeft >= 0 && p.attacksLeft <= (fightAttacks(sim.theme) || sim.cfg.attacksPerRound), 'лимит ударов нарушен');
+        // «Казино»: «три кулака» на «Крутке» — +1 удар, не больше одного за «Крутку»
+        const spins = sim.world.log.filter((ev) => ev.t === 'crowd' && ev.slot).length;
+        check(p.attacksLeft >= 0 && p.attacksLeft <= (fightAttacks(sim.theme) || sim.cfg.attacksPerRound) + spins, 'лимит ударов нарушен');
       }
       if (hasSanity(sim.theme)) {
         for (const p of sim.pr) {

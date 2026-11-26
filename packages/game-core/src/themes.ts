@@ -67,12 +67,12 @@ export interface ThemeRules {
   hidden?: boolean;
   /**
    * Тема только для финала: в обычной очереди её нет, она выпадает последним дублем при матч-боле
-   * (match.ts › finaleTheme) — «Казино» (решение владельца: казино — последний раунд).
+   * (match.ts › finaleTheme). Сейчас таких нет («Казино» с 27.11.2026 — обычная тема в очереди).
    */
   finaleOnly?: boolean;
   /**
-   * «Казино» (slots.ts): все сидят за автоматами, ходить и бить нельзя, команд толпы нет —
-   * всё решает автомат: звезда за «три звезды», череп — вырезан.
+   * «Казино» (slots.ts): обычный дубль, но вместо команд «Море волнуется» — «Крутка»: стоп-кадр,
+   * у каждого живого игрока автомат, выпадает бонус, баф, дебаф или череп (решение владельца, 27.11.2026).
    */
   slots?: boolean;
 }
@@ -98,8 +98,8 @@ export const THEME_RULES: readonly ThemeRules[] = [
   },
   // Купальская ночь: болото, грибники, сумерки плавно уходят в ночь; рассудок тает, цветы вместо звёзд
   { id: 'kupala', sanity: true },
-  // Казино: все за автоматами, решает автомат (пока скрыта — только ?dev&theme=8)
-  { id: 'casino', slots: true, finaleOnly: true },
+  // Казино: обычный дубль, вместо жестов толпы — «Крутка» автомата
+  { id: 'casino', slots: true },
 ];
 
 export const THEME_COUNT = THEME_RULES.length;
@@ -127,7 +127,7 @@ export function themeRules(theme: number): ThemeRules {
   return THEME_RULES[theme] ?? THEME_RULES[0];
 }
 
-/** Дубль этой темы — за слот-автоматами (slots.ts). */
+/** В дубле этой темы вместо «Море волнуется» — «Крутка» автомата (slots.ts). */
 export function hasSlots(theme: number): boolean {
   return !!themeRules(theme).slots;
 }

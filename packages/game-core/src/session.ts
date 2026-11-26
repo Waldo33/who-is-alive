@@ -6,6 +6,7 @@ import { AiPlayer } from './ai';
 import { MatchSim as MatchSimCtor } from './match';
 import type { Intent, MatchSim, MatchSummary, Notice, Phase, PlayerInfo, RoundSummary } from './match';
 import type { World } from './world';
+import type { SlotMine } from './slots';
 
 /** Что клиент знает о себе. О других игроках клиент не знает ничего, кроме видимого на поле. */
 export interface MeView {
@@ -27,6 +28,10 @@ export interface MeView {
   sins: number;
   /** Свои кикиморы (только у себя): где и ходит ли уже (warn — пока рябь на воде). */
   kiki: KikiView[];
+  /** «Казино»: своё вращение на последней «Крутке» (null — ещё не крутил). Знает только сам игрок. */
+  slot: SlotMine | null;
+  /** «Казино», камера: подсвеченный живой соперник и до какого времени мира (знает только сам). */
+  peek: { eid: number; until: number } | null;
 }
 
 export interface KikiView {
@@ -156,6 +161,8 @@ export class LocalSession implements ClientSession {
       sanity: Math.ceil(p.sanity),
       sins: p.sins,
       kiki: p.kiki.map((k) => ({ id: k.id, x: k.x, y: k.y, warn: this.sim.world.time < k.at })),
+      slot: p.slot ? { ...p.slot, reels: [...p.slot.reels] } : null,
+      peek: p.peek && this.sim.world.time < p.peek.until ? { ...p.peek } : null,
     };
   }
 
