@@ -2,11 +2,9 @@
 # к нему заливать из Actions. Нужна, чтобы выбрать способ доставки сборок.
 name: infra-netcheck
 
+# только кнопкой: прогон на push срабатывал от любой правки файла (26.11.2026 — от правки безопасности)
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths: ['.github/workflows/infra-netcheck.yml']
 
 permissions:
   contents: read
@@ -24,6 +22,8 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Сервер
         id: srv
+        # только найти игровой сервер в Европе: без имени и FIND_ONLY скрипт создал бы машину
+        env: { SERVER_NAME: massovka-eu, FIND_ONLY: '1' }
         run: |
           python3 -m venv /tmp/py && /tmp/py/bin/pip install -q cryptography
           /tmp/py/bin/python infra/game/provision.py
@@ -42,7 +42,7 @@ jobs:
           t "mirror.yandex.ru" http://mirror.yandex.ru/ubuntu/ls-lR.gz
           t "archive.ubuntu.com" http://archive.ubuntu.com/ubuntu/ls-lR.gz
           t "timeweb s3" https://s3.timeweb.cloud
-          echo "── Москва → Нидерланды (сервер бота)"
+          echo "── Европа → Нидерланды (сервер бота)"
           getent ahosts 72-56-73-184.sslip.io | head -2 || echo "DNS sslip: fail"
           curl -s -o /dev/null -m 15 -w "https по имени: %{http_code} %{time_total}s\n" https://72-56-73-184.sslip.io/healthz || echo "https по имени: fail"
           curl -s -o /dev/null -m 15 -w "http по IP: %{http_code} %{time_total}s\n" http://72.56.73.184/ || echo "http по IP: fail"
