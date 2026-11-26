@@ -43,11 +43,11 @@ async function post(path: string, body: Blob, type: string, ms: number): Promise
 }
 
 /** PUT файла по подписанной ссылке S3 (тип — ровно тот, что в подписи). */
-async function putSigned(url: string, body: Blob, type: string, ms: number): Promise<boolean> {
+async function putSigned(url: string, body: Blob, headers: Record<string, string>, ms: number): Promise<boolean> {
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), ms);
   try {
-    return (await fetch(url, { method: 'PUT', headers: { 'Content-Type': type }, body, signal: ctl.signal })).ok;
+    return (await fetch(url, { method: 'PUT', headers, body, signal: ctl.signal })).ok;
   } catch {
     return false;
   } finally {
@@ -61,16 +61,18 @@ const json = (o: unknown) => new Blob([JSON.stringify(o)], { type: 'application/
 async function uploadDirect(file: Blob, ext: string, thumb?: Promise<Blob | null>): Promise<SharedClip | null> {
   const r = await post('/v1/clips/direct', json({ ext, size: file.size }), 'application/json', 15_000);
   if (!r?.ok) return null;
-  const d = (await r.json().catch(() => null)) as { id: string; ext: string; put: string; type: string } | null;
+  const d = (await r.json().catch(() => null)) as { id: string; ext: string; put: string; type: string; headers?: Record<string, string> } | null;
   if (!d?.put) return null;
+  // заголовки — те, что сервер вписал в подпись (тип, открытый доступ к файлу)
+  const h = d.headers ?? { 'Content-Type': d.type };
   // одна повторная попытка: мобильная сеть рвётся
-  if (!(await putSigned(d.put, file, d.type, 45_000)) && !(await putSigned(d.put, file, d.type, 45_000))) return null;
+  if (!(await putSigned(d.put, file, h, 45_000)) && !(await putSigned(d.put, file, h, 45_000))) return null;
   const th = thumb ? await thumb.catch(() => null) : null;
   let ok = false;
   if (th) {
     const t = await post(`/v1/clips/${d.id}/thumb-url`, json({ size: th.size }), 'application/json', 15_000);
-    const u = t?.ok ? ((await t.json().catch(() => null)) as { put: string; type: string } | null) : null;
-    ok = !!u?.put && (await putSigned(u.put, th, u.type, 15_000));
+    const u = t?.ok ? ((await t.json().catch(() => null)) as { put: string; type: string; headers?: Record<string, string> } | null) : null;
+    ok = !!u?.put && (await putSigned(u.put, th, u.headers ?? { 'Content-Type': u.type }, 15_000));
   }
   return { id: d.id, ext: d.ext, url: `${GAME_API}/v1/clips/${d.id}.${d.ext}`, thumb: ok };
 }

@@ -102,8 +102,15 @@ export class S3Client {
    * Подписанная ссылка на загрузку (PUT) одного файла: тип и размер входят в подпись — телефон
    * не положит ни другой файл, ни больше заявленного. Ключей телефон так и не видит.
    */
-  presignPut(key: string, expiresSec: number, file: { type: string; length: number }): string {
-    return this.presign('PUT', key, expiresSec, {}, { 'content-length': String(file.length), 'content-type': file.type });
+  presignPut(key: string, expiresSec: number, file: { type: string; length: number; publicRead?: boolean }): string {
+    const h: Record<string, string> = { 'content-length': String(file.length), 'content-type': file.type };
+    if (file.publicRead) h['x-amz-acl'] = 'public-read';
+    return this.presign('PUT', key, expiresSec, {}, h);
+  }
+
+  /** Прямая ссылка без подписи — открывается только у объектов с `public-read`. */
+  publicUrl(key: string): string {
+    return `${this.base}${encPath(this.path(key))}`;
   }
 
   private presign(method: string, key: string, expiresSec: number, extra: Record<string, string>, headers: Record<string, string>): string {
@@ -144,15 +151,19 @@ export class S3Client {
   }
 
   /** Положить файл с диска (клипы до 12 МБ — читаем целиком). */
-  async putFile(key: string, path: string, mime: string, cacheControl = 'public, max-age=172800'): Promise<void> {
+  async putFile(key: string, path: string, mime: string, cacheControl = 'public, max-age=172800', opts: { publicRead?: boolean } = {}): Promise<void> {
     const body = await readFile(path);
-    const r = await this.request('PUT', key, { body, headers: { 'content-type': mime, 'cache-control': cacheControl } });
+    const headers: Record<string, string> = { 'content-type': mime, 'cache-control': cacheControl };
+    if (opts.publicRead) headers['x-amz-acl'] = 'public-read';
+    const r = await this.request('PUT', key, { body, headers });
     if (!r.ok) throw new Error(`s3 put ${key}: HTTP ${r.status} ${(await r.text()).slice(0, 200)}`);
   }
 
   /** Положить байты (маленькие файлы: загадки). */
-  async putBytes(key: string, body: Buffer, mime: string, cacheControl = 'no-store'): Promise<void> {
-    const r = await this.request('PUT', key, { body, headers: { 'content-type': mime, 'cache-control': cacheControl } });
+  async putBytes(key: string, body: Buffer, mime: string, cacheControl = 'no-store', opts: { publicRead?: boolean } = {}): Promise<void> {
+    const headers: Record<string, string> = { 'content-type': mime, 'cache-control': cacheControl };
+    if (opts.publicRead) headers['x-amz-acl'] = 'public-read';
+    const r = await this.request('PUT', key, { body, headers });
     if (!r.ok) throw new Error(`s3 put ${key}: HTTP ${r.status} ${(await r.text()).slice(0, 200)}`);
   }
 
