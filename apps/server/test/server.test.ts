@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { Rng, killerExposed } from '@kto/game-core';
+import { Rng, canFight, killerExposed } from '@kto/game-core';
 import { RemoteSession, ServerLink } from '@kto/net';
 import type { RoomMsg, WireRoom } from '@kto/net';
 import { silentLogger } from '../src/log';
@@ -620,6 +620,8 @@ describe('игровой сервер: клип выбывшего', () => {
       const A = h.world.get(h.sim.playerRound(a.userId)!.eid)!;
       const B = h.world.get(eb)!;
       await new Promise((r) => setTimeout(r, 1500));
+      // офис: в обычном облике не дерутся — ждём подвал (первый — через 16–22 с дубля)
+      await until(() => canFight(h.sim.theme, h.world.twist), 30_000, 'можно бить');
       A.x = B.x + 4;
       A.y = B.y;
       h.sim.intent(a.userId, { k: 'attack', eid: eb });
