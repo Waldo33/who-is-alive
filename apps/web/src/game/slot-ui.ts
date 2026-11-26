@@ -5,7 +5,7 @@ import { SLOT_SYMBOLS, fmt, hasSlots, isLastLap } from '@kto/game-core';
 import type { Sfx } from './audio';
 import type { FontColor } from './font';
 import {
-  BODY_H, BODY_W, REELS_H, REELS_X, REELS_Y, REEL_GAP, REEL_W, SYM_W,
+  BODY_W, REELS_H, REELS_X, REELS_Y, REEL_GAP, REEL_W, SYM_W,
   makeSlotBackdrop, makeSlotBody, makeSlotStars, makeSlotSymbols,
 } from './slot-art';
 
@@ -40,7 +40,6 @@ export class SlotScreen {
   private g: Phaser.GameObjects.Graphics;
   private reelsTex: Phaser.Textures.CanvasTexture;
   private symImg: HTMLCanvasElement;
-  private title: Phaser.GameObjects.BitmapText;
   private turnT: Phaser.GameObjects.BitmapText;
   private line1: Phaser.GameObjects.BitmapText;
   private line2: Phaser.GameObjects.BitmapText;
@@ -87,7 +86,6 @@ export class SlotScreen {
     add(s.add.image(this.bx, this.by, 'slotbody').setOrigin(0, 0), D + 1);
     add(s.add.image(this.bx + REELS_X, this.by + REELS_Y, 'slotreels').setOrigin(0, 0), D + 2);
     this.g = add(s.add.graphics(), D + 3);
-    this.title = add(h.txt(90, this.by + 19, h.t.title, 'yellow').setOrigin(0.5, 0), D + 4);
     this.turnT = add(h.txt(90, this.by + 96, '', 'mist').setOrigin(0.5, 0), D + 4);
     this.line1 = add(h.txt(90, this.by + 108, '', 'white').setOrigin(0.5, 0), D + 4);
     this.line2 = add(h.txt(90, this.by + 120, '', 'yellow').setOrigin(0.5, 0), D + 4);
@@ -274,18 +272,35 @@ export class SlotScreen {
       // лента: свой порядок символов у каждого барабана; при остановке в центре — итог
       const off = running ? Math.floor(dt * 0.32) % (ROW * SLOT_SYMBOLS.length) : 0;
       const centerIdx = SLOT_SYMBOLS.indexOf(this.result[r]);
-      for (let k = running ? -2 : 0; k <= (running ? 2 : 0); k++) {
+      for (let k = -2; k <= 2; k++) {
         const idx = running
           ? (((Math.floor(off / ROW) - k + r * 3) % SLOT_SYMBOLS.length) + SLOT_SYMBOLS.length) % SLOT_SYMBOLS.length
           : k === 0 ? centerIdx : (centerIdx + k * 3 + r + 8) % SLOT_SYMBOLS.length;
         const y = Math.round(REELS_H / 2 - SYM_W + k * ROW + (running ? off % ROW : 0));
         c.drawImage(this.symImg, idx * SYM_W, 0, SYM_W, SYM_W, x0 + (REEL_W - SYM_W * 2) / 2, y, SYM_W * 2, SYM_W * 2);
       }
-      // тень по краям — барабан круглый
-      c.fillStyle = PAL.ink;
-      for (let y = 0; y < 5; y++) for (let x = (y % 2); x < REEL_W; x += 2) {
-        c.fillRect(x0 + x, y, 1, 1);
-        c.fillRect(x0 + x, REELS_H - 1 - y, 1, 1);
+      // барабан круглый: к верху и низу темнеет полосами, середина — светлая
+      const band = (y: number, col: string, step: number) => {
+        c.fillStyle = col;
+        for (let x = (y % 2); x < REEL_W; x += step) {
+          c.fillRect(x0 + x, y, 1, 1);
+          c.fillRect(x0 + x, REELS_H - 1 - y, 1, 1);
+        }
+      };
+      for (let y = 0; y < 3; y++) band(y, PAL.dusk, 1);
+      for (let y = 3; y < 6; y++) band(y, PAL.steel, 1 + (y - 3));
+      for (let y = 6; y < 9; y++) band(y, PAL.slate, 2 + (y - 6) * 2);
+      // боковины барабана
+      c.fillStyle = PAL.slate;
+      c.fillRect(x0, 3, 1, REELS_H - 6);
+      c.fillRect(x0 + REEL_W - 1, 3, 1, REELS_H - 6);
+    }
+    // стекло: косые блики поверх всех барабанов
+    c.fillStyle = PAL.white;
+    for (const sx of [10, 16, 70]) {
+      for (let y = 4; y < REELS_H - 4; y++) {
+        const x = sx + Math.floor((REELS_H - y) / 2);
+        if (y % 2 === 0) c.fillRect(x, y, sx === 16 ? 1 : 2, 1);
       }
     }
     this.reelsTex.refresh();
@@ -364,13 +379,17 @@ export class SlotScreen {
     // лампочки вывески бегут по кругу; на «Последнем круге» — красные и быстрее
     const last = isLastLap(cfg, st.turn) && !st.over;
     const step = Math.floor(now / (last ? 90 : 160));
-    for (let k = 0; k < 18; k++) {
-      const a = Math.PI + (k / 17) * Math.PI;
-      const x = Math.round(bx + BODY_W / 2 + Math.cos(a) * 63);
-      const y = Math.round(by + 16 + Math.sin(a) * 12);
+    // лампочки по рамке светового короба бегут по кругу
+    const bulbs: [number, number][] = [];
+    for (let x = 10; x <= BODY_W - 12; x += 8) bulbs.push([x, 0]);
+    for (let y = 8; y <= 26; y += 9) bulbs.push([BODY_W - 8, y]);
+    for (let x = BODY_W - 12; x >= 10; x -= 8) bulbs.push([x, 32]);
+    for (let y = 26; y >= 8; y -= 9) bulbs.push([6, y]);
+    bulbs.forEach(([x, y], k) => {
       const lit = (k + step) % 3 === 0;
-      g.fillStyle(hexToInt(lit ? (last ? PAL.red : PAL.yellow) : PAL.umber)).fillRect(x, y, 2, 2);
-    }
+      g.fillStyle(hexToInt(PAL.ink)).fillRect(bx + x - 1, by + y - 1, 4, 4);
+      g.fillStyle(hexToInt(lit ? (last ? PAL.red : PAL.white) : last ? PAL.wine : PAL.amber)).fillRect(bx + x, by + y, 2, 2);
+    });
     // рычаг справа: дёрнули — опускается и возвращается
     const lk = Math.min(1, (now - this.leverAt) / 450);
     const down = lk < 1 ? Math.sin(lk * Math.PI) : 0;
@@ -380,9 +399,11 @@ export class SlotScreen {
     g.fillStyle(hexToInt(PAL.steel)).fillRect(lx + 1, by + 79, 7, 12);
     g.fillStyle(hexToInt(PAL.ink)).fillRect(lx + 3, Math.min(top, by + 80), 3, Math.abs(by + 82 - top) + 1);
     g.fillStyle(hexToInt(PAL.mist)).fillRect(lx + 4, Math.min(top, by + 80), 1, Math.abs(by + 82 - top));
-    g.fillStyle(hexToInt(PAL.ink)).fillCircle(lx + 4, top, 4);
-    g.fillStyle(hexToInt(PAL.red)).fillCircle(lx + 4, top, 3);
-    g.fillStyle(hexToInt(PAL.coral)).fillRect(lx + 3, top - 2, 1, 1);
+    g.fillStyle(hexToInt(PAL.ink)).fillRect(lx + 1, top - 4, 7, 9).fillRect(lx, top - 3, 9, 7);
+    g.fillStyle(hexToInt(PAL.wine)).fillRect(lx + 1, top - 3, 7, 7);
+    g.fillStyle(hexToInt(PAL.red)).fillRect(lx + 1, top - 3, 5, 5);
+    g.fillStyle(hexToInt(PAL.coral)).fillRect(lx + 2, top - 3, 2, 2);
+    g.fillStyle(hexToInt(PAL.white)).fillRect(lx + 2, top - 2, 1, 1);
 
     const turnN = Math.min(cfg.slotTurns, st.turn + 1);
     const turnS = last ? t.lastLap : fmt(t.turn, { n: turnN, m: cfg.slotTurns });
@@ -424,7 +445,6 @@ export class SlotScreen {
       const a = 0.45 * (1 - (now - f.at) / 600);
       g.fillStyle(f.color, a).fillRect(0, this.h.ay, 180, 260);
     }
-    void BODY_H;
   }
 
   destroy(): void {

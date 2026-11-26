@@ -1,7 +1,7 @@
 import { PAL } from '@kto/assets';
 import type { SlotSymbol } from '@kto/game-core';
 import { SLOT_SYMBOLS } from '@kto/game-core';
-import { canvas, dither, ellipse, grid, px } from './pixels';
+import { canvas, dither, grid, px } from './pixels';
 
 /**
  * Арт «Казино» (game-core › slots.ts): символы барабанов, автомат на поле, корпус большого автомата.
@@ -208,41 +208,99 @@ export const REEL_W = 36;
 export const REEL_GAP = 2;
 export const REELS_H = 44;
 
-/** Корпус большого автомата 140×176: вывеска, окно барабанов, панель, щель для монет. */
+/** Хромовая рамка: свет сверху-слева, тень снизу-справа (толщина t). */
+function chrome(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, t = 3): void {
+  px(g, x, y, PAL.ink, w, h);
+  const bands = [PAL.white, PAL.mist, PAL.slate, PAL.steel];
+  for (let k = 0; k < t; k++) {
+    const lo = bands[Math.min(bands.length - 1, k + 1)];
+    const hi = bands[Math.min(bands.length - 1, k)];
+    px(g, x + 1 + k, y + 1 + k, hi, w - 2 - k * 2, 1); // верх
+    px(g, x + 1 + k, y + 1 + k, hi, 1, h - 2 - k * 2); // лево
+    px(g, x + 1 + k, y + h - 2 - k, PAL.steel, w - 2 - k * 2, 1); // низ
+    px(g, x + w - 2 - k, y + 1 + k, k ? lo : PAL.dusk, 1, h - 2 - k * 2); // право
+  }
+}
+
+/** Круглая подсвеченная кнопка 7×7 с бликом. */
+function knob(g: CanvasRenderingContext2D, x: number, y: number, c: string, dark: string): void {
+  grid(g, x, y, ['.ooooo.', 'occccco', 'ocwcccd', 'occccdo', 'occcddo', 'odddddo', '.ooooo.'], { o: PAL.ink, c, d: dark, w: PAL.white });
+}
+
+/**
+ * Корпус большого автомата 140×176, как настоящий: световой короб сверху с лучами и звездой,
+ * хромовые рамки, красный корпус с объёмом, окно барабанов, экран-табло, кнопки, щель и лоток.
+ */
 export function makeSlotBody(): HTMLCanvasElement {
   const { c, g } = canvas(BODY_W, BODY_H);
   const W = BODY_W;
-  // корпус
-  px(g, 0, 4, PAL.ink, W, BODY_H - 4);
-  px(g, 1, 5, PAL.wine, W - 2, BODY_H - 6);
-  px(g, 1, 5, PAL.red, W - 2, 1);
-  px(g, 1, 5, PAL.red, 2, BODY_H - 6);
-  px(g, W - 4, 5, PAL.plum, 3, BODY_H - 6);
-  // вывеска (арка) — золото
-  ellipse(g, W / 2, 16, 66, 14, PAL.ink);
-  ellipse(g, W / 2, 16, 65, 13, PAL.amber);
-  ellipse(g, W / 2, 17, 60, 10, PAL.night);
-  px(g, 4, 16, PAL.ink, W - 8, 16);
-  px(g, 5, 17, PAL.amber, W - 10, 14);
-  px(g, 8, 19, PAL.night, W - 16, 10);
-  // окно барабанов
+  // световой короб: хромовая рамка, внутри — лучи от звезды
+  chrome(g, 6, 0, W - 12, 34, 2);
+  const cx = W / 2;
+  const cy = 18;
+  for (let y = 3; y < 31; y++) for (let x = 9; x < W - 9; x++) {
+    const a = Math.atan2(y - cy, (x - cx) / 1.6);
+    const ray = Math.floor(((a + Math.PI) / (Math.PI * 2)) * 24) % 2;
+    const d = Math.hypot((x - cx) / 1.6, y - cy);
+    px(g, x, y, d < 9 ? PAL.yellow : ray ? (d < 22 ? PAL.amber : PAL.orange) : d < 22 ? PAL.yellow : PAL.amber);
+  }
+  // звезда в центре короба
+  grid(g, cx - 8, 9, [
+    '.......oo.......',
+    '......oyyo......',
+    '......oyyo......',
+    '.....oywyyo.....',
+    'oooooowyyyoooooo',
+    'oyyyyywyyyyyyyyo',
+    '.oyyyyyyyyyyyyo.',
+    '..ooyyyyyyyyoo..',
+    '...oyyyyyyyyo...',
+    '...oyyyooyyyo...',
+    '..oyyoo..ooyyo..',
+    '..ooo......ooo..',
+  ], { o: PAL.ink, y: PAL.yellow, w: PAL.white });
+  // корпус: объём — свет слева, тень справа
+  px(g, 0, 34, PAL.ink, W, BODY_H - 34);
+  for (let x = 1; x < W - 1; x++) {
+    const col = x < 3 ? PAL.coral : x < 6 ? PAL.red : x > W - 4 ? PAL.plum : x > W - 9 ? PAL.wine : PAL.red;
+    px(g, x, 35, col, 1, BODY_H - 36);
+  }
+  // хромовая полоса под коробом
+  px(g, 1, 34, PAL.mist, W - 2, 1);
+  px(g, 1, 35, PAL.slate, W - 2, 1);
+  // окно барабанов в хромовой рамке
   const rw = REEL_W * 3 + REEL_GAP * 2;
-  px(g, REELS_X - 4, REELS_Y - 4, PAL.ink, rw + 8, REELS_H + 8);
-  px(g, REELS_X - 3, REELS_Y - 3, PAL.amber, rw + 6, REELS_H + 6);
-  px(g, REELS_X - 3, REELS_Y - 3, PAL.yellow, rw + 6, 1);
-  px(g, REELS_X - 1, REELS_Y - 1, PAL.ink, rw + 2, REELS_H + 2);
-  // линия выигрыша: стрелки слева и справа
-  grid(g, REELS_X - 9, REELS_Y + REELS_H / 2 - 3, ['o...', 'oo..', 'oyo.', 'oyyo', 'oyo.', 'oo..', 'o...'], { o: PAL.ink, y: PAL.yellow });
-  grid(g, REELS_X + rw + 5, REELS_Y + REELS_H / 2 - 3, ['...o', '..oo', '.oyo', 'oyyo', '.oyo', '..oo', '...o'], { o: PAL.ink, y: PAL.yellow });
-  // панель с надписями
-  px(g, 8, 92, PAL.ink, W - 16, 62);
-  px(g, 9, 93, PAL.night, W - 18, 60);
-  px(g, 9, 93, PAL.dusk, W - 18, 1);
-  // щель для монет и лоток
-  px(g, W / 2 - 10, 158, PAL.ink, 20, 3);
-  px(g, W / 2 - 9, 159, PAL.amber, 18, 1);
-  px(g, 20, 164, PAL.ink, W - 40, 9);
-  px(g, 21, 165, PAL.plum, W - 42, 7);
-  px(g, 21, 165, PAL.amber, W - 42, 1);
+  chrome(g, REELS_X - 5, REELS_Y - 5, rw + 10, REELS_H + 10, 3);
+  px(g, REELS_X - 2, REELS_Y - 2, PAL.ink, rw + 4, REELS_H + 4);
+  // линия выигрыша: красные метки слева и справа
+  grid(g, REELS_X - 10, REELS_Y + REELS_H / 2 - 3, ['oo..', 'oro.', 'orro', 'orrr', 'orro', 'oro.', 'oo..'], { o: PAL.ink, r: PAL.red });
+  grid(g, REELS_X + rw + 6, REELS_Y + REELS_H / 2 - 3, ['..oo', '.oro', 'orro', 'rrro', 'orro', '.oro', '..oo'], { o: PAL.ink, r: PAL.red });
+  // хромовая полка под окном
+  px(g, 4, 89, PAL.ink, W - 8, 3);
+  px(g, 5, 89, PAL.white, W - 10, 1);
+  px(g, 5, 90, PAL.slate, W - 10, 1);
+  // табло: тёмное стекло со строками
+  chrome(g, 7, 92, W - 14, 62, 2);
+  px(g, 10, 95, PAL.ink, W - 20, 56);
+  for (let y = 96; y < 150; y += 2) px(g, 10, y, PAL.night, W - 20, 1);
+  // кнопки и щель для монет
+  knob(g, 12, 157, PAL.red, PAL.wine);
+  knob(g, 22, 157, PAL.amber, PAL.orange);
+  knob(g, 32, 157, PAL.green, PAL.forest);
+  px(g, W - 30, 157, PAL.ink, 18, 7);
+  px(g, W - 29, 158, PAL.slate, 16, 5);
+  px(g, W - 29, 158, PAL.mist, 16, 1);
+  px(g, W - 22, 159, PAL.ink, 2, 3);
+  px(g, W - 21, 159, PAL.amber, 1, 3);
+  // лоток для монет: хромовая чаша
+  px(g, 14, 165, PAL.ink, W - 28, 9);
+  px(g, 15, 166, PAL.white, W - 30, 1);
+  px(g, 15, 167, PAL.mist, W - 30, 1);
+  px(g, 16, 168, PAL.steel, W - 32, 4);
+  px(g, 16, 172, PAL.dusk, W - 32, 1);
+  for (const x of [30, 34, 41, 90, 97]) {
+    px(g, x, 170, PAL.amber, 3, 1);
+    px(g, x, 171, PAL.orange, 3, 1);
+  }
   return c;
 }
