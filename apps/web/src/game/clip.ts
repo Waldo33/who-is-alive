@@ -1,11 +1,11 @@
 import { PAL, PLAYER_COLORS } from '@kto/assets';
-import { SLOT_SYMBOLS, TICK_MS, fireLevel, fmt, hasSanity, isLeshyCrowd, makeConfig, makeReplay, nightDeaths, nightLevel, worldOf } from '@kto/game-core';
+import { TICK_MS, fireLevel, fmt, hasSanity, isLeshyCrowd, makeConfig, makeReplay, nightDeaths, nightLevel, worldOf } from '@kto/game-core';
 import type { ArenaDef, Dict, Moment, RoundRecording, SlotRecord, World, WorldEvent } from '@kto/game-core';
 import qrcode from 'qrcode-generator';
 import type { ClipSoundCore } from './clip-audio';
 import { frame, getArt, scaledCanvas, text } from './art';
 import { canvas } from './pixels';
-import { SYM_W, makeSlotSymbols } from './slot-art';
+import { drawClipSlot } from './clip-slot';
 import { LESHY_H, LESHY_W, giantEnd, giantPose, makeEmberVeil, makeLeshy, makeNightVeil } from './night-art';
 import type { Art } from './art';
 import { frameFor } from './frames';
@@ -57,11 +57,6 @@ const REVEAL_STEP = 140;
 /** Хлопушка перед куском фильма и крючок фильма. */
 export const CLAP_MS = 450;
 export const HOOK_MS = 1300;
-/** «Крутка» в клипе (мировое время от стоп-кадра): когда встаёт каждый барабан; при паре третий дразнит дольше. */
-const SLOT_STOP = [800, 1250, 1700];
-const SLOT_TEASE = 700;
-/** Символ барабана в клипе — ×2 (24 пикс.), окно барабана чуть выше. */
-const SLOT_SYM = SYM_W * 2;
 /**
  * «Ирис» — круг затемнения, как в старом кино: сужается на герое в конце куска фильма и раскрывается
  * в начале следующего. Края — ступенями по логическим пикселям (палитра и чёткость сохраняются).
@@ -314,8 +309,6 @@ export class ClipPlayerScene {
   /** Соперник героя в главном событии: на нём сжимается прицел. */
   private opp: number | undefined;
   /** «Купальская ночь»: вуали, кадры Лешего, его удары из журнала и начало ночи (мировое время). */
-  /** Лента символов автомата (рисуется, когда в окне клипа есть «Крутка»). */
-  private slotSyms: HTMLCanvasElement | null = null;
   /** Звуки автомата уже прозвучали (часть ролика : «Крутка» : барабан). */
   private slotSounded = new Set<string>();
   private night: { veil: HTMLCanvasElement; ember: HTMLCanvasElement; leshy: HTMLCanvasElement; strikes: Map<number, { x: number; y: number; at: number }>; playStart: number } | null = null;
@@ -989,126 +982,32 @@ export class ClipPlayerScene {
     return undefined;
   }
 
-  /**
-   * «Казино»: «Крутка» в клипе — как у игрока на экране. Лампы и «КРУТКА!», потом сверху опускается
-   * автомат героя, барабаны встают по очереди, внизу — что выпало (после дубля это уже не тайна).
-   * Чьё вращение неизвестно (клип выбывшего посреди дубля про чужую «Крутку») — только надпись.
-   */
+  /** «Казино»: «Крутка» в кадре — тот же автомат, что у игрока (clip-slot.ts). */
   private drawSlot(w: World, t: number): void {
     const c = w.crowd;
-    if (!c?.slot || t < c.warnAt || t >= c.resumeAt + 400) return;
-    const g = this.g;
-    const font = this.inp.font;
-    const ts = this.inp.t.slot;
-    // ниже плашки подписи и отсчёта загадки, по центру безопасной зоны (ролик обрезают ленты)
-    const cx = Math.round((SAFE_L + SAFE_R) / 2);
-    const y0 = 120;
-    const spin = this.spinAt(c.warnAt);
-    const banner = (on: boolean) => {
-      g.globalAlpha = 0.85;
-      g.fillStyle = PAL.ink;
-      g.fillRect(cx - 46, y0, 92, 16);
-      g.globalAlpha = 1;
-      for (let i = 0; i < 12; i++) {
-        g.fillStyle = (i % 2 === 0) === on ? PAL.yellow : PAL.amber;
-        g.fillRect(cx - 44 + i * 8, y0 + 1, 2, 2);
-        g.fillRect(cx - 44 + i * 8, y0 + 13, 2, 2);
-      }
-      text(g, ts.warn, cx, y0 + 4, on ? PAL.yellow : PAL.white, font, { outline: null, maxWidth: 88 });
-    };
-    if (t < c.showAt || !spin) {
-      if (t < c.resumeAt) banner(Math.floor((t - c.warnAt) / 150) % 2 === 0);
-      return;
-    }
-    const sheet = (this.slotSyms ??= makeSlotSymbols());
-    const e = t - c.showAt;
-    const tease = spin.reels[0] === spin.reels[1];
-    const stopAt = SLOT_STOP.map((s, i) => s + (i === 2 && tease ? SLOT_TEASE : 0));
-    const done = e >= stopAt[2];
-    // звук автомата: рычаг, стук каждого барабана, итог (клип смотрят после дубля — тайны уже нет)
+    if (!c?.slot) return;
     const snd = this.sound;
-    const key = `${this.part}:${c.warnAt}:`;
-    const once = (k: string, f: () => void) => {
-      if (snd && !this.slotSounded.has(key + k)) {
-        this.slotSounded.add(key + k);
-        f();
-      }
-    };
-    once('lever', () => snd!.play('slotLever'));
-    stopAt.forEach((s, i) => e >= s && once(`r${i}`, () => snd!.play('slotStop', i)));
-    if (done) {
-      const o = spin.outcome;
-      const sfx = o === 'skull' ? 'slotSkull' : o === 'seven' ? 'slotJackpot' : o === 'star' || o === 'fist' || o === 'peek' ? 'slotCoins' : null;
-      if (sfx) once('res', () => snd!.play(sfx));
-    }
-    // корпус: опускается за 250 мс (с отскоком), после стоп-кадра тает
-    const MW = 94;
-    const MH = 54;
-    const drop = Math.min(1, e / 250);
-    const fade = t >= c.resumeAt ? Math.min(1, (t - c.resumeAt) / 400) : 0;
-    const x = Math.round(cx - MW / 2);
-    const y = Math.round(y0 - (1 - drop) * 12 + (e >= 250 && e < 330 ? 1 : 0));
-    g.save();
-    g.globalAlpha = 1 - fade;
-    g.fillStyle = PAL.ink;
-    g.fillRect(x - 1, y - 1, MW + 2, MH + 2);
-    g.fillStyle = PAL.red;
-    g.fillRect(x, y, MW, MH);
-    g.fillStyle = PAL.wine;
-    g.fillRect(x, y + MH - 3, MW, 3);
-    const blink = Math.floor(t / 120) % 2 === 0;
-    for (let i = 0; i < 11; i++) {
-      g.fillStyle = (i % 2 === 0) === blink ? PAL.yellow : PAL.amber;
-      g.fillRect(x + 4 + i * 8, y + 2, 2, 2);
-    }
-    // барабаны
-    const RW = SLOT_SYM + 2;
-    const RH = SLOT_SYM + 4;
-    const rx0 = Math.round(cx - (RW * 3 + 6) / 2);
-    const ry = y + 7;
-    for (let i = 0; i < 3; i++) {
-      const rx = rx0 + i * (RW + 3);
-      g.fillStyle = PAL.ink;
-      g.fillRect(rx - 1, ry - 1, RW + 2, RH + 2);
-      g.fillStyle = PAL.white;
-      g.fillRect(rx, ry, RW, RH);
-      // символ ×2, обрезанный окном барабана (без clip(): его нет у холстов монтажа на сервере)
-      const sym = (idx: number, yy: number) => {
-        const top = Math.max(yy, ry);
-        const bot = Math.min(yy + SLOT_SYM, ry + RH);
-        if (bot <= top) return;
-        g.drawImage(sheet, idx * SYM_W, (top - yy) / 2, SYM_W, (bot - top) / 2, rx + 1, top, SLOT_SYM, bot - top);
-      };
-      if (e < stopAt[i]) {
-        // крутится: лента бежит вниз (по 2 пикс. — целый пиксель символа)
-        const off = Math.floor(e * 0.225) * 2;
-        const k = Math.floor(off / SLOT_SYM);
-        const frac = off - k * SLOT_SYM;
-        const at = (n: number) => (n * 5 + i * 4) % SLOT_SYMBOLS.length;
-        sym(at(k), ry + 2 + frac);
-        sym(at(k + 1), ry + 2 + frac - SLOT_SYM);
-      } else {
-        // встал: свой символ с отскоком
-        const bounce = e - stopAt[i] < 110 ? 2 : 0;
-        sym(SLOT_SYMBOLS.indexOf(spin.reels[i]), ry + 2 + bounce);
-      }
-    }
-    // подпись: крутится… / что выпало
-    const o = spin.outcome;
-    const win = o === 'seven' || o === 'star' || o === 'fist' || o === 'peek';
-    const color = !done ? PAL.mist : o === 'skull' ? PAL.red : win ? PAL.yellow : PAL.white;
-    const label = !done ? (e >= stopAt[1] && tease ? ts.tease : ts.spinning) : ts[o];
-    g.fillStyle = PAL.ink;
-    g.fillRect(x + 3, y + MH - 15, MW - 6, 11);
-    text(g, label, cx, y + MH - 14, color, font, { outline: null, maxWidth: MW - 8 });
-    g.restore();
-    if (done && t < c.resumeAt && (o === 'skull' || o === 'seven') && e - stopAt[2] < 600 && Math.floor(e / 100) % 2 === 0) {
-      // вспышка итога: череп — красная, «777» — жёлтая
-      g.globalAlpha = 0.25;
-      g.fillStyle = o === 'skull' ? PAL.red : PAL.yellow;
-      g.fillRect(0, AY, LW, PANEL_Y - AY);
-      g.globalAlpha = 1;
-    }
+    drawClipSlot({
+      g: this.g,
+      font: this.inp.font,
+      t: this.inp.t,
+      ay: AY,
+      py: PANEL_Y,
+      warnAt: c.warnAt,
+      showAt: c.showAt,
+      resumeAt: c.resumeAt,
+      now: t,
+      spin: this.spinAt(c.warnAt),
+      sound: snd
+        ? (key, sfx, step) => {
+            // часть ролика в ключе: загадка и разбор проигрывают одну «Крутку» дважды — звук в каждой
+            const k = `${this.part}:${key}`;
+            if (this.slotSounded.has(k)) return;
+            this.slotSounded.add(k);
+            snd.play(sfx, step);
+          }
+        : undefined,
+    });
   }
 
   private player(eid: number | undefined): ClipPlayer | undefined {
