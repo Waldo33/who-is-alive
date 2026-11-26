@@ -19,7 +19,8 @@ import { featureOn } from './features';
 import { LANG_KEY } from './lang';
 import { savedName, saveName } from './name';
 
-type Haptic = 'light' | 'medium' | 'heavy' | 'success' | 'error' | 'warning' | 'select';
+/** tick — щелчок барабана автомата («Казино»): в Telegram — как select, вне его — самый короткий толчок мотора. */
+export type Haptic = 'light' | 'medium' | 'heavy' | 'success' | 'error' | 'warning' | 'select' | 'tick';
 
 interface TgButton {
   show(): void;
@@ -188,13 +189,13 @@ export function haptic(kind: Haptic): void {
   try {
     if (app && at('6.1')) {
       const h = app.HapticFeedback;
-      if (kind === 'select') h.selectionChanged();
+      if (kind === 'select' || kind === 'tick') h.selectionChanged();
       else if (kind === 'success' || kind === 'error' || kind === 'warning') h.notificationOccurred(kind);
       else h.impactOccurred(kind);
       return;
     }
     if (inTelegram()) return;
-    const ms = kind === 'heavy' || kind === 'error' ? 40 : kind === 'success' ? 25 : 12;
+    const ms = kind === 'heavy' || kind === 'error' ? 40 : kind === 'success' ? 25 : kind === 'tick' ? 5 : 12;
     if (kind !== 'select') navigator.vibrate?.(ms);
   } catch {
     /* нет вибрации */

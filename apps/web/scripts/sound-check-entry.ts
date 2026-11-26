@@ -19,7 +19,7 @@ const SFX: Sfx[] = [
   'flicker', 'dusk', 'siren', 'whack', 'clang', 'stab', 'knockedOut', 'hitOther', 'cut', 'clap', 'logo', 'wrap', 'unmask', 'rewind',
   'leshyStep', 'leshyBreath', 'leshyStinger', 'leshyTake', 'leshyCall', 'snap', 'whisper', 'scream', 'fern',
   'bossAhem', 'bossStamp',
-  'slotLever', 'slotSpin', 'slotStop', 'slotJackpot', 'slotCoins', 'slotTease', 'slotSkull',
+  'slotLever', 'slotSpin', 'slotStop', 'slotJackpot', 'slotCoins', 'slotTease', 'slotSkull', 'slotTick', 'slotBell',
 ];
 
 // ── поддельные часы: Music планирует ноты по setInterval, в офлайне его крутим сами ──

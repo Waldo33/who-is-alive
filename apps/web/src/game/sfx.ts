@@ -7,21 +7,21 @@ export type Sfx =
   | 'click' | 'ready' | 'accuseRight' | 'accuseWrong' | 'fanfare' | 'sad' | 'hedge' | 'pigeon' | 'drum' | 'denied' | 'count' | 'swing' | 'flicker' | 'dusk' | 'siren' | 'whack' | 'clang' | 'stab' | 'knockedOut'
   | 'hitOther' | 'cut' | 'clap' | 'logo' | 'wrap' | 'unmask' | 'rewind' | 'leshyStep' | 'leshyBreath' | 'leshyStinger' | 'leshyTake' | 'leshyCall' | 'snap' | 'whisper' | 'scream' | 'fern'
   | 'bossAhem' | 'bossStamp'
-  | 'slotLever' | 'slotSpin' | 'slotStop' | 'slotJackpot' | 'slotCoins' | 'slotTease' | 'slotSkull';
+  | 'slotLever' | 'slotSpin' | 'slotStop' | 'slotJackpot' | 'slotCoins' | 'slotTease' | 'slotSkull' | 'slotTick' | 'slotBell';
 
 /**
  * Приоритет эффекта (звуковой гайд, план звука): P1 — меняет решение игрока, обязан пробиться
  * через музыку (на динамике телефона −30…−33 дБ, музыку глушит на 9 дБ на 0,6 с); P2 — событие
  * на поле (−35…−39 дБ, глушит на 4 дБ); остальное — фон. Уровни проверяет `pnpm --filter web sound-check`.
  */
-export const P1: ReadonlySet<Sfx> = new Set<Sfx>(['hitPlayer', 'hitBot', 'starTake', 'crowd', 'ready', 'knockedOut', 'cut', 'drum', 'accuseRight', 'accuseWrong', 'unmask', 'wrap', 'logo', 'leshyStinger', 'leshyTake', 'scream', 'fern', 'bossAhem', 'slotJackpot', 'slotSkull']);
+export const P1: ReadonlySet<Sfx> = new Set<Sfx>(['hitPlayer', 'hitBot', 'starTake', 'crowd', 'ready', 'knockedOut', 'cut', 'drum', 'accuseRight', 'accuseWrong', 'unmask', 'wrap', 'logo', 'leshyStinger', 'leshyTake', 'scream', 'fern', 'bossAhem', 'slotJackpot', 'slotSkull', 'slotBell']);
 export const P2: ReadonlySet<Sfx> = new Set<Sfx>(['hitOther', 'whack', 'clang', 'stab', 'starSpawn', 'flicker', 'dusk', 'leshyBreath', 'bossStamp', 'slotLever', 'slotStop', 'slotCoins', 'slotTease']);
 
 /**
  * Частые звуки: каждый раз чуть другие (±30 центов, ±1,5 дБ), чтобы за три матча не стать
  * «пулемётом». Сигналы (команда, старт, логотип) не меняются — их узнают по звуку.
  */
-const VARY: ReadonlySet<Sfx> = new Set<Sfx>(['step', 'hitPlayer', 'hitOther', 'hitBot', 'poof', 'starSpawn', 'tick', 'click', 'hedge', 'pigeon', 'whack', 'clang', 'stab', 'swing', 'unmask', 'slotLever', 'slotStop', 'slotCoins']);
+const VARY: ReadonlySet<Sfx> = new Set<Sfx>(['step', 'hitPlayer', 'hitOther', 'hitBot', 'poof', 'starSpawn', 'tick', 'click', 'hedge', 'pigeon', 'whack', 'clang', 'stab', 'swing', 'unmask', 'slotLever', 'slotStop', 'slotCoins', 'slotTick']);
 
 /** Детский режим: без оружия, звона в ушах и пилы — удары «поф» и бумажный хлопок. */
 const KIDS: Partial<Record<Sfx, Sfx>> = { whack: 'hitOther', clang: 'hitOther', stab: 'hitOther', knockedOut: 'cut', siren: 'starSpawn', scream: 'cut' };
@@ -126,6 +126,20 @@ export class Synth {
         });
         this.tone('square', 760, 420, 0.16, 0.14, 0.14);
         this.tone('triangle', 1520, 840, 0.14, 0.08, 0.14);
+        break;
+      // символ прошёл под стеклом: короткий щелчок зубца (на каждый символ, вместе с вибрацией)
+      case 'slotTick':
+        this.noise(0.01, 0.75, 3300);
+        this.tone('square', 2300, 2100, 0.014, 0.13);
+        break;
+      // «Крутка!»: звонок автомата трелью и щелчок реле — у всех, как сигнал команды (P1)
+      case 'slotBell':
+        this.noise(0.02, 0.8, 3600);
+        for (let i = 0; i < 9; i++) {
+          const f = i % 2 ? 1760 : 1397;
+          this.tone('square', f, f, 0.06, i < 2 ? 0.3 : 0.22, 0.02 + i * 0.065);
+          this.tone('triangle', f * 2, f * 2, 0.05, 0.1, 0.02 + i * 0.065);
+        }
         break;
       // барабаны крутятся: дробь щелчков по зубцам, к остановке всё реже (фон, ~1,4 с)
       case 'slotSpin': {
