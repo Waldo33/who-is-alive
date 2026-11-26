@@ -1,5 +1,5 @@
 # Вывод московского сервера (massovka-game, 129.101.104.99) из эксплуатации (docs/server-migration.md › 15).
-#   PR с правкой этого файла и запуск без подтверждения — только проверка: DNS ни у одного резолвера не смотрит
+#   Запуск без подтверждения — только проверка: DNS ни у одного резолвера не смотрит
 #   на Москву, сколько игроков к ней ещё подключается, вся ли её база уже в Европе.
 #   Удалить — вручную: Actions › infra-msk-off › Run workflow, в поле «confirm» написать «удалить».
 #   Перед удалением — последняя копия базы Москвы на сервер в Нидерландах (/var/backups/massovka-msk-final,
@@ -7,8 +7,6 @@
 name: infra-msk-off
 
 on:
-  pull_request:
-    paths: ['.github/workflows/infra-msk-off.yml']
   workflow_dispatch:
     inputs:
       confirm:
@@ -25,6 +23,8 @@ permissions:
 jobs:
   msk-off:
     runs-on: ubuntu-latest
+    # секреты прода — только в окружении production, а оно пускает только ветку main (docs/security.md)
+    environment: production
     timeout-minutes: 20
     env:
       TWC_TOKEN: ${{ secrets.TWC_TOKEN }}
@@ -32,7 +32,7 @@ jobs:
       FIND_ONLY: '1'
       DELETE: ${{ github.event_name == 'workflow_dispatch' && inputs.confirm == 'удалить' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - run: python3 -m venv /tmp/py && /tmp/py/bin/pip install -q cryptography && sudo apt-get install -y -qq dnsutils >/dev/null
 
       - id: msk

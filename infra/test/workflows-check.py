@@ -1,0 +1,42 @@
+#!/usr/bin/env python3
+"""Правила безопасности для .github/workflows (docs/security.md, ревью H4 и N2). Гоняет CI.
+
+1. Каждый чужой action закреплён полным SHA коммита (тег можно перевесить на другой код).
+2. Каждая задача, которая читает секреты (кроме github.token), идёт в окружении production —
+   его секреты GitHub отдаёт только ветке main.
+3. Задача с секретами не запускается на pull_request и на push в другие ветки.
+"""
+import glob
+import re
+import sys
+
+bad = []
+for f in sorted(glob.glob('.github/workflows/*.yml')):
+    s = open(f, encoding='utf-8').read()
+    for m in re.finditer(r'(?m)^\s*-?\s*uses:\s*([^\s#]+)', s):
+        ref = m.group(1)
+        if ref.startswith('./'):
+            continue
+        if not re.search(r'@[0-9a-f]{40}$', ref):
+            bad.append(f'{f}: action не закреплён SHA: {ref}')
+    uses_secrets = re.search(r'secrets\.(?!GITHUB_TOKEN)[A-Z_]+', s)
+    if not uses_secrets:
+        continue
+    # задачи: блоки с отступом 2 под jobs:
+    jobs = s.split('\njobs:\n', 1)[1] if '\njobs:\n' in s else ''
+    for jm in re.finditer(r'(?ms)^  ([A-Za-z0-9_-]+):\n(.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)', jobs):
+        name, body = jm.group(1), jm.group(2)
+        if re.search(r'secrets\.(?!GITHUB_TOKEN)[A-Z_]+', body) and not re.search(r'(?m)^    environment: production\s*$', body):
+            bad.append(f'{f}: задача {name} читает секреты без environment: production')
+    trig = s.split('\njobs:\n', 1)[0]
+    if re.search(r'(?m)^  pull_request(_target)?:', trig):
+        bad.append(f'{f}: секреты в workflow, который запускается на pull_request')
+    for bm in re.finditer(r'(?ms)^  push:\n(.*?)(?=^  \S|^\S)', trig):
+        br = re.search(r'branches:\s*\[([^\]]*)\]', bm.group(1))
+        if not br or [b.strip(" '\"") for b in br.group(1).split(',')] != ['main']:
+            bad.append(f'{f}: секреты в workflow, который запускается на push не только в main')
+
+if bad:
+    print('\n'.join(bad))
+    sys.exit(1)
+print('workflows: actions закреплены, секреты только в production и только для main')

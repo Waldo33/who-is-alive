@@ -3,13 +3,15 @@ on:
   push:
     branches: [main]
   pull_request:
+permissions:
+  contents: read
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: pnpm
@@ -18,17 +20,19 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm sim -- --rounds 200
+      # известные критичные уязвимости в зависимостях, которые едут в прод (docs/security.md)
+      - run: pnpm audit --prod --audit-level critical
   native:
     # монтаж «Фильма матча» на Rust (apps/server/native): тесты холста и YUV, сверка кадров со Skia
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: pnpm
-      - uses: actions/cache@v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             ~/.cargo/registry
@@ -43,14 +47,18 @@ jobs:
     # скрипты серверов: синтаксис bash и конфиг Caddy для всех схем (старая, синий/зелёный) — caddy validate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - run: for f in infra/*.sh infra/game/*.sh infra/test/*.sh; do bash -n "$f" || exit 1; done
+      # правила безопасности workflows: actions по SHA, секреты только в окружении production (docs/security.md)
+      - run: python3 infra/test/workflows-check.py
       - name: Caddy
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          tag=$(gh release view --repo caddyserver/caddy --json tagName -q .tagName)
-          v=${tag#v}
+          # та же версия, что едет на серверы (infra/game/versions.env)
+          . infra/game/versions.env
+          tag=$CADDY_VERSION; v=${tag#v}
           gh release download "$tag" --repo caddyserver/caddy -p "caddy_${v}_linux_amd64.tar.gz" -D /tmp/caddy
+          echo "$CADDY_SHA256  /tmp/caddy/caddy_${v}_linux_amd64.tar.gz" | sha256sum -c -
           tar -xzf "/tmp/caddy/caddy_${v}_linux_amd64.tar.gz" -C /tmp/caddy caddy
           REQUIRE_CADDY=1 CADDY_BIN=/tmp/caddy/caddy infra/test/caddy-config.sh

@@ -41,13 +41,15 @@ env:
 jobs:
   move:
     runs-on: ubuntu-latest
+    # секреты прода — только в окружении production, а оно пускает только ветку main (docs/security.md)
+    environment: production
     timeout-minutes: 170
     env:
       TWC_TOKEN: ${{ secrets.TWC_TOKEN }}
       SSH_OPTS: -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=20 -o ServerAliveInterval=15 -o LogLevel=ERROR
       FIND_ONLY: '1'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Дождаться выкладки сервера (не переключать посреди неё)
         env:
           GH_TOKEN: ${{ github.token }}
@@ -215,9 +217,9 @@ jobs:
           rm -f /tmp/m.tsv
           echo "событий: Москва $(ssh $SSH_OPTS root@$MSK "sudo -u postgres psql -tAc 'select count(*) from analytics_events' massovka"), Европа $(ssh $SSH_OPTS root@$EU "sudo -u postgres psql -tAc 'select count(*) from analytics_events' massovka")"
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         if: env.SW == 'true' || env.DN == 'true' || env.MODE == 'finish'
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         if: env.SW == 'true' || env.DN == 'true' || env.MODE == 'finish'
         with:
           node-version: 22

@@ -14,6 +14,8 @@ permissions:
 jobs:
   chat:
     runs-on: ubuntu-latest
+    # секреты прода — только в окружении production, а оно пускает только ветку main (docs/security.md)
+    environment: production
     timeout-minutes: 5
     env:
       TOKEN: ${{ secrets.ALERTS_BOT_TOKEN }}

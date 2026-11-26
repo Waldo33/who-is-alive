@@ -1,5 +1,5 @@
 # Журнал игрового сервера в Европе: ошибки, падения, перезапуски, события мест (подмена ботом) — без секретов.
-# Запуск: вручную (workflow_dispatch) или push в ветку claude/** с правкой этого файла.
+# Запуск: вручную (workflow_dispatch) с ветки main — секреты прода есть только у main (docs/security.md).
 name: infra-logs
 
 on:
@@ -8,9 +8,6 @@ on:
       since:
         description: 'С какого момента (journalctl --since)'
         default: '-24h'
-  push:
-    branches: ['claude/**']
-    paths: ['.github/workflows/infra-logs.yml']
 
 permissions:
   contents: read
@@ -18,6 +15,8 @@ permissions:
 jobs:
   logs:
     runs-on: ubuntu-latest
+    # секреты прода — только в окружении production, а оно пускает только ветку main (docs/security.md)
+    environment: production
     timeout-minutes: 10
     env:
       TWC_TOKEN: ${{ secrets.TWC_TOKEN }}
@@ -25,7 +24,7 @@ jobs:
       FIND_ONLY: '1'
       SINCE: ${{ inputs.since || '-24h' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - run: python3 -m venv /tmp/py && /tmp/py/bin/pip install -q cryptography
       - id: eu
         env: { SERVER_NAME: massovka-eu }

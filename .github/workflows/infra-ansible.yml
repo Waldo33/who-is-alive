@@ -1,14 +1,10 @@
 # Настройка машин из кода (infra/ansible, docs/ansible.md).
-#   PR и push в main с правкой infra/ansible — сухой прогон против живых серверов (--check --diff):
+#   push в main с правкой infra/ansible (на PR секретов прода нет — docs/security.md) — сухой прогон против живых серверов (--check --diff):
 #   ничего не меняется, в логе — чем роль расходится с машиной. Цель — «changed=0» на проде.
 #   Применить — вручную: Actions › infra-ansible › Run workflow, apply = true.
 name: infra-ansible
 
 on:
-  pull_request:
-    paths:
-      - 'infra/ansible/**'
-      - '.github/workflows/infra-ansible.yml'
   push:
     branches: [main]
     paths:
@@ -32,6 +28,8 @@ permissions:
 jobs:
   ansible:
     runs-on: ubuntu-latest
+    # секреты прода — только в окружении production, а оно пускает только ветку main (docs/security.md)
+    environment: production
     timeout-minutes: 20
     defaults:
       run:
@@ -41,7 +39,7 @@ jobs:
       TWC_TOKEN: ${{ secrets.TWC_TOKEN }}
       ANSIBLE_FORCE_COLOR: '0'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Ansible
         run: |

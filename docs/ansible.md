@@ -41,7 +41,7 @@ Terraform (`docs/terraform.md`) создаёт машину и задаёт та
 
 ## Как пользоваться
 
-- Сухой прогон — сам на каждом PR с правкой `infra/ansible`; итог (`PLAY RECAP`) — в Summary прогона.
+- Сухой прогон — сам на каждом push в `main` с правкой `infra/ansible` (на PR секретов прода нет — `docs/security.md`); итог (`PLAY RECAP`) — в Summary прогона.
 - Применить — Actions › `infra-ansible` › Run workflow, `apply` = true.
 - Инвентарь — `inventory.py`: адреса из Timeweb по именам серверов, ключ SSH выводится из `TWC_TOKEN`
   (как в `provision.py`). Москва (`massovka-game`) выведена 25.11.2026.
