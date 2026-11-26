@@ -1,9 +1,9 @@
 # Серверы в Timeweb Cloud: создать (если нет), настроить, выкатить новую версию сервера.
-#   game/msk — Москва: игра (api.benobody.app), сайт (benobody.app, выкладывает web-deploy), Postgres с аналитикой.
-#   game/eu  — Европа (Нидерланды, massovka-eu): та же игра, сайт и база — сюда переезжаем (docs/infra-plan.md › этап 3).
+#   game/eu  — Европа (Нидерланды, massovka-eu): игра (api.benobody.app), сайт (benobody.app, выкладывает web-deploy),
+#              Postgres с аналитикой.
 #   infra    — Нидерланды: Telegram-бот (из России api.telegram.org закрыт), мониторинг, логи, копии базы.
-# Код сервера один (apps/server), роль задают переменные окружения. Порядок: Европа (создаётся первой),
-# infra (туннели к игровым серверам), Москва (пускает туннели Нидерландов и Европы).
+# Код сервера один (apps/server), роль задают переменные окружения. Порядок: Европа (пускает туннель Нидерландов),
+# infra (туннель к игровому серверу). Москва (massovka-game) выключена 25.11.2026 (docs/server-migration.md › 15).
 # Всё идемпотентно. Логи Actions: секреты не печатаем (ключ SSH выводится из TWC_TOKEN внутри provision.py).
 name: game-deploy
 
@@ -47,7 +47,6 @@ jobs:
     timeout-minutes: 30
     strategy:
       max-parallel: 1
-      # Москва выкатывается, даже если у сервера бота что-то не так
       fail-fast: false
       matrix:
         include:
@@ -65,9 +64,6 @@ jobs:
             name: massovka-infra
             # Cloud NL-30: 1 vCPU, 2 ГБ, 30 ГБ, Нидерланды, 1560 ₽ (решение владельца 23.11.2026)
             presets: '6807'
-          # Москва (massovka-game) с 24.11.2026 только пересылает запоздавших в Европу (RELAY) — игру
-          # туда не выкладываем: новый экземпляр в Москве перехватывал бы /i/<цвет>/ws мимо пересылки.
-          # Вернуть Москву — эта запись: role game, site msk, name massovka-game, presets 6759,…
     env:
       TWC_TOKEN: ${{ secrets.TWC_TOKEN }}
       SERVER_NAME: ${{ matrix.name }}
@@ -134,7 +130,7 @@ jobs:
           python3 -m venv /tmp/py && /tmp/py/bin/pip install -q cryptography
           /tmp/py/bin/python infra/game/provision.py
 
-      - name: Адрес сервера бота (для Москвы)
+      - name: Адрес сервера бота (его ключ туннеля — игровому серверу)
         id: infra
         if: matrix.role == 'game'
         env:
@@ -142,17 +138,9 @@ jobs:
           FIND_ONLY: '1'
         run: /tmp/py/bin/python infra/game/provision.py
 
-      - name: Адрес Москвы (для туннелей из Нидерландов и Европы)
-        id: moscow
-        if: matrix.role == 'infra' || matrix.site == 'eu'
-        env:
-          SERVER_NAME: massovka-game
-          FIND_ONLY: '1'
-        run: /tmp/py/bin/python infra/game/provision.py
-
-      - name: Адрес сервера в Европе (туннель из Нидерландов, ключ пересылки для Москвы)
+      - name: Адрес сервера в Европе (туннель из Нидерландов)
         id: eu
-        if: matrix.role == 'infra' || matrix.site == 'msk'
+        if: matrix.role == 'infra'
         env:
           SERVER_NAME: massovka-eu
           FIND_ONLY: '1'
@@ -183,32 +171,6 @@ jobs:
             sleep 10
           done
           echo "::error::SSH не ответил"; exit 1
-
-      - name: Европа — сертификаты и ключ токенов из Москвы
-        # Один раз, до первой настройки: Caddy в Европе сразу отдаёт benobody.app и api.benobody.app с
-        # сертификатами Москвы (DNS ещё смотрит на Москву — выпустить свои он не может, а после
-        # переключения DNS не должно быть ни минуты без HTTPS). Ключ подписи токенов — тот же, что в
-        # Москве: игроки после переезда не теряют вход. Всё идёт трубой раннера по SSH, в лог не попадает.
-        if: matrix.site == 'eu'
-        env:
-          IP: ${{ steps.srv.outputs.ip }}
-          MSK: ${{ steps.moscow.outputs.ip }}
-        run: |
-          [ -n "$MSK" ] || { echo "Москвы нет — пропуск"; exit 0; }
-          if ssh $SSH_OPTS root@$IP 'grep -q "^AUTH_SIGNING_KEY=" /etc/massovka/secrets.env 2>/dev/null'; then
-            echo "ключ токенов уже есть"
-          else
-            ssh $SSH_OPTS root@$MSK 'grep "^AUTH_SIGNING_KEY=" /etc/massovka/secrets.env' \
-              | ssh $SSH_OPTS root@$IP 'install -d -m 700 /etc/massovka && umask 077 && cat >> /etc/massovka/secrets.env && grep -c "^AUTH_SIGNING_KEY=" /etc/massovka/secrets.env'
-            echo "ключ токенов перенесён из Москвы"
-          fi
-          have=$(ssh $SSH_OPTS root@$IP 'find /var/lib/caddy -maxdepth 5 -type d -name api.benobody.app 2>/dev/null | head -1' || true)
-          if [ -n "$have" ]; then echo "сертификаты уже есть"; exit 0; fi
-          dirs=$(ssh $SSH_OPTS root@$MSK 'cd /var/lib/caddy && find . -maxdepth 5 -type d \( -name api.benobody.app -o -name benobody.app -o -name www.benobody.app \) -path "*certificates*"' | tr '\n' ' ')
-          echo "сертификаты в Москве: $dirs"
-          [ -n "$dirs" ] || { echo "::warning::в Москве нет сертификатов — Европа выпустит свои после переключения DNS"; exit 0; }
-          ssh $SSH_OPTS root@$MSK "cd /var/lib/caddy && tar -cz $dirs" \
-            | ssh $SSH_OPTS root@$IP 'id caddy >/dev/null 2>&1 || useradd --system --home /var/lib/caddy --shell /usr/sbin/nologin caddy; install -d -o caddy -g caddy /var/lib/caddy && tar -xz -C /var/lib/caddy && chown -R caddy:caddy /var/lib/caddy && find /var/lib/caddy -name "*.crt" | sed "s|.*/||"'
 
       - name: Что уже стоит на сервере
         id: have
@@ -351,11 +313,13 @@ jobs:
           HOST: ${{ steps.addr.outputs.host }}
           SSLIP: ${{ steps.srv.outputs.host }}
           BOT_IP: ${{ steps.infra.outputs.ip }}
-          MOSCOW_IP: ${{ steps.moscow.outputs.ip }}
           EU_IP: ${{ steps.eu.outputs.ip }}
           SITE: ${{ matrix.site }}
           TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           GRAFANA_PASSWORD: ${{ secrets.GRAFANA_PASSWORD }}
+          # ключи S3 из панели Timeweb (если заданы) — s3-env.py пробует их первыми
+          S3_ACCESS_KEY: ${{ secrets.S3_ACCESS_KEY }}
+          S3_SECRET_KEY: ${{ secrets.S3_SECRET_KEY }}
         run: |
           ssh $SSH_OPTS root@$IP 'rm -rf /tmp/deploy && mkdir -p /tmp/deploy'
           # ключ бота — только серверу бота, файлом по SSH (не в командной строке и не в логах)
@@ -369,27 +333,23 @@ jobs:
           # ключи S3 для клипов и фильмов — игре в Европе, из API Timeweb по TWC_TOKEN (бакета нет — файла нет)
           if [ "$SITE" = eu ]; then python3 infra/game/s3-env.py deploy/s3.env || echo "::warning::S3: ключи не получены — клипы на диске"; fi
           # бот тревог (alerts.env) кладёт Ansible — шагом выше
-          # открытый ключ туннеля сервера бота — Москве (вход только для проброса порта)
+          # открытый ключ туннеля сервера бота — игровому серверу (вход только для проброса порта)
           if [ "$ROLE" = game ] && [ -n "$BOT_IP" ]; then
             ssh $SSH_OPTS root@$BOT_IP 'cat /etc/massovka/tunnel_ed25519.pub 2>/dev/null' > deploy/tunnel.pub || true
           fi
-          # открытый ключ туннеля пересылки из Европы — Москве (вход только на порты 18090/18091)
-          if [ "$SITE" = msk ] && [ -n "$EU_IP" ]; then
-            ssh $SSH_OPTS root@$EU_IP 'cat /etc/massovka/tunnel_ed25519.pub 2>/dev/null' > deploy/relay.pub || true
-          fi
           scp $SSH_OPTS -q -r deploy/* root@$IP:/tmp/deploy/
           if [ "$SITE" = eu ]; then
-            # Европа: основной адрес — api.benobody.app (сертификат из Москвы), запасной — свой sslip.io;
+            # Европа: основной адрес — api.benobody.app, запасной — свой sslip.io;
             # переезд комнат при выкладке — на тот адрес, что сейчас работает снаружи (до DNS — sslip.io)
             up=""; [ -s deploy/tunnel.pub ] && up="http://127.0.0.1:9090"
-            vars="HOST=api.benobody.app ALT_HOST=$SSLIP PEER_HOST=$HOST WS_HOSTS=api.benobody.app,$SSLIP REGION=eu SITE_HOST=benobody.app SITE_REDIRECT=https://who-is-alive.vercel.app BOT_UPSTREAM=$up RELAY_FRONT=1 RELAY_TO=$MOSCOW_IP"
+            vars="HOST=api.benobody.app ALT_HOST=$SSLIP PEER_HOST=$HOST WS_HOSTS=api.benobody.app,$SSLIP REGION=eu SITE_HOST=benobody.app SITE_REDIRECT=https://who-is-alive.vercel.app BOT_UPSTREAM=$up"
           elif [ "$ROLE" = game ]; then
             up=""; [ -s deploy/tunnel.pub ] && up="http://127.0.0.1:9090"
             vars="HOST=$HOST ALT_HOST=$SSLIP SITE_HOST=benobody.app SITE_REDIRECT=https://who-is-alive.vercel.app BOT_UPSTREAM=$up"
           else
             # игра живёт в Европе (переезд 24.11): аналитика с замера — туда (туннель :28080), Grafana,
             # копии базы и сторож — тоже туда
-            vars="HOST=$HOST BOT_SITE=https://benobody.app TUNNEL_TO=$MOSCOW_IP TUNNEL_EU_TO=$EU_IP GAME_SITE=eu EVENTS_TO=28080"
+            vars="HOST=$HOST BOT_SITE=https://benobody.app TUNNEL_EU_TO=$EU_IP GAME_SITE=eu EVENTS_TO=28080"
           fi
           ssh $SSH_OPTS root@$IP "ANSIBLE=1 ROLE=$ROLE $vars SHA=${GITHUB_SHA::12} bash /tmp/deploy/setup.sh"
 
@@ -409,6 +369,7 @@ jobs:
         continue-on-error: true
         env:
           HOST: ${{ steps.addr.outputs.host }}
+          IP: ${{ steps.srv.outputs.ip }}
           HAS_TG: ${{ secrets.TELEGRAM_BOT_TOKEN != '' }}
         run: |
           if [ "$HAS_TG" != true ]; then echo "TELEGRAM_BOT_TOKEN не задан в GitHub Secrets — бот остаётся в Supabase"; exit 0; fi
@@ -418,8 +379,9 @@ jobs:
           for i in $(seq 1 6); do info=$(curl -fsS "https://$HOST/tg/info") && break; sleep 5; done
           if [ -z "$info" ]; then echo "::warning::бот не отвечает (api.telegram.org?) — вебхук не трогаю"; exit 0; fi
           echo "бот: $info"
-          curl -fsS "https://$HOST/tg/setup"; echo
-          curl -fsS "https://$HOST/tg/status"; echo
+          # /tg/setup и /tg/status снаружи закрыты (server.ts) — изнутри машины, через внутренний вход Caddy
+          ssh $SSH_OPTS root@$IP 'curl -fsS http://127.0.0.1:8080/tg/setup'; echo
+          ssh $SSH_OPTS root@$IP 'curl -fsS http://127.0.0.1:8080/tg/status'; echo
 
       - name: Игровой сервер → бот (/tg/* проксируется на сервер бота)
         if: matrix.role == 'game' && steps.infra.outputs.host != ''
@@ -480,7 +442,7 @@ jobs:
         env:
           IP: ${{ steps.srv.outputs.ip }}
         run: |
-          ssh $SSH_OPTS root@$IP 'journalctl -u 'massovka-game*' -u caddy -u massovka-tunnel -n 60 --no-pager -o cat' | grep -v -E '"(remote_ip|client_ip)"' | cut -c1-300 || true
+          ssh $SSH_OPTS root@$IP 'journalctl -u 'massovka-game*' -u caddy -u massovka-tunnel-eu -n 60 --no-pager -o cat' | grep -v -E '"(remote_ip|client_ip)"' | cut -c1-300 || true
 
       - name: Итог
         if: success()

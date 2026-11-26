@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Сторож (сервер в Нидерландах, раз в минуту): сайт, игра, бот, туннели к игровым серверам.
-# Где живёт игра — /etc/massovka/game-site (msk | eu, пишет observe.sh): по нему метки метрик и тексты тревог.
+# Где живёт игра — /etc/massovka/game-site (eu, пишет observe.sh): по нему метки метрик и тексты тревог.
 # Тревога в Telegram — если проверка не проходит 5 минут подряд; «восстановлено» — когда снова в порядке.
 # Связь Нидерланды → Москва режется фильтрами (новые соединения проходят на 20–40%), поэтому каждая
 # внешняя проверка делает до 6 попыток с коротким таймаутом: хоть одна удалась — значит, работает.
@@ -9,7 +9,7 @@ set -uo pipefail
 STATE=/var/lib/massovka-watch
 LIMIT=5
 mkdir -p "$STATE"
-G=$(cat /etc/massovka/game-site 2>/dev/null || echo msk)
+G=$(cat /etc/massovka/game-site 2>/dev/null || echo eu)
 case "$G" in eu) GW="в Европе" ;; *) G=msk; GW="в Москве" ;; esac
 
 send() {
@@ -94,20 +94,20 @@ check bot_webhook $r "вебхук Telegram-бота (ошибка: $(echo "$st"
 disk=$(df --output=pcent / | tail -1 | tr -dc 0-9)
 [ "${disk:-0}" -lt 90 ]; check nl_disk $? "диск сервера в Нидерландах заполнен на ${disk}%"
 
-# наблюдение: метрики собираются со всех источников (Москва — через туннель), Grafana жива
+# наблюдение: метрики собираются со всех источников (Европа — через туннель), Grafana жива
 if [ -x /usr/local/bin/victoria-metrics ]; then
   down=$(curl -s -m 5 'http://127.0.0.1:8428/api/v1/query?query=up==0' | jq -r '[.data.result[] | .metric.job + "/" + .metric.server] | join(", ")' 2>/dev/null)
   [ -n "${down+x}" ] && curl -s -m 5 -o /dev/null http://127.0.0.1:8428/health && [ -z "$down" ]
   check metrics $? "сбор метрик${down:+ (не отвечает: $down)}"
   curl -s -m 5 -o /dev/null -f http://127.0.0.1:3001/api/health; check grafana $? "Grafana"
 
-  # диск Москвы и память обоих серверов (по метрикам; нет данных — не тревожим, за это «сбор метрик»)
+  # диск Европы и память обоих серверов (по метрикам; нет данных — не тревожим, за это «сбор метрик»)
   vm() { curl -s -m 5 --data-urlencode "query=$1" http://127.0.0.1:8428/api/v1/query | jq -r '.data.result[] | "\(.metric.server // "") \(.value[1])"' 2>/dev/null; }
   pct() { awk -v v="$1" 'BEGIN { printf "%d", v * 100 }'; }
   # «в норме»: значение не выше порога (0 — норма, как у остальных проверок)
   within() { awk -v v="$1" -v lim="$2" 'BEGIN { exit !(v <= lim) }'; }
-  for s in msk eu nl; do
-    case $s in msk) name="Москвы" ;; eu) name="в Европе" ;; *) name="в Нидерландах" ;; esac
+  for s in eu nl; do
+    case $s in eu) name="в Европе" ;; *) name="в Нидерландах" ;; esac
     # диск Нидерландов уже проверяется выше по df (работает и без метрик)
     [ $s = nl ] && d="" || d=$(vm "1 - node_filesystem_avail_bytes{server=\"$s\",mountpoint=\"/\"} / node_filesystem_size_bytes{server=\"$s\",mountpoint=\"/\"}" | awk '{print $NF}' | head -1)
     if [ -n "$d" ]; then within "$d" 0.85; check "disk_$s" $? "диск сервера $name заполнен на $(pct "$d")%"; fi
@@ -127,9 +127,17 @@ if [ -x /usr/local/bin/victoria-metrics ]; then
   # в drain значит завис (новая выкладка будет ждать его 15 минут, а потом оборвёт матчи)
   dr=$(vm "max(max_over_time(game_draining{server=\"$G\"}[30m]) * min_over_time(game_draining{server=\"$G\"}[30m]))" | awk '{print $NF}' | head -1)
   if [ -n "$dr" ]; then within "$dr" 0; check drain_stuck $? "экземпляр игры $GW больше 30 минут в drain (выкладка синий/зелёный)"; fi
-  # клипы для Telegram в Москве: лимит папки 1 ГБ, старые вытесняются — на 80% пора думать об S3
-  c=$(vm "max(game_clips_bytes{server=\"$G\"}) / max(game_clips_limit_bytes{server=\"$G\"})" | awk '{print $NF}' | head -1)
-  if [ -n "$c" ]; then within "$c" 0.8; check clips_msk $? "место под клипы $GW занято на $(pct "$c")% из 1 ГБ (пора S3)"; fi
+  # клипы: с S3 (s3.ts) папка на диске — только кэш на 1 ГБ, старое вытесняется, а ссылки ведут в бакет —
+  # тогда тревожимся о сбоях загрузки в бакет; без S3 (s3_off) — о заполнении папки, как раньше
+  s3=$(vm "max(game_clips_s3_uploaded_total{server=\"$G\"})" | awk '{print $NF}' | head -1)
+  if [ -n "$s3" ]; then
+    check clips_msk 0 "место под клипы $GW: подключён S3, папка на диске — только кэш"
+    f=$(vm "sum(increase(game_clips_s3_failed_total{server=\"$G\"}[1h]))" | awk '{print $NF}' | head -1)
+    if [ -n "$f" ]; then within "$f" 5; check clips_s3 $? "клипы не уходят в S3: $(printf '%.0f' "$f") сбоев за час (лог: s3_put_failed)"; fi
+  else
+    c=$(vm "max(game_clips_bytes{server=\"$G\"}) / max(game_clips_limit_bytes{server=\"$G\"})" | awk '{print $NF}' | head -1)
+    if [ -n "$c" ]; then within "$c" 0.8; check clips_msk $? "место под клипы $GW занято на $(pct "$c")% из 1 ГБ, S3 не подключён"; fi
+  fi
 fi
 # копия восстанавливается (раз в неделю, observe.sh › backup-check): итог не старше 8 суток и «ok»
 if systemctl is-enabled -q massovka-backup-check.timer 2>/dev/null && [ -s /var/lib/postgresql/backup-check.status ]; then

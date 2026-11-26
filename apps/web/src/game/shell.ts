@@ -1,4 +1,4 @@
-import { DEFAULT_CONFIG, DICTS, THEME_RULES } from '@kto/game-core';
+import { DAILY_THEMES, DEFAULT_CONFIG, DICTS, THEME_RULES } from '@kto/game-core';
 import { detectLang } from '../lib/lang';
 import { download, shareContent, withLang } from '../lib/share';
 import { setTrackContext, shareKind, track } from '../lib/analytics';
@@ -210,8 +210,12 @@ export function mountSandbox(root: HTMLElement, opts: ShellOptions): () => void 
   const gameOpts = (): Partial<TopBarOptions> => ({ onLang: undefined, onBack: undefined, onExit: exitToMenu, noGear: true });
   let overrides: Partial<GameConfig> = {};
   // ?dev&theme=N — все дубли в одной теме (посмотреть новую площадку)
-  const themeQ = dev ? new URLSearchParams(location.search).get('theme') : null;
+  const q = new URLSearchParams(location.search);
+  const themeQ = dev ? q.get('theme') : null;
+  // со страницы загадки (?src=puzzle&theme=N) — первый дубль в той же площадке, что и загадка
+  const puzzleTheme = !dev && q.get('src') === 'puzzle' ? Number(q.get('theme')) : NaN;
   if (themeQ !== null && Number.isInteger(Number(themeQ))) overrides = { fixedTheme: Number(themeQ) };
+  else if (DAILY_THEMES.includes(puzzleTheme)) overrides = { leadTheme: puzzleTheme };
   // под Новый год матч открывается «Корпоративом» (как на сервере; ?season=ny — посмотреть вне сезона)
   else if (newYearSeason()) overrides = { leadTheme: THEME_RULES.findIndex((r) => r.id === 'party') };
 

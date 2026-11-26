@@ -234,6 +234,12 @@ function bind(): void {
   });
 }
 
+/** Случайный id телефона (тот же, что в событиях): загадка из фильма считает итог один раз с телефона. */
+export function deviceId(): string {
+  bind();
+  return device;
+}
+
 /** Записать событие. name — латиница в нижнем регистре и `_` (до 40 знаков), props — плоские значения. */
 export function track(name: string, props: Props = {}): void {
   crumb(name);

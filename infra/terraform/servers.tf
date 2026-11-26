@@ -17,17 +17,11 @@ locals {
       preset = 6807 # Cloud NL-30: 1 vCPU, 2 ГБ, 30 ГБ, 1560 ₽/мес
       ipv4   = true
     }
-    # Москва: неделю после 24.11.2026 пересылает запоздавших в Европу, потом выключается.
-    # Тариф не трогаем (null — какой стоит, такой и остаётся). Удаление — вручную в панели:
-    # убрать запись отсюда недостаточно, и это нарочно.
-    msk = {
-      name   = "massovka-game"
-      preset = null
-      ipv4   = false
-    }
+    # Москва (massovka-game) выведена 25.11.2026: Terraform её больше не видит (план ничего с ней не делает),
+    # удаляет её кнопка infra-msk-off — Terraform удалять серверы не умеет нарочно (prevent_destroy).
   }
 
-  # id уже существующих серверов по нашим ключам (eu, infra, msk)
+  # id уже существующих серверов по нашим ключам (eu, infra)
   existing = {
     for k, s in local.servers : k => var.existing_servers[s.name]
     if contains(keys(var.existing_servers), s.name)

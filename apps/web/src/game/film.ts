@@ -97,6 +97,11 @@ export interface FilmInput {
   site: string;
   /** Ссылка в QR финала. */
   link?: string;
+  /**
+   * Код загадки из этого фильма (apps/server/src/puzzles.ts): адрес `site/<код>` — в водяном знаке весь
+   * фильм и в финале у QR («Найди актёра»). Нет — как раньше: адрес сайта и «Сыграй с друзьями».
+   */
+  puzzle?: string;
   noGore?: boolean;
   scale?: number;
   /** Титры: по убыванию очков. */
@@ -150,7 +155,8 @@ export class FilmScene {
     this.c = c;
     this.g = g;
     this.bg = scaledCanvas(LW, LH, scale);
-    const base = { t: inp.t, font: inp.font, site: inp.site, noGore: inp.noGore, scale, link: inp.link };
+    // водяной знак: с загадкой — её адрес (его набирают руками с экрана TikTok)
+    const base = { t: inp.t, font: inp.font, site: this.address(), noGore: inp.noGore, scale, link: inp.link };
     const h = inp.hook;
     this.pieces.push(scenePiece(new ClipPlayerScene({ ...base, ...h, mode: 'hook', keepMusic: true })));
     this.pieces.push({ kind: 'rewind', dur: REWIND_MS });
@@ -318,11 +324,25 @@ export class FilmScene {
     text(g, this.inp.t.clip.rewind, cx, cy + 14, PAL.white, this.inp.font);
   }
 
-  /** QR, «Сыграй с друзьями» и адрес — блок призыва в финале. */
+  /** Адрес в кадре: сайт или страница загадки этого фильма (`benobody.app/7KQ2P` — 18 знаков, влезает). */
+  private address(): string {
+    return this.inp.puzzle ? `${this.inp.site}/${this.inp.puzzle}` : this.inp.site;
+  }
+
+  /** QR, «Сыграй с друзьями» и адрес — блок призыва в финале; с загадкой — «Найди актёра» и её адрес. */
   private callToPlay(y: number): void {
     const g = this.g;
     const t = this.inp.t;
     const font = this.inp.font;
+    if (this.inp.puzzle) {
+      // адрес целиком не помещается рядом с QR — строкой над ним
+      text(g, this.address(), SAFE_L + 2, y - 2, PAL.cyan, font, { align: 'left', outline: null, maxWidth: SAFE_R - SAFE_L });
+      const qr = drawQr(g, this.inp.link ?? `https://${this.address()}`, SAFE_L + 2, y + 9);
+      const tx = SAFE_L + 2 + qr + 6;
+      text(g, t.clip.puzzle1, tx, y + 13, PAL.white, font, { align: 'left', outline: null, maxWidth: SAFE_R - tx + 8 });
+      text(g, t.clip.puzzle2, tx, y + 23, PAL.white, font, { align: 'left', outline: null });
+      return;
+    }
     const qr = drawQr(g, this.inp.link ?? `https://${this.inp.site}`, SAFE_L + 2, y);
     const tx = SAFE_L + 2 + qr + 6;
     text(g, t.clip.play1, tx, y + 4, PAL.white, font, { align: 'left', outline: null });
@@ -891,7 +911,7 @@ export class FilmScene {
       g.drawImage(sc.c, sx * scale, sy * scale, BLOOP_W * scale, BLOOP_H * scale, dx * scale, BLOOP_Y * scale, BLOOP_W * scale, BLOOP_H * scale);
       g.restore();
     }
-    text(g, this.inp.site, cx, 200, PAL.cyan, font, { outline: null });
+    text(g, this.address(), cx, 200, PAL.cyan, font, { outline: null });
   }
 }
 

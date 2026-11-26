@@ -87,7 +87,7 @@ describe('i18n', () => {
       for (const s of [c.photoTie, c.rival, c.rewind]) expect(s.length, `${lang}: «${s}»`).toBeLessThanOrEqual(21);
       for (const s of [c.send, c.save, c.close]) expect(s.length).toBeLessThanOrEqual(10);
       // рядом с QR (33 пикс.) в концовке и титрах фильма — до 12 знаков
-      for (const s of [c.play1, c.play2]) expect(s.length, s).toBeLessThanOrEqual(12);
+      for (const s of [c.play1, c.play2, c.puzzle1, c.puzzle2]) expect(s.length, s).toBeLessThanOrEqual(12);
       // кнопка клипа призрака в шапке: 65 пикс. — до 7 знаков (и «100%»)
       for (const s of [c.deathBtn, c.sendShort, c.preparing]) expect(s.length, s).toBeLessThanOrEqual(7);
     }

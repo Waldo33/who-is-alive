@@ -128,10 +128,14 @@ describe.skipIf(!hasFfmpeg)('клип выбывшего: комната цел�
       const eb = h.sim.playerRound('b')!.eid;
       const A = h.world.get(ea)!;
       const B = h.world.get(eb)!;
-      A.x = B.x + 4;
-      A.y = B.y;
-      h.sim.intent('a', { k: 'attack', eid: eb });
-      step(50);
+      // зерно комнаты случайное: удар бывает «не сейчас» (стоп-кадр «Море волнуется», офис до изнанки) —
+      // бьём, пока не пройдёт
+      for (let i = 0; i < 600 && h.sim.playerRound('b')!.alive; i++) {
+        A.x = B.x + 4;
+        A.y = B.y;
+        h.sim.intent('a', { k: 'attack', eid: eb });
+        step(50);
+      }
       expect(h.sim.playerRound('b')!.alive).toBe(false);
       step(3400);
       room.clip('a', { n: 1, round: h.round, lang: 'ru', mild: false });
@@ -180,10 +184,14 @@ describe.skipIf(!hasFfmpeg)('клип выбывшего: заготовка д�
       const eb = h.sim.playerRound('b')!.eid;
       const A = h.world.get(ea)!;
       const B = h.world.get(eb)!;
-      A.x = B.x + 4;
-      A.y = B.y;
-      h.sim.intent('a', { k: 'attack', eid: eb });
-      step(50);
+      // зерно комнаты случайное: удар бывает «не сейчас» (стоп-кадр «Море волнуется», офис до изнанки) —
+      // бьём, пока не пройдёт
+      for (let i = 0; i < 600 && h.sim.playerRound('b')!.alive; i++) {
+        A.x = B.x + 4;
+        A.y = B.y;
+        h.sim.intent('a', { k: 'attack', eid: eb });
+        step(50);
+      }
       expect(h.sim.playerRound('b')!.alive).toBe(false);
       step(1000);
       expect(film.preclips).toBe(0);

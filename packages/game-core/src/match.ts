@@ -1685,6 +1685,12 @@ export class MatchSim {
       this.notices.push({ t: 'denied', pid: p.pid, reason: 'not_now' });
       return;
     }
+    // стоп-кадр «Море волнуется»: мир замер, все выбирают жест — бить нельзя ни игрокам, ни ИИ.
+    // Судим по моменту на экране нападавшего: ударил до стоп-кадра, а дошло по сети уже в нём — засчитано
+    if (this.world.isFrozen(view ?? t)) {
+      this.notices.push({ t: 'denied', pid: p.pid, reason: 'not_now' });
+      return;
+    }
     if (p.attacksLeft <= 0) {
       this.notices.push({ t: 'denied', pid: p.pid, reason: 'no_attacks' });
       return;

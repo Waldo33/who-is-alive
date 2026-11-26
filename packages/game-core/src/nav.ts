@@ -114,8 +114,8 @@ export class NavGrid {
       const x = x0 + (x1 - x0) * t;
       const y = y0 + (y1 - y0) * t;
       // проверяем «плечи» шириной ±1 пикс., чтобы не срезать углы препятствий
-      for (const [ox, oy] of [[0, 0], [1, 1], [-1, -1], [1, -1], [-1, 1]]) {
-        const j = this.cellAt(x + ox, y + oy);
+      for (let k = 0; k < SHOULDERS.length; k += 2) {
+        const j = this.cellAt(x + SHOULDERS[k], y + SHOULDERS[k + 1]);
         if (!this.walkable(j, zone)) return false;
       }
     }
@@ -129,11 +129,19 @@ export class NavGrid {
   findPath(start: number, goal: number, zone?: Rect | null): number[] | null {
     if (start === goal) return [];
     if (!this.walkable(goal, zone)) return null;
-    const n = this.cols * this.rows;
-    const g = new Float32Array(n).fill(Infinity);
-    const came = new Int32Array(n).fill(-1);
-    const closed = new Uint8Array(n);
-    const heap = new MinHeap();
+    // рабочие массивы — общие на все поиски (без выделения памяти на каждый); «чистота» клетки —
+    // по номеру поиска: клетка, не тронутая в этом поиске, читается как g = ∞, came = −1, не закрыта
+    const sc = scratch(this.cols * this.rows);
+    const run = sc.next();
+    const { g, came, seen, closed, heap } = sc;
+    const touch = (i: number) => {
+      if (seen[i] !== run) {
+        seen[i] = run;
+        g[i] = Infinity;
+        came[i] = -1;
+        closed[i] = 0;
+      }
+    };
     const gc = this.col(goal);
     const gr = this.row(goal);
     const h = (i: number) => {
@@ -141,6 +149,8 @@ export class NavGrid {
       const dy = Math.abs(this.row(i) - gr);
       return dx + dy + (Math.SQRT2 - 2) * Math.min(dx, dy);
     };
+    touch(start);
+    touch(goal);
     g[start] = 0;
     heap.push(start, h(start));
     // старт может оказаться в непроходимой клетке (вытолкнуло изгородью) — разрешаем выйти из неё
@@ -158,6 +168,7 @@ export class NavGrid {
           const nr = r + dr;
           if (!this.inBounds(nc, nr)) continue;
           const j = this.idx(nc, nr);
+          touch(j);
           if (closed[j] || !this.walkable(j, zone)) continue;
           if (dr && dc) {
             if (!this.walkable(this.idx(c + dc, r), zone) || !this.walkable(this.idx(c, r + dr), zone)) continue;
@@ -195,23 +206,35 @@ export class NavGrid {
   }
 }
 
+/** Смещения «плеч» для lineClear: (0,0), (1,1), (−1,−1), (1,−1), (−1,1). */
+const SHOULDERS = [0, 0, 1, 1, -1, -1, 1, -1, -1, 1];
+
+/** Куча по возрастанию ключа; при равных ключах порядок тот же, что у прежней (маршруты не меняются). */
 class MinHeap {
   private items: number[] = [];
   private keys: number[] = [];
+  private n = 0;
   get size(): number {
-    return this.items.length;
+    return this.n;
+  }
+  clear(): void {
+    this.n = 0;
   }
   push(item: number, key: number): void {
     const a = this.items;
     const k = this.keys;
-    a.push(item);
-    k.push(key);
-    let i = a.length - 1;
+    let i = this.n++;
+    a[i] = item;
+    k[i] = key;
     while (i > 0) {
       const p = (i - 1) >> 1;
       if (k[p] <= k[i]) break;
-      [a[p], a[i]] = [a[i], a[p]];
-      [k[p], k[i]] = [k[i], k[p]];
+      const ti = a[p];
+      a[p] = a[i];
+      a[i] = ti;
+      const tk = k[p];
+      k[p] = k[i];
+      k[i] = tk;
       i = p;
     }
   }
@@ -219,24 +242,64 @@ class MinHeap {
     const a = this.items;
     const k = this.keys;
     const top = a[0];
-    const lastI = a.pop()!;
-    const lastK = k.pop()!;
-    if (a.length) {
-      a[0] = lastI;
-      k[0] = lastK;
+    const len = --this.n;
+    if (len) {
+      a[0] = a[len];
+      k[0] = k[len];
       let i = 0;
       for (;;) {
         const l = 2 * i + 1;
         const r = l + 1;
         let m = i;
-        if (l < a.length && k[l] < k[m]) m = l;
-        if (r < a.length && k[r] < k[m]) m = r;
+        if (l < len && k[l] < k[m]) m = l;
+        if (r < len && k[r] < k[m]) m = r;
         if (m === i) break;
-        [a[m], a[i]] = [a[i], a[m]];
-        [k[m], k[i]] = [k[i], k[m]];
+        const ti = a[m];
+        a[m] = a[i];
+        a[i] = ti;
+        const tk = k[m];
+        k[m] = k[i];
+        k[i] = tk;
         i = m;
       }
     }
     return top;
   }
+}
+
+/**
+ * Рабочие массивы A*. Одни на модуль, а не поля NavGrid: сетка попадает в записи дублей (JSON),
+ * и лишние мегабайты там не нужны. Поиск синхронный и не вложенный — делить их безопасно.
+ */
+interface Scratch {
+  g: Float32Array;
+  came: Int32Array;
+  seen: Uint32Array;
+  closed: Uint8Array;
+  heap: MinHeap;
+  next(): number;
+}
+let shared: Scratch | null = null;
+function scratch(n: number): Scratch {
+  if (!shared || shared.g.length < n) {
+    let run = 0;
+    const s: Scratch = {
+      g: new Float32Array(n),
+      came: new Int32Array(n),
+      seen: new Uint32Array(n),
+      closed: new Uint8Array(n),
+      heap: new MinHeap(),
+      next() {
+        // номер поиска; на переполнении — честно обнулить отметки
+        if (++run === 0xffffffff) {
+          s.seen.fill(0);
+          run = 1;
+        }
+        s.heap.clear();
+        return run;
+      },
+    };
+    shared = s;
+  }
+  return shared;
 }

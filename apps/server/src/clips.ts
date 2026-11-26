@@ -10,9 +10,14 @@
  * Хранится 2 суток под случайным именем, папка не больше 1 ГБ (сначала уходят старые).
  * Тело пишется на диск потоком — в памяти 1-гигабайтного сервера не копится.
  *
- * Есть S3 (s3.ts, бакет из infra/terraform/storage.tf) — каждый файл после записи уходит и туда
- * (`clips/<id>.<ext>`, бакет сам удаляет через 2 суток). Отдаём локальную копию, пока она есть; ушла
- * (папка переполнилась, файл с другой машины) — GET отвечает 302 на подписанную ссылку S3.
+ * Есть S3 (s3.ts, бакет из infra/terraform/storage.tf) — видео живёт там (`clips/<id>.<ext>`, бакет сам
+ * удаляет через 2 суток), а GET отвечает 302 на подписанную ссылку S3:
+ *   - фильм и клип выбывшего (монтаж на сервере, `adopt`) кладутся в S3 сразу, ссылка выдаётся после
+ *     загрузки, на диске копии не остаётся;
+ *   - клип с телефона: POST /v1/clips/direct { ext, size } → { id, ext, put } — телефон кладёт файл в бакет
+ *     сам, по подписанной ссылке PUT (тип и размер — в подписи); обложка — POST /v1/clips/<id>/thumb-url;
+ *   - S3 не ответил — файл остаётся на диске и отдаётся отсюда, как без S3 (запасной путь, и POST /v1/clips
+ *     для старых вкладок).
  */
 import { randomBytes } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
@@ -46,6 +51,8 @@ export interface ClipRemote {
 
 /** Ссылка из S3 живёт столько же, сколько сам файл. */
 export const REMOTE_URL_TTL_S = 48 * 3600;
+/** Ссылка на загрузку с телефона: 10 минут хватит и медленной сети. */
+export const REMOTE_PUT_TTL_S = 600;
 
 export class ClipStore {
   readonly dir: string;
@@ -55,7 +62,9 @@ export class ClipStore {
   private readonly inRemote = new Map<string, number>();
   /** Идущие загрузки в S3 (тесты ждут их через `flushRemote`). */
   private readonly pending = new Set<Promise<void>>();
-  readonly remoteStats = { uploaded: 0, failed: 0, redirects: 0 };
+  readonly remoteStats = { uploaded: 0, failed: 0, redirects: 0, direct: 0 };
+  /** Клипы, которые телефон грузит прямо в S3: id → когда выдали ссылку (для обложки к нему). */
+  private readonly issued = new Map<string, number>();
 
   constructor(dir?: string, private readonly now: () => number = Date.now, private readonly remote?: ClipRemote) {
     this.dir = dir ?? join(tmpdir(), 'massovka-clips');
@@ -65,24 +74,34 @@ export class ClipStore {
     return !!this.remote;
   }
 
-  /** Положить файл в S3 в фоне: сбой S3 не ломает клип — он остаётся на диске, как раньше. */
-  private mirror(id: string, ext: string): void {
+  /** Положить файл в S3; true — лежит там. Сбой S3 не ломает клип — он остаётся на диске, как раньше. */
+  private async put(id: string, ext: string): Promise<boolean> {
     const r = this.remote;
-    if (!r) return;
+    if (!r) return false;
     const key = `clips/${id}.${ext}`;
-    const job = r.s3
-      .putFile(key, join(this.dir, `${id}.${ext}`), CLIP_MIME[ext])
-      .then(() => {
-        this.inRemote.set(key, this.now());
-        this.remoteStats.uploaded++;
-        if (this.inRemote.size > 50_000) this.inRemote.clear();
-      })
-      .catch((e: unknown) => {
-        this.remoteStats.failed++;
-        r.log?.('warn', 's3_put_failed', { key, err: String(e).slice(0, 300) });
-      })
-      .finally(() => this.pending.delete(job));
+    try {
+      await r.s3.putFile(key, join(this.dir, `${id}.${ext}`), CLIP_MIME[ext]);
+    } catch (e) {
+      this.remoteStats.failed++;
+      r.log?.('warn', 's3_put_failed', { key, err: String(e).slice(0, 300) });
+      return false;
+    }
+    this.inRemote.set(key, this.now());
+    this.remoteStats.uploaded++;
+    if (this.inRemote.size > 50_000) this.inRemote.clear();
+    return true;
+  }
+
+  /** Копия в S3 в фоне (клип, пришедший с телефона через сервер): локальный файл остаётся. */
+  private mirror(id: string, ext: string): void {
+    if (!this.remote) return;
+    const job = this.put(id, ext).then(() => undefined).finally(() => this.pending.delete(job));
     this.pending.add(job);
+  }
+
+  /** Положить в S3 и убрать с диска; не вышло — файл остаётся на диске и отдаётся отсюда. */
+  private async moveToRemote(id: string, ext: string): Promise<void> {
+    if (await this.put(id, ext)) await rm(join(this.dir, `${id}.${ext}`), { force: true });
   }
 
   /** Дождаться фоновых загрузок в S3 (тесты, остановка сервера). */
@@ -111,6 +130,36 @@ export class ClipStore {
     return r.s3.presignGet(key, REMOTE_URL_TTL_S, { disposition: `attachment; filename="massovka-${id.slice(0, 6)}.${ext}"` });
   }
 
+  /**
+   * Клип с телефона прямо в S3: выдать id и подписанную ссылку PUT (тип и размер — в подписи).
+   * S3 нет — 404 `no_s3`: телефон грузит по-старому, POST /v1/clips.
+   */
+  direct(user: string, b: { ext?: unknown; size?: unknown } | null): ClipResult {
+    const r = this.remote;
+    if (!r) return { status: 404, body: { error: 'no_s3' } };
+    const ext = b?.ext === 'mp4' || b?.ext === 'webm' ? b.ext : null;
+    const size = typeof b?.size === 'number' && Number.isInteger(b.size) ? b.size : 0;
+    if (!ext || size < 1000) return { status: 400, body: { error: 'bad_clip' } };
+    if (size > CLIP_MAX) return { status: 413, body: { error: 'too_big' } };
+    if (!this.rateOk(user)) return { status: 429, body: { error: 'rate_limited' } };
+    const id = randomBytes(10).toString('hex');
+    this.issued.set(id, this.now());
+    if (this.issued.size > 20_000) for (const [k, t] of this.issued) if (this.now() - t > 3600_000) this.issued.delete(k);
+    this.remoteStats.direct++;
+    const put = r.s3.presignPut(`clips/${id}.${ext}`, REMOTE_PUT_TTL_S, { type: CLIP_MIME[ext], length: size });
+    return { status: 200, body: { id, ext, put, type: CLIP_MIME[ext] } };
+  }
+
+  /** Обложка к клипу, который телефон грузит прямо в S3: ссылка PUT на JPEG (выдаётся в течение часа). */
+  directThumb(id: string, b: { size?: unknown } | null): ClipResult {
+    const r = this.remote;
+    const t = this.issued.get(id);
+    if (!r || t === undefined || this.now() - t > 3600_000) return { status: 404, body: { error: 'no_clip' } };
+    const size = typeof b?.size === 'number' && Number.isInteger(b.size) ? b.size : 0;
+    if (size < 100 || size > THUMB_MAX) return { status: 400, body: { error: 'bad_thumb' } };
+    return { status: 200, body: { put: r.s3.presignPut(`clips/${id}.jpg`, REMOTE_PUT_TTL_S, { type: 'image/jpeg', length: size }), type: 'image/jpeg' } };
+  }
+
   /** Клип из тела запроса. */
   async upload(user: string, req: IncomingMessage): Promise<ClipResult> {
     const type = String(req.headers['content-type'] ?? '').split(';')[0].trim();
@@ -134,6 +183,7 @@ export class ClipStore {
   /**
    * Готовый файл с этого же сервера (фильм матча, film.ts): переложить в хранилище под случайным именем.
    * Файл уже лежит в этой папке (монтаж пишет сюда же — переименование без копирования).
+   * Есть S3 — сначала в бакет, и только потом ответ (ссылка сразу ведёт в S3), копия с диска убирается.
    */
   async adopt(path: string, ext: 'mp4', thumb?: Buffer | null): Promise<{ id: string; thumb: boolean }> {
     await mkdir(this.dir, { recursive: true });
@@ -145,8 +195,7 @@ export class ClipStore {
       await writeFile(join(this.dir, `${id}.jpg`), thumb);
       hasThumb = true;
     }
-    this.mirror(id, ext);
-    if (hasThumb) this.mirror(id, 'jpg');
+    await Promise.all([this.moveToRemote(id, ext), hasThumb ? this.moveToRemote(id, 'jpg') : null]);
     return { id, thumb: hasThumb };
   }
 

@@ -1,8 +1,7 @@
 # Туннели SSH (то же, что «туннели» в infra/game/setup.sh; юниты — байт в байт).
 # Из Москвы соединения за границу режутся, поэтому туннели поднимают Нидерланды и Европа:
-#   massovka-infra → Европа (massovka-tunnel-eu) и Москва (massovka-tunnel): бот -R 9090, логи -R 9428,
-#     база, метрики игры и машины — -L;
-#   massovka-eu → Москва (massovka-relay): Москва пересылает игру в Европу (-R 18090, -R 18091).
+#   massovka-infra → Европа (massovka-tunnel-eu): бот -R 9090, логи -R 9428, база, метрики игры и машины — -L.
+# Москва (massovka-game) выключена 25.11.2026: её туннели massovka-tunnel и massovka-relay — в tunnels_retired.
 # Принимающая сторона пускает их пользователем tunnel только на эти порты (authorized_keys ниже).
 - name: Ключ туннелей
   ansible.builtin.command: ssh-keygen -q -t ed25519 -N '' -C massovka-tunnel -f /etc/massovka/tunnel_ed25519
@@ -34,6 +33,28 @@
     daemon_reload: "{{ item.changed }}"
   loop: "{{ units.results | default([]) }}"
   loop_control: { label: "{{ item.item.name }}" }
+
+- name: Выключенные туннели — остановить
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: false
+    state: stopped
+  loop: "{{ tunnels_retired }}"
+  register: retired
+  # юнита уже нет — нечего и останавливать
+  failed_when: (retired.failed | default(false)) and 'Could not find' not in (retired.msg | default(''))
+
+- name: Выключенные туннели — убрать юниты
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ item }}.service"
+    state: absent
+  loop: "{{ tunnels_retired }}"
+  register: retired_units
+
+- name: Выключенные туннели — systemd забывает юниты
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: retired_units.changed
 
 # ── принимающая сторона (игровой сервер) ──
 - name: Открытый ключ туннеля сервера бота (Нидерланды)

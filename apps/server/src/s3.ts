@@ -1,6 +1,6 @@
 /**
  * Маленький клиент S3 (подпись AWS Signature V4 на node:crypto, без SDK): положить файл, проверить, что он есть,
- * выдать подписанную ссылку на скачивание и поставить бакету правила — срок хранения и CORS.
+ * выдать подписанную ссылку на скачивание или загрузку и поставить бакету правила — срок хранения и CORS.
  *
  * Хранилище — Timeweb S3 в Петербурге (infra/terraform/storage.tf): https://s3.twcstorage.ru, регион ru-1,
  * адресация «путём» (https://s3.twcstorage.ru/<бакет>/<ключ>). Ключи приходят из окружения
@@ -95,6 +95,18 @@ export class S3Client {
 
   /** Подписанная ссылка на скачивание (до 7 суток — предел SigV4). */
   presignGet(key: string, expiresSec: number, opts: { disposition?: string } = {}): string {
+    return this.presign('GET', key, expiresSec, opts.disposition ? { 'response-content-disposition': opts.disposition } : {}, {});
+  }
+
+  /**
+   * Подписанная ссылка на загрузку (PUT) одного файла: тип и размер входят в подпись — телефон
+   * не положит ни другой файл, ни больше заявленного. Ключей телефон так и не видит.
+   */
+  presignPut(key: string, expiresSec: number, file: { type: string; length: number }): string {
+    return this.presign('PUT', key, expiresSec, {}, { 'content-length': String(file.length), 'content-type': file.type });
+  }
+
+  private presign(method: string, key: string, expiresSec: number, extra: Record<string, string>, headers: Record<string, string>): string {
     const at = this.now();
     const date = amzDate(at);
     const query: Record<string, string> = {
@@ -102,10 +114,10 @@ export class S3Client {
       'X-Amz-Credential': `${this.cfg.accessKey}/${date.slice(0, 8)}/${this.cfg.region}/s3/aws4_request`,
       'X-Amz-Date': date,
       'X-Amz-Expires': String(Math.min(604800, Math.max(1, Math.floor(expiresSec)))),
-      'X-Amz-SignedHeaders': 'host',
+      'X-Amz-SignedHeaders': ['host', ...Object.keys(headers)].sort().join(';'),
+      ...extra,
     };
-    if (opts.disposition) query['response-content-disposition'] = opts.disposition;
-    const s = sign({ method: 'GET', host: this.host, path: this.path(key), query, payloadHash: 'UNSIGNED-PAYLOAD', at, region: this.cfg.region, accessKey: this.cfg.accessKey, secretKey: this.cfg.secretKey });
+    const s = sign({ method, host: this.host, path: this.path(key), query, headers, payloadHash: 'UNSIGNED-PAYLOAD', at, region: this.cfg.region, accessKey: this.cfg.accessKey, secretKey: this.cfg.secretKey });
     const qs = Object.entries({ ...query, 'X-Amz-Signature': s.signature })
       .map(([k, v]) => `${enc(k)}=${enc(v)}`)
       .join('&');
@@ -138,6 +150,20 @@ export class S3Client {
     if (!r.ok) throw new Error(`s3 put ${key}: HTTP ${r.status} ${(await r.text()).slice(0, 200)}`);
   }
 
+  /** Положить байты (маленькие файлы: загадки). */
+  async putBytes(key: string, body: Buffer, mime: string, cacheControl = 'no-store'): Promise<void> {
+    const r = await this.request('PUT', key, { body, headers: { 'content-type': mime, 'cache-control': cacheControl } });
+    if (!r.ok) throw new Error(`s3 put ${key}: HTTP ${r.status} ${(await r.text()).slice(0, 200)}`);
+  }
+
+  /** Прочитать объект целиком; null — его нет. */
+  async get(key: string): Promise<Buffer | null> {
+    const r = await this.request('GET', key);
+    if (r.status === 404) return null;
+    if (!r.ok) throw new Error(`s3 get ${key}: HTTP ${r.status}`);
+    return Buffer.from(await r.arrayBuffer());
+  }
+
   /** Есть ли объект. */
   async has(key: string): Promise<boolean> {
     const r = await this.request('HEAD', key);
@@ -157,11 +183,11 @@ export class S3Client {
     await this.putConfig('lifecycle', xml);
   }
 
-  /** CORS: скачивание из web.telegram.org и со страниц сайта (только чтение). */
+  /** CORS: скачивание из web.telegram.org и со страниц сайта; PUT — загрузка клипа с телефона по подписанной ссылке. */
   async putCors(): Promise<void> {
     const xml =
       '<?xml version="1.0" encoding="UTF-8"?><CORSConfiguration><CORSRule><AllowedOrigin>*</AllowedOrigin>' +
-      '<AllowedMethod>GET</AllowedMethod><AllowedMethod>HEAD</AllowedMethod><AllowedHeader>*</AllowedHeader>' +
+      '<AllowedMethod>GET</AllowedMethod><AllowedMethod>HEAD</AllowedMethod><AllowedMethod>PUT</AllowedMethod><AllowedHeader>*</AllowedHeader>' +
       '<ExposeHeader>Content-Length</ExposeHeader><MaxAgeSeconds>86400</MaxAgeSeconds></CORSRule></CORSConfiguration>';
     await this.putConfig('cors', xml);
   }

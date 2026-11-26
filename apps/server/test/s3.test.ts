@@ -36,6 +36,13 @@ describe('подпись S3 (SigV4)', () => {
     expect(url.searchParams.get('X-Amz-Signature')).toBe('aeeed9bbccd4d02ee5c0109b86d86835f995330da4c265957d157751f604d404');
   });
 
+  it('ссылка на загрузку (PUT) — как у botocore (S3SigV4QueryAuth, тип и размер в подписи)', () => {
+    const c = new S3Client({ endpoint: 'https://s3.example', region: 'ru-1', bucket: 'bucket', accessKey: 'key', secretKey: 'secret' }, fetch, () => Date.UTC(2026, 10, 26, 7, 33, 3));
+    const url = new URL(c.presignPut('clips/abc.webm', 600, { type: 'video/webm', length: 5000 }));
+    expect(url.searchParams.get('X-Amz-SignedHeaders')).toBe('content-length;content-type;host');
+    expect(url.searchParams.get('X-Amz-Signature')).toBe('d0bc818517441c2eef60337fd32ecf87d47a465c9ed3f51abeb8b85aae08abc7');
+  });
+
   it('адрес «путём» (Timeweb) и настройки из окружения', () => {
     expect(s3FromEnv({})).toBeNull();
     const cfg = s3FromEnv({ S3_BUCKET: 'abc-massovka-media', S3_ACCESS_KEY: 'k', S3_SECRET_KEY: 's' })!;
@@ -112,9 +119,11 @@ describe('клипы в S3', () => {
     const tmp = join(dir, 'film.mp4');
     await writeFile(tmp, Buffer.alloc(3000, 1));
     const film = await store.adopt(tmp, 'mp4', Buffer.from([0xff, 0xd8, 1, 2]));
-    await store.flushRemote();
+    // фильм уже в бакете к ответу adopt — и на диске его копии нет
     expect(s3.objects.has(`clips/${film.id}.mp4`)).toBe(true);
     expect(s3.objects.get(`clips/${film.id}.jpg`)?.type).toBe('image/jpeg');
+    expect(await store.file(film.id, 'mp4')).toBeNull();
+    expect(await store.file(film.id, 'jpg')).toBeNull();
 
     srv = new GameServer({ authSecret: 'test-secret-test-secret-test-secret!!', log: silentLogger, clips: store });
     const http = `http://127.0.0.1:${await srv.listen(0, '127.0.0.1')}`;
@@ -149,6 +158,55 @@ describe('клипы в S3', () => {
     // и ссылки в S3 нет — значит, 404, а не битый редирект
     await rm(join(dir, `${id}.webm`));
     expect(await store.remoteUrl(id, 'webm')).toBeNull();
+    // фильм при лежащем S3 остаётся на диске и отдаётся оттуда
+    const tmp = join(dir, 'film.mp4');
+    await writeFile(tmp, Buffer.alloc(3000, 1));
+    const film = await store.adopt(tmp, 'mp4');
+    expect(await store.file(film.id, 'mp4')).not.toBeNull();
+  });
+
+  it('телефон грузит прямо в S3: ссылка PUT с типом и размером в подписи, потом 302', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'clips-s3-'));
+    const s3 = fakeS3();
+    const store = new ClipStore(dir, Date.now, { s3: s3.client() });
+    expect(new ClipStore(dir).direct('u1', { ext: 'mp4', size: 5000 }).status).toBe(404);
+    expect(store.direct('u1', { ext: 'mov', size: 5000 }).status).toBe(400);
+    expect(store.direct('u1', { ext: 'mp4', size: 13 * 1024 * 1024 }).status).toBe(413);
+    const r = store.direct('u1', { ext: 'webm', size: 5000 });
+    expect(r.status).toBe(200);
+    const d = r.body as { id: string; ext: string; put: string; type: string };
+    expect(d.type).toBe('video/webm');
+    const put = new URL(d.put);
+    expect(put.host).toBe('s3.example');
+    expect(put.pathname).toBe(`/bucket/clips/${d.id}.webm`);
+    expect(put.searchParams.get('X-Amz-SignedHeaders')).toBe('content-length;content-type;host');
+    expect(put.searchParams.get('X-Amz-Expires')).toBe('600');
+    // обложка — только к выданному клипу
+    expect(store.directThumb('0'.repeat(20), { size: 2000 }).status).toBe(404);
+    expect(store.directThumb(d.id, { size: 999_999 }).status).toBe(400);
+    expect(new URL((store.directThumb(d.id, { size: 2000 }).body as { put: string }).put).pathname).toBe(`/bucket/clips/${d.id}.jpg`);
+    // телефон положил файл — GET ведёт в бакет
+    s3.objects.set(`clips/${d.id}.webm`, { body: Buffer.alloc(5000), type: 'video/webm' });
+    expect(new URL((await store.remoteUrl(d.id, 'webm'))!).pathname).toBe(`/bucket/clips/${d.id}.webm`);
+  });
+
+  it('HTTP: /v1/clips/direct и /thumb-url — с токеном игрока', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'clips-s3-'));
+    const s3 = fakeS3();
+    srv = new GameServer({ authSecret: 'test-secret-test-secret-test-secret!!', log: silentLogger, clips: new ClipStore(dir, Date.now, { s3: s3.client() }) });
+    const http = `http://127.0.0.1:${await srv.listen(0, '127.0.0.1')}`;
+    const call = (p: string, body: unknown, token?: string) =>
+      fetch(`${http}${p}`, { method: 'POST', headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body) });
+    expect((await call('/v1/clips/direct', { ext: 'mp4', size: 5000 })).status).toBe(401);
+    const { token } = (await (await fetch(`${http}/v1/auth/anon`, { method: 'POST' })).json()) as { token: string };
+    const r = await call('/v1/clips/direct', { ext: 'mp4', size: 5000 }, token);
+    expect(r.status).toBe(200);
+    const d = (await r.json()) as { id: string; put: string; type: string };
+    expect(d.type).toBe('video/mp4');
+    expect(new URL(d.put).pathname).toBe(`/bucket/clips/${d.id}.mp4`);
+    const t = await call(`/v1/clips/${d.id}/thumb-url`, { size: 2000 }, token);
+    expect(t.status).toBe(200);
+    expect(await (await fetch(`${http}/metrics`)).text()).toContain('game_clips_s3_direct_total 1');
   });
 
   it('срок хранения и CORS — XML с Content-MD5', async () => {
@@ -158,5 +216,6 @@ describe('клипы в S3', () => {
     await c.putCors();
     expect(s3.configs.get('lifecycle')).toContain('<Filter><Prefix>clips/</Prefix></Filter><Status>Enabled</Status><Expiration><Days>2</Days>');
     expect(s3.configs.get('cors')).toContain('<AllowedMethod>GET</AllowedMethod>');
+    expect(s3.configs.get('cors')).toContain('<AllowedMethod>PUT</AllowedMethod>');
   });
 });

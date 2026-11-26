@@ -1069,6 +1069,12 @@ export class GameScene extends Phaser.Scene {
     }
     const inRange = this.candidates(x, y).filter((e) => Math.hypot(e.x - mine.x, e.y - mine.y) <= this.cfg.attackRange);
     if (inRange.length) {
+      // стоп-кадр: бить нельзя (сервер тоже откажет) — не замахиваемся и не идём
+      if (w.isFrozen()) {
+        this.audio.play('denied');
+        this.showToast(this.t.game.denied.not_now, 900);
+        return;
+      }
       if (this.cfg.attackConfirm === 'hold') this.holdTarget = { eid: inRange[0].eid, at: performance.now() };
       else this.doAttack(inRange[0].eid);
       return;
@@ -3404,6 +3410,9 @@ export class GameScene extends Phaser.Scene {
       if (vis) {
         h.setPosition(x, AY + y).setSize(rw, rh);
         h.setTilePosition(x, y);
+        // верхняя полоса — по глубине, как предмет с основанием на своей нижней кромке: кто стоит
+        // у неё внутри зоны, виден перед стеной целиком, а не «за стеной» с отрезанной головой
+        h.setDepth(i === 0 ? AY + y0 : 900);
       }
     });
   }
@@ -4446,7 +4455,9 @@ export class GameScene extends Phaser.Scene {
   private openFilm(): void {
     this.closeClip?.();
     const feed = this.init0.film;
-    const text = this.filmCaption();
+    const puzzle = feed?.puzzle?.() ?? null;
+    // загадка из фильма — ссылкой под роликом: кто посмотрел, идёт искать актёра
+    const text = [this.filmCaption(), puzzle ? `${location.origin}/${puzzle}` : ''].filter(Boolean).join('\n');
     const share = async (file: File, via: string) => {
       this.track('clip_send', { kind: 'film', type: file.type.split(';')[0], via });
       await this.init0.onShare?.(text, [file]);
@@ -4463,9 +4474,9 @@ export class GameScene extends Phaser.Scene {
         this.closeClip = openFilmOverlay(document.body, feed, this.t, (f) => share(f, 'server'), (f) => save(f, 'server'), {
           text,
           onTelegram,
-          fallback: () => this.openLocalFilm(share, save, onTelegram),
+          fallback: () => this.openLocalFilm(share, save, onTelegram, text, puzzle),
         });
-      } else this.openLocalFilm(share, save, onTelegram);
+      } else this.openLocalFilm(share, save, onTelegram, text, puzzle);
       this.events.once('shutdown', () => this.closeClip?.());
     } catch {
       this.showToast(this.t.clip.failed, 2500);
@@ -4477,6 +4488,8 @@ export class GameScene extends Phaser.Scene {
     share: (f: File, via: string) => Promise<void>,
     save: (f: File, via: string) => void,
     onTelegram: (what: 'story' | 'chat' | 'save', ok: boolean) => void,
+    text: string,
+    puzzle: string | null,
   ): void {
     const m = this.sim.match;
     const inp = m
@@ -4485,7 +4498,8 @@ export class GameScene extends Phaser.Scene {
           lang: this.lang,
           font: this.init0.fontFamily,
           site: location.host,
-          link: inviteLink(`${location.origin}/?src=film&l=${this.lang}`),
+          link: puzzle ? `${location.origin}/${puzzle}?src=film_qr&l=${this.lang}` : inviteLink(`${location.origin}/?src=film&l=${this.lang}`),
+          puzzle: puzzle ?? undefined,
           noGore: mildOn(),
           self: this.sim.selfPid,
         })
@@ -4499,7 +4513,7 @@ export class GameScene extends Phaser.Scene {
     // модуль клипа в основной сборке (не ленивый чанк): после обновления сайта открытая вкладка
     // не сможет подгрузить чанк, которого уже нет на сервере, и кнопка молча не срабатывала бы
     this.closeClip = openClipOverlay(document.body, () => new FilmScene(inp), this.t, (f) => share(f, 'local'), (f) => save(f, 'local'), {
-      text: this.filmCaption(),
+      text,
       onTelegram,
       making: this.t.clip.filmMaking,
     });
