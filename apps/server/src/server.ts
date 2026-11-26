@@ -296,6 +296,9 @@ export class GameServer {
       res.setHeader('Access-Control-Max-Age', '86400');
     }
     if (req.method === 'OPTIONS') return this.reply(res, 204);
+    // «Кривой» путь (/tg/..\internal/…, %2e%2e, %2f): URL ниже схлопнул бы его в другой маршрут, чем видел Caddy, —
+    // так снаружи можно было бы попасть в /internal/*. Своим клиентам такие пути не нужны: отказ сразу
+    if (badPath(req.url ?? '/')) return this.reply(res, 400, { error: 'bad_path' });
     try {
       const p = url.pathname;
       if (p === '/healthz') return this.reply(res, 200, { ok: true });
@@ -317,6 +320,9 @@ export class GameServer {
       if (p.startsWith('/tg/')) {
         if (!this.o.bot) return this.reply(res, 503, { error: 'no_bot' });
         // вебхук Telegram — без лимита (его проверяет секретный заголовок), остальное — по адресу
+        // перепривязка вебхука и состояние бота — только изнутри машины (выкладка по SSH, сторож): иначе любой
+        // скрипт гоняет setWebhook и профиль бота, и Telegram на время режет боту все методы
+        if ((p === '/tg/setup' || p === '/tg/status') && !this.internal(req)) return this.reply(res, 404, { error: 'not_found' });
         if (p !== '/tg/hook' && !this.botRate.take(this.ip(req), this.now())) return this.reply(res, 429, { error: 'rate_limited' });
         const body = req.method === 'POST' ? await readJson(req, 65_536) : null;
         const r = await this.o.bot.handle(req.method ?? 'GET', p.slice(3), req.headers, body);
@@ -988,6 +994,12 @@ export class GameServer {
     peer.send(JSON.stringify({ t: 'error', code, fatal } satisfies ServerMsg));
     if (fatal) ws?.close(4004, code);
   }
+}
+
+/** Путь с точками-переходами, обратной косой или их кодами (%2e, %2f, %5c) — до разбора URL. */
+export function badPath(rawUrl: string): boolean {
+  const path = rawUrl.split('?')[0];
+  return /(^|\/)\.\.?(\/|$)|\\|%2e|%2f|%5c/i.test(path);
 }
 
 async function readJson(req: IncomingMessage, limit = 8192): Promise<unknown> {

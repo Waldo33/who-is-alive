@@ -264,4 +264,42 @@ describe('клипы на игровом сервере (/v1/clips)', () => {
       await srv.close();
     }
   });
+
+  it('перепривязка вебхука и состояние бота — только изнутри машины; кривые пути к /internal/* — отказ', async () => {
+    const { GameServer, badPath } = await import('../src/server');
+    const { request } = await import('node:http');
+    const { bot, calls } = makeBot();
+    const srv = new GameServer({ authSecret: 'test-secret-test-secret-test-secret!!', log: silentLogger, bot });
+    const port = await srv.listen(0, '127.0.0.1');
+    // сырой запрос: fetch сам схлопнул бы «..» и обратную косую
+    const raw = (path: string, headers: Record<string, string> = {}) =>
+      new Promise<number>((resolve, reject) => {
+        const r = request({ host: '127.0.0.1', port, path, method: 'POST', headers }, (res) => {
+          res.resume();
+          resolve(res.statusCode ?? 0);
+        });
+        r.on('error', reject);
+        r.end('{}');
+      });
+    try {
+      const out = { 'x-forwarded-for': '203.0.113.7' };
+      expect((await fetch(`http://127.0.0.1:${port}/tg/setup`, { headers: out })).status).toBe(404);
+      expect((await fetch(`http://127.0.0.1:${port}/tg/status`, { headers: out })).status).toBe(404);
+      expect(calls.some((c) => c.method === 'setWebhook')).toBe(false);
+      // изнутри (выкладка по SSH, сторож) — можно
+      expect((await fetch(`http://127.0.0.1:${port}/tg/setup`)).status).toBe(200);
+      expect(calls.some((c) => c.method === 'setWebhook')).toBe(true);
+      // информация для проверок выкладки — по-прежнему всем
+      expect((await fetch(`http://127.0.0.1:${port}/tg/info`, { headers: out })).status).toBe(200);
+      for (const path of ['/tg/../internal/drain', '/tg/%2e%2e/internal/drain', '/tg/..%2Finternal/drain', '/tg/..\\internal/drain', '/tg/./prepare']) {
+        expect(badPath(path)).toBe(true);
+        expect(await raw(path, out)).toBe(400);
+      }
+      expect(srv.draining).toBe(false);
+      // обычные пути своих клиентов не задеты
+      for (const path of ['/v1/clips/0123456789abcdef0123.mp4', '/v1/puzzles/ABC23/tap', '/tg/prepare', '/v1/rooms/ABCD?x=..%2f']) expect(badPath(path)).toBe(false);
+    } finally {
+      await srv.close();
+    }
+  });
 });
