@@ -2872,7 +2872,7 @@ export class GameScene extends Phaser.Scene {
         drawBossCone(fill, b.look, p.x, sy, t, { x0: 0, y0: AY, w: this.sim.arena.width, h: this.sim.arena.height }, BOSS_RANGE, BOSS_SPREAD, kids);
       }
       // у двери шеф выше стены: рисуем его на шаг впереди двери, чтобы воротник не уходил под шапку
-      const vy = Math.max(sy, AY + BOSS_H + 1);
+      const vy = Math.max(sy, AY + BOSS_H - 2);
       if (!p.ghost) drawBossShadow(fill, p.x, vy, p.alpha);
       const left = p.x - BOSS_W / 2;
       const top = vy - p.lift - BOSS_H;
@@ -2964,9 +2964,9 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     if (ev.act === 'in' && ev.x === door.x && ev.y === door.y) {
-      // резко: дверь настежь, он уже в проёме, глаза вспыхивают — удар звука и толчок кадра
-      this.audio.play('bossIn');
-      if (!this.cfg.kidsMode) this.cameras.main.shake(160, 0.006);
+      // лампа гаснет, щелчок замка — дверь открывается сама
+      this.audio.play('doorLock');
+      this.time.delayedCall(150, () => this.audio.play('doorCreak'));
       this.time.delayedCall(BOSS_SHUT_IN, () => this.audio.play('doorShut'));
       return;
     }

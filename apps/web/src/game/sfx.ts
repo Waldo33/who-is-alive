@@ -6,14 +6,14 @@ export type Sfx =
   | 'step' | 'hitPlayer' | 'hitBot' | 'poof' | 'starTake' | 'starSpawn' | 'crowd' | 'tick'
   | 'click' | 'ready' | 'accuseRight' | 'accuseWrong' | 'fanfare' | 'sad' | 'hedge' | 'pigeon' | 'drum' | 'denied' | 'count' | 'swing' | 'flicker' | 'dusk' | 'siren' | 'whack' | 'clang' | 'stab' | 'knockedOut'
   | 'hitOther' | 'cut' | 'clap' | 'logo' | 'wrap' | 'unmask' | 'rewind' | 'leshyStep' | 'leshyBreath' | 'leshyStinger' | 'leshyTake' | 'leshyCall' | 'snap' | 'whisper' | 'scream' | 'fern'
-  | 'bossAhem' | 'bossStamp' | 'bossStare' | 'doorCreak' | 'doorShut' | 'doorLock' | 'clockTick' | 'bossIn';
+  | 'bossAhem' | 'bossStamp' | 'bossStare' | 'doorCreak' | 'doorShut' | 'doorLock' | 'clockTick';
 
 /**
  * Приоритет эффекта (звуковой гайд, план звука): P1 — меняет решение игрока, обязан пробиться
  * через музыку (на динамике телефона −30…−33 дБ, музыку глушит на 9 дБ на 0,6 с); P2 — событие
  * на поле (−35…−39 дБ, глушит на 4 дБ); остальное — фон. Уровни проверяет `pnpm --filter web sound-check`.
  */
-export const P1: ReadonlySet<Sfx> = new Set<Sfx>(['hitPlayer', 'hitBot', 'starTake', 'crowd', 'ready', 'knockedOut', 'cut', 'drum', 'accuseRight', 'accuseWrong', 'unmask', 'wrap', 'logo', 'leshyStinger', 'leshyTake', 'scream', 'fern', 'bossAhem', 'bossIn']);
+export const P1: ReadonlySet<Sfx> = new Set<Sfx>(['hitPlayer', 'hitBot', 'starTake', 'crowd', 'ready', 'knockedOut', 'cut', 'drum', 'accuseRight', 'accuseWrong', 'unmask', 'wrap', 'logo', 'leshyStinger', 'leshyTake', 'scream', 'fern', 'bossAhem']);
 export const P2: ReadonlySet<Sfx> = new Set<Sfx>(['hitOther', 'whack', 'clang', 'stab', 'starSpawn', 'flicker', 'dusk', 'leshyBreath', 'bossStamp', 'bossStare', 'doorCreak', 'doorShut', 'doorLock']);
 
 /**
@@ -137,18 +137,6 @@ export class Synth {
         this.tone('square', f / 2, f / 2.4, 0.018, 0.08);
         break;
       }
-      // шеф вышел — дверь распахнулась настежь: удар о стену, глухой провал вниз и диссонанс
-      // как в хорроре, когда фигура вдруг в кадре (без визга: пугает, но не скример)
-      case 'bossIn':
-        this.noise(0.06, 1, 2600);
-        this.noise(0.25, 1, 900);
-        this.noise(0.16, 1, 1500, 0.01);
-        this.tone('sine', 90, 34, 0.7, 0.4);
-        this.tone('square', 220, 70, 0.4, 0.35);
-        for (const [f, d] of [[466, 0.02], [494, 0.03], [698, 0.05]] as const) this.tone('sawtooth', f, f * 0.97, 0.9, 0.2, d);
-        this.swell(1.1, 0.45, 2200, 0.05, 0.1);
-        this.noise(0.3, 0.6, 1100, 0.02);
-        break;
       // замок кабинета: металлический щелчок в тишине — сейчас выйдет
       case 'doorLock':
         this.noise(0.015, 1, 3200);

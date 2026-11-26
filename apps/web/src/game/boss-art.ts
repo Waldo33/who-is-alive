@@ -5,7 +5,7 @@ import { canvas, grid } from './pixels';
 
 /**
  * Шеф «Клерков» (game-core › boss.ts) — «Пустой костюм» (решение владельца): тёмно-серый пиджак, белый
- * воротничок и красный галстук — единственное яркое пятно (пиджак тёмный: читается силуэтом); над воротником пустота (лишь два пикселя глаз,
+ * воротничок и красный галстук — единственное яркое пятно; над воротником пустота (лишь два пикселя глаз,
  * тусклые в покое и ярко-красные под взглядом), пустые рукава колышутся, брюки обрезаны над полом —
  * под ними только мягкая тень. Не шагает, а плывёт, покачиваясь. Ростом в полтора человечка.
  *
@@ -15,28 +15,27 @@ import { canvas, grid } from './pixels';
  * Лента: по 4 кадра на вид — вниз (D), вверх (U), боком вправо (S; влево — зеркально):
  * 0–2 рукава колышутся, 3 — рукав указывает (выговор или ложная тревога).
  */
-export const BOSS_W = 24;
-export const BOSS_H = 36;
+export const BOSS_W = 20;
+export const BOSS_H = 24;
 export const BOSS_PER_VIEW = 4;
 export const BOSS_SWAY = 0;
 export const BOSS_POINT = 3;
-/** Дверь кабинета захлопывается через столько мс после того, как он ушёл к себе / вышел к нам. */
-export const BOSS_SHUT_OUT = 500;
-export const BOSS_SHUT_IN = 900;
-/** Выход — резко: дверь распахивается за столько мс, костюм сразу стоит в проёме. */
-const BURST_MS = 70;
-/** Глаза вспыхивают при выходе, мс. */
-export const BOSS_FLARE_MS = 700;
+/** Дверь кабинета захлопывается через столько мс после того, как он ушёл к себе / выплыл к нам. */
+export const BOSS_SHUT_OUT = 650;
+export const BOSS_SHUT_IN = 1100;
+/** Выход: щелчок замка, дверь сама открывается через столько мс, костюм выплывает из темноты. */
+const OPEN_AT = 150;
+const EMERGE_MS = 650;
 /** Пустой рукав указывает столько мс. */
 const POINT_MS = 1000;
 /** Полоска под дверью мигает за столько мс до его возвращения. */
 const BLINK_MS = 3000;
 
 /**
- * o ink (контур), n dusk (пиджак), k night (тень пиджака, лацканы), h steel (блик ткани), p ink (брюки), w white (воротничок),
- * m mist (дальний край воротника изнутри), r red (галстук), R wine (тень галстука), e ink (пустота)
+ * o ink (контур), n steel (пиджак), k dusk (тень пиджака, лацканы), p night (брюки), w white (воротничок),
+ * r red (галстук), R wine (тень галстука), e ink (пустота внутри воротника и рукавов)
  */
-type BossKey = 'o' | 'n' | 'k' | 'h' | 'p' | 'w' | 'm' | 'r' | 'R' | 'e';
+type BossKey = 'o' | 'n' | 'k' | 'p' | 'w' | 'r' | 'R' | 'e';
 type View = 'D' | 'U' | 'S';
 type Grid = (BossKey | null)[][];
 
@@ -63,99 +62,75 @@ function frame(view: View, f: number): string[] {
   const point = f === BOSS_POINT;
   // рукава колышутся: низ рукава уходит на пиксель влево-вправо (кадры 0–2), рукава — в противофазе
   const sway = point ? 0 : [0, 1, -1][f] ?? 0;
-  // пустой рукав: длинный, висит от плеча ниже пиджака; низ колышется; манжета — тёмная пустота
-  const sleeve = (x: number, dx: number, k: BossKey, dark: BossKey): void => {
-    rect(x, 11, 3, 8, k);
-    rect(x + dx, 19, 3, 6, k);
-    put(x + dx + (x < 12 ? 2 : 0), 19, dark);
-    rect(x + dx, 25, 3, 1, 'e');
+  // пустой рукав: висит от плеча, низ колышется, на конце — тёмная пустота манжеты
+  const sleeve = (x: number, dx: number, k: BossKey): void => {
+    rect(x, 8, 2, 4, k);
+    rect(x + dx, 12, 2, 3, k);
+    put(x + dx, 15, 'e');
+    put(x + dx + 1, 15, 'e');
   };
   // рукав указывает: вытянут вбок на уровне груди, манжета пустая
   const pointing = (x0: number): void => {
-    rect(x0, 12, BOSS_W - 1 - x0, 3, 'n');
-    rect(x0, 15, BOSS_W - 2 - x0, 1, 'k');
-    rect(BOSS_W - 1, 12, 1, 3, 'e');
+    rect(x0, 8, BOSS_W - 1 - x0, 2, 'n');
+    rect(x0, 10, BOSS_W - 2 - x0, 1, 'k');
+    put(BOSS_W - 1, 8, 'e');
+    put(BOSS_W - 1, 9, 'e');
   };
   if (view === 'S') {
-    // боком: воротник — открытое кольцо, внутри пустота; кончик галстука выглядывает спереди
-    rect(11, 7, 3, 1, 'm');
-    put(10, 8, 'w');
-    rect(11, 8, 3, 2, 'e');
-    rect(14, 8, 2, 2, 'w');
-    put(10, 9, 'w');
-    rect(9, 10, 8, 1, 'n');
-    rect(8, 11, 9, 15, 'n');
-    rect(8, 23, 9, 3, 'k');
-    put(15, 10, 'w');
-    rect(16, 11, 1, 6, 'r');
-    put(16, 17, 'R');
-    put(14, 13, 'w');
-    if (point) pointing(13);
+    // боком: пиджак уже, воротничок сбоку, кончик галстука выглядывает спереди
+    rect(9, 6, 3, 1, 'w');
+    put(12, 6, 'w');
+    put(10, 6, 'e');
+    put(11, 6, 'e');
+    rect(8, 7, 6, 1, 'n');
+    rect(8, 8, 6, 8, 'n');
+    rect(8, 14, 6, 2, 'k');
+    put(13, 7, 'w');
+    rect(13, 8, 1, 3, 'r');
+    put(13, 11, 'R');
+    if (point) pointing(10);
     else {
       // рукав висит поверх пиджака: тёмный, с тёмной кромкой сзади
-      sleeve(11, sway, 'k', 'k');
-      for (let y = 12; y < 25; y++) put(10 + (y >= 19 ? sway : 0), y, 'o');
+      sleeve(10, sway, 'k');
+      for (let y = 9; y < 15; y++) put(9 + (y >= 12 ? sway : 0), y, 'o');
     }
-    rect(9, 10, 6, 1, 'h');
-    for (let y = 11; y < 23; y++) put(8, y, 'h');
-    if (point) rect(13, 12, 10, 1, 'h');
-    // брюки обрезаны над полом — ног нет
-    rect(9, 26, 7, 1, 'p');
-    rect(9, 27, 3, 6, 'p');
-    rect(13, 27, 3, 6, 'p');
-    put(12, 27, 'o');
+    // брюки обрезаны над полом
+    rect(9, 16, 4, 1, 'p');
+    rect(9, 17, 2, 4, 'p');
+    rect(11, 17, 2, 4, 'p');
+    put(11, 17, 'o');
   } else {
     const front = view === 'D';
-    // воротник: открытое кольцо, внутри — пустота (видно дальний край изнутри); сзади — белый
+    // воротничок: спереди V, внутри — пустота; сзади — белая полоска
     if (front) {
-      rect(10, 7, 4, 1, 'm');
-      rect(8, 8, 2, 2, 'w');
-      rect(14, 8, 2, 2, 'w');
-      rect(10, 8, 4, 2, 'e');
-      put(9, 10, 'w');
-      put(14, 10, 'w');
-      rect(10, 10, 4, 1, 'e');
-    } else {
-      rect(8, 7, 8, 3, 'w');
-      rect(9, 7, 6, 1, 'm');
-    }
-    // широкие плечи, длинный пиджак
-    rect(5, 10, 14, 1, 'n');
-    rect(3, 11, 18, 2, 'n');
-    rect(6, 13, 12, 13, 'n');
-    rect(6, 23, 12, 3, 'k');
+      rect(7, 5, 2, 2, 'w');
+      rect(11, 5, 2, 2, 'w');
+      rect(9, 5, 2, 2, 'e');
+    } else rect(7, 5, 6, 2, 'w');
+    rect(5, 7, 10, 1, 'n');
+    rect(4, 8, 12, 1, 'n');
+    rect(6, 9, 8, 7, 'n');
+    rect(6, 14, 8, 2, 'k');
     if (front) {
-      rect(11, 11, 2, 1, 'r');
-      rect(10, 12, 4, 1, 'r');
-      rect(11, 13, 2, 6, 'r');
-      rect(11, 19, 2, 1, 'R');
+      put(8, 7, 'w');
+      put(11, 7, 'w');
+      put(9, 7, 'r');
+      put(10, 7, 'r');
+      rect(9, 8, 2, 4, 'r');
+      rect(9, 12, 2, 1, 'R');
       // лацканы
-      put(9, 11, 'k');
-      put(9, 12, 'k');
-      put(10, 13, 'k');
-      put(14, 11, 'k');
-      put(14, 12, 'k');
-      put(13, 13, 'k');
-      // платок в кармане и пуговицы
-      put(15, 14, 'w');
-      put(12, 21, 'k');
-      put(12, 23, 'o');
-    } else rect(12, 13, 1, 13, 'k');
+      put(7, 8, 'k');
+      put(8, 9, 'k');
+      put(12, 8, 'k');
+      put(11, 9, 'k');
+    } else rect(10, 9, 1, 7, 'k');
     // рукава отдельно от пиджака: левый (с экрана) колышется в противофазе правому
-    sleeve(2, -sway, 'n', 'k');
-    if (point) pointing(19);
-    else sleeve(19, sway, 'n', 'k');
-    rect(8, 26, 8, 1, 'p');
-    rect(8, 27, 3, 6, 'p');
-    rect(13, 27, 3, 6, 'p');
-    // блик ткани по плечам и рукавам — силуэт читается на тёмном полу и в тёмном проёме
-    rect(5, 10, 3, 1, 'h');
-    rect(16, 10, 3, 1, 'h');
-    rect(3, 11, 2, 1, 'h');
-    rect(19, 11, 2, 1, 'h');
-    for (let y = 12; y < 19; y++) put(2, y, 'h');
-    if (!point) for (let y = 12; y < 19; y++) put(21, y, 'h');
-    else rect(19, 12, 4, 1, 'h');
+    sleeve(3, -sway, 'n');
+    if (point) pointing(15);
+    else sleeve(15, sway, 'n');
+    rect(7, 16, 6, 1, 'p');
+    rect(7, 17, 2, 4, 'p');
+    rect(11, 17, 2, 4, 'p');
   }
   outline(g);
   return g.map((r) => r.map((k) => k ?? '.').join(''));
@@ -167,7 +142,7 @@ function outline(g: Grid): void {
   for (let y = 0; y < BOSS_H; y++) {
     for (let x = 0; x < BOSS_W; x++) {
       if (g[y][x]) continue;
-      const near = [g[y - 1]?.[x], g[y + 1]?.[x], g[y]?.[x - 1], g[y]?.[x + 1]].some((k) => k && k !== 'o' && k !== 'e' && k !== 'm');
+      const near = [g[y - 1]?.[x], g[y + 1]?.[x], g[y]?.[x - 1], g[y]?.[x + 1]].some((k) => k && k !== 'o' && k !== 'e');
       if (near) add.push([x, y]);
     }
   }
@@ -177,12 +152,10 @@ function outline(g: Grid): void {
 /** Цвета букв кадра — только из палитры. */
 const BOSS_MAP: Record<BossKey, string> = {
   o: PAL.ink,
-  n: PAL.dusk,
-  k: PAL.night,
-  h: PAL.steel,
-  p: PAL.ink,
+  n: PAL.steel,
+  k: PAL.dusk,
+  p: PAL.night,
   w: PAL.white,
-  m: PAL.slate,
   r: PAL.red,
   R: PAL.wine,
   e: PAL.ink,
@@ -217,8 +190,6 @@ export interface BossPose {
   eyeColor: string;
   /** Глаза горят — с ореолом. */
   glow: boolean;
-  /** Только что появился: ореол глаз шире и ярче. */
-  flare: boolean;
   /** Шеф указывает на сущность. */
   point: number | null;
 }
@@ -247,14 +218,17 @@ export function bossScene(b: BossState, t: number, door: { x: number; y: number 
   let open = 0;
   if (fresh) {
     if (b.out) open = since < 200 ? since / 200 : since < BOSS_SHUT_OUT ? 1 : since < BOSS_SHUT_OUT + 120 ? 1 - (since - BOSS_SHUT_OUT) / 120 : 0;
-    // выход — резко: дверь распахивается настежь, он уже стоит в проёме
-    else open = since < BURST_MS ? since / BURST_MS : since < BOSS_SHUT_IN ? 1 : since < BOSS_SHUT_IN + 120 ? 1 - (since - BOSS_SHUT_IN) / 120 : 0;
+    else {
+      // выход: щелчок замка — и дверь открывается сама, медленно
+      const s = since - OPEN_AT;
+      open = s < 0 ? 0 : s < 350 ? s / 350 : since < BOSS_SHUT_IN ? 1 : since < BOSS_SHUT_IN + 120 ? 1 - (since - BOSS_SHUT_IN) / 120 : 0;
+    }
   }
   const lamp = b.out && !(since >= 0 && since < BOSS_SHUT_OUT + 150);
   const blink = b.out && b.back !== undefined && t >= b.back - BLINK_MS;
   const strip = b.out && open === 0 && (!blink || Math.floor(t / 160) % 2 === 0);
   const feet = strip ? Math.round(Math.sin(t / 900) * 4) : null;
-  const ghostOut = b.out && since >= 0 && since < 350;
+  const ghostOut = b.out && since >= 0 && since < 500;
   if (b.out && !ghostOut) return { pose: null, open, lamp, strip, feet };
 
   const x = Math.round(b.px + (b.x - b.px) * alpha);
@@ -281,25 +255,27 @@ export function bossScene(b: BossState, t: number, door: { x: number; y: number 
   let lift = Math.round(Math.sin(t / 380) + 1);
   let a = 1;
   if (ghostOut) {
-    // ушёл к себе: отступает в темноту проёма
+    // ушёл к себе: уплывает вглубь проёма и тает в темноте
     body = 1;
     head = 1;
-    a = 1 - since / 350;
-    lift += Math.round((since / 350) * 6);
+    a = 1 - since / 500;
+    lift += Math.round((since / 500) * 8);
+  } else if (fresh && atDoor && !b.out) {
+    const s = since - OPEN_AT - 200;
+    a = s < 0 ? 0 : Math.min(1, s / EMERGE_MS);
+    lift += Math.round((1 - a) * 6);
   }
-  // только что появился — глаза вспыхивают
-  const flare = !b.out && since >= 0 && since < BOSS_FLARE_MS;
   const flip = body === 2;
   const eyes: [number, number][] = [];
-  const ey = 4;
-  if (head === 0) eyes.push([9, ey], [10, ey], [13, ey], [14, ey]);
-  else if (head === 3) eyes.push([14, ey], [15, ey]);
-  else if (head === 2) eyes.push([8, ey], [9, ey]);
+  const ey = 2;
+  if (head === 0) eyes.push([8, ey], [11, ey]);
+  else if (head === 3) eyes.push([12, ey]);
+  else if (head === 2) eyes.push([7, ey]);
   // спиной к нам (вверх) глаз не видно
-  const hot = watching || point !== null || flare;
+  const hot = watching || point !== null;
   const eyeColor = kids ? (hot ? PAL.yellow : PAL.amber) : hot ? PAL.magenta : looking ? (Math.floor(t / 120) % 2 ? PAL.red : PAL.wine) : PAL.wine;
   return {
-    pose: { x, y, frame: bossFrame(body, pose), flip, lift, alpha: a, ghost: ghostOut, eyes, eyeColor, glow: hot && !kids, flare: flare && !kids, point },
+    pose: { x, y, frame: bossFrame(body, pose), flip, lift, alpha: a, ghost: ghostOut, eyes, eyeColor, glow: hot && !kids, point },
     open,
     lamp,
     strip,
@@ -341,24 +317,18 @@ export function drawBossDoor(fill: Fill, s: BossScene, dx: number, top: number, 
 
 /** Пустота над воротником дрожит: пара бледных пикселей то тут, то там. */
 export function drawBossVoid(fill: Fill, t: number, left: number, topY: number): void {
-  // тёмное марево там, где должна быть голова: её нет, а темнота — есть
-  const breath = 0.22 + 0.08 * Math.sin(t / 300);
-  fill(left + 10, topY, 4, 1, PAL.ink, breath);
-  fill(left + 9, topY + 1, 6, 6, PAL.ink, breath);
-  fill(left + 10, topY + 7, 4, 1, PAL.ink, breath);
   const k = Math.floor(t / 90);
   const h = (n: number) => ((n * 2654435761) >>> 0) % 1000;
   for (let i = 0; i < 2; i++) {
     const r = h(k * 3 + i);
     if (r < 450) continue;
-    fill(left + 9 + (r % 6), topY + 1 + ((r >> 2) % 6), 1, 1, PAL.mist, 0.2);
+    fill(left + 8 + (r % 4), topY + 1 + ((r >> 2) % 5), 1, 1, PAL.mist, 0.18);
   }
 }
 
 /** Глаза поверх кадра: два пикселя, под взглядом — с красным ореолом. */
 export function drawBossEyes(fill: Fill, p: BossPose, left: number, topY: number): void {
   for (const [ex, ey] of p.eyes) {
-    if (p.flare) fill(left + ex - 2, topY + ey - 2, 5, 5, PAL.red, 0.3 * p.alpha);
     if (p.glow) fill(left + ex - 1, topY + ey - 1, 3, 3, PAL.red, 0.35 * p.alpha);
     fill(left + ex, topY + ey, 1, 1, p.eyeColor, p.alpha);
   }
@@ -366,8 +336,8 @@ export function drawBossEyes(fill: Fill, p: BossPose, left: number, topY: number
 
 /** Мягкая тень под костюмом (ног нет — только тень). */
 export function drawBossShadow(fill: Fill, x: number, y: number, alpha: number): void {
-  fill(x - 8, y - 1, 16, 2, PAL.ink, 0.3 * alpha);
-  fill(x - 5, y - 2, 10, 4, PAL.ink, 0.25 * alpha);
+  fill(x - 6, y - 1, 12, 2, PAL.ink, 0.3 * alpha);
+  fill(x - 4, y - 2, 8, 4, PAL.ink, 0.25 * alpha);
 }
 
 /**

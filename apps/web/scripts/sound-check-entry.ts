@@ -18,7 +18,7 @@ const SFX: Sfx[] = [
   'accuseRight', 'accuseWrong', 'fanfare', 'sad', 'hedge', 'pigeon', 'drum', 'denied', 'count', 'swing',
   'flicker', 'dusk', 'siren', 'whack', 'clang', 'stab', 'knockedOut', 'hitOther', 'cut', 'clap', 'logo', 'wrap', 'unmask', 'rewind',
   'leshyStep', 'leshyBreath', 'leshyStinger', 'leshyTake', 'leshyCall', 'snap', 'whisper', 'scream', 'fern',
-  'bossAhem', 'bossStamp', 'bossStare', 'doorCreak', 'doorShut', 'doorLock', 'clockTick', 'bossIn',
+  'bossAhem', 'bossStamp', 'bossStare', 'doorCreak', 'doorShut', 'doorLock', 'clockTick',
 ];
 
 // ── поддельные часы: Music планирует ноты по setInterval, в офлайне его крутим сами ──
