@@ -18,8 +18,6 @@ export interface RoundStats {
   accuseCorrect: boolean;
   accusedAsGhost: boolean;
   timesAccused: number;
-  /** Выговоров от шефа за дубль (офис). */
-  reprimands?: number;
 }
 
 export interface AwardContext {
@@ -37,10 +35,6 @@ export function pickRoundAwards(ctx: AwardContext, max = 2): AwardCard[] {
     if (c && out.length < max) out.push(c);
   };
   const s = ctx.stats;
-
-  // офис: больше всех выговоров от шефа — на виду у всех (решение владельца: строка в итогах)
-  const rep = [...s].filter((p) => (p.reprimands ?? 0) > 0).sort((a, b) => (b.reprimands ?? 0) - (a.reprimands ?? 0))[0];
-  add(rep ? { id: 'reprimand', pids: [rep.pid], value: rep.reprimands! } : null);
 
   const nb = ctx.neighbors.filter((n) => !n.hit && n.ms >= 8000).sort((a, b) => b.ms - a.ms)[0];
   add(nb ? { id: 'blindNeighbors', pids: [nb.a, nb.b], value: Math.floor(nb.ms / 1000) } : null);
@@ -70,7 +64,7 @@ export function pickRoundAwards(ctx: AwardContext, max = 2): AwardCard[] {
   return out;
 }
 
-const PRIORITY: AwardId[] = ['reprimand', 'blindNeighbors', 'ninja', 'paranoid', 'botlike', 'greedy', 'kamikaze', 'clairvoyant'];
+const PRIORITY: AwardId[] = ['blindNeighbors', 'ninja', 'paranoid', 'botlike', 'greedy', 'kamikaze', 'clairvoyant'];
 
 /** Награды матча: главный охотник + самая частая награда раунда. */
 export function pickMatchAwards(rounds: AwardCard[][], killsByPid: Record<string, number>): AwardCard[] {

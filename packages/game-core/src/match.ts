@@ -13,7 +13,7 @@ import { LESHY_HUNT_SEC, fireLevel, leshySpot, leshyVisits, nightLevel, playLenS
 import { ROTATION_THEMES, THEME_COUNT, THEME_RULES, canFight, fightAttacks, hasBoss, hasSanity, killerExposed, themeRules, twistEmote } from './themes';
 import { ROUND_MODS, roundMod } from './mods';
 import { World } from './world';
-import { BOSS_SPEED_MUL, bossDoor, bossFightLeft, bossLooking, bossWatching, inBossCone, pathInBossCone } from './boss';
+import { BOSS_SPEED_MUL, bossDoor, bossLooking, bossWatching, inBossCone, pathInBossCone } from './boss';
 
 /** «Купальская ночь» — тема-финал при матч-боле (nightFinale). */
 const NIGHT_THEME = THEME_RULES.findIndex((r) => r.id === 'kupala');
@@ -244,10 +244,6 @@ export class MatchSim {
   private bossLookNext = false;
   /** Кого шеф уже поймал за этот взгляд. */
   private bossCaught = new Set<number>();
-  /** Когда решить про ложную тревогу (конец взгляда), 0 — не надо. */
-  private bossPointAt = 0;
-  /** Шеф идёт за спину кому-то — дойдёт и постоит. */
-  private bossLinger = false;
   plannedPlayEnd = 0;
   playEnd = 0;
   endReason: RoundSummary['endReason'] = 'time';
@@ -534,8 +530,6 @@ export class MatchSim {
     this.bossRng = hasBoss(this.theme) ? new Rng(this.rng.fork()) : null;
     this.bossCaught.clear();
     this.bossLookNext = false;
-    this.bossPointAt = 0;
-    this.bossLinger = false;
     if (this.bossRng) {
       const p0 = this.bossRng.pick(this.arena.interest);
       this.emit({ t: 'boss', act: 'in', x: p0.x, y: p0.y, at: this.world.time });
@@ -573,11 +567,9 @@ export class MatchSim {
     }
     // офис: подвал начинается, только когда шеф дошёл до двери (bossTick ведёт его туда заранее)
     if (on && this.bossRng && !this.bossAtDoor()) return;
-    const [a, b] = on ? tw.onSec : tw.gapSec;
-    const next = t + this.rng.range(a, b) * 1000;
     this.emit({ t: 'twist', on, at: t });
     if (this.bossRng) {
-      if (on) this.emit({ t: 'boss', act: 'out', back: Math.round(next), at: t });
+      if (on) this.emit({ t: 'boss', act: 'out', at: t });
       else this.bossBack(t);
     }
     this.lastTwistAt = t;
@@ -586,9 +578,10 @@ export class MatchSim {
     const fight = fightAttacks(this.theme);
     if (on && fight && !this.fightArmed) {
       this.fightArmed = true;
-      for (const p of this.pr) p.attacksLeft = p.reprimands >= this.cfg.bossZeroAt ? 0 : Math.max(0, fight - p.reprimands * this.cfg.bossPenalty);
+      for (const p of this.pr) p.attacksLeft = Math.max(0, fight - p.reprimands * this.cfg.bossPenalty);
     }
-    this.nextTwistAt = next;
+    const [a, b] = on ? tw.onSec : tw.gapSec;
+    this.nextTwistAt = t + this.rng.range(a, b) * 1000;
   }
 
   /**
@@ -841,23 +834,7 @@ export class MatchSim {
         this.bossCatch(e.eid, t);
       }
     }
-    // взгляд кончился без выговора — иногда шеф всё равно тычет рукавом в кого-то из попавших в конус
-    // (кого угодно: бота или живого — ложная тревога, на счёт не влияет)
-    if (this.bossPointAt && t >= this.bossPointAt) {
-      const look = b.look;
-      this.bossPointAt = 0;
-      if (look && !this.bossCaught.size && rng.chance(cfg.bossFalseAlarm)) {
-        const seen = this.world.alive().filter((e) => inBossCone(b, look.dir, e.x, e.y));
-        if (seen.length) this.emit({ t: 'boss', act: 'point', eid: rng.pick(seen).eid, at: t });
-      }
-    }
     if (bossLooking(b, t) || b.pi < b.path.length || t < this.bossNextAt) return;
-    // дошёл до кого-то за спину — постоять молча, потом посмотреть
-    if (this.bossLinger) {
-      this.bossLinger = false;
-      this.bossNextAt = t + cfg.bossLingerMs;
-      return;
-    }
     // перед подвалом — к двери, заранее (подвал дождётся, пока он дойдёт)
     const door = bossDoor(this.arena.width);
     const leaving = this.twistLeft > 0 && !this.zoneStarted && this.nextTwistAt < Infinity;
@@ -874,23 +851,6 @@ export class MatchSim {
     }
     // пройтись к точке интереса (не к той, где стоит)
     // недалеко: обход — короткими переходами, взглядов за дубль побольше
-    // иногда смотрит ещё раз с того же места — офис не успевает расслабиться
-    if (rng.chance(cfg.bossStayLook)) {
-      this.bossLook(t);
-      return;
-    }
-    // иногда — не к точке, а за спину кому-то из толпы (кто угодно: бот или живой)
-    if (rng.chance(cfg.bossLingerChance)) {
-      const alive = this.world.alive();
-      const e = alive.length ? rng.pick(alive) : null;
-      if (e && Math.hypot(e.x - b.x, e.y - b.y) < 90) {
-        this.bossWalk(e.x, e.y - 7, t);
-        this.bossLinger = true;
-        this.bossLookNext = true;
-        this.bossNextAt = t + 200;
-        return;
-      }
-    }
     const pts = this.arena.interest.filter((q) => Math.hypot(q.x - b.x, q.y - b.y) > 24 && Math.hypot(q.x - b.x, q.y - b.y) < 80);
     const q = rng.pick(pts.length ? pts : this.arena.interest);
     this.bossWalk(q.x + rng.range(-6, 6), q.y + rng.range(-4, 4), t);
@@ -930,7 +890,6 @@ export class MatchSim {
     // взгляд виден ботам уже в этом шаге (событие мир применит в конце шага): иначе кто-то успеет зашагать в конус
     b.look = { dir, from, until };
     this.bossCaught.clear();
-    this.bossPointAt = until;
     this.bossNextAt = until + rng.range(cfg.bossRestMs[0], cfg.bossRestMs[1]);
     for (const e of alive) {
       // в конусе стоит или через него пройдёт по своему пути
@@ -952,7 +911,7 @@ export class MatchSim {
     const p = this.pr.find((q) => q.eid === eid && q.alive);
     if (p) {
       p.reprimands++;
-      if (this.fightArmed) p.attacksLeft = bossFightLeft(p.attacksLeft, p.reprimands, cfg.bossPenalty, cfg.bossZeroAt);
+      if (this.fightArmed) p.attacksLeft = Math.max(0, p.attacksLeft - cfg.bossPenalty);
     }
     // пойманный бот дальше не затевает новых прогулок (событий для него не шлём — иначе отличался бы от живого)
     if (!p || p.autopilot) this.bots.interrupt(eid, t + 1200);
@@ -1387,7 +1346,6 @@ export class MatchSim {
       accuseCorrect: p.accused !== null && caughtEids.has(p.accused),
       accusedAsGhost: p.accusedAsGhost,
       timesAccused: accusedCount.get(p.eid) ?? 0,
-      reprimands: p.reprimands,
     }));
     const awards = pickRoundAwards({
       stats,

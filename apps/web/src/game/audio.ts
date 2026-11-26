@@ -85,7 +85,7 @@ export class Audio {
   private orch: Orchestra | null = null;
   private roundGain: GainNode | null = null;
   /** Что сейчас задано музыке: после пересоздания контекста вернуть как было. */
-  private mood = { hush: false, dread: -1, intensity: 0, muffle: 0 };
+  private mood = { hush: false, dread: -1, intensity: 0 };
   /**
    * Игра уходила в фон (свернули, экран погас, звонок, Telegram свернул Mini App). Пока звук
    * после этого не подтвердил, что жив, каждое касание его проверяет и чинит (wake).
@@ -250,9 +250,8 @@ export class Audio {
     if (this.ctx.state !== 'running') void this.ctx.resume().catch(() => undefined);
     this.kick(this.ctx);
     this.apply(true);
-    const { hush, dread, intensity, muffle } = this.mood;
+    const { hush, dread, intensity } = this.mood;
     if (hush) this.music.setHush(true);
-    if (muffle) this.music.setMuffle(muffle);
     if (dread >= 0) this.music.setDread(dread);
     if (intensity) this.music.setIntensity(intensity);
     // проверить, что звук действительно пошёл (iOS после фона создаёт и «мёртвые» контексты)
@@ -359,12 +358,6 @@ export class Audio {
   setHush(on: boolean): void {
     this.mood.hush = on;
     this.music?.setHush(on);
-  }
-
-  /** Шеф в офисе: песня под фильтром 0–1 (у всех одинаково). */
-  setMuffle(v: number): void {
-    this.mood.muffle = v;
-    this.music?.setMuffle(v);
   }
 
   /** Ночь темы с рассудком 0–1 (общая для всех, не свой рассудок). */

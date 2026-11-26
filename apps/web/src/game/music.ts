@@ -186,9 +186,6 @@ export class Music {
   private intensity = 0;
   private dread = 0;
   private hush = false;
-  /** Песня «под фильтром» 0–1 (шеф в офисе): срезаны верха, чуть тише. */
-  private muffle = 0;
-  private muffleF: BiquadFilterNode | null = null;
   private tempoMul = 1;
   private live: Live[] = [];
   private pulse: PeriodicWave;
@@ -341,17 +338,6 @@ export class Music {
     this.hush = on;
   }
 
-  /** Песня под фильтром 0–1: 0 — как есть, 1 — глухо, как из-за двери (шеф смотрит). */
-  setMuffle(v: number): void {
-    this.muffle = Math.max(0, Math.min(1, v));
-    const f = this.muffleF;
-    if (f) f.frequency.setTargetAtTime(this.muffleHz(this.muffle), this.ctx.currentTime, 0.12);
-  }
-
-  private muffleHz(v: number): number {
-    return 18000 * Math.pow(320 / 18000, v);
-  }
-
   /** Ночь темы с рассудком 0–1: песня темнеет и расстраивается. */
   setDread(v: number): void {
     this.dread = Math.max(0, Math.min(1, v));
@@ -442,13 +428,7 @@ export class Music {
     mid.frequency.value = 2200;
     mid.Q.value = 0.7;
     mid.gain.value = 4;
-    // фильтр «шеф рядом»: песня как из-за стены
-    const lp = this.ctx.createBiquadFilter();
-    lp.type = 'lowpass';
-    lp.Q.value = 0.9;
-    lp.frequency.value = this.muffleHz(this.muffle);
-    this.muffleF = lp;
-    this.bus.connect(lp).connect(low).connect(mid).connect(this.out);
+    this.bus.connect(low).connect(mid).connect(this.out);
     this.drive = null;
     this.echo = null;
     if (this.flavor.echo) {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AiPlayer, MatchSim, bossDoor, bossFightLeft, bossWatching, hasSanity, inBossCone, makeConfig, roundMod } from '../src';
+import { AiPlayer, MatchSim, bossDoor, bossWatching, hasSanity, inBossCone, makeConfig, roundMod } from '../src';
 import type { GameConfig } from '../src';
 import type { CrowdKind, WorldEvent } from '../src';
 
@@ -431,37 +431,8 @@ describe('Напряжение: новые механики', () => {
     expect(a.reprimands).toBe(1);
     expect(marks).toContain(a.eid);
     runUntil(sim, () => sim.world.twist);
-    const left = (r: number) => (r >= 2 ? 0 : 10 - 2 * r);
-    expect(a.attacksLeft).toBe(left(a.reprimands));
-    expect(sim.playerRound('b')!.attacksLeft).toBe(left(sim.playerRound('b')!.reprimands));
-  });
-
-  it('шеф: второй выговор обнуляет удары; ложная тревога — без выговора; уход — со временем возвращения', () => {
-    expect(bossFightLeft(10, 1, 2, 2)).toBe(8);
-    expect(bossFightLeft(8, 2, 2, 2)).toBe(0);
-    expect(bossFightLeft(1, 1, 2, 2)).toBe(0);
-    let points = 0;
-    let catches = 0;
-    let back = 0;
-    let outAt = 0;
-    for (const seed of [101, 102, 103, 104]) {
-      const sim = new MatchSim(makeConfig({ fixedTheme: 4 }), players, seed);
-      sim.world.listeners.push((ev) => {
-        if (ev.t !== 'boss') return;
-        if (ev.act === 'point') points++;
-        if (ev.act === 'catch') catches++;
-        if (ev.act === 'out') {
-          back = ev.back ?? 0;
-          outAt = ev.at;
-        }
-      });
-      runUntil(sim, () => sim.phase === 'reveal');
-      const reps = sim.summary!.awards.find((c) => c.id === 'reprimand');
-      if (reps) expect(sim.playerRound(reps.pids[0])!.reprimands).toBe(reps.value);
-    }
-    expect(points).toBeGreaterThan(0);
-    expect(back - outAt).toBeGreaterThanOrEqual(14000);
-    expect(catches).toBeGreaterThanOrEqual(0);
+    expect(a.attacksLeft).toBe(10 - 2 * a.reprimands);
+    expect(sim.playerRound('b')!.attacksLeft).toBe(10 - 2 * sim.playerRound('b')!.reprimands);
   });
 
   it('шеф: в других темах его нет', () => {

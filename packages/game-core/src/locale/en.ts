@@ -10,7 +10,6 @@ export const en: Dict = {
     description: 'A pixel party game: hide in a crowd of bots and spot your friends before they spot you.',
   },
   awards: {
-    reprimand: { title: 'Written Up', text: { one: '{n} write-up', other: '{n} write-ups' } },
     blindNeighbors: { title: 'Blind Neighbors', text: '{n} s together' },
     ninja: { title: 'Stunt Double', text: 'ambush hit' },
     paranoid: { title: 'Paranoid', text: { one: '{n} bot hit', other: '{n} bot hits' } },

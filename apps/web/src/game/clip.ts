@@ -1,10 +1,9 @@
 import { PAL, PLAYER_COLORS } from '@kto/assets';
-import { BOSS_RANGE, BOSS_SPREAD, TICK_MS, WALK_TOP, bossDoor, bossLooking, hasBoss, fireLevel, fmt, hasSanity, isLeshyCrowd, makeConfig, makeReplay, nightDeaths, nightLevel, worldOf } from '@kto/game-core';
+import { TICK_MS, fireLevel, fmt, hasSanity, isLeshyCrowd, makeConfig, makeReplay, nightDeaths, nightLevel, worldOf } from '@kto/game-core';
 import type { ArenaDef, Dict, Moment, RoundRecording, World, WorldEvent } from '@kto/game-core';
 import qrcode from 'qrcode-generator';
 import type { ClipSoundCore } from './clip-audio';
 import { frame, getArt, scaledCanvas, text } from './art';
-import { BOSS_H, BOSS_W, bossScene, drawBossCone, drawBossDoor, drawBossEyes, drawBossShadow, drawBossVoid, makeBossSheet } from './boss-art';
 import { canvas } from './pixels';
 import { LESHY_H, LESHY_W, giantEnd, giantPose, makeEmberVeil, makeLeshy, makeNightVeil } from './night-art';
 import type { Art } from './art';
@@ -36,7 +35,6 @@ export const CLIP_SCALE = 6;
 
 /** Числа ночи (костёр, темнота) — те же, что у ядра по умолчанию. */
 const NIGHT_CFG = makeConfig();
-let bossSheet: HTMLCanvasElement | null = null;
 let nightCache: { veil: HTMLCanvasElement; ember: HTMLCanvasElement; leshy: HTMLCanvasElement } | null = null;
 /** Вуали и кадры Лешего рисуются один раз на процесс (на сервере — на воркер фильма). */
 function nightArt(): { veil: HTMLCanvasElement; ember: HTMLCanvasElement; leshy: HTMLCanvasElement } {
@@ -677,33 +675,6 @@ export class ClipPlayerScene {
 
     type D = { y: number; draw: () => void };
     const list: D[] = [];
-    // шеф в офисе (boss-art.ts): дверь, конус взгляда, костюм — как в кадре игры
-    const bw = w.boss && hasBoss(this.inp.rec.theme) ? w.boss : null;
-    if (bw) {
-      const door = bossDoor(W);
-      const sc = bossScene(bw, t, door, false, alpha);
-      drawBossDoor(px, sc, door.x - 10, 0, WALK_TOP - 1);
-      const bp = sc.pose;
-      if (bp) {
-        if (!bw.out && bw.look && bossLooking(bw, t)) drawBossCone(px, bw.look, bp.x, bp.y, t, { x0: 0, y0: 0, w: W, h: H }, BOSS_RANGE, BOSS_SPREAD, false);
-        const vy = Math.max(bp.y, BOSS_H - 2);
-        if (!bp.ghost) drawBossShadow(px, bp.x, vy, bp.alpha);
-        bossSheet ??= makeBossSheet();
-        const sheet = bossSheet;
-        list.push({
-          y: bp.ghost ? -100 : bp.y,
-          draw: () => {
-            const left = bp.x - BOSS_W / 2;
-            const top = vy - bp.lift - BOSS_H;
-            g.globalAlpha = bp.alpha;
-            frame(g, sheet, BOSS_W, BOSS_H, bp.frame, left, top, bp.flip);
-            g.globalAlpha = 1;
-            if (bp.alpha > 0.3) drawBossVoid(px, t, left, top);
-            drawBossEyes(px, bp, left, top);
-          },
-        });
-      }
-    }
     for (const p of this.inp.arena.props) {
       const pr = loc.props.get(p.kind)!;
       const f =

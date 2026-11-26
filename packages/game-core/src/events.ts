@@ -46,11 +46,8 @@ export type WorldEvent =
   | { t: 'boss'; act: 'in'; x: number; y: number; at: number }
   | { t: 'boss'; act: 'walk'; path: number[]; at: number }
   | { t: 'boss'; act: 'look'; dir: Dir; from: number; until: number; at: number }
-  /** back — когда шеф собирается вернуться (примерно: подвал дождётся конца команды толпы). */
-  | { t: 'boss'; act: 'out'; back?: number; at: number }
-  | { t: 'boss'; act: 'catch'; eid: number; at: number }
-  /** Ложная тревога: шеф ткнул рукавом без выговора — на счёт не влияет. */
-  | { t: 'boss'; act: 'point'; eid: number; at: number };
+  | { t: 'boss'; act: 'out'; at: number }
+  | { t: 'boss'; act: 'catch'; eid: number; at: number };
 
 export interface EntitySpawn {
   eid: number;

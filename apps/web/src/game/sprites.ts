@@ -356,21 +356,6 @@ export function makeIcons(): { canvas: HTMLCanvasElement; names: string[] } {
  */
 export const AWARD_ICON = 12;
 const AWARD_ICONS: Record<AwardId, string[]> = {
-  // «Выговор»: пустой костюм шефа — красные глаза над воротником, галстук
-  reprimand: [
-    '............',
-    '...rr..rr...',
-    '............',
-    '............',
-    '...ow..wo...',
-    '..oddwwddo..',
-    '.odddrrdddo.',
-    'oddddrrddddo',
-    'odnddrrddndo',
-    'odnddRRddndo',
-    'odnddddddndo',
-    'oooooooooooo',
-  ],
   // «Слепые соседи»: двое в тёмных очках бок о бок
   blindNeighbors: [
     '............',

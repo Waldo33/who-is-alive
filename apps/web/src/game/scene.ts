@@ -30,15 +30,15 @@ import {
   bossDoor,
   hasBoss,
   bossLooking,
+  bossWatching,
   inBossCone,
   BOSS_RANGE,
   BOSS_SPREAD,
   WALK_TOP,
 } from '@kto/game-core';
-import type { AwardId, ClientSession, CrowdKind, Dict, Entity, GameConfig, Lang, Moment, Notice, RoundSummary, ThemeText, World, WorldEvent } from '@kto/game-core';
+import type { AwardId, BossLook, ClientSession, Dir, CrowdKind, Dict, Entity, GameConfig, Lang, Moment, Notice, RoundSummary, ThemeText, World, WorldEvent } from '@kto/game-core';
 import { resultCardFile } from './card';
-import { BOSS_H, BOSS_SHUT_IN, BOSS_SHUT_OUT, BOSS_W, bossScene, drawBossCone, drawBossDoor, drawBossEyes, drawBossShadow, drawBossVoid, makeBossSheet } from './boss-art';
-import type { BossPose, Fill } from './boss-art';
+import { BOSS_H, BOSS_LOOK, BOSS_POINT, BOSS_STAND, BOSS_W, BOSS_WALK, bossFrame, makeBossSheet } from './boss-art';
 import { Tutorial, tutorialDone } from './tutorial';
 import { mildOn } from '../ui/topbar';
 import { SWING_HIT, aim, armed, armsOf, bodyPose, drawAir, drawFloor, killsFromLog, makeKill, weaponSfx } from './gore';
@@ -69,6 +69,9 @@ import { clearErrorScene, setErrorScene } from '../lib/crumbs';
 /** Постоянные кнопки «автопилот» и «эмоция» в нижней панели (выключены — не пользовались). */
 const HUD_EXTRAS = false;
 const AY = 24; // верх арены на экране
+/** Дверь шефа захлопывается через столько мс после того, как он ушёл к себе / вышел к нам. */
+const BOSS_SHUT_OUT = 650;
+const BOSS_SHUT_IN = 1000;
 const CROWD_KINDS: CrowdKind[] = ['freeze', 'jump', 'dance'];
 /** Половина заката/рассвета: столько сгущаются сумерки, столько же проступает новый облик. */
 const DUSK_HALF_MS = 1400;
@@ -210,17 +213,15 @@ export class GameScene extends Phaser.Scene {
   private views: EntityView[] = [];
   /** Шеф в офисе (game-core › boss.ts): фигура, тень, конус взгляда и дверь, подписи «Выговор!» над пойманными. */
   private bossSpr: Phaser.GameObjects.Image | null = null;
+  private bossShadow: Phaser.GameObjects.Image | null = null;
   private bossG: Phaser.GameObjects.Graphics | null = null;
   private bossNotes: { eid: number; at: number; txt: Phaser.GameObjects.BitmapText }[] = [];
   /** Взгляд шефа, на который уже прозвучало «Кхм» (from), и показана ли за матч подсказка «замри». */
   private bossAhemFor = -1;
   private bossTipShown = false;
-  /** Глаза и дрожь пустоты над воротником (поверх костюма), тёмные края экрана рядом с шефом. */
-  private bossFx: Phaser.GameObjects.Graphics | null = null;
-  private bossVig: Phaser.GameObjects.Image | null = null;
-  /** Песня под фильтром (0–1) и секунда последнего «тик» часов. */
-  private bossMuffle = 0;
-  private bossTickSec = -1;
+  /** Кадр шага шефа (для звука шагов) и заглушена ли песня его взглядом. */
+  private bossStepF = -1;
+  private bossHush = false;
   private starSprites = new Map<number, Phaser.GameObjects.Image>();
   private hedges: Phaser.GameObjects.TileSprite[] = [];
   private props: { spr: Phaser.GameObjects.Image; kind: string }[] = [];
@@ -512,8 +513,7 @@ export class GameScene extends Phaser.Scene {
       });
     }
     this.bossG = this.add.graphics().setDepth(2);
-    this.bossFx = this.add.graphics();
-    this.bossVig = this.add.image(0, AY, 'vignette').setOrigin(0, 0).setDepth(951).setAlpha(0);
+    this.bossShadow = this.add.image(0, 0, 'shadow').setOrigin(0.5, 0.5).setVisible(false);
     this.bossSpr = this.add.image(0, 0, 'ch0_0', 0).setOrigin(0.5, 1).setVisible(false);
     this.bossNotes = [];
     // свой персонаж (только у себя): кольцо под ногами, стрелка над головой, контур — цветом игрока
@@ -2834,69 +2834,123 @@ export class GameScene extends Phaser.Scene {
   }
 
   /**
-   * Шеф в офисе — «Пустой костюм» (boss-art.ts): плывёт по офису, дверь кабинета в верхней стене, конус
-   * взгляда на полу. Поворот («Кхм») — конус бледный и мигает, взгляд — горит тусклым красным, пол вокруг
-   * темнеет, песня уходит под фильтр. Рядом с ним гаснут мониторы и мигают лампы, у тебя темнеют края
-   * экрана, тикают часы. Уходит к себе — дверь хлопает, под ней красная полоска (подвал), мигает перед
-   * возвращением; выходит — гаснет лампа, щелчок замка, дверь открывается сама и он выплывает из темноты.
+   * Шеф в офисе: свой спрайт (boss-art.ts) вдвое выше толпы, дверь кабинета в верхней стене, конус взгляда
+   * на полу. Поворот («Кхм») — конус бледный и мигает, взгляд — конус горит, пол вокруг темнеет, музыка
+   * молчит, глаза горят красным. Поймал — указывает пальцем. Уходит в кабинет и выходит из темноты дверного
+   * проёма, дверь скрипит и хлопает; пока он у себя — под дверью полоска света, по ней ходят тени ног.
    * Рисуется из состояния мира, поэтому шеф есть и в повторе разоблачения.
    */
   private renderBoss(w: World, alpha: number, mode: 'live' | 'replay' | 'final'): void {
     const g = this.bossG;
     const spr = this.bossSpr;
-    const fx = this.bossFx;
-    if (!g || !spr || !fx) return;
+    const sh = this.bossShadow;
+    if (!g || !spr || !sh) return;
     g.clear();
-    fx.clear();
     const b = w.boss;
     if (!b || !hasBoss(this.sim.theme)) {
       spr.setVisible(false);
+      sh.setVisible(false);
       for (const n of this.bossNotes) n.txt.destroy();
       this.bossNotes = [];
-      this.bossMood(false, false, null, 0);
+      this.setBossHush(false);
       return;
     }
     if (!this.textures.exists('boss')) this.addSheet('boss', makeBossSheet(), BOSS_W, BOSS_H);
     const t = w.time - TICK_MS + alpha * TICK_MS;
-    const kids = this.cfg.kidsMode;
     const live = mode === 'live' && this.sim.phase === 'play';
+    // шеф смотрит — песня темы замолкает, слышен только гул его взгляда
+    this.setBossHush(live && bossLooking(b, t));
     const door = bossDoor(this.sim.arena.width);
-    const sc = bossScene(b, t, door, kids, alpha);
-    const fill: Fill = (x, y, fw, fh, c, a = 1) => g.fillStyle(hexToInt(c), a).fillRect(x, y, fw, fh);
-    drawBossDoor(fill, sc, door.x - 10, AY, WALK_TOP - 1);
-    const p = sc.pose;
-    if (!p) spr.setVisible(false);
-    else {
-      const sy = AY + p.y;
-      if (!b.out && b.look && bossLooking(b, t)) {
-        drawBossCone(fill, b.look, p.x, sy, t, { x0: 0, y0: AY, w: this.sim.arena.width, h: this.sim.arena.height }, BOSS_RANGE, BOSS_SPREAD, kids);
+    const since = b.door !== undefined ? t - b.door : Infinity;
+    const atDoor = Math.abs(b.x - door.x) < 2 && Math.abs(b.y - door.y) < 2;
+    // дверь распахивается за 0,2 с и захлопывается, когда шеф скрылся (или вышел и отошёл)
+    let open = 0;
+    if (since >= 0 && (b.out || atDoor)) {
+      const shut = b.out ? BOSS_SHUT_OUT : BOSS_SHUT_IN;
+      open = since < 200 ? since / 200 : since < shut ? 1 : since < shut + 120 ? 1 - (since - shut) / 120 : 0;
+    }
+    const dx = door.x - 10;
+    const dy = AY;
+    const dh = WALK_TOP - 1;
+    g.fillStyle(hexToInt(PAL.ink)).fillRect(dx, dy, 20, dh);
+    if (open > 0) {
+      // проём — темнота кабинета; полотно на петлях слева сужается, как будто поворачивается к нам
+      const lw = Math.max(2, Math.round(18 * (1 - open)));
+      g.fillStyle(hexToInt(PAL.umber)).fillRect(dx + 1, dy + 1, lw, dh - 1);
+      g.fillStyle(hexToInt(PAL.brick)).fillRect(dx + 1 + lw - 1, dy + 1, 1, dh - 1);
+    } else {
+      g.fillStyle(hexToInt(PAL.umber)).fillRect(dx + 1, dy + 1, 18, dh - 1);
+      g.fillStyle(hexToInt(PAL.brick)).fillRect(dx + 4, dy + 3, 12, 8).fillRect(dx + 4, dy + 14, 12, 8);
+      g.fillStyle(hexToInt(PAL.yellow)).fillRect(dx + 15, dy + 12, 2, 1);
+      if (b.out) {
+        // шеф у себя: из-под двери свет, по нему ходят тени ног — он там, и он ходит
+        g.fillStyle(hexToInt(PAL.yellow)).fillRect(dx + 2, dy + dh - 1, 16, 1);
+        const fx = dx + 10 + Math.round(Math.sin(t / 900) * 4);
+        const lift = Math.floor(t / 450) % 2;
+        g.fillStyle(hexToInt(PAL.ink)).fillRect(fx - 3 - lift, dy + dh - 1, 2, 1).fillRect(fx + 1 + lift, dy + dh - 1, 2, 1);
       }
-      // у двери шеф выше стены: рисуем его на шаг впереди двери, чтобы воротник не уходил под шапку
-      const vy = Math.max(sy, AY + BOSS_H - 2);
-      if (!p.ghost) drawBossShadow(fill, p.x, vy, p.alpha);
-      const left = p.x - BOSS_W / 2;
-      const top = vy - p.lift - BOSS_H;
+    }
+    // шеф ушёл к себе: ещё миг виден в проёме — уходит в темноту
+    const ghostOut = b.out && since >= 0 && since < 500;
+    if (b.out && !ghostOut) {
+      spr.setVisible(false);
+      sh.setVisible(false);
+    } else {
+      const x = Math.round(b.px + (b.x - b.px) * alpha);
+      const y = Math.round(b.py + (b.y - b.py) * alpha);
+      const sy = AY + y;
+      if (!b.out && bossLooking(b, t)) this.drawBossCone(g, b.look, x, sy, t);
+      const moving = !b.out && (b.moving || b.pi < b.path.length);
+      let dir: Dir = b.dir;
+      let pose = BOSS_STAND;
+      const wf = moving ? Math.floor(b.walk / 3) % 4 : -1;
+      if (moving) pose = BOSS_WALK + wf;
+      if (!b.out && bossLooking(b, t)) {
+        dir = b.look.dir;
+        pose = bossWatching(b, t) ? BOSS_LOOK : BOSS_STAND;
+      }
+      // поймал — указывает пальцем на провинившегося
+      const note = this.bossNotes.find((n) => w.time - n.at >= 0 && w.time - n.at < 900);
+      const ce = note ? w.get(note.eid) : undefined;
+      if (ce && !b.out) {
+        pose = BOSS_POINT;
+        const ddx = ce.x - b.x;
+        const ddy = ce.y - b.y;
+        dir = Math.abs(ddx) > Math.abs(ddy) ? (ddx < 0 ? 2 : 3) : ddy < 0 ? 1 : 0;
+      }
+      let a = 1;
+      let lift = 0;
+      if (ghostOut) {
+        dir = 1;
+        pose = BOSS_WALK + (Math.floor(since / 120) % 4);
+        a = 1 - since / 500;
+        lift = Math.round((since / 500) * 10);
+      } else if (atDoor && since >= 0 && since < 450) {
+        // вышел из темноты проёма
+        a = since / 450;
+        lift = Math.round((1 - since / 450) * 8);
+      }
+      // у двери шеф выше стены: рисуем его на шаг впереди двери, чтобы голова не уходила под шапку
+      const vy = Math.max(sy, AY + BOSS_H + 1);
+      // тяжёлые шаги: на каждую постановку ноги
+      if (live && wf !== this.bossStepF && (wf === 0 || wf === 2)) this.audio.play('bossStep');
+      this.bossStepF = wf;
       spr
-        .setTexture('boss', p.frame)
-        .setOrigin(0, 0)
+        .setTexture('boss', bossFrame(dir, pose))
+        .setOrigin(0.5, 1)
         .setScale(1)
         .setVisible(true)
-        .setFlipX(p.flip)
-        .setPosition(left, top)
-        .setDepth(p.ghost ? 3 : sy)
-        .setAlpha(p.alpha);
-      fx.setDepth(p.ghost ? 3.1 : sy + 0.1);
-      const ff: Fill = (x, y, fw, fh, c, a = 1) => fx.fillStyle(hexToInt(c), a).fillRect(x, y, fw, fh);
-      if (p.alpha > 0.3) drawBossVoid(ff, t, left, top);
-      drawBossEyes(ff, p, left, top);
+        .setFlipX(dir === 2)
+        .setPosition(x, vy - lift)
+        .setDepth(ghostOut ? 3 : sy)
+        .setAlpha(a);
+      sh.setScale(2).setVisible(!ghostOut).setPosition(x, vy).setDepth(sy - 0.5).setAlpha(a);
     }
-    const looking = !b.out && bossLooking(b, t);
-    this.bossMood(live && !b.out, live && looking, p && !p.ghost ? p : null, t);
-    // «Выговор!» над пойманными — 2 с, над головой, чуть всплывает
+    // «Выговор!» над пойманными — 1,5 с, над головой, чуть всплывает
     this.bossNotes = this.bossNotes.filter((n) => {
       const age = w.time - n.at;
       const e = w.get(n.eid);
-      if (age > 2000 || age < -100 || !e || mode === 'final') {
+      if (age > 1500 || age < -100 || !e || mode === 'final') {
         n.txt.destroy();
         return false;
       }
@@ -2908,35 +2962,68 @@ export class GameScene extends Phaser.Scene {
   }
 
   /**
-   * Атмосфера, пока шеф в офисе (только в живом дубле): песня под фильтром (под взглядом — глуше),
-   * часы тикают, рядом с ним гаснут мониторы и мигают лампы, у твоего персонажа темнеют края экрана.
-   * Звуки — общие для всех (от твоего места не зависят: соседи по комнате не услышат, где ты).
+   * Конус взгляда шефа на полу, под толпой: пока поворачивается — бледный и мигает, потом горит,
+   * а пол вокруг темнеет (видно, куда смотреть нельзя шевелиться).
    */
-  private bossMood(present: boolean, looking: boolean, p: BossPose | null, t: number): void {
-    const kids = this.cfg.kidsMode;
-    const muffle = !present ? 0 : looking ? (kids ? 0.45 : 0.85) : kids ? 0.25 : 0.45;
-    if (muffle !== this.bossMuffle) {
-      this.bossMuffle = muffle;
-      this.audio.setMuffle(muffle);
+  private drawBossCone(g: Phaser.GameObjects.Graphics, look: BossLook, x: number, sy: number, t: number): void {
+    const hot = t >= look.from;
+    const d = look.dir;
+    const vert = d === 0 || d === 1;
+    // клетка конуса для строки (или столбца) экрана: сколько вдоль взгляда
+    const along = (r: number): number => (d === 0 ? r - (sy - 2) : d === 1 ? sy - 2 - r : d === 3 ? r - x : x - r);
+    if (hot) {
+      const k = Math.min(1, (t - look.from) / 300) * Math.min(1, (look.until - t) / 250);
+      if (k > 0) {
+        g.fillStyle(hexToInt(PAL.ink), 0.34 * k);
+        const W = this.sim.arena.width;
+        const H = this.sim.arena.height;
+        const n = vert ? H : W;
+        const span = vert ? W : H;
+        const o = vert ? AY : 0;
+        const c = vert ? x : sy - 2;
+        const c0 = vert ? 0 : AY;
+        for (let i = 0; i < n; i++) {
+          const r = o + i;
+          const a = along(r);
+          if (a < 2 || a > BOSS_RANGE) {
+            if (vert) g.fillRect(0, r, span, 1);
+            else g.fillRect(r, c0, 1, span);
+            continue;
+          }
+          const half = Math.round(5 + a * BOSS_SPREAD);
+          const lo = c - half - c0;
+          const hi = c + half + 1 - c0;
+          if (vert) g.fillRect(0, r, Math.max(0, lo), 1).fillRect(c0 + hi, r, Math.max(0, span - hi), 1);
+          else g.fillRect(r, c0, 1, Math.max(0, lo)).fillRect(r, c0 + hi, 1, Math.max(0, span - hi));
+        }
+      }
     }
-    const sec = present ? Math.floor(t / 1000) : -1;
-    if (sec !== this.bossTickSec) {
-      if (sec >= 0 && this.bossTickSec >= 0) this.audio.play('clockTick', sec);
-      this.bossTickSec = sec;
+    if (!hot && Math.floor(t / 150) % 2 !== 0) return;
+    const col = hexToInt(hot ? PAL.yellow : PAL.sand);
+    g.fillStyle(col, hot ? 0.22 : 0.12);
+    for (let a = 2; a <= BOSS_RANGE; a++) {
+      const half = Math.round(5 + a * BOSS_SPREAD);
+      if (vert) g.fillRect(x - half, sy + (d === 0 ? a : -a) - 2, half * 2 + 1, 1);
+      else g.fillRect(x + (d === 3 ? a : -a), sy - 2 - half, 1, half * 2 + 1);
     }
-    // мониторы и лампы рядом с шефом: гаснут, иногда мигают
-    for (const [i, pr] of this.props.entries()) {
-      const near = !!p && Math.hypot(pr.spr.x - p.x, pr.spr.y - (AY + p.y)) < 34;
-      const blink = near && ((Math.floor(t / 110) * 31 + i * 17) % 23 === 0);
-      if (near && !blink) pr.spr.setTint(hexToInt(PAL.slate));
-      else pr.spr.clearTint();
+    // кромка — пунктиром, чтобы край читался на любом полу
+    g.fillStyle(col, hot ? 0.8 : 0.5);
+    for (let a = 4; a <= BOSS_RANGE; a += 3) {
+      const half = Math.round(5 + a * BOSS_SPREAD);
+      if (vert) {
+        const yy = sy + (d === 0 ? a : -a) - 2;
+        g.fillRect(x - half, yy, 1, 1).fillRect(x + half, yy, 1, 1);
+      } else {
+        const xx = x + (d === 3 ? a : -a);
+        g.fillRect(xx, sy - 2 - half, 1, 1).fillRect(xx, sy - 2 + half, 1, 1);
+      }
     }
-    // края экрана темнеют, чем ближе шеф к тебе (только у тебя на экране)
-    const myEid = this.me()?.eid;
-    const me = myEid !== undefined ? this.sim.world.get(myEid) : undefined;
-    let k = 0;
-    if (present && p && me?.alive && !kids) k = Math.max(0, Math.min(1, (75 - Math.hypot(me.x - p.x, me.y - p.y)) / 55));
-    this.bossVig?.setAlpha(0.6 * k);
+  }
+
+  private setBossHush(on: boolean): void {
+    if (this.bossHush === on) return;
+    this.bossHush = on;
+    this.audio.setHush(on);
   }
 
   /** Событие шефа: «Кхм» и гул на поворот (и подсказка один раз за матч), «Выговор!» над пойманным, свой — тостом, дверь. */
@@ -2953,27 +3040,15 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     if (this.sim.phase !== 'play') return;
-    if (ev.act === 'point') {
-      this.audio.play('swing');
-      return;
-    }
-    const door = bossDoor(this.sim.arena.width);
-    if (ev.act === 'out') {
+    if (ev.act === 'out' || (ev.act === 'in' && ev.x === bossDoor(this.sim.arena.width).x && ev.y === bossDoor(this.sim.arena.width).y)) {
       this.audio.play('doorCreak');
-      this.time.delayedCall(BOSS_SHUT_OUT, () => this.audio.play('doorShut'));
-      return;
-    }
-    if (ev.act === 'in' && ev.x === door.x && ev.y === door.y) {
-      // лампа гаснет, щелчок замка — дверь открывается сама
-      this.audio.play('doorLock');
-      this.time.delayedCall(150, () => this.audio.play('doorCreak'));
-      this.time.delayedCall(BOSS_SHUT_IN, () => this.audio.play('doorShut'));
+      this.time.delayedCall(ev.act === 'out' ? BOSS_SHUT_OUT : BOSS_SHUT_IN, () => this.audio.play('doorShut'));
       return;
     }
     if (ev.act === 'look' && this.bossAhemFor !== ev.from) {
       this.bossAhemFor = ev.from;
       this.audio.play('bossAhem');
-      if (!this.cfg.kidsMode) this.time.delayedCall(Math.max(0, ev.from - ev.at - 300), () => this.audio.play('bossStare'));
+      this.audio.play('bossStare');
       const me = myEid !== undefined ? this.sim.world.get(myEid) : undefined;
       const b = this.sim.world.boss;
       // свой персонаж в конусе — вибрация: «замри»
