@@ -10,13 +10,18 @@ import type { ActKind, CrowdKind, Dir, EmoteKind, EntitySpawn, WorldEvent } from
 import { NavGrid } from './nav';
 import { Rng } from './rng';
 import { LESHY_HUNT_SEC, fireLevel, leshySpot, leshyVisits, nightLevel, playLenSec, sanityDrain } from './sanity';
-import { ROTATION_THEMES, THEME_COUNT, THEME_RULES, canFight, fightAttacks, hasBoss, hasSanity, killerExposed, themeRules, twistEmote } from './themes';
+import { ROTATION_THEMES, THEME_COUNT, THEME_RULES, canFight, fightAttacks, hasBoss, hasSanity, hasSlots, killerExposed, themeRules, twistEmote } from './themes';
+import type { SlotChoice, SlotEffect, SlotResult, SlotSpin, SlotTable } from './slots';
+import { casinoSeats, newSlotTable, resolveTurn } from './slots';
 import { ROUND_MODS, roundMod } from './mods';
 import { World } from './world';
 import { BOSS_SPEED_MUL, bossDoor, bossLooking, bossWatching, inBossCone, pathInBossCone } from './boss';
 
-/** «Купальская ночь» — тема-финал при матч-боле (nightFinale). */
-const NIGHT_THEME = THEME_RULES.findIndex((r) => r.id === 'kupala');
+/**
+ * Темы-финалы: выпав, заканчивают матч — «Купальская ночь» (рассудок) и «Казино» (автоматы).
+ * При матч-боле одна из них может стать последним дублем (finaleTheme): из очереди или «только финал» (finaleOnly).
+ */
+const FINALE_THEMES = THEME_RULES.map((r, i) => (r.sanity || r.slots ? i : -1)).filter((i) => i >= 0);
 const EMOTES: EmoteKind[] = ['wave', 'dance', 'jump'];
 
 export interface PlayerInfo {
@@ -50,6 +55,8 @@ export type Intent =
   | { k: 'attack'; eid: number; wt?: number }
   | { k: 'autopilot'; on: boolean }
   | { k: 'accuse'; eid: number }
+  /** «Казино»: крутить (pull) или пропустить круг. */
+  | { k: 'slot'; pull: boolean }
   | { k: 'next' }
   | { k: 'rematch' };
 
@@ -209,7 +216,11 @@ export class MatchSim {
   /** Порядок тем в матче — свой в каждом матче и реванше. */
   themeOrder: number[] = [];
   /** В этом матче (реванше) ночь станет финалом при матч-боле — решается при тасовке тем. */
-  nightFinale = false;
+  finaleTheme = -1;
+  /** Старое имя: финал в этом матче будет (какой — finaleTheme). */
+  get nightFinale(): boolean {
+    return this.finaleTheme >= 0;
+  }
   /** Свой генератор для решения о финале: основной `rng` не трогаем, чтобы матчи по зерну не менялись. */
   private readonly finaleRng: Rng;
   scores: Record<string, number> = {};
@@ -269,6 +280,14 @@ export class MatchSim {
   starSeq = 1;
   neighbors = new Map<string, { a: string; b: string; cur: number; max: number; hit: boolean }>();
   private intents: { pid: string; it: Intent }[] = [];
+  /** «Казино» (slots.ts): стол дубля, выбор мест на текущий круг, своё зерно. */
+  slots: SlotTable | null = null;
+  private slotPick: (SlotChoice | null)[] = [];
+  private slotOpenAt = 0;
+  private slotDeadline = 0;
+  private slotRng: Rng | null = null;
+  /** Стол решил исход: дубль кончится в это время мира (после последнего вращения). */
+  private slotEndAt = Infinity;
 
   constructor(
     readonly cfg: GameConfig,
@@ -368,7 +387,7 @@ export class MatchSim {
   private startRound(): void {
     this.round++;
     this.theme = this.themeOrder[(this.round - 1) % this.themeOrder.length];
-    if (this.nightFinale && this.round > 1 && Math.max(...Object.values(this.scores)) >= this.cfg.nightFinaleScore) this.theme = NIGHT_THEME;
+    if (this.finaleTheme >= 0 && this.round > 1 && Math.max(...Object.values(this.scores)) >= this.cfg.nightFinaleScore) this.theme = this.finaleTheme;
     this.pickMod();
     this.bountyPid = bountyLeader(this.scores);
     this.summary = null;
@@ -380,6 +399,11 @@ export class MatchSim {
     const spawns: EntitySpawn[] = [];
     const taken: { x: number; y: number }[] = [];
     let guard = 0;
+    // «Казино»: все сидят за автоматами (случайные места из рядов), лицом к экрану
+    if (hasSlots(this.theme)) {
+      const seats = rng.shuffle(casinoSeats(this.arena));
+      for (let i = 0; i < eids.length && i < seats.length; i++) spawns.push({ eid: eids[i], x: seats[i].x, y: seats[i].y, dir: 1 });
+    }
     while (spawns.length < eids.length && guard++ < 10000) {
       const c = rng.int(0, this.nav.cols - 1);
       const r = rng.int(0, this.nav.rows - 1);
@@ -401,7 +425,7 @@ export class MatchSim {
       eid: playerEids[i],
       alive: true,
       // в теме-драке (офис) ударов нет до первого подвала — там выдаётся запас на весь дубль
-      attacksLeft: fightAttacks(this.theme) ? 0 : roundMod(this.mod) === 'onehit' ? 1 : this.cfg.attacksPerRound,
+      attacksLeft: fightAttacks(this.theme) || hasSlots(this.theme) ? 0 : roundMod(this.mod) === 'onehit' ? 1 : this.cfg.attacksPerRound,
       stars: 0,
       stunUntil: 0,
       autopilot: false,
@@ -430,7 +454,10 @@ export class MatchSim {
     const pset = new Set(playerEids);
     // с «Условиями съёмки» отсчёт на 2 с дольше — успеть прочитать правило дубля
     const countdownMs = (this.cfg.countdownSec + (this.mod ? 2 : 0)) * 1000;
-    for (const s of spawns) if (!pset.has(s.eid)) this.bots.add(s.eid, t0 + countdownMs);
+    // в «Казино» боты сидят за автоматами, а не ходят
+    if (!hasSlots(this.theme)) for (const s of spawns) if (!pset.has(s.eid)) this.bots.add(s.eid, t0 + countdownMs);
+    this.slots = null;
+    this.slotEndAt = Infinity;
     this.crowdShowTimes = [];
     this.zoneStarted = false;
     this.starSpawnQueue = [];
@@ -449,7 +476,7 @@ export class MatchSim {
     this.mod = 0;
     if (this.round <= 1 || !this.cfg.roundMods || !this.rng.chance(this.cfg.roundModChance)) return;
     // «Купальская ночь» — свой режим: условий съёмки в ней нет (случайность берём всё равно — ход матча тот же)
-    if (hasSanity(this.theme)) return;
+    if (hasSanity(this.theme) || hasSlots(this.theme)) return;
     // «Один удар» в офисе не к месту: там удары и так выдаёт только подвал
     const pool = ROUND_MODS.map((_, i) => i).filter((i) => i > 0 && i !== prev && !(fightAttacks(this.theme) && ROUND_MODS[i] === 'onehit'));
     this.mod = this.rng.pick(pool);
@@ -517,6 +544,10 @@ export class MatchSim {
     this.leshyIdx = 0;
     this.leshyWarn = -1;
     this.hardChecked = -1;
+    if (hasSlots(this.theme)) {
+      this.beginSlots();
+      return;
+    }
     this.scheduleCrowd(this.playStart);
     // звёзды выходят по одной: сначала starsAtStart, остальные — с шагом появления
     const first = Math.min(this.maxStars(), this.cfg.starsAtStart + (roundMod(this.mod) === 'stars' ? 1 : 0));
@@ -926,6 +957,10 @@ export class MatchSim {
   private playTick(): void {
     const t = this.world.time;
     const cfg = this.cfg;
+    if (hasSlots(this.theme)) {
+      this.slotPlayTick(t);
+      return;
+    }
     this.bossTick(t);
     this.twistTick(t);
 
@@ -1083,6 +1118,84 @@ export class MatchSim {
   }
 
   private starTouched = new Set<number>();
+
+  // ───────────── «Казино» (slots.ts) ─────────────
+
+  private beginSlots(): void {
+    // своё зерно: исходы автоматов не зависят от того, сколько случайностей ушло на остальное
+    this.slotRng = new Rng(this.rng.fork());
+    this.slots = newSlotTable(this.pr.length);
+    this.slotPick = this.pr.map(() => null);
+    this.slotOpenAt = this.playStart;
+    this.slotDeadline = this.playStart + this.cfg.slotDecideMs;
+    this.slotEndAt = Infinity;
+    this.emitSlot([], []);
+  }
+
+  private emitSlot(spins: (SlotSpin | null)[], effects: SlotEffect[]): void {
+    const s = this.slots!;
+    this.emit({
+      t: 'slot',
+      at: this.world.time,
+      turn: s.turn,
+      openAt: this.slotOpenAt,
+      deadline: this.slotDeadline,
+      seats: s.seats.map((x) => ({ ...x })),
+      spins: spins.map((x) => (x ? { outcome: x.outcome, reels: [...x.reels] } : null)),
+      effects: effects.map((x) => ({ ...x })),
+      over: s.over ? { reason: s.over.reason, winners: [...s.over.winners] } : null,
+    });
+  }
+
+  /** Сидящие за автоматами иногда дёргают рычаг и радуются — все одинаково, игроки и боты (по полю не отличить). */
+  private seatedActs(t: number): void {
+    const rng = this.slotRng!;
+    for (const e of this.world.entities) {
+      if (!e.alive || e.actEnd > t) continue;
+      if (rng.chance(TICK_MS / 5000)) {
+        const kind: ActKind = rng.chance(0.8) ? 'wave' : 'jump';
+        this.emit({ t: 'act', eid: e.eid, kind, dur: kind === 'wave' ? 700 : 600, at: t });
+      }
+    }
+  }
+
+  private slotPlayTick(t: number): void {
+    const cfg = this.cfg;
+    const s = this.slots!;
+    this.seatedActs(t);
+    for (const a of this.agents) a.update(this);
+    this.processIntents();
+    if (!s.over && t >= this.slotOpenAt) {
+      const waiting = s.seats.some((x, i) => x.alive && x.skip === 0 && this.slotPick[i] === null);
+      if (!waiting || t >= this.slotDeadline) {
+        const idle: SlotChoice = cfg.slotIdlePull ? 'pull' : 'pass';
+        const choices = s.seats.map((_, i) => this.slotPick[i] ?? idle);
+        const rep = resolveTurn(cfg, s, choices, this.slotRng!);
+        for (const ef of rep.effects) {
+          if (ef.k !== 'cut') continue;
+          const p = this.pr[ef.seat];
+          p.alive = false;
+          p.diedAt = t;
+        }
+        s.seats.forEach((x, i) => (this.pr[i].stars = Math.floor(x.halves / 2)));
+        this.slotPick = this.pr.map(() => null);
+        this.slotOpenAt = t + cfg.slotSpinMs;
+        this.slotDeadline = this.slotOpenAt + cfg.slotDecideMs;
+        this.emitSlot(rep.spins, rep.effects);
+        // resolveTurn меняет стол: TS об этом не знает
+        const over = s.over as SlotResult | null;
+        if (over) {
+          // дать досмотреть последнее вращение
+          this.slotEndAt = t + cfg.slotSpinMs + 1200;
+          this.endReason = over.reason === 'stars' ? 'stars' : over.reason === 'last' ? 'last_alive' : 'time';
+          this.starWinner = over.winners.length === 1 ? this.pr[over.winners[0]].pid : null;
+        }
+      }
+    }
+    this.world.step();
+    this.recordPositions();
+    if (t >= this.slotEndAt || this.world.time >= this.plannedPlayEnd) this.endPlay();
+  }
 
   /** Рассудок меняется только в теме с рассудком (themes.ts › sanity) и только у живых. */
   private addSanity(p: PlayerRound, d: number): void {
@@ -1270,7 +1383,7 @@ export class MatchSim {
     }
     this.world.step(); // применить остановку
     // живые тоже угадывают: короткий стоп-кадр «Кто ещё живой?» (в «Купальской ночи» — нет: там свой финал)
-    if (!hasSanity(this.theme) && this.pr.length >= 2 && this.pr.some((p) => p.alive)) {
+    if (!hasSanity(this.theme) && !hasSlots(this.theme) && this.pr.length >= 2 && this.pr.some((p) => p.alive)) {
       this.setPhase('accuse', (this.cfg.kidsMode ? this.cfg.kidsAccuseSec : this.cfg.accuseSec) * 1000);
     } else this.finishRound();
   }
@@ -1301,7 +1414,8 @@ export class MatchSim {
     for (const p of this.pr) {
       if (p.alive) this.addScore(p.pid, cfg.points.survive, 'survive', pts);
       // в «Купальской ночи» победитель ночи и так получает больше всех за место — без второго бонуса
-      if (this.starWinner === p.pid && !night) this.addScore(p.pid, cfg.points.stars, 'stars', pts);
+      const slotWin = !!this.slots?.over?.winners.includes(this.pr.indexOf(p));
+      if ((this.starWinner === p.pid || slotWin) && !night) this.addScore(p.pid, cfg.points.stars, 'stars', pts);
     }
     // «Кража»: угадал живого — забрал у него очко из счёта матча. Угадавшему +1 всегда,
     // у вычисленного −1 за каждого угадавшего, но счёт не уходит ниже нуля. Отстающие догоняют лидера.
@@ -1403,8 +1517,8 @@ export class MatchSim {
    */
   get lastRound(): boolean {
     const top = Math.max(...Object.values(this.scores));
-    // «Купальская ночь» — матч в одну ночь: до смерти всех, без повторов между дублями
-    return top >= this.cfg.scoreToWin || this.round >= this.cfg.maxRounds || hasSanity(this.theme);
+    // темы-финалы («Купальская ночь», «Казино») — последний дубль матча
+    return top >= this.cfg.scoreToWin || this.round >= this.cfg.maxRounds || hasSanity(this.theme) || hasSlots(this.theme);
   }
 
   /** Итоги матча по уже начисленным очкам — те же, что будут на match_end. */
@@ -1440,7 +1554,11 @@ export class MatchSim {
     const fixed = this.cfg.fixedTheme;
     // решаем всегда (и при fixedTheme), чтобы последовательность finaleRng не зависела от настроек
     const finale = this.finaleRng.next() < this.cfg.nightFinaleChance;
-    this.nightFinale = finale && !(fixed >= 0 && fixed < THEME_COUNT) && ROTATION_THEMES.includes(NIGHT_THEME);
+    // кандидаты — темы-финалы из обычной очереди; из нескольких выбираем вторым числом (при одной — не тянем,
+    // чтобы матчи по зерну не менялись)
+    const pool = FINALE_THEMES.filter((i) => ROTATION_THEMES.includes(i) || THEME_RULES[i].finaleOnly);
+    const pick = pool.length > 1 ? pool[Math.floor(this.finaleRng.next() * pool.length)] : pool[0];
+    this.finaleTheme = finale && !(fixed >= 0 && fixed < THEME_COUNT) && pick !== undefined ? pick : -1;
     if (fixed >= 0 && fixed < THEME_COUNT) {
       this.themeOrder = Array.from({ length: THEME_COUNT }, () => fixed);
       return;
@@ -1506,6 +1624,15 @@ export class MatchSim {
       if (pid === this.hostPid && this.phase === 'match_end') this.rematch();
       return;
     }
+    // «Казино»: только выбор на автомате — ходить, бить, угадывать нельзя
+    if (hasSlots(this.theme)) {
+      if (it.k !== 'slot' || this.phase !== 'play' || !p.alive || !this.slots || this.slots.over) return;
+      const seat = this.pr.indexOf(p);
+      if (t < this.slotOpenAt || this.slotPick[seat] !== null || this.slots.seats[seat].skip > 0) return;
+      this.slotPick[seat] = it.pull ? 'pull' : 'pass';
+      return;
+    }
+    if (it.k === 'slot') return;
     if (it.k === 'accuse') {
       // обвинение — одна метка «?»: вырезанный ставит по ходу дубля, живой — в стоп-кадре «Кто ещё живой?»;
       // можно перенести или снять (eid -1)

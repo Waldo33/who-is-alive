@@ -34,7 +34,12 @@ import {
   BOSS_RANGE,
   BOSS_SPREAD,
   WALK_TOP,
+  hasSlots,
+  isLastLap,
+  casinoSeats,
 } from '@kto/game-core';
+import { SlotScreen } from './slot-ui';
+import { makeFieldMachine } from './slot-art';
 import type { AwardId, ClientSession, CrowdKind, Dict, Entity, GameConfig, Lang, Moment, Notice, RoundSummary, ThemeText, World, WorldEvent } from '@kto/game-core';
 import { resultCardFile } from './card';
 import { Tutorial, tutorialDone } from './tutorial';
@@ -217,6 +222,9 @@ export class GameScene extends Phaser.Scene {
   private starSprites = new Map<number, Phaser.GameObjects.Image>();
   private hedges: Phaser.GameObjects.TileSprite[] = [];
   private props: { spr: Phaser.GameObjects.Image; kind: string }[] = [];
+  /** «Казино»: автоматы на поле (по местам casinoSeats) и экран автомата на весь дубль. */
+  private machines: Phaser.GameObjects.Image[] = [];
+  private slotScreen: SlotScreen | null = null;
   private ground!: Phaser.GameObjects.Image;
   /** Тема, под которую сейчас одеты земля, предметы, стенка зоны и зверьки. */
   /** Текущий облик на поле: «тема_облик» (облик 1 — изнанка темы). */
@@ -428,6 +436,8 @@ export class GameScene extends Phaser.Scene {
     this.torches.clear();
     this.hedges = [];
     this.props = [];
+    this.machines = [];
+    this.slotScreen = null;
     this.pigeons = [];
     this.buttons = [];
     this.btnObjs.clear();
@@ -491,6 +501,10 @@ export class GameScene extends Phaser.Scene {
       const spr = this.add.image(p.x, AY + p.y, `prop-${p.kind}-0_0`, 0).setOrigin(0.5, 1).setDepth(AY + p.y);
       this.props.push({ spr, kind: p.kind });
     }
+    if (!this.textures.exists('slotm')) this.addSheet('slotm', makeFieldMachine(), 12, 20);
+    for (const st of casinoSeats(arena)) {
+      this.machines.push(this.add.image(st.x, AY + st.y - 5, 'slotm', 0).setOrigin(0.5, 1).setDepth(AY + st.y - 1).setVisible(false));
+    }
     for (let i = 0; i < 4; i++) this.hedges.push(this.add.tileSprite(0, 0, 8, 8, 'hedge0_0').setOrigin(0, 0).setDepth(900).setVisible(false));
 
     for (let i = 0; i < this.cfg.entitiesTotal; i++) {
@@ -531,6 +545,14 @@ export class GameScene extends Phaser.Scene {
     this.spotG = this.add.graphics().setDepth(955);
     this.ui = this.add.graphics().setDepth(1000);
     this.buildHud();
+    this.slotScreen = new SlotScreen({
+      scene: this,
+      ay: AY,
+      txt: (x, y, str, color) => this.txt(x, y, str, color),
+      t: this.t.slot,
+      play: (sfx, step) => this.audio.play(sfx, step),
+      haptic: (k) => haptic(k),
+    });
     this.buildButtons();
     this.crowdIcon = this.add.image(90, AY + 46, 'icons', 0).setScale(3).setDepth(1500).setVisible(false);
     this.crowdText = this.txt(90, AY + 64, '', 'yellow').setOrigin(0.5, 0).setDepth(1500).setVisible(false);
@@ -772,7 +794,7 @@ export class GameScene extends Phaser.Scene {
     }
     // Чужие — без цветов и имён, по убыванию, под общей пометкой «?»: видно, что кто-то близок
     // к победе (звёздочка мигает), но не видно, кто именно (раздел 5).
-    this.txt(108, 7, '?', 'mist').setDepth(1100);
+    this.hud.q = this.txt(108, 7, '?', 'mist').setDepth(1100);
     this.hudThreat = this.add.image(114, 7, 'hud', 2).setOrigin(0, 0).setDepth(1100).setAlpha(0.45);
     for (let i = 1; i < this.sim.players.length; i++) {
       this.hud['starsOther' + i] = this.txt(116 + i * 10, 7, '0', 'mist').setDepth(1100);
@@ -806,10 +828,23 @@ export class GameScene extends Phaser.Scene {
         },
       });
     });
+    // «Казино»: «Крутить» и «Пас» нарисованы на самом автомате (slot-ui), сцена только ловит нажатия
+    const slotOpen = () => !!this.slotScreen?.canChoose(this.sim);
+    const slotHit = (id: string, pull: boolean) => {
+      const r = this.slotScreen?.hitRects()[pull ? 'pull' : 'pass'] ?? [0, 0, 0, 0];
+      this.buttons.push({
+        id, x: r[0], y: r[1], w: r[2], h: r[3], visible: slotOpen, keep: true,
+        onDown: () => {
+          if (this.slotScreen?.pick(this.sim, pull)) this.sim.intent({ k: 'slot', pull });
+        },
+      });
+    };
+    slotHit('slot-pull', true);
+    slotHit('slot-pass', false);
     // «Хлопушка» вырезанного: подать команду толпе — справа в панели, рядом с пометкой «за кадром»
     const clapVis = () => {
       const me = this.me();
-      return this.sim.phase === 'play' && !!me && !me.alive && me.clapsLeft > 0;
+      return this.sim.phase === 'play' && !!me && !me.alive && me.clapsLeft > 0 && !hasSlots(this.sim.theme);
     };
     kinds.forEach(([kind, icon], i) => {
       this.buttons.push({
@@ -922,7 +957,7 @@ export class GameScene extends Phaser.Scene {
       o?.text?.setVisible(vis);
       // шестерёнка без рамки: при нажатии чуть проседает, как кнопки
       if (b.id === 'sound' && o?.icon) o.icon.y = b.y + b.h / 2 + (b.pressed ? 1 : 0);
-      if (!vis || b.id === 'sound') continue;
+      if (!vis || b.id === 'sound' || b.id.startsWith('slot-')) continue;
       if (b.id.startsWith('clap-')) {
         const ready = this.clapReady();
         this.drawPanel(b.x, b.y, b.w, b.h, PAL.dusk, b.pressed, ready ? b.accent : PAL.steel, this.crowdG);
@@ -987,6 +1022,7 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     if (p.y < AY || p.y >= PANEL_Y) return;
+    if (this.slotScreen?.visible) return;
     this.tapArena(p.x, p.y - AY, true);
   }
 
@@ -2774,7 +2810,8 @@ export class GameScene extends Phaser.Scene {
     if (phase === 'play') {
       // напряжение: изгородь сжимается — 1, последние 10 секунд — 2
       const w = this.sim.world;
-      const level = this.sim.timeLeft() <= 10_000 ? 2 : w.zone && w.time >= w.zone.startAt ? 1 : 0;
+      const slot = hasSlots(this.sim.theme) ? w.slot : null;
+      const level = slot ? (isLastLap(this.cfg, slot.turn) ? 2 : 0) : this.sim.timeLeft() <= 10_000 ? 2 : w.zone && w.time >= w.zone.startAt ? 1 : 0;
       this.audio.setIntensity(level);
       // ночь у всех одна (по времени дубля) — песня темнеет; свой рассудок в музыку не попадает, его услышали бы соседи
       this.audio.setDread(hasSanity(this.sim.theme) ? nightLevel(this.cfg, this.playSec()) : 0);
@@ -2793,7 +2830,7 @@ export class GameScene extends Phaser.Scene {
     this.renderCoach();
     this.dim.setVisible(false);
     // в обучении подсказку «за кадром» даёт сам шаг сверху, а внизу слева — «Пропустить»
-    const ghost = phase === 'play' && !!this.me() && !this.me()!.alive && !this.tut;
+    const ghost = phase === 'play' && !!this.me() && !this.me()!.alive && !this.tut && !hasSlots(this.sim.theme);
     for (const o of this.ghostUi) (o as Phaser.GameObjects.Image).setVisible(ghost);
     if (ghost) {
       // справа «Хлопушка» — подписи короче, чтобы не налезали на кнопки
@@ -2805,6 +2842,8 @@ export class GameScene extends Phaser.Scene {
       if (l2.text !== b) l2.setText(b);
     }
     this.renderProps();
+    this.renderMachines();
+    this.slotScreen?.update(this.sim);
     this.renderHedge(phase === 'reveal' && this.replay ? this.replay : this.sim.world);
     this.renderPigeons(delta);
     this.renderFx(delta);
@@ -3341,6 +3380,16 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  /** Автоматы «Казино» на поле — только в этой теме; лампочки мигают вразнобой. */
+  private renderMachines(): void {
+    const on = hasSlots(this.sim.theme);
+    const t = Math.floor(performance.now() / 400);
+    this.machines.forEach((m, i) => {
+      m.setVisible(on);
+      if (on) m.setFrame((t + i) % 3 === 0 ? 1 : 0);
+    });
+  }
+
   private renderHedge(w: World): void {
     const z = w.zoneRect();
     const full = this.sim.arena.walk;
@@ -3677,7 +3726,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private tip(key: 'vote' | 'spot' | 'star' | 'move' | 'crowd' | 'hunt'): void {
-    if (this.tut) return;
+    if (this.tut || hasSlots(this.sim.theme)) return;
     let seen: string[] = [];
     try {
       seen = JSON.parse(localStorage.getItem('kto:tips') ?? '[]') as string[];
@@ -3717,7 +3766,7 @@ export class GameScene extends Phaser.Scene {
       this.hudIcons.forEach((ic, i) => ic.setFrame(lit ? 0 : 1).setVisible(mine && i === 0));
       this.hud.atkNum?.setText(String(n)).setFont(lit ? 'px-sand' : 'px-mist').setVisible(mine);
     } else {
-      this.hudIcons.forEach((ic, i) => ic.setFrame(me && i < me.attacksLeft ? 0 : 1).setVisible(mine));
+      this.hudIcons.forEach((ic, i) => ic.setFrame(me && i < me.attacksLeft ? 0 : 1).setVisible(mine && !hasSlots(sim.theme)));
       this.hud.atkNum?.setVisible(false);
     }
     const hk = this.hudStarKey();
@@ -3912,11 +3961,11 @@ export class GameScene extends Phaser.Scene {
     if (!this.init0.spectator) {
       const share: RowButton = { id: 'share', kind: 'secondary', icon: 'share', onTap: () => this.share(), release: true };
       this.addRow(AY + 214, this.amHost()
-        ? [share, { id: 'next', kind: 'primary', flex: true, label: night ? this.t.game.toFinal : fmt(this.t.game.next, { n }), fill, onTap: () => {
+        ? [share, { id: 'next', kind: 'primary', flex: true, label: night || hasSlots(sim.theme) ? this.t.game.toFinal : fmt(this.t.game.next, { n }), fill, onTap: () => {
           this.track('next_tap', { round: sim.round });
           sim.intent({ k: 'next' });
         } }]
-        : [share, { id: 'next', kind: 'plate', flex: true, label: night ? fmt(this.t.game.toFinalIn, { s: Math.ceil(sim.timeLeft() / 1000) }) : fmt(this.t.game.nextTake, { n, s: Math.ceil(sim.timeLeft() / 1000) }) }]);
+        : [share, { id: 'next', kind: 'plate', flex: true, label: night || hasSlots(sim.theme) ? fmt(this.t.game.toFinalIn, { s: Math.ceil(sim.timeLeft() / 1000) }) : fmt(this.t.game.nextTake, { n, s: Math.ceil(sim.timeLeft() / 1000) }) }]);
     }
   }
 
@@ -4013,11 +4062,12 @@ export class GameScene extends Phaser.Scene {
     this.ovPanel(8, AY + 8, 164, 244);
     // в «Купальской ночи» вместо короны — цвет папоротника
     if (hasSanity(sim.theme) && this.themeText()?.triumph) this.ov(this.add.image(90, AY + 22, 'fern', 3).setScale(2), 2100);
+    else if (hasSlots(sim.theme) && this.themeText()?.triumph) this.ov(this.add.image(90, AY + 22, 'slotsyms', 0).setScale(2), 2100);
     else this.ov(this.add.image(90, AY + 22, 'icons', this.icon('crown')).setScale(2), 2100);
     if (m.tooAlive) this.ovText(90, AY + 36, this.t.game.tooAlive, 'yellow');
     else {
       const w = sim.info(m.winners[0])!;
-      const tr = hasSanity(sim.theme) ? this.themeText()?.triumph : undefined;
+      const tr = hasSanity(sim.theme) || hasSlots(sim.theme) ? this.themeText()?.triumph : undefined;
       this.ovText(90, AY + 36, w.pid === this.sim.selfPid ? (tr?.you ?? this.t.game.youWon) : (tr?.other ?? this.t.game.winner), 'yellow');
       if (w.pid !== this.sim.selfPid) this.ovText(90, AY + 48, w.name, COLOR_FONT[w.color]);
     }
@@ -4146,7 +4196,7 @@ export class GameScene extends Phaser.Scene {
     const pt = plate && this.btnObjs.get('next')?.text;
     if (pt) {
       const sec = Math.max(0, Math.ceil(sim.timeLeft() / 1000));
-      const s = hasSanity(sim.theme) ? fmt(this.t.game.toFinalIn, { s: sec }) : fmt(this.t.game.nextTake, { n: sim.round + 1, s: sec });
+      const s = hasSanity(sim.theme) || hasSlots(sim.theme) ? fmt(this.t.game.toFinalIn, { s: sec }) : fmt(this.t.game.nextTake, { n: sim.round + 1, s: sec });
       if (pt.text !== s) {
         pt.setText(s);
         pt.x = Math.round(plate.x + (plate.w - pt.width) / 2);
@@ -4208,6 +4258,10 @@ export class GameScene extends Phaser.Scene {
   private showTriumph(done: () => void): void {
     if (hasSanity(this.sim.theme) && this.themeText()?.triumph) {
       this.showFernTriumph(done);
+      return;
+    }
+    if (hasSlots(this.sim.theme) && this.themeText()?.triumph) {
+      this.showJackpotTriumph(done);
       return;
     }
     const sim = this.sim;
@@ -4341,6 +4395,94 @@ export class GameScene extends Phaser.Scene {
       finished = true;
       tick.remove();
       this.fernOn = false;
+      if (this.sim.phase === 'match_end') done();
+    };
+    this.time.delayedCall(TRIUMPH_MS, finish);
+    this.time.delayedCall(TRIUMPH_SKIP_MS, () => {
+      if (!finished) this.input.once('pointerup', finish);
+    });
+  }
+
+  /**
+   * Триумф «Казино» — джекпот: за спиной победителя горит световой короб автомата (лучи), над головой
+   * три звезды загораются по одной, как барабаны, сверху сыплются монеты, звенит выигрыш.
+   */
+  private showJackpotTriumph(done: () => void): void {
+    const sim = this.sim;
+    const m = sim.match!;
+    const pid = m.winners[0];
+    const info = sim.info(pid)!;
+    const tr = this.themeText()!.triumph!;
+    const color = hexToInt(PLAYER_COLORS[info.color]);
+    const eid = sim.summary?.reveal.find((r) => r.pid === pid)?.eid ?? -1;
+    const idx = Math.max(0, sim.world.entities.findIndex((e) => e.eid === eid));
+    const fig = this.charKey(this.lookKey, idx);
+    const cy = AY + 176;
+    const bg = this.ov(this.add.graphics(), 2050);
+    const ol = this.ov(this.add.image(90, cy, 'ol' + fig, F.JUMP).setOrigin(7 / OL_W, 17 / OL_H).setScale(3).setTint(color), 2052);
+    const body = this.ov(this.add.image(90, cy, 'ch' + fig, F.JUMP).setOrigin(6 / CH_W, 1).setScale(3), 2053);
+    const stars = [0, 1, 2].map((i) => this.ov(this.add.image(62 + i * 28, cy - CH_H * 3 - 18, 'slotsyms', 0).setScale(2).setVisible(false), 2054));
+    const me = pid === sim.selfPid;
+    const title = this.ovText(90, AY + 26, me ? tr.you : tr.other, 'yellow');
+    if (title.width * 2 <= 170) {
+      title.setScale(2);
+      this.centerScaled(title);
+    }
+    this.ovText(90, AY + 46, tr.sub, 'sand');
+    this.ovText(90, cy + 14, info.name, COLOR_FONT[info.color]);
+    haptic('success');
+    // звёзды загораются по одной — как останавливаются барабаны
+    stars.forEach((st, i) => this.time.delayedCall(300 + i * 350, () => {
+      if (!st.active) return;
+      st.setVisible(true);
+      this.audio.play('slotStop', i);
+      haptic('light');
+      if (i === 2) this.time.delayedCall(120, () => {
+        this.audio.play('slotJackpot');
+        haptic('success');
+      });
+    }));
+    const coins = Array.from({ length: 40 }, () => ({ x: 4 + Math.random() * 172, y: AY - Math.random() * 240, v: 0.8 + Math.random() * 1.2, ph: Math.floor(Math.random() * 4) }));
+    let k = 0;
+    const tick = this.time.addEvent({
+      delay: 50,
+      loop: true,
+      callback: () => {
+        k++;
+        bg.clear();
+        bg.fillStyle(hexToInt(PAL.ink), 0.9).fillRect(0, AY, 180, PANEL_Y - AY);
+        // лучи светового короба вращаются за победителем
+        const ox = 90;
+        const oy = cy - 30;
+        for (let y = AY + 60; y < PANEL_Y - 20; y += 2) for (let x = 0; x < 180; x += 2) {
+          const a = Math.atan2(y - oy, x - ox) + k * 0.02;
+          const ray = Math.floor(((a + Math.PI) / (Math.PI * 2)) * 20) % 2;
+          const d = Math.hypot(x - ox, y - oy);
+          if (ray && d < 80 && (x + y) % 4 === 0) bg.fillStyle(hexToInt(d < 40 ? PAL.amber : PAL.umber)).fillRect(x, y, 2, 2);
+        }
+        // монеты сыплются, переворачиваются
+        for (const c of coins) {
+          c.y += c.v;
+          if (c.y > PANEL_Y - 4) c.y = AY - 4;
+          if (c.y < AY) continue;
+          const f = (Math.floor(k / 3) + c.ph) % 4;
+          const w = f === 0 ? 4 : f === 2 ? 1 : 2;
+          bg.fillStyle(hexToInt(PAL.ink)).fillRect(Math.round(c.x - w / 2) - 1, Math.round(c.y) - 1, w + 2, 6);
+          bg.fillStyle(hexToInt(f === 2 ? PAL.orange : PAL.yellow)).fillRect(Math.round(c.x - w / 2), Math.round(c.y), w, 4);
+          if (w === 4) bg.fillStyle(hexToInt(PAL.amber)).fillRect(Math.round(c.x - w / 2) + 1, Math.round(c.y) + 1, 2, 2);
+        }
+        // победитель подпрыгивает, звёзды мигают
+        const hop = Math.floor(k / 4) % 2 ? -4 : 0;
+        body.setY(cy + hop);
+        ol.setY(cy + hop);
+        stars.forEach((st, i) => st.setAlpha(Math.floor(k / 5 + i) % 3 === 0 ? 0.6 : 1));
+      },
+    });
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      tick.remove();
       if (this.sim.phase === 'match_end') done();
     };
     this.time.delayedCall(TRIUMPH_MS, finish);

@@ -5,6 +5,7 @@ import type { NavGrid } from './nav';
 import { TICK_MS } from './config';
 import type { BossState } from './boss';
 import { BOSS_SPEED_MUL } from './boss';
+import type { SlotState } from './slots';
 
 export interface Entity {
   eid: number;
@@ -68,6 +69,8 @@ export interface WorldSnapshot {
   twist?: boolean;
   /** Шеф в офисе (необязательно — для снимков старых версий). */
   boss?: BossState | null;
+  /** Стол «Казино» (необязательно — для снимков старых версий). */
+  slot?: SlotState | null;
   pending: WorldEvent[];
 }
 
@@ -86,6 +89,8 @@ export class World {
   twist = false;
   /** Шеф в офисе (boss.ts); null — в теме его нет. */
   boss: BossState | null = null;
+  /** Стол «Казино» (slots.ts); null — в теме его нет. */
+  slot: SlotState | null = null;
   private pending: WorldEvent[] = [];
   /** Журнал применённых событий (для повтора и клипа). */
   log: WorldEvent[] = [];
@@ -127,6 +132,7 @@ export class World {
     this.crowd = null;
     this.twist = false;
     this.boss = null;
+    this.slot = null;
     this.pending = [];
     this.log = [];
     this.keyframes = [];
@@ -279,6 +285,13 @@ export class World {
       case 'boss':
         this.applyBoss(ev);
         break;
+      case 'slot': {
+        const { t: _t, at: _at, ...state } = ev;
+        void _t;
+        void _at;
+        this.slot = cloneSlot(state);
+        break;
+      }
       case 'hit':
       case 'spot':
         break;
@@ -348,6 +361,7 @@ export class World {
       crowd: this.crowd ? { ...this.crowd } : null,
       twist: this.twist,
       boss: this.boss ? { ...this.boss, path: this.boss.path.slice(), look: this.boss.look ? { ...this.boss.look } : null } : null,
+      slot: this.slot ? cloneSlot(this.slot) : null,
       pending: this.pending.slice(),
     };
   }
@@ -361,8 +375,19 @@ export class World {
     this.crowd = s.crowd ? { ...s.crowd } : null;
     this.twist = !!s.twist;
     this.boss = s.boss ? { ...s.boss, path: s.boss.path.slice(), look: s.boss.look ? { ...s.boss.look } : null } : null;
+    this.slot = s.slot ? cloneSlot(s.slot) : null;
     this.pending = s.pending.slice();
   }
+}
+
+function cloneSlot(s: SlotState): SlotState {
+  return {
+    ...s,
+    seats: s.seats.map((x) => ({ ...x })),
+    spins: s.spins.map((x) => (x ? { outcome: x.outcome, reels: [...x.reels] } : null)),
+    effects: s.effects.map((x) => ({ ...x })),
+    over: s.over ? { reason: s.over.reason, winners: [...s.over.winners] } : null,
+  };
 }
 
 /**

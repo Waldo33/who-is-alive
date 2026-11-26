@@ -21,6 +21,13 @@ const only = args.filter((a, i) => !a.startsWith('--') && (jsonAt < 0 || i !== j
  */
 const TARGETS = {
   'sfx:hitPlayer': [-32, -28, 'P1 ты выбил живого'],
+  'sfx:slotJackpot': [-33, -29, 'P1 казино: джекпот'],
+  'sfx:slotSkull': [-33, -29, 'P1 казино: череп'],
+  'sfx:slotLever': [-39, -34, 'P2 казино: рычаг'],
+  'sfx:slotStop': [-39, -34, 'P2 казино: барабан встал'],
+  'sfx:slotCoins': [-39, -34, 'P2 казино: монеты'],
+  'sfx:slotTease': [-39, -34, 'P2 казино: почти'],
+  'sfx:slotSpin': [-54, -44, 'P3 казино: барабаны крутятся'],
   'sfx:knockedOut': [-33, -29, 'P1 тебя вырезали'],
   'sfx:hitBot': [-35, -31, 'P1 ударил бота'],
   'sfx:cut': [-33, -29, 'P1 тебя вырезали (без оружия)'],
@@ -61,7 +68,7 @@ for (let th = 0; th < 8; th++) {
   TARGETS[`music:${th}:night`] = [-50, -38, 'глухая ночь: тише, но слышно'];
 }
 TARGETS['music:accuse'] = [-42, -38, 'обвинение'];
-for (const k of ['hitPlayer', 'cut', 'knockedOut', 'hitBot']) TARGETS['kids:' + k] = [-36, -29, 'детский: P1'];
+for (const k of ['hitPlayer', 'cut', 'knockedOut', 'hitBot', 'slotSkull']) TARGETS['kids:' + k] = [-36, -29, 'детский: P1'];
 for (const k of ['hitOther', 'whack']) TARGETS['kids:' + k] = [-42, -33, 'детский: P2'];
 TARGETS['music:6:blackout-gap'] = [-200, -70, 'тишина после «свет вырубили»'];
 

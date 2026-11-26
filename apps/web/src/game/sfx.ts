@@ -6,21 +6,22 @@ export type Sfx =
   | 'step' | 'hitPlayer' | 'hitBot' | 'poof' | 'starTake' | 'starSpawn' | 'crowd' | 'tick'
   | 'click' | 'ready' | 'accuseRight' | 'accuseWrong' | 'fanfare' | 'sad' | 'hedge' | 'pigeon' | 'drum' | 'denied' | 'count' | 'swing' | 'flicker' | 'dusk' | 'siren' | 'whack' | 'clang' | 'stab' | 'knockedOut'
   | 'hitOther' | 'cut' | 'clap' | 'logo' | 'wrap' | 'unmask' | 'rewind' | 'leshyStep' | 'leshyBreath' | 'leshyStinger' | 'leshyTake' | 'leshyCall' | 'snap' | 'whisper' | 'scream' | 'fern'
-  | 'bossAhem' | 'bossStamp';
+  | 'bossAhem' | 'bossStamp'
+  | 'slotLever' | 'slotSpin' | 'slotStop' | 'slotJackpot' | 'slotCoins' | 'slotTease' | 'slotSkull';
 
 /**
  * Приоритет эффекта (звуковой гайд, план звука): P1 — меняет решение игрока, обязан пробиться
  * через музыку (на динамике телефона −30…−33 дБ, музыку глушит на 9 дБ на 0,6 с); P2 — событие
  * на поле (−35…−39 дБ, глушит на 4 дБ); остальное — фон. Уровни проверяет `pnpm --filter web sound-check`.
  */
-export const P1: ReadonlySet<Sfx> = new Set<Sfx>(['hitPlayer', 'hitBot', 'starTake', 'crowd', 'ready', 'knockedOut', 'cut', 'drum', 'accuseRight', 'accuseWrong', 'unmask', 'wrap', 'logo', 'leshyStinger', 'leshyTake', 'scream', 'fern', 'bossAhem']);
-export const P2: ReadonlySet<Sfx> = new Set<Sfx>(['hitOther', 'whack', 'clang', 'stab', 'starSpawn', 'flicker', 'dusk', 'leshyBreath', 'bossStamp']);
+export const P1: ReadonlySet<Sfx> = new Set<Sfx>(['hitPlayer', 'hitBot', 'starTake', 'crowd', 'ready', 'knockedOut', 'cut', 'drum', 'accuseRight', 'accuseWrong', 'unmask', 'wrap', 'logo', 'leshyStinger', 'leshyTake', 'scream', 'fern', 'bossAhem', 'slotJackpot', 'slotSkull']);
+export const P2: ReadonlySet<Sfx> = new Set<Sfx>(['hitOther', 'whack', 'clang', 'stab', 'starSpawn', 'flicker', 'dusk', 'leshyBreath', 'bossStamp', 'slotLever', 'slotStop', 'slotCoins', 'slotTease']);
 
 /**
  * Частые звуки: каждый раз чуть другие (±30 центов, ±1,5 дБ), чтобы за три матча не стать
  * «пулемётом». Сигналы (команда, старт, логотип) не меняются — их узнают по звуку.
  */
-const VARY: ReadonlySet<Sfx> = new Set<Sfx>(['step', 'hitPlayer', 'hitOther', 'hitBot', 'poof', 'starSpawn', 'tick', 'click', 'hedge', 'pigeon', 'whack', 'clang', 'stab', 'swing', 'unmask']);
+const VARY: ReadonlySet<Sfx> = new Set<Sfx>(['step', 'hitPlayer', 'hitOther', 'hitBot', 'poof', 'starSpawn', 'tick', 'click', 'hedge', 'pigeon', 'whack', 'clang', 'stab', 'swing', 'unmask', 'slotLever', 'slotStop', 'slotCoins']);
 
 /** Детский режим: без оружия, звона в ушах и пилы — удары «поф» и бумажный хлопок. */
 const KIDS: Partial<Record<Sfx, Sfx>> = { whack: 'hitOther', clang: 'hitOther', stab: 'hitOther', knockedOut: 'cut', siren: 'starSpawn', scream: 'cut' };
@@ -92,6 +93,12 @@ export class Synth {
         this.tone('triangle', 660, 440, 0.25, 0.3, 0.12);
         this.tone('triangle', 520, 330, 0.35, 0.28, 0.4);
         return true;
+      // «Казино», череп: тот же мягкий «упс», без зуммера и ножниц
+      case 'slotSkull':
+        this.paperPop();
+        this.tone('triangle', 660, 440, 0.25, 0.3, 0.12);
+        this.tone('triangle', 520, 330, 0.35, 0.28, 0.4);
+        return true;
       // бот: мягкое «боинг» вместо зуммера
       case 'hitBot': this.tone('triangle', 900, 260, 0.32, 0.55); this.tone('square', 1800, 520, 0.2, 0.1); return true;
       case 'accuseWrong': this.tone('triangle', 660, 440, 0.35, 0.3); return true;
@@ -110,6 +117,78 @@ export class Synth {
   private voice(name: Sfx, step: number): void {
     switch (name) {
       case 'step': this.noise(0.03, 0.05, 1800); break;
+      // ── «Казино»: звуки настоящего автомата ──
+      // рычаг: храповик (щелчки всё чаще) и «дзынь» возвратной пружины
+      case 'slotLever':
+        [0, 0.04, 0.072, 0.098, 0.118].forEach((d, i) => {
+          this.noise(0.014, 0.5, 3600 - i * 160, d);
+          this.tone('square', 1900 - i * 60, 1700 - i * 60, 0.014, 0.1, d);
+        });
+        this.tone('square', 760, 420, 0.16, 0.14, 0.14);
+        this.tone('triangle', 1520, 840, 0.14, 0.08, 0.14);
+        break;
+      // барабаны крутятся: дробь щелчков по зубцам, к остановке всё реже (фон, ~1,4 с)
+      case 'slotSpin': {
+        let t = 0.04;
+        let gap = 0.026;
+        for (let i = 0; t < 1.36; i++) {
+          this.noise(0.008, 0.22, 2900 + (i % 3) * 300, t);
+          t += gap;
+          gap *= 1.04;
+        }
+        this.tone('sawtooth', 820, 560, 1.3, 0.035, 0.04);
+        break;
+      }
+      // барабан встал: глухой «клак» с металлом; каждый следующий на тон выше (step 0–2)
+      case 'slotStop': {
+        const k = Math.pow(2, (step * 2) / 12);
+        this.noise(0.02, 1, 3400);
+        this.noise(0.09, 1, 1300 * k);
+        this.noise(0.06, 0.8, 2400 * k, 0.004);
+        this.tone('square', 880 * k, 500 * k, 0.1, 0.34);
+        this.tone('triangle', 1320 * k, 1320 * k, 0.1, 0.26, 0.006);
+        break;
+      }
+      // джекпот: звонок автомата трелью, монеты сыплются в лоток, мажор вверх
+      case 'slotJackpot':
+        for (let i = 0; i < 14; i++) {
+          const f = i % 2 ? 2637 : 2093;
+          this.tone('square', f, f, 0.05, i < 2 ? 0.26 : 0.17, i * 0.06);
+          this.tone('triangle', f * 2, f * 2, 0.04, 0.07, i * 0.06);
+        }
+        for (let i = 0; i < 18; i++) {
+          const d = 0.16 + i * 0.055 + ((i * 37) % 11) / 400;
+          const f = 3100 + ((i * 577) % 7) * 270;
+          this.tone('triangle', f, f * 0.985, 0.09, 0.14, d);
+          this.noise(0.012, 0.3, 5200, d);
+        }
+        [1047, 1319, 1568, 2093].forEach((f, i) => this.tone('square', f, f, i === 3 ? 0.4 : 0.12, 0.2, 0.86 + i * 0.075));
+        break;
+      // пол-звезды, кража: несколько монет звякнули о лоток
+      case 'slotCoins':
+        [2637, 3136, 2794, 3520, 3322].forEach((f, i) => {
+          this.tone('triangle', f, f * 0.985, 0.1, 0.17, i * 0.07);
+          this.tone('square', f / 2, f / 2, 0.03, 0.06, i * 0.07);
+          this.noise(0.012, 0.28, 5000, i * 0.07);
+        });
+        break;
+      // «почти»: две звезды встали со звоном вверх, третий барабан — глухой «бум» вниз
+      case 'slotTease':
+        this.tone('square', 1568, 1568, 0.08, 0.12);
+        this.tone('square', 2093, 2093, 0.08, 0.12, 0.12);
+        this.noise(0.06, 0.45, 900, 0.27);
+        this.tone('square', 392, 196, 0.24, 0.15, 0.27);
+        this.tone('triangle', 784, 392, 0.2, 0.07, 0.27);
+        break;
+      // череп: зуммер проигрыша (малая секунда — неприятно), щелчок монтажных ножниц и спад вниз
+      case 'slotSkull':
+        this.noise(0.04, 1, 3200);
+        this.tone('square', 466, 466, 0.34, 0.24);
+        this.tone('square', 494, 494, 0.34, 0.24);
+        this.tone('sawtooth', 932, 932, 0.3, 0.1);
+        this.scissors(0.38);
+        this.tone('square', 620, 180, 0.32, 0.26, 0.42);
+        break;
       // шеф поворачивается: «Кхм-кхм» — два хриплых толчка горлом (шум в полосе голоса + жёсткий тон с обертонами)
       case 'bossAhem':
         for (const d of [0, 0.17]) {

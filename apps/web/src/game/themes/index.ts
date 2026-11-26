@@ -23,6 +23,7 @@ const LOADERS: Record<ThemeId, () => Promise<{ default: ThemePack }>> = {
   miami: () => import('./miami'),
   party: () => import('./party'),
   kupala: () => import('./kupala'),
+  casino: () => import('./casino'),
 };
 
 const loaded = new Map<number, ThemePack>([[0, PARK]]);
