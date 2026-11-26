@@ -11,7 +11,8 @@
  * Тело пишется на диск потоком — в памяти 1-гигабайтного сервера не копится.
  *
  * Есть S3 (s3.ts, бакет из infra/terraform/storage.tf) — видео живёт там (`clips/<id>.<ext>`, бакет сам
- * удаляет через 2 суток), а GET отвечает 302 на подписанную ссылку S3:
+ * удаляет через 2 суток), а GET отдаёт его с этого же адреса — сервер тянет файл из бакета потоком
+ * (не 302: 26.11 Telegram не смог отправить карточку с фильмом по перенаправлению на подписанную ссылку):
  *   - фильм и клип выбывшего (монтаж на сервере, `adopt`) кладутся в S3 сразу, ссылка выдаётся после
  *     загрузки, на диске копии не остаётся;
  *   - клип с телефона: POST /v1/clips/direct { ext, size } → { id, ext, put } — телефон кладёт файл в бакет
@@ -128,6 +129,28 @@ export class ClipStore {
     }
     this.remoteStats.redirects++;
     return r.s3.presignGet(key, REMOTE_URL_TTL_S, { disposition: `attachment; filename="massovka-${id.slice(0, 6)}.${ext}"` });
+  }
+
+  /**
+   * Файл из S3 потоком (локальной копии нет): ответ бакета со статусом 200 или null (S3 нет, файла нет,
+   * бакет не ответил). Отсюда его отдаёт GET /v1/clips/<id>.<ext> — для Telegram адрес тот же, что с диска.
+   */
+  async remoteOpen(id: string, ext: string, method: string): Promise<Response | null> {
+    const r = this.remote;
+    if (!r || !CLIP_ID.test(id) || !CLIP_MIME[ext]) return null;
+    const key = `clips/${id}.${ext}`;
+    try {
+      const res = await r.s3.open(key, method === 'HEAD' ? 'HEAD' : 'GET');
+      if (res.status === 200) {
+        this.remoteStats.redirects++;
+        return res;
+      }
+      await res.body?.cancel();
+      if (res.status !== 404) r.log?.('warn', 's3_get_failed', { key, status: res.status });
+    } catch (e) {
+      r.log?.('warn', 's3_get_failed', { key, err: String(e).slice(0, 300) });
+    }
+    return null;
   }
 
   /**

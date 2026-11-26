@@ -76,7 +76,11 @@ function fakeS3() {
       objects.set(key, { body: Buffer.from(init!.body as Uint8Array), type: h.get('content-type') ?? '' });
       return new Response('', { status: 200 });
     }
-    if (method === 'HEAD') return new Response(null, { status: objects.has(key) ? 200 : 404 });
+    if (method === 'HEAD') return new Response(null, { status: objects.has(key) ? 200 : 404, headers: objects.has(key) ? { 'content-length': String(objects.get(key)!.body.length) } : {} });
+    if (method === 'GET') {
+      const o = objects.get(key);
+      return o ? new Response(new Uint8Array(o.body), { status: 200, headers: { 'content-length': String(o.body.length), 'content-type': o.type } }) : new Response('<Code>NoSuchKey</Code>', { status: 404 });
+    }
     return new Response('', { status: 405 });
   }) as typeof fetch;
   return {
@@ -103,7 +107,7 @@ describe('клипы в S3', () => {
     if (dir) await rm(dir, { recursive: true, force: true });
   });
 
-  it('клип и обложка уходят в бакет, без копии на диске — 302 на подписанную ссылку', async () => {
+  it('клип и обложка уходят в бакет, без копии на диске — сервер отдаёт файл из бакета с того же адреса', async () => {
     dir = await mkdtemp(join(tmpdir(), 'clips-s3-'));
     const s3 = fakeS3();
     const store = new ClipStore(dir, Date.now, { s3: s3.client() });
@@ -132,16 +136,19 @@ describe('клипы в S3', () => {
     expect(local.status).toBe(200);
     // диск почистили — ссылка в S3
     await rm(join(dir, `${id}.mp4`));
+    // без перенаправления: Telegram не отправил карточку по 302 на S3 (26.11)
     const moved = await fetch(`${http}/v1/clips/${id}.mp4`, { redirect: 'manual' });
-    expect(moved.status).toBe(302);
-    const loc = new URL(moved.headers.get('location')!);
-    expect(loc.host).toBe('s3.example');
-    expect(loc.pathname).toBe(`/bucket/clips/${id}.mp4`);
-    expect(loc.searchParams.get('X-Amz-Expires')).toBe(String(48 * 3600));
-    expect(loc.searchParams.get('response-content-disposition')).toContain('attachment');
+    expect(moved.status).toBe(200);
+    expect(moved.headers.get('content-type')).toBe('video/mp4');
+    expect(moved.headers.get('content-length')).toBe(String(video.length));
+    expect(moved.headers.get('content-disposition')).toContain('attachment');
+    expect(Buffer.from(await moved.arrayBuffer()).equals(video)).toBe(true);
+    const head = await fetch(`${http}/v1/clips/${film.id}.mp4`, { method: 'HEAD' });
+    expect(head.status).toBe(200);
+    expect(head.headers.get('content-length')).toBe('3000');
     // нет ни на диске, ни в бакете — 404
     expect((await fetch(`${http}/v1/clips/${'0'.repeat(20)}.mp4`, { redirect: 'manual' })).status).toBe(404);
-    expect(await (await fetch(`${http}/metrics`)).text()).toContain('game_clips_s3_redirects_total 1');
+    expect(await (await fetch(`${http}/metrics`)).text()).toContain('game_clips_s3_redirects_total 2');
   });
 
   it('S3 не отвечает — клип всё равно сохранён и отдаётся с диска', async () => {
@@ -165,7 +172,7 @@ describe('клипы в S3', () => {
     expect(await store.file(film.id, 'mp4')).not.toBeNull();
   });
 
-  it('телефон грузит прямо в S3: ссылка PUT с типом и размером в подписи, потом 302', async () => {
+  it('телефон грузит прямо в S3: ссылка PUT с типом и размером в подписи, потом отдаётся из бакета', async () => {
     dir = await mkdtemp(join(tmpdir(), 'clips-s3-'));
     const s3 = fakeS3();
     const store = new ClipStore(dir, Date.now, { s3: s3.client() });
