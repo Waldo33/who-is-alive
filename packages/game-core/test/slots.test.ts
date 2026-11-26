@@ -357,11 +357,29 @@ describe('«Казино» в матче', () => {
     return { sim, events, phases };
   };
 
-  it('тема скрыта: только по fixedTheme, в загадке дня её нет', () => {
+  it('только финал: в очереди и загадке дня её нет, при матч-боле бывает последним дублем', () => {
     expect(CASINO).toBe(THEME_RULES.length - 1);
     expect(hasSlots(CASINO)).toBe(true);
     expect(ROTATION_THEMES).not.toContain(CASINO);
     expect(DAILY_THEMES).not.toContain(CASINO);
+    let seen = 0;
+    for (let seed = 1; seed <= 60 && !seen; seed++) {
+      const sim = new MatchSim(makeConfig({ nightFinaleChance: 1 }), players, seed);
+      if (sim.finaleTheme !== CASINO) continue;
+      seen++;
+      const themes = new Set<number>();
+      for (let i = 0; i < 40 * 60 * 20 && sim.phase !== 'match_end'; i++) {
+        sim.tick();
+        if (sim.phase === 'play') themes.add(sim.theme);
+      }
+      expect(sim.phase).toBe('match_end');
+      // финал случился, только если до матч-бола не выпала «Купальская ночь» (она тоже заканчивает матч)
+      if (sim.theme !== CASINO) continue;
+      // казино было ровно один раз — последним дублем
+      expect([...themes].filter((t) => t === CASINO)).toHaveLength(1);
+      seen++;
+    }
+    expect(seen).toBe(1);
   });
 
   it('дубль: все сидят, никто не ходит и не выбывает с поля; обвинения нет; стол дошёл до конца', () => {

@@ -66,6 +66,11 @@ export interface ThemeRules {
    */
   hidden?: boolean;
   /**
+   * Тема только для финала: в обычной очереди её нет, она выпадает последним дублем при матч-боле
+   * (match.ts › finaleTheme) — «Казино» (решение владельца: казино — последний раунд).
+   */
+  finaleOnly?: boolean;
+  /**
    * «Казино» (slots.ts): все сидят за автоматами, ходить и бить нельзя, команд толпы нет —
    * всё решает автомат: звезда за «три звезды», череп — вырезан.
    */
@@ -94,13 +99,13 @@ export const THEME_RULES: readonly ThemeRules[] = [
   // Купальская ночь: болото, грибники, сумерки плавно уходят в ночь; рассудок тает, цветы вместо звёзд
   { id: 'kupala', sanity: true },
   // Казино: все за автоматами, решает автомат (пока скрыта — только ?dev&theme=8)
-  { id: 'casino', slots: true, hidden: true },
+  { id: 'casino', slots: true, finaleOnly: true },
 ];
 
 export const THEME_COUNT = THEME_RULES.length;
 
-/** Темы обычной очереди (без `hidden`): из них тасуется порядок дублей матча. */
-export const ROTATION_THEMES: readonly number[] = THEME_RULES.map((r, i) => (r.hidden ? -1 : i)).filter((i) => i >= 0);
+/** Темы обычной очереди (без `hidden` и `finaleOnly`): из них тасуется порядок дублей матча. */
+export const ROTATION_THEMES: readonly number[] = THEME_RULES.map((r, i) => (r.hidden || r.finaleOnly ? -1 : i)).filter((i) => i >= 0);
 
 /**
  * Темы загадки дня: обычная очередь без тем-режимов (рассудок — своя механика, кастингу не подходит).

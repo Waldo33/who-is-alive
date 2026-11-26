@@ -19,7 +19,7 @@ import { BOSS_SPEED_MUL, bossDoor, bossLooking, bossWatching, inBossCone, pathIn
 
 /**
  * Темы-финалы: выпав, заканчивают матч — «Купальская ночь» (рассудок) и «Казино» (автоматы).
- * При матч-боле одна из них (если она в очереди) может стать последним дублем (finaleTheme).
+ * При матч-боле одна из них может стать последним дублем (finaleTheme): из очереди или «только финал» (finaleOnly).
  */
 const FINALE_THEMES = THEME_RULES.map((r, i) => (r.sanity || r.slots ? i : -1)).filter((i) => i >= 0);
 const EMOTES: EmoteKind[] = ['wave', 'dance', 'jump'];
@@ -1556,7 +1556,7 @@ export class MatchSim {
     const finale = this.finaleRng.next() < this.cfg.nightFinaleChance;
     // кандидаты — темы-финалы из обычной очереди; из нескольких выбираем вторым числом (при одной — не тянем,
     // чтобы матчи по зерну не менялись)
-    const pool = FINALE_THEMES.filter((i) => ROTATION_THEMES.includes(i));
+    const pool = FINALE_THEMES.filter((i) => ROTATION_THEMES.includes(i) || THEME_RULES[i].finaleOnly);
     const pick = pool.length > 1 ? pool[Math.floor(this.finaleRng.next() * pool.length)] : pool[0];
     this.finaleTheme = finale && !(fixed >= 0 && fixed < THEME_COUNT) && pick !== undefined ? pick : -1;
     if (fixed >= 0 && fixed < THEME_COUNT) {
