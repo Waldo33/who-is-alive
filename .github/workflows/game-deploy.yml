@@ -40,7 +40,26 @@ permissions:
   actions: read
 
 jobs:
+  keys:
+    # ключ выкладки (выводится из TWC_TOKEN) — сразу на все серверы, старые ключи выкладки — прочь.
+    # Сменили токен — выкладка пройдёт сама: серверы друг к другу ходят тем же ключом (docs/security.md › 5)
+    if: vars.DEPLOY_FREEZE != '1' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    # секреты прода — только в окружении production, а оно пускает только ветку main (docs/security.md)
+    environment: production
+    timeout-minutes: 15
+    env:
+      TWC_TOKEN: ${{ secrets.TWC_TOKEN }}
+      SERVERS: massovka-eu massovka-infra
+      SSH_OPTS: -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=20 -o LogLevel=ERROR
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - run: python3 -m venv /tmp/py && /tmp/py/bin/pip install -q cryptography
+      - name: Ключ выкладки на всех серверах
+        run: /tmp/py/bin/python infra/game/keys.py
+
   deploy:
+    needs: keys
     # стоп-кран: переменная репозитория DEPLOY_FREEZE=1 — push не выкладывает, только запуск вручную
     if: vars.DEPLOY_FREEZE != '1' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
