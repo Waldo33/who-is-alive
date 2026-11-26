@@ -169,6 +169,18 @@ def main():
     print('ключ сервера (открытый):', pub)
     key_id = ensure_key(pub)
     servers = [s for s in api('GET', '/servers').get('servers', []) if s.get('name') == NAME]
+    # сменили TWC_TOKEN — сменился и ключ выкладки, а на сервере старый: попросить Timeweb поставить новый
+    # ключ на живой сервер (зовёт шаг «Дождаться SSH», только если сервер ответил «Permission denied»)
+    if os.environ.get('ATTACH_KEY') == '1':
+        if not servers:
+            print(f'::error::{NAME}: нет такого сервера')
+            sys.exit(1)
+        r = api('POST', f'/servers/{servers[0]["id"]}/ssh-keys', {'ssh_key_ids': [key_id]}, soft=True)
+        if '_error' in r:
+            print(f'::error::Timeweb не поставил ключ на {NAME}: HTTP {r["_error"]}: {r["_msg"][:200]}')
+            sys.exit(1)
+        print(f'{NAME}: ключ {key_id} отправлен на сервер')
+        return
     # только узнать адрес другого сервера (Москве — адрес сервера бота); нет его — пустой вывод
     if os.environ.get('FIND_ONLY') == '1':
         ip = ipv4(servers[0]) if servers else None
