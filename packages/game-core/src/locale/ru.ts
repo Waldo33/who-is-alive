@@ -109,7 +109,6 @@ export const ru = {
     title: 'КИНО-СЛОТ',
     pull: 'КРУТИТЬ',
     pass: 'ПАС',
-    score: 'Очки {n}',
     turn: 'Круг {n} из {m}',
     lastLap: 'Последний круг!',
     choose: 'Крутишь или пас?',

@@ -5,7 +5,7 @@ import { SLOT_SYMBOLS, fmt, hasSlots, isLastLap } from '@kto/game-core';
 import type { Sfx } from './audio';
 import type { FontColor } from './font';
 import {
-  BODY_W, PANEL_H, PANEL_TOP, SCORE_W, SCORE_X, SCORE_Y, REELS_H, REELS_X, REELS_Y, REEL_GAP, REEL_W, SYM_K, SYM_W, TOP_H,
+  BODY_W, PANEL_H, PANEL_TOP, REELS_H, REELS_X, REELS_Y, REEL_GAP, REEL_W, SYM_K, SYM_W, TOP_H,
   makeSlotBackdrop, makeSlotBody, makeSlotStars, makeSlotSymbols,
 } from './slot-art';
 
@@ -41,7 +41,6 @@ export class SlotScreen {
   private reelsTex: Phaser.Textures.CanvasTexture;
   private symImg: HTMLCanvasElement;
   private turnT: Phaser.GameObjects.BitmapText;
-  private scoreT: Phaser.GameObjects.BitmapText;
   private line1: Phaser.GameObjects.BitmapText;
   private line2: Phaser.GameObjects.BitmapText;
   private line3: Phaser.GameObjects.BitmapText;
@@ -90,8 +89,6 @@ export class SlotScreen {
     const px0 = this.by + PANEL_TOP;
     const cxm = this.bx + BODY_W / 2;
     this.turnT = add(h.txt(cxm, px0 + 6, '', 'mist').setOrigin(0.5, 0), D + 4);
-    // очки матча — крутить бесплатно, но видно, за что играешь
-    this.scoreT = add(h.txt(this.bx + SCORE_X + SCORE_W / 2, this.by + SCORE_Y + 1, '', 'yellow').setOrigin(0.5, 0), D + 4);
     this.line1 = add(h.txt(cxm, px0 + 20, '', 'white').setOrigin(0.5, 0), D + 4);
     this.line2 = add(h.txt(cxm, px0 + 33, '', 'yellow').setOrigin(0.5, 0), D + 4);
     this.line3 = add(h.txt(cxm, px0 + 46, '', 'sand').setOrigin(0.5, 0), D + 4);
@@ -366,8 +363,6 @@ export class SlotScreen {
     const turnN = Math.min(cfg.slotTurns, st.turn + 1);
     const turnS = last ? t.lastLap : fmt(t.turn, { n: turnN, m: cfg.slotTurns });
     this.turnT.setText(turnS).setFont(last ? 'px-coral' : 'px-mist');
-    const sc = fmt(t.score, { n: v.scores[v.selfPid] ?? 0 });
-    if (this.scoreT.text !== sc) this.scoreT.setText(sc);
     let l1 = '';
     let l1c: FontColor = 'white';
     const wt = v.world.time;

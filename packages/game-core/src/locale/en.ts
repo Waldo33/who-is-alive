@@ -67,7 +67,6 @@ export const en: Dict = {
     title: 'REEL-SLOT',
     pull: 'SPIN',
     pass: 'PASS',
-    score: 'Pts {n}',
     turn: 'Round {n} of {m}',
     lastLap: 'Final round!',
     choose: 'Spin or pass?',

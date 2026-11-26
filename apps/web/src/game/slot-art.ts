@@ -214,10 +214,6 @@ export const SYM_K = 3;
 /** Табло: верх и высота (в координатах корпуса). */
 export const PANEL_TOP = 132;
 export const PANEL_H = 74;
-/** окошко счёта под табло */
-export const SCORE_X = 46;
-export const SCORE_W = 78;
-export const SCORE_Y = PANEL_TOP + PANEL_H + 2;
 
 /** Хромовая рамка: свет сверху-слева, тень снизу-справа (толщина t). */
 function chrome(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, t = 3): void {
@@ -308,10 +304,6 @@ export function makeSlotBody(): HTMLCanvasElement {
   px(g, W - 29, ky + 1, PAL.mist, 16, 1);
   px(g, W - 22, ky + 2, PAL.ink, 2, 3);
   px(g, W - 21, ky + 2, PAL.amber, 1, 3);
-  // окошко счёта между кнопками и щелью: очки матча
-  px(g, SCORE_X - 1, ky - 3, PAL.ink, SCORE_W + 2, 13);
-  px(g, SCORE_X, ky - 2, PAL.night, SCORE_W, 11);
-  px(g, SCORE_X, ky - 2, PAL.dusk, SCORE_W, 1);
   // лоток для монет: хромовая чаша
   const ty = ky + 10;
   px(g, 14, ty, PAL.ink, W - 28, 10);
