@@ -162,3 +162,17 @@ export interface SlotMine {
   outcome: SlotOutcome;
   reels: [SlotSymbol, SlotSymbol, SlotSymbol];
 }
+
+/** Вращение в итогах дубля и в записи для клипа: чьё (сущность), к какой «Крутке» (warnAt), что выпало. */
+export interface SlotRecord {
+  eid: number;
+  at: number;
+  outcome: SlotOutcome;
+  reels: [SlotSymbol, SlotSymbol, SlotSymbol];
+}
+
+/** Череп вырезал: вращение с черепом у этой сущности, после которого её выбили в `hitAt`. */
+export function skullSpin(slots: readonly SlotRecord[] | undefined, eid: number, hitAt: number, cfg: GameConfig): SlotRecord | undefined {
+  const due = cfg.slotWarnMs + cfg.slotPauseMs;
+  return slots?.find((s) => s.eid === eid && s.outcome === 'skull' && hitAt >= s.at + due && hitAt <= s.at + due + 200);
+}

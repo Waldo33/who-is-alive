@@ -17,7 +17,7 @@ void (async () => {
     if (s.phase === 'reveal' && s.round !== last && s.summary) {
       last = s.round;
       const sum = s.summary;
-      takes.push({ rec: recordRound(s.world, { round: s.round, theme: s.theme, players: sum.reveal, playEnd: sum.replayTo, kills: sum.kills }), summary: sum, arena: s.arena });
+      takes.push({ rec: recordRound(s.world, { round: s.round, theme: s.theme, players: sum.reveal, playEnd: sum.replayTo, kills: sum.kills, slots: sum.slots }), summary: sum, arena: s.arena });
     }
   }
   const inp = filmInput(takes, players, s.match!, { t: DICTS.ru, lang: 'ru', font: '"Press Start 2P"', site: 'benobody.app', link: G.__puzzle ? `https://benobody.app/${G.__puzzle}?src=film_qr` : 'https://benobody.app/?src=film', puzzle: G.__puzzle });

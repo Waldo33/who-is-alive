@@ -11,7 +11,7 @@ import { NavGrid } from './nav';
 import { Rng } from './rng';
 import { LESHY_HUNT_SEC, fireLevel, leshySpot, leshyVisits, nightLevel, playLenSec, sanityDrain } from './sanity';
 import { ROTATION_THEMES, THEME_COUNT, THEME_RULES, canFight, fightAttacks, hasBoss, hasSanity, hasSlots, killerExposed, themeRules, twistEmote } from './themes';
-import type { SlotMine, SlotOutcome } from './slots';
+import type { SlotMine, SlotOutcome, SlotRecord } from './slots';
 import { botSlotEffect, rollSlot } from './slots';
 import { ROUND_MODS, roundMod } from './mods';
 import { World } from './world';
@@ -145,6 +145,8 @@ export interface RoundSummary {
   replayTo: number;
   /** Кто кого выбил (сущности). После разоблачения это уже не секрет — для повтора и клипа. */
   kills?: { by: number; victim: number; at: number }[];
+  /** «Казино»: что выпало каждому игроку на каждой «Крутке» (at — начало «Крутки»). После дубля не секрет — для клипа. */
+  slots?: SlotRecord[];
 }
 
 export interface MatchSummary {
@@ -245,6 +247,7 @@ export class MatchSim {
   private posHist: { t: number; pos: Map<number, [number, number]> }[] = [];
   /** Выбивания раунда: кто кого (сущности) — уходят в итоги раунда. */
   private roundKills: { by: number; victim: number; at: number }[] = [];
+  private roundSpins: SlotRecord[] = [];
   /** Лидер, за голову которого в этом дубле награда (bountyLeader на начало дубля). */
   bountyPid: string | null = null;
   agents: AiAgent[] = [];
@@ -290,6 +293,7 @@ export class MatchSim {
   private intents: { pid: string; it: Intent }[] = [];
   /** «Казино»: что выпало на «Крутке» и применится, когда мир отомрёт (resumeAt). */
   private slotDue: { at: number; spins: { pid: string; outcome: SlotOutcome }[]; bots: { eid: number; outcome: SlotOutcome }[] } | null = null;
+
   /** Сценарий (обучение, тесты): исход следующей «Крутки» у всех игроков. */
   private forcedSlot: SlotOutcome | null = null;
 
@@ -420,6 +424,7 @@ export class MatchSim {
     this.world.init(spawns, t0);
     this.posHist = [];
     this.roundKills = [];
+    this.roundSpins = [];
     const playerEids = rng.shuffle(spawns.map((s) => s.eid)).slice(0, this.players.length);
     this.pr = this.players.map((p, i) => ({
       pid: p.pid,
@@ -1144,6 +1149,7 @@ export class MatchSim {
       if (p) {
         const spin = rollSlot(cfg, this.rng, this.forcedSlot ?? undefined);
         p.slot = { at: t, outcome: spin.outcome, reels: spin.reels };
+        this.roundSpins.push({ eid: p.eid, at: t, outcome: spin.outcome, reels: spin.reels });
         due.spins.push({ pid: p.pid, outcome: spin.outcome });
         outcome = spin.outcome;
       } else {
@@ -1220,6 +1226,11 @@ export class MatchSim {
       }
     }
     for (const b of due.bots) if (b.outcome === 'spot') spotOn(b.eid);
+  }
+
+  /** Вращения игроков в этом дубле (сервер и песочница — для клипа выбывшего посреди дубля). */
+  get spins(): readonly SlotRecord[] {
+    return this.roundSpins;
   }
 
   /** Сценарий (обучение, тесты): исход следующей «Крутки» у всех игроков. */
@@ -1517,6 +1528,7 @@ export class MatchSim {
       replayFrom,
       replayTo,
       kills: [...this.roundKills],
+      ...(this.roundSpins.length ? { slots: [...this.roundSpins] } : {}),
     };
     this.setPhase('reveal', revealMs(cfg));
   }

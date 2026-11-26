@@ -1,11 +1,12 @@
 /** Кадры клипа «Лучший момент» без записи видео: безголовый матч с ИИ, лучший момент, кадры через равные промежутки. */
 import { createLocalSession, findBestMoment, makeConfig, recordRound } from '@kto/game-core';
+import type { LocalSession, SlotOutcome } from '@kto/game-core';
 import { DICTS } from '@kto/game-core';
 import { ClipPlayerScene } from '../src/game/clip';
 import { loadTheme } from '../src/game/themes';
 
 const out: { name: string; url: string }[] = [];
-const G = globalThis as unknown as { __seeds: number[]; __theme?: number; __out: unknown };
+const G = globalThis as unknown as { __seeds: number[]; __theme?: number; __slot?: SlotOutcome | null; __out: unknown };
 const seeds = G.__seeds;
 // третий аргумент — тема всех дублей (как ?dev&theme=N в песочнице)
 const cfg = makeConfig(G.__theme !== undefined && G.__theme >= 0 ? { fixedTheme: G.__theme } : {});
@@ -13,9 +14,12 @@ void (async () => {
 for (const seed of seeds) {
   const players = ['me', 'b', 'c', 'd'].map((pid, i) => ({ pid, name: ['Быстрый Енот', 'Тихий Батон', 'Злой Пиксель', 'Шустрый Кот'][i], color: i }));
   const s = createLocalSession(cfg, players, seed, 'me');
-  for (let i = 0; i < 20 * 200 && s.phase !== 'reveal'; i++) s.tick();
+  for (let i = 0; i < 20 * 200 && s.phase !== 'reveal'; i++) {
+    if (G.__slot) (s as LocalSession).sim.forceSlot(G.__slot);
+    s.tick();
+  }
   const sum = s.summary!;
-  const rec = recordRound(s.world, { round: s.round, theme: s.theme, players: sum.reveal, playEnd: sum.replayTo, kills: sum.kills });
+  const rec = recordRound(s.world, { round: s.round, theme: s.theme, players: sum.reveal, playEnd: sum.replayTo, kills: sum.kills, slots: sum.slots });
   await loadTheme(s.theme);
   const self = sum.reveal.find((r) => r.pid === 'me')!.eid;
   const moment = findBestMoment({ ...rec, kills: sum.kills }, self)!;

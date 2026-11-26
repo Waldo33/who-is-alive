@@ -6,8 +6,8 @@
  * сущность самого просящего; до разоблачения дубля в кадре подсвечен и подписан только он,
  * остальные живые — обычная толпа (как в клипе с телефона).
  */
-import { hasSanity, makeConfig, nightCause, recordRound } from '@kto/game-core';
-import type { ArenaDef, Moment, RoundSummary, World } from '@kto/game-core';
+import { hasSanity, makeConfig, nightCause, recordRound, skullSpin } from '@kto/game-core';
+import type { ArenaDef, Moment, RoundSummary, SlotRecord, World } from '@kto/game-core';
 import type { ClipJob } from './film-render';
 
 export interface DeathClipView {
@@ -16,6 +16,8 @@ export interface DeathClipView {
   theme: number;
   arena: ArenaDef;
   summary: RoundSummary | null;
+  /** «Казино»: вращения игроков в этом дубле — кого вырезали черепа (в клип идёт только своё). */
+  spins?: readonly SlotRecord[];
   info(pid: string): { name: string; color: number } | undefined;
 }
 
@@ -37,8 +39,12 @@ export function deathClipJob(
   const known = !!s && killer !== undefined;
   const start = w.keyframes[0]?.time ?? 0;
   const to = Math.min(w.time, at + 1500);
+  // «Казино»: вырезали черепа — в кадре вся «Крутка» (свой автомат), а не «кто вырезал»
+  const cfg = makeConfig();
+  const mine = (s?.slots ?? v.spins ?? []).filter((r) => r.eid === eid);
+  const skull = killer === undefined ? skullSpin(mine, eid, at, cfg) : undefined;
   // с известным нападавшим — его подход целиком (до 4,5 с), иначе — 6 с до развязки
-  const from = Math.max(start, known ? at - 4500 : to - 6000);
+  const from = Math.max(start, skull ? skull.at + cfg.slotWarnMs - 300 : known ? at - 4500 : to - 6000);
   if (to - from < 1500) return null;
   const players = known
     ? s.reveal.flatMap((r) => {
@@ -46,12 +52,12 @@ export function deathClipJob(
         return i ? [{ eid: r.eid, name: i.name, color: i.color }] : [];
       })
     : [{ eid, name: me.name, color: me.color }];
-  const rec = recordRound(w, { round: v.round, theme: v.theme, players: known ? s.reveal : [], playEnd: to, kills: s?.kills });
+  const rec = recordRound(w, { round: v.round, theme: v.theme, players: known ? s.reveal : [], playEnd: to, kills: s?.kills, slots: known ? s.slots : mine });
   // мир идёт дальше, пока задача ждёт в очереди: снимок того, что уже было
   rec.log = rec.log.slice();
   rec.keyframes = rec.keyframes.slice();
   // «Купальская ночь»: забрал Леший или туман — подпись про них (клип рисует ночь сам)
-  const by = hasSanity(v.theme) && killer === undefined ? nightCause(makeConfig(), w.log, eid, at, s?.kills) : undefined;
+  const by = skull ? 'slot' : hasSanity(v.theme) && killer === undefined ? nightCause(cfg, w.log, eid, at, s?.kills) : undefined;
   const moment: Moment = { from, to, score: 0, kind: 'knockout', at, victim: eid, attacker: killer, selfRole: 'victim', ...(by ? { by } : {}) };
   return { rec, moment, arena: v.arena, players, hero: eid, known, noGore: o.noGore, lang: o.lang };
 }

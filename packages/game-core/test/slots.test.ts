@@ -13,6 +13,8 @@ import {
   classifyReels,
   hasSlots,
   makeConfig,
+  momentEvents,
+  recordRound,
   reelsFor,
   rollOutcome,
   skullChance,
@@ -140,6 +142,23 @@ describe('«Казино» в матче', () => {
     expect(hard.sim.pr.every((p) => !p.alive)).toBe(true);
     const kids = run(4, { kidsMode: true }, 'skull');
     expect(kids.sim.pr.some((p) => p.alive)).toBe(true);
+  });
+
+  it('итоги дубля знают все вращения; клип вырезанного черепами — вся «Крутка», без «кто вырезал»', () => {
+    const hard = run(4, {}, 'skull');
+    const sum = hard.sim.summary!;
+    const crowd = hard.events.filter((e): e is Extract<WorldEvent, { t: 'crowd' }> => e.t === 'crowd');
+    expect(sum.slots?.length).toBe(players.length);
+    for (const r of sum.slots!) {
+      expect(r.outcome).toBe('skull');
+      expect(r.at).toBe(crowd[0].at);
+    }
+    const victim = sum.slots![0].eid;
+    const rec = recordRound(hard.sim.world, { round: 1, theme: CASINO, players: sum.reveal, playEnd: sum.replayTo, kills: sum.kills, slots: sum.slots });
+    const ko = momentEvents(rec, victim).find((m) => m.victim === victim)!;
+    expect(ko.by).toBe('slot');
+    expect(ko.attacker).toBeUndefined();
+    expect(ko.from).toBeLessThanOrEqual(crowd[0].showAt);
   });
 
   it('«777» — очко в итогах дубля; три звезды на «Крутке» — звезда', () => {

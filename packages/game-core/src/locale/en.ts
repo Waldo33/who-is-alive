@@ -449,6 +449,7 @@ export const en: Dict = {
     leshyOf: 'taken by Leshy',
     mistOf: 'lost in the mist',
     mistNear: 'The mist closes in…',
+    slotOf: 'rolled three skulls',
     shareKo: '{a} vs {b}: 1–0 😳 Can you spot them among the extras?',
     deathTextBy: '{name} cut me from the shot 😤 Can you find me?',
     star3Of: 'got 3 stars!',
