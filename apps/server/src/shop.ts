@@ -786,6 +786,16 @@ export class Shop {
    * недостающее (стандартные — файлы WEBM, свои — рисует `drawMy`). Стикер в паке находим по первому эмодзи
    * (у каждого своё: game-core/test/my-stickers.test.ts).
    */
+  /**
+   * Записать ход выдачи: только `issued` и `pack` поверх свежей записи. Выдача идёт долго (файлы в Telegram), а
+   * игрок тем временем покупает, открывает стикеры, правит свои — целиком записанная старая копия стирала бы это
+   * (так пропал купленный Кот-банан, 27.11.2026).
+   */
+  private async saveIssued(u: ShopUser): Promise<void> {
+    const fresh = await this.d.ledger.shopUser(u.userId);
+    await this.d.ledger.saveShopUser(fresh ? { ...fresh, issued: [...u.issued], pack: u.pack } : u);
+  }
+
   private async issueRun(id: number): Promise<void> {
     const u = await this.d.ledger.shopUser(id);
     if (!u) return;
@@ -808,7 +818,7 @@ export class Shop {
         const fid = byEmoji.get(em(d.emoji));
         if (fid) await this.call('deleteStickerFromSet', jsonForm({ sticker: fid }));
         u.issued = u.issued.filter((x) => x !== d.key);
-        await this.d.ledger.saveShopUser(u);
+        await this.saveIssued(u);
         changed = true;
       }
       for (const r of first.replace) {
@@ -825,7 +835,7 @@ export class Shop {
           u.issued.push(r.e.key);
         }
         // не нашли в паке (убрали руками в Telegram) — добавится ниже как новый
-        await this.d.ledger.saveShopUser(u);
+        await this.saveIssued(u);
         changed = true;
       }
     }
@@ -850,7 +860,7 @@ export class Shop {
           if (!/already occupied/i.test(String(e))) throw e;
         }
         u.pack = name;
-        await this.d.ledger.saveShopUser(u);
+        await this.saveIssued(u);
         continue;
       }
       const e = left[0];
@@ -861,7 +871,7 @@ export class Shop {
       form.set('f0', await blob(e), `${e.key}.webm`);
       await this.call('addStickerToSet', form);
       u.issued.push(e.key);
-      await this.d.ledger.saveShopUser(u);
+      await this.saveIssued(u);
       changed = true;
     }
     // приманка «Собери свой пак» — снова в конец пака

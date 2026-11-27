@@ -131,6 +131,27 @@ describe('гардероб', () => {
     expect(await pre({})).toBe(false);
   });
 
+  it('пока бот выдаёт стикеры, покупка не теряется: выдача пишет только свой ход поверх свежей записи', async () => {
+    const store = new MemoryStore();
+    const { bot } = makeBot({
+      store,
+      // Telegram создаёт пак — а игрок в это время купил набор (запись поменялась в обход выдачи)
+      result: (m) => {
+        if (m === 'createNewStickerSet') {
+          const cur = (store as unknown as { shop: Map<number, { items: string[] }> }).shop.get(77)!;
+          cur.items.push('kotBanan');
+        }
+        return undefined;
+      },
+    });
+    await played(bot);
+    await bot.handle('POST', '/shop/claim', {}, { initData: initData(ANYA) });
+    const u = await store.shopUser(77);
+    expect(u?.items).toContain('kotBanan');
+    expect(u?.items).toContain('starter');
+    expect(u?.pack).toBe('m77_by_be_nobody_bot');
+  });
+
   it('оплата с настоящим номером платежа (длинный, base64) записывается и выдаёт набор', async () => {
     const { bot, store } = makeBot();
     const charge = `stxmDht2QrZc${'aZ09+/_-='.repeat(14)}`;
