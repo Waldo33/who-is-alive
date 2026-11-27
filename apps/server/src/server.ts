@@ -719,8 +719,17 @@ export class GameServer {
   /** Фильм матча готов, а комната собрана карточкой из Telegram — отдать боту (он заменит карточку видео). */
   private filmToChat(room: Room, f: RoomFilm): void {
     const base = this.o.botInternal;
-    if (!base || !room.invite) return;
+    const bot = this.o.bot;
+    if ((!base && !bot) || !room.invite) return;
     const body: FilmNotice = { invite: room.invite, id: f.id, code: room.code, winners: f.winners, draw: f.draw, awards: f.awards, ...(f.puzzle ? { puzzle: f.puzzle } : {}) };
+    // бот в этом же процессе (с 28.11.2026 — бот живёт в игровом сервере) — напрямую, без HTTP
+    if (!base) {
+      void bot!
+        .film(body)
+        .then((r) => this.log(r.status === 200 ? 'info' : 'warn', 'film_to_chat', { room: room.code, status: r.status, sent: !!(r.body as { sent?: boolean } | null)?.sent }))
+        .catch((e: unknown) => this.log('warn', 'film_to_chat', { room: room.code, err: String(e) }));
+      return;
+    }
     void fetch(`${base}/internal/tg/film`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -780,8 +789,18 @@ export class GameServer {
   /** Живая карточка в чате: состав лобби или счёт съёмки — боту, он перерисует карточку (bot.ts › card). */
   private cardToChat(room: Room, c: RoomCard): void {
     const base = this.o.botInternal;
-    if (!base || !room.invite) return;
+    const bot = this.o.bot;
+    if ((!base && !bot) || !room.invite) return;
     const body: CardNotice = { invite: room.invite, code: room.code, ...c };
+    if (!base) {
+      void bot!
+        .card(body)
+        .then((r) => {
+          if (r.status !== 200) this.log('warn', 'card_to_chat', { room: room.code, status: r.status });
+        })
+        .catch((e: unknown) => this.log('warn', 'card_to_chat', { room: room.code, err: String(e) }));
+      return;
+    }
     void fetch(`${base}/internal/tg/card`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

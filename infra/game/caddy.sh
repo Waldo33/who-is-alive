@@ -161,7 +161,8 @@ $(proxy_opts)
 # и /internal/import (ревью безопасности, M5)
 http://:8079 {
 	bind 127.0.0.1
-	@allowed path /metrics /v1/events /internal/errors /internal/shop /internal/sticker
+	# /tg/status — сторожу в Нидерландах, когда бот живёт в игровом сервере (infra/game/bot-home: eu)
+	@allowed path /metrics /v1/events /internal/errors /internal/shop /internal/sticker /tg/status
 	handle @allowed {
 		reverse_proxy $A $B {
 $(proxy_opts)

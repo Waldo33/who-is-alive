@@ -56,6 +56,8 @@ export interface BotOptions {
   supportChat?: string;
   /** Нарисовать свой стикер игрока (WEBM): sticker-render.ts здесь или игровой сервер по туннелю. */
   drawMy?: ShopDeps['drawMy'];
+  /** Аренда сверки оплат по расписанию (синий и зелёный — один сверяет). */
+  lease?: ShopDeps['lease'];
 }
 
 /** Канал игры в Telegram (новости, ролики). */
@@ -286,6 +288,7 @@ export class Bot {
       site: o.site,
       channelId: '@' + CHANNEL.split('/').pop(),
       drawMy: o.drawMy,
+      lease: o.lease,
     });
   }
 

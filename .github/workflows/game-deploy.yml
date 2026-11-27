@@ -103,6 +103,16 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
 
+      - name: Где живёт бот (infra/game/bot-home)
+        # infra — бот на сервере в Нидерландах (вебхук — туда по туннелю); both — ключ бота ещё и у игры в Европе
+        # (бот в её процессе поднят, но вебхук пока идёт в Нидерланды); eu — бот только в игровом сервере
+        # (docs/server-migration.md › 16). Откат — прежнее значение в файле и выкладка
+        run: |
+          h=$(tr -d ' \n' < infra/game/bot-home)
+          case "$h" in infra | both | eu) ;; *) echo "::error::infra/game/bot-home: «$h» — нужно infra, both или eu"; exit 1 ;; esac
+          echo "BOT_HOME=$h" >> "$GITHUB_ENV"
+          echo "бот: $h"
+
       - name: Тесты сервера
         run: pnpm --filter @kto/server test
 
@@ -356,8 +366,11 @@ jobs:
           S3_SECRET_KEY: ${{ secrets.S3_SECRET_KEY }}
         run: |
           ssh $SSH_OPTS root@$IP 'rm -rf /tmp/deploy && mkdir -p /tmp/deploy'
-          # ключ бота — только серверу бота, файлом по SSH (не в командной строке и не в логах)
-          if [ "$ROLE" = infra ] && [ -n "$TG_TOKEN" ]; then
+          # ключ бота — тому, где живёт бот (infra/game/bot-home), файлом по SSH (не в командной строке и не в логах)
+          bot_here=""
+          [ "$ROLE" = infra ] && [ "$BOT_HOME" != eu ] && bot_here=1
+          [ "$SITE" = eu ] && [ "$BOT_HOME" != infra ] && bot_here=1
+          if [ -n "$bot_here" ] && [ -n "$TG_TOKEN" ]; then
             ( umask 077; printf 'TELEGRAM_BOT_TOKEN=%s\n' "$TG_TOKEN" > deploy/bot.env )
           fi
           # пароль роли базы «только чтение» (Grafana и копии): выводится из TWC_TOKEN — Москва и Нидерланды
@@ -375,7 +388,8 @@ jobs:
           if [ "$SITE" = eu ]; then
             # Европа: основной адрес — api.benobody.app, запасной — свой sslip.io;
             # переезд комнат при выкладке — на тот адрес, что сейчас работает снаружи (до DNS — sslip.io)
-            up=""; [ -s deploy/tunnel.pub ] && up="http://127.0.0.1:9090"
+            # бот в самом игровом сервере (BOT_HOME=eu) — /tg/* к активному экземпляру, без туннеля
+            up=""; [ -s deploy/tunnel.pub ] && [ "$BOT_HOME" != eu ] && up="http://127.0.0.1:9090"
             vars="HOST=api.benobody.app ALT_HOST=$SSLIP PEER_HOST=$HOST WS_HOSTS=api.benobody.app,$SSLIP REGION=eu SITE_HOST=benobody.app SITE_REDIRECT=https://who-is-alive.vercel.app BOT_UPSTREAM=$up"
           elif [ "$ROLE" = game ]; then
             up=""; [ -s deploy/tunnel.pub ] && up="http://127.0.0.1:9090"
@@ -385,7 +399,7 @@ jobs:
             # копии базы и сторож — тоже туда
             vars="HOST=$HOST BOT_SITE=https://benobody.app TUNNEL_EU_TO=$EU_IP GAME_SITE=eu EVENTS_TO=28080"
           fi
-          ssh $SSH_OPTS root@$IP "ANSIBLE=1 ROLE=$ROLE $vars SHA=${GITHUB_SHA::12} bash /tmp/deploy/setup.sh"
+          ssh $SSH_OPTS root@$IP "ANSIBLE=1 ROLE=$ROLE BOT_HOME=$BOT_HOME $vars SHA=${GITHUB_SHA::12} bash /tmp/deploy/setup.sh"
 
       - name: HTTPS снаружи
         env:
@@ -398,8 +412,9 @@ jobs:
           echo "::error::https://$HOST/healthz не отвечает"
           exit 1
 
-      - name: Telegram-бот (вебхук на сервер бота)
-        if: matrix.role == 'infra'
+      - name: Telegram-бот (вебхук туда, где он живёт)
+        # вебхук один (https://api.benobody.app/tg/hook): Caddy в Европе ведёт его в туннель или к активному экземпляру
+        if: (matrix.role == 'infra' && env.BOT_HOME != 'eu') || (matrix.site == 'eu' && env.BOT_HOME == 'eu')
         continue-on-error: true
         env:
           HOST: ${{ steps.addr.outputs.host }}
@@ -416,6 +431,33 @@ jobs:
           # /tg/setup и /tg/status снаружи закрыты (server.ts) — изнутри машины, через внутренний вход Caddy
           ssh $SSH_OPTS root@$IP 'curl -fsS http://127.0.0.1:8080/tg/setup'; echo
           ssh $SSH_OPTS root@$IP 'curl -fsS http://127.0.0.1:8080/tg/status'; echo
+
+      - name: Бот в игровом сервере отвечает (ключ на месте, Telegram доступен)
+        # both — вебхук ещё в Нидерландах, но бот в процессе игры уже поднят: проверяем его изнутри машины
+        if: matrix.site == 'eu' && env.BOT_HOME != 'infra'
+        env:
+          IP: ${{ steps.srv.outputs.ip }}
+        run: |
+          for i in $(seq 1 6); do
+            if res=$(ssh $SSH_OPTS root@$IP 'curl -fsS -m 15 http://127.0.0.1:8080/tg/info'); then echo "бот в игре: $res"; exit 0; fi
+            sleep 5
+          done
+          echo "::error::бот в игровом сервере не отвечает (ключ? api.telegram.org из Европы?)"; exit 1
+
+      - name: Карточки чатов и рейтинг бота — в базу игры (бот переехал в игровой сервер)
+        # бот жил в Нидерландах со своей базой: живые карточки «Собрать комнату» (tg_inline_cards) и рейтинг
+        # «Кастинга дня» (tg_daily_scores) — переносим в базу Европы; повтор ничего не дублирует. Через раннер, в журнал — только счёт
+        if: matrix.role == 'infra' && env.BOT_HOME == 'eu' && steps.eu.outputs.ip != ''
+        continue-on-error: true
+        env:
+          IP: ${{ steps.srv.outputs.ip }}
+          EU_IP: ${{ steps.eu.outputs.ip }}
+        run: |
+          set -o pipefail
+          ssh $SSH_OPTS root@$IP 'sudo -u postgres pg_dump massovka --data-only --inserts --on-conflict-do-nothing -t tg_inline_cards -t tg_daily_scores' \
+            | ssh $SSH_OPTS root@$EU_IP 'sudo -u postgres psql -q massovka >/dev/null'
+          printf 'в базе игры: карточек — '; ssh $SSH_OPTS root@$EU_IP "sudo -u postgres psql massovka -Atc 'select count(*) from tg_inline_cards'"
+          printf 'результатов кастинга — '; ssh $SSH_OPTS root@$EU_IP "sudo -u postgres psql massovka -Atc 'select count(*) from tg_daily_scores'"
 
       - name: Игровой сервер → бот (/tg/* проксируется на сервер бота)
         if: matrix.role == 'game' && steps.infra.outputs.host != ''

@@ -199,6 +199,53 @@ describe('гардероб', () => {
     expect(await store.saveShopPayment({ charge: LOST, userId: 77, item: 'kotBanan', stars: 49, refunded: false })).toBe(false);
   });
 
+  it('сверка по расписанию выдаёт оплату, хотя игрок не заходил в гардероб; повторная сверка ничего не дублирует', async () => {
+    const LOST = `stx${'Qw7+/='.repeat(20)}y`;
+    const txs = [{ id: LOST, amount: 49, date: 1, source: { type: 'user', user: { id: 77, first_name: 'Аня', language_code: 'ru' }, invoice_payload: 'kotBanan:77' } }];
+    const { bot, calls, store } = makeBot({ result: (m) => (m === 'getStarTransactions' ? { transactions: txs } : undefined) });
+    expect(await bot.shop.reconcileAll()).toBe(1);
+    const u = await store.shopUser(77);
+    expect(u?.items).toContain('kotBanan');
+    expect(u?.lang).toBe('ru');
+    expect(calls.filter((c) => c.method === 'sendMessage' && String(c.body.text).includes('Кот-банан'))).toHaveLength(1);
+    // второй проход (или второй экземпляр) — уже выдано: ни записи, ни сообщения
+    calls.length = 0;
+    expect(await bot.shop.reconcileAll()).toBe(0);
+    expect(calls.some((c) => c.method === 'sendMessage')).toBe(false);
+  });
+
+  it('сверку по расписанию делает тот, кто держит аренду: синий и зелёный не сверяют вдвоём', async () => {
+    const store = new MemoryStore();
+    expect(await store.lease('shop_reconcile', 'blue:1', 60_000)).toBe(true);
+    expect(await store.lease('shop_reconcile', 'green:2', 60_000)).toBe(false);
+    // свою аренду продлевает
+    expect(await store.lease('shop_reconcile', 'blue:1', 60_000)).toBe(true);
+  });
+
+  it('проверочная покупка за 1 звезду: без пака и стикеров, возвращается кнопкой; наборы так не вернуть', async () => {
+    const CH = `stx${'Zz1+/='.repeat(20)}t`;
+    let txs: unknown[] = [];
+    const { bot, calls, store } = makeBot({ result: (m) => (m === 'getStarTransactions' ? { transactions: txs } : undefined) });
+    const buy = await bot.handle('POST', '/shop/buy', {}, { initData: initData(ANYA), item: 'test' });
+    expect(buy.status).toBe(200);
+    expect(calls.find((c) => c.method === 'createInvoiceLink')?.body).toMatchObject({ payload: 'test:77', prices: [{ amount: 1 }] });
+    // оплата прошла — только отметка: пака нет, стикеров и сообщения тоже
+    calls.length = 0;
+    await hook(bot, payment({ total_amount: 1, invoice_payload: 'test:77', telegram_payment_charge_id: CH }));
+    expect((await store.shopUser(77))?.items).toEqual(['test']);
+    expect(calls.some((c) => /StickerSet|StickerToSet|sendMessage/.test(c.method))).toBe(false);
+    // «Вернуть звёзды»: номер платежа — из списка Telegram, отметка снимается
+    txs = [{ id: CH, amount: 1, date: 1, source: { type: 'user', user: { id: 77 }, invoice_payload: 'test:77' } }];
+    const back = await bot.handle('POST', '/shop/refund', {}, { initData: initData(ANYA), item: 'test' });
+    expect(back.status).toBe(200);
+    expect((back.body as { items: string[] }).items).not.toContain('test');
+    expect(calls.find((c) => c.method === 'refundStarPayment')?.body).toEqual({ user_id: 77, telegram_payment_charge_id: CH });
+    // чужая покупка не найдётся, набор так не вернуть
+    const BOB = { id: 78, first_name: 'Боб', language_code: 'ru' };
+    expect((await bot.handle('POST', '/shop/refund', {}, { initData: initData(BOB), item: 'test' })).status).toBe(404);
+    expect((await bot.handle('POST', '/shop/refund', {}, { initData: initData(ANYA), item: 'kotBanan' })).status).toBe(403);
+  });
+
   it('бесплатный пак есть — купленный набор сразу добавляется в него; пак по внешней ссылке /start stickers', async () => {
     // пак в Telegram: приманка (🎁) уже не последняя — бот переставит её в конец
     const set = { stickers: [...['👋', '💃', '😵', '🤨'].map((e, i) => ({ file_id: `f${i}`, emoji: e })), { file_id: 'lure_id', emoji: '🎁' }, { file_id: 'f5', emoji: '😭' }, { file_id: 'f6', emoji: '🍌' }] };
