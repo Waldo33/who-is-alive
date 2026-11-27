@@ -2,12 +2,14 @@
 
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
-import { DICTS, SHOP_ITEMS, STICKER_LIST, shopItem } from '@kto/game-core';
+import { DICTS, SHOP_ITEMS, STICKER_LIST, fmt, shopItem } from '@kto/game-core';
 import type { Lang, ShopItemId } from '@kto/game-core';
 import { track } from '@/lib/analytics';
 import { TG_APP } from '@/lib/env';
 import { detectLang } from '@/lib/lang';
-import { bootTelegram, haptic, inTelegram, linkTelegramOnce, openTelegram, shopBuy, shopCached, shopState, shopWear, tgLink } from '@/lib/telegram';
+import { bootTelegram, haptic, inTelegram, linkTelegramOnce, openTelegram, shopBuy, shopCached, shopSignedIn, shopState, shopWear, tgLink } from '@/lib/telegram';
+import { currentWebLogin, prepareWebLogin, startWebLogin, webLogout } from '@/lib/tg-login';
+import type { TgLogin } from '@/lib/tg-login';
 import type { ShopState } from '@/lib/telegram';
 import { TopBar } from '@/ui/TopBarView';
 import { CARD_H, CARD_W, buyLabel, drawCard, itemIcon, starsIcon } from '@/game/skins/wardrobe';
@@ -42,7 +44,12 @@ export default function WardrobeClient() {
   const [lang, setLang] = useState<Lang>('ru');
   const t = DICTS[lang].shop;
   const [ready, setReady] = useState(false);
+  // tgOn — магазин доступен (Telegram или вход через Telegram в браузере); inTg — игра внутри Telegram (покупка — только там)
   const [tgOn, setTgOn] = useState(false);
+  const [inTg, setInTg] = useState(false);
+  // вход через Telegram в браузере: кто вошёл; готово ли окно входа (скрипт Telegram и id бота загружены)
+  const [login, setLogin] = useState<TgLogin | null>(null);
+  const [loginReady, setLoginReady] = useState(false);
   // кнопки внизу — только когда ясно, Telegram ли это и что у игрока есть: иначе сначала мелькает
   // «Купить в Telegram», потом «Купить 49», потом «Уже твой» — экран скачет
   const [known, setKnown] = useState(false);
@@ -81,8 +88,14 @@ export default function WardrobeClient() {
     const pick = SHOP_ITEMS.find((x) => x.id === want);
     if (pick) setItem(pick.id);
     track('shop_view', pick ? { item: pick.id } : {});
-    const tgNow = inTelegram();
+    const inTgNow = inTelegram();
+    setInTg(inTgNow);
+    const tgNow = shopSignedIn();
     setTgOn(tgNow);
+    if (!inTgNow) {
+      setLogin(currentWebLogin());
+      if (!tgNow) void prepareWebLogin().then(setLoginReady);
+    }
     void (async () => {
       try {
         await Promise.race([document.fonts.load('8px "Press Start 2P"', 'Гардероб ABC'), new Promise((r) => setTimeout(r, 2500))]);
@@ -169,9 +182,31 @@ export default function WardrobeClient() {
     return () => cancelAnimationFrame(raf);
   }, [ready, scale]);
 
+  // вход через Telegram в браузере: окно Telegram открывается прямо из нажатия
+  const signIn = async () => {
+    if (busy) return;
+    track('tg_login_tap', {});
+    const l = await startWebLogin(lang);
+    track('tg_login', { ok: !!l });
+    if (!l) return flash(t.loginFail);
+    setLogin(l);
+    setTgOn(true);
+    // этот браузер — тот же игрок Telegram: скин в комнате и стикеры за матчи
+    void linkTelegramOnce();
+    const s = await shopState();
+    if (s) setSt(s);
+  };
+  const signOut = () => {
+    webLogout();
+    setLogin(null);
+    setTgOn(false);
+    setSt(null);
+    void prepareWebLogin().then(setLoginReady);
+  };
+
   const buy = async () => {
     // вне Telegram покупка невозможна — ведём в гардероб внутри бота
-    if (!tgOn) {
+    if (!inTg) {
       track('shop_to_tg', { item: ITEM });
       const link = tgLink('shop');
       if (link) location.href = link;
@@ -282,11 +317,12 @@ export default function WardrobeClient() {
             ) : (
               <p className="muted">{t.sending}</p>
             )}
-            <p className="muted">{t.packHint}</p>
+            {/* в браузере место подсказки занимает строка входа (iPhone SE: витрина должна влезть) */}
+            {inTg && <p className="muted">{t.packHint}</p>}
           </>
         ) : (
           <>
-            {tgOn ? (
+            {inTg ? (
               <button className="btn" onClick={() => void buy()} aria-disabled={!!busy}>
                 {was && <s className="wardrobe-was">{was}</s>}
                 {buyLabel(lang, ITEM)}
@@ -306,6 +342,25 @@ export default function WardrobeClient() {
             {t.build.open}
           </button>
         )}
+        {/* браузер: вход через Telegram — купленное в боте (скин, стикерпак) и здесь */}
+        {!inTg &&
+          (login ? (
+            <p className="muted">
+              {fmt(t.loggedAs, { name: login.username ? `@${login.username}` : (login.first_name ?? String(login.id)) })}{' '}
+              <button className="link" onClick={signOut}>
+                {t.logout}
+              </button>
+            </p>
+          ) : (
+            loginReady && (
+              <>
+                <button className="link" onClick={() => void signIn()}>
+                  {t.login}
+                </button>
+                <p className="muted">{t.loginHint}</p>
+              </>
+            )
+          ))}
         {st?.error === 'need_bot' && (
           <button className="link" onClick={() => openTelegram(bot)}>
             {bot.replace('https://', '')}

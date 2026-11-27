@@ -7,7 +7,7 @@ import type { Lang, MyFig, MyPose, MySticker, ShopItemId, StickerMeta } from '@k
 import { PAL } from '@kto/assets';
 import { track } from '@/lib/analytics';
 import { detectLang } from '@/lib/lang';
-import { bootTelegram, haptic, inTelegram, linkTelegramOnce, openTelegram, shopClaim, shopMy, shopMyDel, shopPick, shopCached, shopState, tgLink } from '@/lib/telegram';
+import { bootTelegram, haptic, linkTelegramOnce, openTelegram, shopClaim, shopMy, shopMyDel, shopPick, shopCached, shopSignedIn, shopState, tgLink } from '@/lib/telegram';
 import type { ShopState } from '@/lib/telegram';
 import { TopBar } from '@/ui/TopBarView';
 import { ST_SIZE, STICKERS, stickerFrame } from '@/game/skins/stickers';
@@ -89,7 +89,8 @@ export default function StickersClient() {
     document.documentElement.lang = l;
     document.title = `${DICTS[l].shop.build.title} · ${DICTS[l].meta.title}`;
     track('stickers_view', {});
-    const tgNow = inTelegram();
+    // в браузере — если вошёл через Telegram на сайте (гардероб › «Войти через Telegram»)
+    const tgNow = shopSignedIn();
     setTgOn(tgNow);
     void (async () => {
       try {
