@@ -397,3 +397,8 @@ button.summary { color: var(--sand); cursor: pointer; }
 .stickers .btn[aria-disabled='true'] { background: var(--night); color: var(--steel); box-shadow: 0 0 0 2px var(--ink); pointer-events: none; }
 /* «Напомнить» в подсказке стикерпака: ссылка, а не кнопка — строка не растёт */
 .stickers-link { font: inherit; font-size: inherit; color: var(--yellow); background: none; border: 0; padding: 8px 2px; margin: -8px 0; text-decoration: underline; cursor: pointer; }
+/* Голограмма платных стикеров: лента из 24 кадров (shine.ts › holoStrip), листается по кадру в 100 мс */
+.stickers-holo { position: absolute; inset: 0; overflow: hidden; }
+.stickers-holo img { width: 2400%; height: 100%; max-width: none; image-rendering: pixelated; animation: stickers-holo 2.4s steps(24) infinite; }
+@keyframes stickers-holo { to { transform: translateX(-100%); } }
+@media (prefers-reduced-motion: reduce) { .stickers-holo img { animation: none; } }
