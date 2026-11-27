@@ -220,6 +220,26 @@ describe('сетевая игра', () => {
     }
   });
 
+  it('скин гардероба идёт только по игроку: в мире, кадрах, итогах и личных сообщениях его нет', () => {
+    const rig = makeRig([50, 120], 0, 6);
+    // скин — в составе (PlayerInfo), как его кладёт сервер; на поле его рисует только телефон самого игрока
+    (players[1] as PlayerInfo).skin = 'kotBanan';
+    try {
+      const rng = new Rng(6);
+      for (let i = 0; i < 20 * 150 && rig.host.phase !== 'results'; i++) {
+        rig.step();
+        botFingers(rig, rng);
+      }
+      expect(rig.host.phase === 'reveal' || rig.host.phase === 'results').toBe(true);
+      for (const { msg } of rig.roomLog) if (msg.t !== 'players') expect(JSON.stringify(msg)).not.toMatch(/kotBanan|"skin"/);
+      for (const { msg } of rig.privLog) expect(JSON.stringify(msg)).not.toMatch(/kotBanan|"skin"/);
+      // гости знают скин игрока g1, но не его сущность — до итогов дубля
+      for (const g of rig.guests) expect(g.info('g1')?.skin).toBe('kotBanan');
+    } finally {
+      delete (players[1] as PlayerInfo).skin;
+    }
+  });
+
   it('рассудок («Купальская ночь») приходит только лично: в общих сообщениях его нет, у гостя — свой', () => {
     const kupala = THEME_RULES.findIndex((r) => r.id === 'kupala');
     const rig = makeRig([50, 120], 0, 7, { fixedTheme: kupala });

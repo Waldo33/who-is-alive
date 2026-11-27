@@ -15,6 +15,7 @@ import type { AddressInfo } from 'node:net';
 import { WebSocketServer } from 'ws';
 import type { WebSocket } from 'ws';
 import { ClientMsg, DEFAULT_WIRE_SETTINGS, ROOM_CODE_ALPHABET, RoomSettingsSchema, WIRE_MAX_BYTES, WIRE_VERSION } from '@kto/net';
+import { skinOf } from '@kto/game-core';
 import type { ServerMsg, WireError } from '@kto/net';
 import { Auth } from './auth';
 import { Counter, MsgBudget, RateWindow } from './limits';
@@ -207,7 +208,14 @@ export class GameServer {
     this.maxRooms = o.maxRooms ?? 2000;
     this.peer = o.peer;
     this.store = o.store ?? new MemoryStore();
-    this.ledger = localLedger(this.store, (t) => this.auth.verify(t));
+    this.ledger = localLedger(
+      this.store,
+      (t) => this.auth.verify(t),
+      // связь с Telegram часто приходит, когда игрок уже в лобби (RoomClient › linkTelegramOnce)
+      (u) => {
+        for (const r of this.rooms.values()) if (r.members.has(u)) this.skinFor(r, u);
+      },
+    );
     this.http = createServer((req, res) => void this.onHttp(req, res));
     this.wss = new WebSocketServer({ noServer: true, maxPayload: WIRE_MAX_BYTES });
     this.http.on('upgrade', (req, socket, head) => {
@@ -754,6 +762,21 @@ export class GameServer {
       .catch((e) => this.log('warn', 'stickers_to_bot', { room: room.code, err: String(e) }));
   }
 
+  /**
+   * Скин игрока — по покупкам его Telegram (tg_links → shop_users), а не с телефона: надеть некупленное
+   * нельзя. Приходит в комнату чуть позже входа; ошибка базы — просто без скина.
+   */
+  private skinFor(room: Room, userId: string): void {
+    void this.store
+      .telegramOf([userId])
+      .then(async (links) => {
+        const tg = links[0];
+        const u = tg ? await this.store.shopUser(tg.tgUser) : null;
+        room.setSkin(userId, (u && skinOf(u.items)) ?? null);
+      })
+      .catch((e) => this.log('warn', 'skin_lookup', { room: room.code, err: String(e) }));
+  }
+
   /** Живая карточка в чате: состав лобби или счёт съёмки — боту, он перерисует карточку (bot.ts › card). */
   private cardToChat(room: Room, c: RoomCard): void {
     const base = this.o.botInternal;
@@ -1072,6 +1095,7 @@ export class GameServer {
       st.name = m.name;
       if (m.clip) room.setClipPrefs(userId, m.clip);
       peer.send(this.flagsText());
+      this.skinFor(room, userId);
       return;
     }
     const room = st.room;

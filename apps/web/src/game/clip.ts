@@ -10,6 +10,8 @@ import { LESHY_H, LESHY_W, giantEnd, giantPose, makeEmberVeil, makeLeshy, makeNi
 import type { Art } from './art';
 import { frameFor } from './frames';
 import { CH_H, CH_W, F, OL_H, OL_W } from './sprites';
+import { skinArt, skinFrame } from './skins/skin-art';
+import type { SkinArt } from './skins/skin-art';
 import { aim, armed, armsOf, bodyPose, drawAir, drawFloor, killsFromLog, weaponSfx } from './gore';
 import type { Holder, Kill, Px } from './gore';
 import { isThemeLoaded, themeLook, themePack } from './themes';
@@ -110,6 +112,8 @@ export interface ClipPlayer {
   eid: number;
   name: string;
   color: number;
+  /** Скин из гардероба: в клипе игрок уже раскрыт — его видят все. */
+  skin?: string;
 }
 
 export interface ClipInput {
@@ -290,6 +294,8 @@ export class ClipPlayerScene {
   private part = -1;
   private trails = new Map<number, { x: number; y: number }[]>();
   private colors = new Map<number, number>();
+  /** Скины игроков (по сущности): надеваются, когда игрок «загорелся» на разборе — до этого он в толпе. */
+  private skins = new Map<number, SkinArt>();
   /** Когда (мс разбора) загорается каждый живой; герой — последним. */
   private litAt = new Map<number, number>();
   private cam = { x: 0, y: 0 };
@@ -356,7 +362,11 @@ export class ClipPlayerScene {
     const len = this.win.to - this.win.from;
     this.speed1 = Math.max(PART1_SPEED, len / (this.mode === 'feature' ? FEATURE_PUZZLE_MAX : PART1_MAX_MS));
     const speed2 = full ? Math.max(this.tm.base, len / PART_MAX_MS) : this.tm.base;
-    for (const p of inp.players) this.colors.set(p.eid, p.color);
+    for (const p of inp.players) {
+      this.colors.set(p.eid, p.color);
+      const sk = skinArt(p.skin);
+      if (sk) this.skins.set(p.eid, sk);
+    }
     const hero = inp.hero;
     this.opp = m.attacker === hero ? m.victim : m.victim === hero ? m.attacker : undefined;
 
@@ -737,9 +747,26 @@ export class ClipPlayerScene {
       // на разборе тусклые все, кроме участников события и живых игроков
       const actor = e.eid === m.attacker || e.eid === m.victim;
       const dim = reveal && !lit && !(zoomed && actor);
+      // скин — только раскрытому: в загадке «найди актёра» банан выдал бы ответ
+      const sk = lit ? this.skins.get(e.eid) : undefined;
       list.push({
         y,
         draw: () => {
+          if (sk) {
+            const f = skinFrame(fr.frame);
+            const ox = x - sk.oax;
+            const oy = y + fr.yoff - sk.oay;
+            g.drawImage(a.shadow, x - 5, y - 2);
+            const oc = sk.outlines[1 + col!];
+            if (isHero) {
+              for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) frame(g, oc, sk.ow, sk.oh, f, ox + dx, oy + dy, fr.flip);
+              frame(g, pulse ? sk.outlines[0] : oc, sk.ow, sk.oh, f, ox, oy, fr.flip);
+            } else frame(g, oc, sk.ow, sk.oh, f, ox, oy, fr.flip);
+            frame(g, sk.body, sk.fw, sk.fh, f, x - sk.ax, y + fr.yoff - sk.ay, fr.flip);
+            if (e.act === 'stun' && t < e.actEnd) frame(g, a.stun, 12, 5, Math.floor(t / 120) % 3, x - 6, y - sk.ay - 3);
+            if (e.markUntil > t) g.drawImage(a.mark, x - 2, y - sk.ay - 9 - (Math.floor(t / 150) % 2));
+            return;
+          }
           const ox = x - 7;
           const oy = y + fr.yoff - 17;
           g.globalAlpha = dim ? 0.4 : 1;

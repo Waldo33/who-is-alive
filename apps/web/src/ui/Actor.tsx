@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react';
 import { PAL, PLAYER_COLORS } from '@kto/assets';
 import { CH_H, CH_W, F, OL_H, OL_W, PARK_CHARS, makeCharacterSheets } from '@/game/sprites';
 import type { CharSheets } from '@/game/sprites';
+import { skinArt, skinFrame } from '@/game/skins/skin-art';
 
 /**
  * Человечек из игры в лобби: спрайт парка (×3, на низком экране ×2) с обводкой цвета игрока. Готовый — машет рукой (кадр жеста),
@@ -29,11 +30,34 @@ function tinted(src: HTMLCanvasElement, color: string): HTMLCanvasElement {
 const outlines = new Map<string, HTMLCanvasElement>();
 const silhouette = new Map<string, HTMLCanvasElement>();
 
-export function Actor({ color, waving = false, empty = false }: { color?: number; waving?: boolean; empty?: boolean }) {
+/**
+ * skin — скин из гардероба (в лобби его видят все): тот же масштаб, что у соседей, банан выше человечка —
+ * холст выше и шире, лишнее уходит вверх и в стороны отрицательными полями (карточка не растёт).
+ */
+export function Actor({ color, waving = false, empty = false, skin }: { color?: number; waving?: boolean; empty?: boolean; skin?: string }) {
   const ref = useRef<HTMLCanvasElement>(null);
+  const sk = empty ? null : skinArt(skin);
   useEffect(() => {
     const cv = ref.current;
     if (!cv) return;
+    if (sk) {
+      const g = cv.getContext('2d')!;
+      g.imageSmoothingEnabled = false;
+      const ol = color === undefined ? null : sk.outlines[1 + color];
+      let i = 0;
+      const draw = () => {
+        // руки скрыты бананом: «машет» — покачивается в танце
+        const f = skinFrame(waving ? F.DANCE + (i++ % 4) : F.D);
+        g.clearRect(0, 0, cv.width, cv.height);
+        if (ol) g.drawImage(ol, f * sk.ow, 0, sk.ow, sk.oh, 0, 0, sk.ow, sk.oh);
+        g.drawImage(sk.body, f * sk.fw, 0, sk.fw, sk.fh, 1, 1, sk.fw, sk.fh);
+      };
+      draw();
+      const reduce = typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+      if (!waving || reduce) return;
+      const id = setInterval(draw, 180);
+      return () => clearInterval(id);
+    }
     sheets ??= makeCharacterSheets(PARK_CHARS);
     const s = sheets;
     const g = cv.getContext('2d')!;
@@ -61,6 +85,7 @@ export function Actor({ color, waving = false, empty = false }: { color?: number
     if (!waving || empty || reduce) return;
     const id = setInterval(draw, 180);
     return () => clearInterval(id);
-  }, [color, waving, empty]);
+  }, [color, waving, empty, sk]);
+  if (sk) return <canvas ref={ref} className="actor skin" width={sk.ow} height={sk.oh} aria-hidden="true" />;
   return <canvas ref={ref} className="actor" width={OL_W * SCALE} height={OL_H * SCALE} aria-hidden="true" />;
 }

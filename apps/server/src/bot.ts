@@ -1,7 +1,9 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { DICTS } from '@kto/game-core';
+import { RateWindow } from './limits';
 import { errFields } from './log';
 import type { Logger } from './log';
+import { cleanName } from './room';
 import { Shop, localLedger } from './shop';
 import type { ShopDeps, ShopLedger, VerifyToken } from './shop';
 import type { Store } from './store';
@@ -50,12 +52,18 @@ export interface BotOptions {
   verifyGameToken?: VerifyToken;
   /** Видеостикеры (<язык>/<id>.webm); нет — гардероб без выдачи стикеров. */
   stickersDir?: string;
+  /** Чат поддержки (бот — его участник): сюда бот пересылает /paysupport, ответ на пересылку уходит игроку. */
+  supportChat?: string;
   /** Нарисовать свой стикер игрока (WEBM): sticker-render.ts здесь или игровой сервер по туннелю. */
   drawMy?: ShopDeps['drawMy'];
 }
 
 /** Канал игры в Telegram (новости, ролики). */
 const CHANNEL = 'https://t.me/benobody_app';
+/** Группа «benobody alerts» (как ALERTS_CHAT в game-deploy.yml): id чата не секрет без ключа бота. */
+const SUPPORT_CHAT = '-5387784292';
+/** Сколько после /paysupport бот пересылает обычные сообщения игрока в поддержку. */
+const SUPPORT_OPEN_MS = 30 * 60_000;
 
 const T = {
   ru: {
@@ -161,9 +169,12 @@ export function dailyNow(now = Date.now()): number {
 
 interface Update {
   message?: {
+    message_id?: number;
     chat: { id: number; type: string };
     text?: string;
-    from?: { id: number; first_name?: string; username?: string; language_code?: string };
+    from?: { id: number; first_name?: string; username?: string; language_code?: string; is_bot?: boolean };
+    /** Ответ на сообщение (в чате поддержки — на пересылку бота). */
+    reply_to_message?: { text?: string; from?: { id: number; is_bot?: boolean } };
     successful_payment?: { currency: string; total_amount: number; invoice_payload: string; telegram_payment_charge_id: string };
   };
   callback_query?: { id: string; from: { id: number; first_name?: string; username?: string; language_code?: string }; data?: string };
@@ -244,12 +255,17 @@ export class Bot {
   private meAt = 0;
   readonly hookSecret: string;
   readonly shop: Shop;
+  private readonly supportChat: string;
+  /** Кто недавно написал /paysupport: id → до какого времени пересылать его сообщения. */
+  private readonly supportUntil = new Map<number, number>();
+  private readonly supportRate = new RateWindow(5, 10 * 60_000);
 
   constructor(private readonly o: BotOptions) {
     this.app = o.app ?? 'play';
     this.casting = (o.features ?? []).includes('casting');
     this.f = o.fetchImpl ?? fetch;
     // секрет вебхука выводится из ключа бота — хранить отдельно не нужно (так же было в Supabase)
+    this.supportChat = o.supportChat ?? SUPPORT_CHAT;
     this.hookSecret = createHash('sha256').update('kto-hook:' + o.token).digest('hex').slice(0, 48);
     this.shop = new Shop({
       api: (m, b) => this.api(m, b),
@@ -262,6 +278,60 @@ export class Bot {
       channelId: '@' + CHANNEL.split('/').pop(),
       drawMy: o.drawMy,
     });
+  }
+
+  private supportOpen(id: number): boolean {
+    const until = this.supportUntil.get(id);
+    if (until !== undefined && until < Date.now()) this.supportUntil.delete(id);
+    return (this.supportUntil.get(id) ?? 0) >= Date.now();
+  }
+
+  /**
+   * /paysupport и сообщения после него: игроку — «запрос передан», в чат поддержки — кто, что куплено и текст
+   * (без чужих ссылок и @упоминаний). Метка #u<id> в пересылке — по ней ответ из чата уходит игроку.
+   */
+  private async onSupport(from: { id: number; first_name?: string; username?: string; language_code?: string }, raw: string, command: boolean): Promise<void> {
+    const text = safeCaption(raw, this.o.site ?? '').slice(0, 1000);
+    if (command) this.supportUntil.set(from.id, Date.now() + SUPPORT_OPEN_MS);
+    // пустой /paysupport: игроку — подсказка, в поддержку — пока ничего
+    if (!text) {
+      if (command) await this.shop.support(from.id, from.language_code, false);
+      return;
+    }
+    if (!this.supportRate.take(String(from.id), Date.now())) return;
+    const items = await this.shop.itemsOf(from.id);
+    const name = cleanName(safeCaption(from.first_name ?? '', ''), '—');
+    const user = from.username && /^\w{3,32}$/.test(from.username) ? ` · ${from.username}` : '';
+    const card = [
+      `🧾 Поддержка: ${name}${user}`,
+      `Номер покупателя: ${from.id}`,
+      `Куплено: ${items.length ? items.join(', ') : 'ничего'}`,
+      '',
+      text,
+      '',
+      `Ответь на это сообщение — ответ уйдёт игроку. Возврат: Actions → shop-refund, номер ${from.id}.`,
+      `#u${from.id}`,
+    ].join('\n');
+    try {
+      await this.api('sendMessage', { chat_id: this.supportChat, text: card, disable_web_page_preview: true });
+    } catch (e) {
+      // бот не в чате поддержки — игроку всё равно ответим; тревога — по журналу
+      this.o.log('error', 'tg_support', errFields(e));
+    }
+    if (command) await this.shop.support(from.id, from.language_code, true);
+  }
+
+  /** Ответ в чате поддержки на пересылку бота — игроку, чей #u<id> в пересылке. */
+  private async onSupportReply(m: NonNullable<Update['message']>): Promise<void> {
+    const re = m.reply_to_message;
+    const to = re?.from?.is_bot ? /#u(\d{1,16})\s*$/.exec(re.text ?? '')?.[1] : undefined;
+    if (!to || !m.text || m.from?.is_bot) return;
+    try {
+      await this.api('sendMessage', { chat_id: Number(to), text: m.text.slice(0, 3000) });
+      if (m.message_id) await this.api('setMessageReaction', { chat_id: this.supportChat, message_id: m.message_id, reaction: [{ type: 'emoji', emoji: '👍' }] });
+    } catch (e) {
+      this.o.log('warn', 'tg_support_reply', errFields(e));
+    }
   }
 
   private get hookUrl(): string {
@@ -343,8 +413,10 @@ export class Bot {
           else if (u?.callback_query) await this.shop.onCallback(u.callback_query);
           // бесплатный стикерпак по внешней ссылке t.me/<бот>?start=stickers (только в личке: пак — этого игрока)
           else if (u?.message?.text === '/start stickers' && u.message.chat.type === 'private' && u.message.from) await this.shop.claimInChat(u.message.from);
-          else if (u?.message?.text?.startsWith('/paysupport')) await this.shop.support(u.message.chat.id, u.message.from?.language_code);
+          else if (u?.message?.text?.startsWith('/paysupport') && u.message.chat.type === 'private' && u.message.from) await this.onSupport(u.message.from, u.message.text.slice('/paysupport'.length), true);
+          else if (u?.message && String(u.message.chat.id) === this.supportChat) await this.onSupportReply(u.message);
           else if (u?.message?.text?.startsWith('/start')) await this.onStart(u.message);
+          else if (u?.message?.text && u.message.chat.type === 'private' && u.message.from && this.supportOpen(u.message.from.id)) await this.onSupport(u.message.from, u.message.text, false);
           else if (u?.inline_query) await this.onInline(u.inline_query);
           else if (u?.chosen_inline_result) await this.onChosen(u.chosen_inline_result);
         } catch (e) {

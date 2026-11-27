@@ -439,6 +439,8 @@ export interface ShopState {
   error: string | null;
   /** Канал игры (при need_sub). */
   channel?: string;
+  /** Надетый скин (null — снят или не куплен); старый сервер бота не шлёт. */
+  worn?: string | null;
   /** «Собери свой стикерпак»: открытые стикеры, убранные игроком, свои, открытые фигурки, открытые наградами (`st:`). */
   open?: StickerId[];
   off?: StickerId[];
@@ -484,6 +486,11 @@ export function shopMyDel(slot: number) {
 /** Что есть у игрока (и дослать недовыданные стикеры). null — не в Telegram или сервер недоступен. */
 export function shopState(): Promise<ShopState | null> {
   return botPost<ShopState>('/shop', {});
+}
+
+/** «Надеть» купленный скин или «Снять» (null). В комнате — со следующего входа. */
+export function shopWear(item: string | null): Promise<ShopState | null> {
+  return botPost<ShopState>('/shop/wear', { item });
 }
 
 /** Забрать бесплатный пак: бот рисует пак и присылает ссылку (до ~20 с). */

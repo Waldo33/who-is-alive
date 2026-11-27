@@ -35,6 +35,8 @@ export interface Member {
   joinedAt: number;
   online: boolean;
   ready: boolean;
+  /** Скин из гардероба (подставляет сервер по покупкам) — в лобби его видят все. */
+  skin?: string;
 }
 
 export interface RoomState {

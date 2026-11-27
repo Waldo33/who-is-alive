@@ -74,6 +74,8 @@ export interface WireMember {
   joinedAt: number;
   online: boolean;
   ready: boolean;
+  /** Скин из гардероба (по покупкам, подставляет сервер). В лобби его видят все. Старые серверы не шлют. */
+  skin?: string;
 }
 
 export interface WireRoom {

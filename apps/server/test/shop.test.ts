@@ -6,6 +6,7 @@ import { silentLogger } from '../src/log';
 import { GameServer } from '../src/server';
 import { RemoteLedger, localLedger, packName, shopLedgerOp, wantedStickers } from '../src/shop';
 import { MemoryStore } from '../src/store';
+import { skinOf } from '@kto/game-core';
 
 /** Гардероб: бесплатный пак, покупка за звёзды, выдача стикеров в личный пак (shop.ts). */
 
@@ -49,6 +50,8 @@ function makeBot(opts: { result?: (method: string) => unknown; fail?: (method: s
   return { bot, calls, store };
 }
 
+/** Чат поддержки по умолчанию (bot.ts › SUPPORT_CHAT). */
+const SUPPORT = '-5387784292';
 const ANYA = { id: 77, first_name: 'Аня @spam', language_code: 'ru' };
 /** Сервер засчитал игроку сыгранный матч (бесплатный пак — после матча и подписки на канал). */
 const played = (bot: Bot, id = 77) => bot.shop.earn({ users: [{ tgUser: id, name: 'Аня @spam', lang: 'ru', stickers: [] }] });
@@ -57,7 +60,7 @@ const payment = (over: Record<string, unknown> = {}) => ({
   message: {
     chat: { id: 77, type: 'private' },
     from: ANYA,
-    successful_payment: { currency: 'XTR', total_amount: 199, invoice_payload: 'kotBanan:77', telegram_payment_charge_id: 'ch_1', ...over },
+    successful_payment: { currency: 'XTR', total_amount: 49, invoice_payload: 'kotBanan:77', telegram_payment_charge_id: 'ch_1', ...over },
   },
 });
 
@@ -87,13 +90,13 @@ describe('гардероб', () => {
     const buy = await bot.handle('POST', '/shop/buy', {}, { initData: initData(ANYA), item: 'kotBanan' });
     expect(buy).toEqual({ status: 200, body: { link: 'https://t.me/$invoice' } });
     const inv = calls.find((c) => c.method === 'createInvoiceLink')!.body;
-    expect(inv).toMatchObject({ currency: 'XTR', payload: 'kotBanan:77', prices: [{ amount: 199 }] });
+    expect(inv).toMatchObject({ currency: 'XTR', payload: 'kotBanan:77', prices: [{ amount: 49 }] });
     expect(inv.provider_token).toBeUndefined();
     expect((await bot.handle('POST', '/shop/buy', {}, { initData: initData(ANYA), item: 'nope' })).status).toBe(400);
 
     const pre = async (q: Record<string, unknown>) => {
       calls.length = 0;
-      await hook(bot, { pre_checkout_query: { id: 'q', from: { id: 77 }, currency: 'XTR', total_amount: 199, invoice_payload: 'kotBanan:77', ...q } });
+      await hook(bot, { pre_checkout_query: { id: 'q', from: { id: 77 }, currency: 'XTR', total_amount: 49, invoice_payload: 'kotBanan:77', ...q } });
       return calls.find((c) => c.method === 'answerPreCheckoutQuery')!.body.ok;
     };
     expect(await pre({})).toBe(true);
@@ -164,6 +167,48 @@ describe('гардероб', () => {
     expect(calls.flatMap((c) => c.files).some((f) => /notCrying|justBanana/.test(f))).toBe(false);
   });
 
+  it('/paysupport: запрос — в чат поддержки с номером и покупками, ответ оттуда — игроку', async () => {
+    const { bot, calls } = makeBot();
+    const sent = (chat: number | string) => calls.filter((c) => c.method === 'sendMessage' && String(c.body.chat_id) === String(chat)).map((c) => String(c.body.text));
+    // пустой /paysupport — подсказка игроку, в поддержку ничего
+    await hook(bot, { message: { chat: { id: 77, type: 'private' }, from: ANYA, text: '/paysupport' } });
+    expect(sent(77).at(-1)).toContain('77');
+    expect(sent(SUPPORT)).toHaveLength(0);
+    // следующее сообщение — в поддержку: имя без @, номер, покупки, без чужих ссылок
+    await hook(bot, payment());
+    await hook(bot, { message: { chat: { id: 77, type: 'private' }, from: ANYA, text: 'скин не появился evil.example/x @spammer' } });
+    const card = sent(SUPPORT).at(-1)!;
+    expect(card).toContain('Номер покупателя: 77');
+    expect(card).toContain('kotBanan');
+    expect(card).toContain('скин не появился');
+    expect(card).not.toMatch(/evil\.example|@spam/);
+    expect(card).toMatch(/#u77$/);
+    // ответ на пересылку в чате поддержки — игроку; чужая группа и не ответ — никому
+    const before = sent(77).length;
+    await hook(bot, { message: { message_id: 5, chat: { id: Number(SUPPORT), type: 'group' }, from: { id: 1, first_name: 'Owner' }, text: 'Вернули звёзды', reply_to_message: { text: card, from: { id: 9, is_bot: true } } } });
+    expect(sent(77).at(-1)).toBe('Вернули звёзды');
+    await hook(bot, { message: { chat: { id: -100, type: 'group' }, from: { id: 1 }, text: 'чужое', reply_to_message: { text: card, from: { id: 9, is_bot: true } } } });
+    await hook(bot, { message: { chat: { id: Number(SUPPORT), type: 'group' }, from: { id: 1 }, text: 'просто так' } });
+    expect(sent(77).length).toBe(before + 1);
+  });
+
+  it('«Надеть» / «Снять»: только купленный скин; новая покупка надевается сама', async () => {
+    const { bot, store } = makeBot();
+    const wear = (item: unknown) => bot.handle('POST', '/shop/wear', {}, { initData: initData(ANYA), item });
+    // не куплен — не надеть, чужое имя — отказ
+    expect((await wear('kotBanan')).status).toBe(403);
+    expect((await wear('<b>')).status).toBe(400);
+    await hook(bot, payment());
+    expect(skinOf((await store.shopUser(77))!.items)).toBe('kotBanan');
+    const off = await wear(null);
+    expect(off.status).toBe(200);
+    expect((off.body as { worn: string | null }).worn).toBeNull();
+    expect(skinOf((await store.shopUser(77))!.items)).toBeUndefined();
+    const on = await wear('kotBanan');
+    expect((on.body as { worn: string | null }).worn).toBe('kotBanan');
+    expect((await store.shopUser(77))!.items.filter((x) => x.startsWith('wear:'))).toEqual(['wear:kotBanan']);
+  });
+
   it('сбой Telegram: выдано записано, остальное дошлётся при заходе в гардероб; без «Старт» у бота — need_bot', async () => {
     let down = true;
     const { bot, calls } = makeBot({ fail: (m) => (m === 'createNewStickerSet' && down ? 'Bad Request: PEER_ID_INVALID' : null) });
@@ -194,8 +239,14 @@ describe('гардероб', () => {
     expect((await hook(bot, payment())).status).toBe(500);
   });
 
-  it('возврат: звёзды назад, набор забран — только изнутри машины', async () => {
-    const { bot, calls, store } = makeBot();
+  it('возврат: звёзды назад, набор и скин забраны, его стикеры удалены из пака — только изнутри машины', async () => {
+    // пак игрока в Telegram: стикеры набора узнаются по первому эмодзи (🌧 — с вариантом U+FE0F, как отдаёт Telegram)
+    const inPack = [
+      { file_id: 'F_cry', emoji: '😭' },
+      { file_id: 'F_banana', emoji: '🍌' },
+      { file_id: 'F_lure', emoji: '🎁' },
+    ];
+    const { bot, calls, store } = makeBot({ result: (m) => (m === 'getStickerSet' ? { stickers: inPack } : undefined) });
     await hook(bot, payment());
     const srv = new GameServer({ authSecret: 'x'.repeat(32), log: silentLogger, trustProxy: true, store, bot });
     const port = await srv.listen(0, '127.0.0.1');
@@ -205,8 +256,13 @@ describe('гардероб', () => {
       const r = await fetch(url, { method: 'POST', body: JSON.stringify({ charge: 'ch_1' }) });
       expect(r.status).toBe(200);
       expect(calls.find((c) => c.method === 'refundStarPayment')?.body).toEqual({ user_id: 77, telegram_payment_charge_id: 'ch_1' });
-      // набор забран, пак (и выданные стикеры) остаётся
-      expect((await store.shopUser(77))?.items).toEqual(['pack']);
+      // набор забран (скина больше нет), пак остаётся, стикеры набора удалены из него, приманка — на месте
+      const u = (await store.shopUser(77))!;
+      expect(u.items).toEqual(['pack']);
+      expect(skinOf(u.items)).toBeUndefined();
+      expect(calls.filter((c) => c.method === 'deleteStickerFromSet').map((c) => c.body.sticker)).toEqual(['F_cry', 'F_banana']);
+      expect(u.issued.some((id) => id === 'notCrying' || id === 'justBanana')).toBe(false);
+      expect(await r.json()).toMatchObject({ ok: true, item: 'kotBanan', removed: 2 });
       // второй возврат того же платежа — нет
       expect((await fetch(url, { method: 'POST', body: JSON.stringify({ charge: 'ch_1' }) })).status).toBe(404);
     } finally {

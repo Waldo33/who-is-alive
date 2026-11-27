@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { DICTS, MY_FIGS, MY_ISSUED, MY_MARKS, MY_MAX, MY_POSE_EMOJI, SHOP_ITEMS, STICKER_LIST, canDrop, fmt, isMySticker, isStickerId, myFigOpen, myIssued, offSticker, parseMySticker, shopItem } from '@kto/game-core';
+import { DICTS, MY_FIGS, MY_ISSUED, MY_MARKS, MY_MAX, MY_POSE_EMOJI, SHOP_ITEMS, STICKER_LIST, canDrop, fmt, isMySticker, isSkin, isStickerId, myFigOpen, myIssued, offSticker, parseMySticker, shopItem, skinOf, wearItems } from '@kto/game-core';
 import type { MySticker, StickerId, StickerMeta } from '@kto/game-core';
 import { RateWindow } from './limits';
 import { errFields } from './log';
@@ -42,7 +42,8 @@ export type ShopLedger = Pick<Store, 'shopUser' | 'saveShopUser' | 'saveShopPaym
 export type VerifyToken = (token: string) => Promise<string | null>;
 
 /** Учёт в своей базе (бот и игровой сервер в одном процессе: разработка, тесты). */
-export function localLedger(store: Store, verify?: VerifyToken): ShopLedger {
+/** onLink — игрок сервера связан с Telegram (его скин теперь известен: server.ts обновит комнату). */
+export function localLedger(store: Store, verify?: VerifyToken, onLink?: (gameUser: string) => void): ShopLedger {
   return {
     shopUser: (id) => store.shopUser(id),
     saveShopUser: (u) => store.saveShopUser(u),
@@ -52,6 +53,7 @@ export function localLedger(store: Store, verify?: VerifyToken): ShopLedger {
       const gameUser = verify ? await verify(token) : null;
       if (!gameUser) return false;
       await store.linkTelegram({ gameUser, ...link });
+      onLink?.(gameUser);
       return true;
     },
   };
@@ -60,7 +62,7 @@ export function localLedger(store: Store, verify?: VerifyToken): ShopLedger {
 /** Токен игрока: JWT (три части base64url), не длиннее 1 КБ. */
 const TOKEN = /^[A-Za-z0-9_-]{1,512}\.[A-Za-z0-9_-]{1,512}\.[A-Za-z0-9_-]{1,512}$/;
 
-const ITEM = /^(?:starter|(?:st|in|own|made|off):[A-Za-z]{1,24}|[A-Za-z]{1,24})$/;
+const ITEM = /^(?:starter|(?:st|in|own|made|off|wear):[A-Za-z]{1,24}|[A-Za-z]{1,24})$/;
 const PACK = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
 const CHARGE = /^[A-Za-z0-9_:.-]{1,128}$/;
 
@@ -223,7 +225,7 @@ export interface ShopDeps {
   log: Logger;
   /** Папка с видеостикерами: <язык>/<id>.webm. */
   stickersDir: string;
-  /** Канал игры — в /paysupport. */
+  /** Канал игры (кнопка «Подписаться» за бесплатный пак). */
   channel: string;
   /** Адрес игры (кнопка «Играть» в сообщении о новом стикере). */
   site?: string;
@@ -273,6 +275,7 @@ export class Shop {
     if (path === '/shop/pack') return { status: 200, body: await this.state(id, true) };
     if (path === '/shop/buy') return this.buy(init, body.item);
     if (path === '/shop/link') return this.link(init.user, body.token);
+    if (path === '/shop/wear') return this.wear(id, body.item);
     if (path === '/shop/pick') return this.pick(id, body.id, body.on);
     if (path === '/shop/my') return this.saveMy(id, body.slot, body.sticker, now);
     if (path === '/shop/my/del') return this.delMy(id, body.slot);
@@ -295,6 +298,8 @@ export class Shop {
       wanted: plan?.total ?? 0,
       error: this.failed.get(id) ?? null,
       catalog: SHOP_ITEMS,
+      /** Надетый скин (null — снят или не куплен). */
+      worn: (u && skinOf(u.items)) ?? null,
       // «Собери свой стикерпак»: что открыто, что убрано, свои стикеры, открытые фигурки, сколько ещё делать боту
       open: open.map((s) => s.id),
       off: open.filter((s) => u?.items.includes(offSticker(s.id))).map((s) => s.id),
@@ -542,6 +547,16 @@ export class Shop {
     if (q.data?.startsWith('pk:')) await this.d.api('answerCallbackQuery', { callback_query_id: q.id });
   }
 
+  /** «Надеть» (купленный скин) или «Снять» (item: null). В комнате — со следующего входа. */
+  private async wear(id: number, raw: unknown): Promise<ShopReply> {
+    if (raw !== null && !isSkin(raw)) return { status: 400, body: { error: 'bad_item' } };
+    const u = await this.d.ledger.shopUser(id);
+    if (!u || (raw !== null && !u.items.includes(raw))) return { status: 403, body: { error: 'not_owned' } };
+    u.items = wearItems(u.items, raw);
+    await this.d.ledger.saveShopUser(u);
+    return { status: 200, body: await this.state(id, false) };
+  }
+
   private async buy(init: ShopInit, raw: unknown): Promise<ShopReply> {
     const item = shopItem(raw);
     if (!item) return { status: 400, body: { error: 'bad_item' } };
@@ -594,6 +609,8 @@ export class Shop {
     const add = [p.item.id, 'pack'].filter((i) => !u.items.includes(i));
     if (add.length) {
       u.items.push(...add);
+      // купленный скин сразу надет (даже если раньше был «Снять»): без отметки надет последний купленный
+      if (isSkin(p.item.id) && add.includes(p.item.id)) u.items = u.items.filter((x) => !x.startsWith('wear:'));
       await this.d.ledger.saveShopUser(u);
     }
     if (!fresh) return;
@@ -604,7 +621,11 @@ export class Shop {
     await this.notify(u.userId, u.lang, DICTS[u.lang].shop.botBought, st.pack);
   }
 
-  /** Возврат звёзд (изнутри машины: /internal/tg/refund). Набор забираем, стикеры остаются в паке. */
+  /**
+   * Возврат звёзд (изнутри машины: /internal/tg/refund, кнопка shop-refund.yml). Набор забираем: скин пропадает
+   * (и с «Надеть»), стикеры набора удаляются из пака игрока. Открытые в матчах (`st:<id>`) помним — при новой
+   * покупке они вернутся в пак.
+   */
   async refund(charge: unknown): Promise<ShopReply> {
     if (typeof charge !== 'string' || !CHARGE.test(charge)) return { status: 400, body: { error: 'bad_charge' } };
     const p = await this.d.ledger.refundShopPayment(charge);
@@ -616,16 +637,50 @@ export class Shop {
       return { status: 502, body: { error: 'telegram' } };
     }
     const u = await this.d.ledger.shopUser(p.userId);
+    let removed = 0;
     if (u) {
-      u.items = u.items.filter((i) => i !== p.item);
+      u.items = u.items.filter((i) => i !== p.item && i !== `wear:${p.item}`);
       await this.d.ledger.saveShopUser(u);
+      removed = await this.dropStickers(u, p.item);
     }
-    this.d.log('info', 'shop_refunded', { item: p.item, stars: p.stars });
-    return { status: 200, body: { ok: true, item: p.item, stars: p.stars } };
+    this.d.log('info', 'shop_refunded', { item: p.item, stars: p.stars, removed });
+    return { status: 200, body: { ok: true, item: p.item, stars: p.stars, removed } };
   }
 
-  async support(chat: number, code?: string): Promise<void> {
-    await this.d.api('sendMessage', { chat_id: chat, text: fmt(DICTS[langOf(code)].shop.botSupport, { channel: this.d.channel }) });
+  /**
+   * Убрать из пака стикеры набора: стикер пака узнаём по первому эмодзи (у каждого стикера своё). Пак не может
+   * опустеть — приманка остаётся. Не вышло (сбой Telegram) — стикер остаётся выданным, ошибка — в журнал.
+   */
+  private async dropStickers(u: ShopUser, item: string): Promise<number> {
+    const mine = STICKER_LIST.filter((s) => s.set === item && u.issued.includes(s.id));
+    if (!mine.length || !u.pack) return 0;
+    const bare = (e: string | undefined) => (e ?? '').replace(/\uFE0F/g, '');
+    let n = 0;
+    try {
+      const set = await this.d.api<{ stickers?: { file_id: string; emoji?: string }[] }>('getStickerSet', { name: u.pack });
+      for (const s of mine) {
+        const st = set?.stickers?.find((x) => bare(x.emoji) === bare(s.emoji[0]));
+        if (st) await this.d.api('deleteStickerFromSet', { sticker: st.file_id });
+        u.issued = u.issued.filter((id) => id !== s.id);
+        n++;
+      }
+    } catch (e) {
+      this.d.log('error', 'shop_refund_stickers', errFields(e));
+    }
+    await this.d.ledger.saveShopUser(u);
+    return n;
+  }
+
+  /** /paysupport: игроку — «запрос передан» (sent) или подсказка написать, что случилось; номер покупателя — в обоих. */
+  async support(chat: number, code: string | undefined, sent: boolean): Promise<void> {
+    const t = DICTS[langOf(code)].shop;
+    await this.d.api('sendMessage', { chat_id: chat, text: fmt(sent ? t.botSupportSent : t.botSupport, { id: chat }) });
+  }
+
+  /** Что куплено (наборы, без стикеров и меток) — для запроса в поддержку. */
+  async itemsOf(id: number): Promise<string[]> {
+    const u = await this.d.ledger.shopUser(id);
+    return (u?.items ?? []).filter((i) => !!shopItem(i));
   }
 
   private async notify(chat: number, lang: Lang, text: string, pack: string | null, play = false): Promise<void> {
