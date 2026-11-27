@@ -14,6 +14,7 @@
  * Вне Telegram всё здесь — пустые вызовы. Скрипт Telegram грузится только внутри Telegram.
  */
 import { GAME_API, TG_APP } from './env';
+import { ensureGameUser } from './game-server';
 import type { SharedClip } from './clips';
 import { featureOn } from './features';
 import { LANG_KEY } from './lang';
@@ -38,7 +39,7 @@ interface TgInsets {
 
 export interface TgWebApp {
   initData: string;
-  initDataUnsafe: { user?: { first_name?: string; last_name?: string; username?: string; language_code?: string; is_premium?: boolean }; start_param?: string };
+  initDataUnsafe: { user?: { id?: number; first_name?: string; last_name?: string; username?: string; language_code?: string; is_premium?: boolean }; start_param?: string };
   version: string;
   platform: string;
   isFullscreen?: boolean;
@@ -431,8 +432,10 @@ export interface ShopState {
   packs: Record<string, string>;
   issued: number;
   wanted: number;
-  /** need_bot — игрок не открывал бота, стикеры выдать нельзя. */
+  /** need_bot — игрок не открывал бота, стикеры выдать нельзя; need_sub — бесплатный пак: ни матча, ни подписки. */
   error: string | null;
+  /** Канал игры (при need_sub). */
+  channel?: string;
 }
 
 /** Что есть у игрока (и дослать недовыданные стикеры). null — не в Telegram или сервер недоступен. */
@@ -468,4 +471,24 @@ export function openTelegram(url: string): void {
   const w = tg();
   if (w) w.openTelegramLink(url);
   else window.open(url, '_blank', 'noopener');
+}
+
+/**
+ * Связать игрока игрового сервера с аккаунтом Telegram (один раз на пару «телефон — аккаунт»): по связи
+ * сервер после матча кладёт открытые стикеры в пак игрока. Вне Telegram — ничего.
+ */
+export async function linkTelegramOnce(): Promise<void> {
+  if (!inTelegram()) return;
+  try {
+    const w = await bootTelegram();
+    const tg = w?.initDataUnsafe?.user?.id;
+    if (!tg) return;
+    const me = await ensureGameUser();
+    const key = `${tg}:${me.userId}`;
+    if (localStorage.getItem('kto:tglink') === key) return;
+    const r = await botPost<{ ok?: boolean }>('/shop/link', { token: me.token });
+    if (r?.ok) localStorage.setItem('kto:tglink', key);
+  } catch {
+    /* нет сети или приватный режим — свяжем в следующий раз */
+  }
 }

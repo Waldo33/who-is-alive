@@ -35,6 +35,10 @@ export interface Store {
   saveShopPayment(p: ShopPayment): Promise<boolean>;
   /** Отметить возврат. null — платежа нет или он уже возвращён. */
   refundShopPayment(charge: string): Promise<ShopPayment | null>;
+  /** Связь игрока сервера (анонимный id) с пользователем Telegram — для стикеров за матчи. */
+  linkTelegram(link: TgLink): Promise<void>;
+  /** Связи для этих игроков сервера (кого нет — нет в ответе). */
+  telegramOf(gameUsers: string[]): Promise<TgLink[]>;
   ping(): Promise<boolean>;
   close(): Promise<void>;
 }
@@ -50,6 +54,16 @@ export interface ShopUser {
   pack: string | null;
   /** Стикеры, уже добавленные в пак. */
   issued: string[];
+}
+
+export interface TgLink {
+  /** id игрока на игровом сервере (auth.ts). */
+  gameUser: string;
+  /** id пользователя Telegram. */
+  tgUser: number;
+  /** Имя для названия пака и язык — если пака ещё нет. */
+  name: string;
+  lang: 'ru' | 'en';
 }
 
 export interface ShopPayment {
@@ -168,6 +182,14 @@ const MIGRATIONS: string[] = [
      stars integer not null,
      refunded boolean not null default false,
      created_at timestamptz not null default now()
+   )`,
+  // стикеры за матчи: какой игрок сервера — какой пользователь Telegram (вход из Mini App; новый вход — перезапись)
+  `create table if not exists tg_links (
+     game_user text primary key,
+     tg_user bigint not null,
+     name text not null default '',
+     lang text not null default 'ru',
+     updated_at timestamptz not null default now()
    )`,
 ];
 
@@ -306,6 +328,20 @@ export class PgStore implements Store {
     return x ? { charge: x.charge, userId: Number(x.user_id), item: x.item, stars: x.stars, refunded: true } : null;
   }
 
+  async linkTelegram(l: TgLink): Promise<void> {
+    await this.pool.query(
+      `insert into tg_links (game_user, tg_user, name, lang) values ($1, $2, $3, $4)
+       on conflict (game_user) do update set tg_user = excluded.tg_user, name = excluded.name, lang = excluded.lang, updated_at = now()`,
+      [l.gameUser, l.tgUser, l.name, l.lang],
+    );
+  }
+
+  async telegramOf(gameUsers: string[]): Promise<TgLink[]> {
+    if (!gameUsers.length) return [];
+    const res = await this.pool.query(`select game_user, tg_user, name, lang from tg_links where game_user = any($1::text[])`, [gameUsers]);
+    return res.rows.map((x) => ({ gameUser: x.game_user, tgUser: Number(x.tg_user), name: x.name, lang: x.lang === 'en' ? 'en' : 'ru' }));
+  }
+
   async ping(): Promise<boolean> {
     try {
       await this.pool.query('select 1');
@@ -413,6 +449,16 @@ export class MemoryStore implements Store {
     if (!p || p.refunded) return null;
     p.refunded = true;
     return { ...p };
+  }
+
+  links = new Map<string, TgLink>();
+
+  async linkTelegram(l: TgLink): Promise<void> {
+    this.links.set(l.gameUser, { ...l });
+  }
+
+  async telegramOf(gameUsers: string[]): Promise<TgLink[]> {
+    return gameUsers.flatMap((g) => (this.links.has(g) ? [{ ...this.links.get(g)! }] : []));
   }
 
   async ping(): Promise<boolean> {

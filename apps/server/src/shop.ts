@@ -5,23 +5,27 @@ import type { StickerMeta } from '@kto/game-core';
 import { RateWindow } from './limits';
 import { errFields } from './log';
 import type { Logger } from './log';
-import type { ShopPayment, ShopUser, Store } from './store';
+import type { ShopPayment, ShopUser, Store, TgLink } from './store';
 
 /**
  * Гардероб (за флагом shop в клиенте): наборы за звёзды Telegram и личный стикерпак игрока.
  *
  * Маршруты бота (https://api.<домен>/tg/...), тело — { initData } от Mini App (подпись проверяет бот):
  *   POST /shop        — что есть у игрока, ссылка на его пак; недовыданные стикеры досылаются;
- *   POST /shop/claim  — бесплатный пак с обычным актёром (плашка на главной после первого матча);
- *   POST /shop/pack   — { item, mode: in | own } стикеры купленного набора: в свой пак (in) или новым паком (own);
- *   POST /shop/buy    — { item } → ссылка на счёт в звёздах (WebApp.openInvoice).
- * Вебхук: pre_checkout_query (проверка перед оплатой), message.successful_payment (выдать набор и
- * предложить кнопками «В мой пак» / «Новый пак»), callback_query «pk:in|own:<набор>» (эти кнопки), /start stickers (бесплатный пак по внешней
- * ссылке t.me/<бот>?start=stickers), /paysupport (обязателен для оплаты звёздами).
+ *   POST /shop/claim  — бесплатный пак с обычным актёром (после первого матча и подписки на канал);
+ *   POST /shop/pack   — устарело (старые вкладки): просто состояние;
+ *   POST /shop/buy    — { item } → ссылка на счёт в звёздах (WebApp.openInvoice);
+ *   POST /shop/link   — { token } связать игрока игрового сервера (его токен) с этим пользователем Telegram:
+ *                       по связи сервер после матча открывает стикеры за события матча (earn в game-core/shop.ts).
+ * Стикеры за матч: игровой сервер считает, кому что открылось, и шлёт боту /internal/tg/stickers → `earn`
+ * (только наборы, которые у игрока есть; новый стикер — сообщение «Новый стикер в паке»).
+ * Вебхук: pre_checkout_query (проверка перед оплатой), message.successful_payment (набор — и его стикеры сразу
+ * в пак), callback_query «free:claim» («Забрать стикерпак» / «Я подписался»), /start stickers (бесплатный пак по
+ * внешней ссылке t.me/<бот>?start=stickers), /paysupport (обязателен для оплаты звёздами).
  * Возврат — только изнутри: POST /internal/tg/refund { charge }.
  *
- * Паки — только по желанию игрока: свой пак (`pack`, «Массовка · Имя · @бот»; набор в него — `in:<набор>`) или
- * отдельный пак набора (`own:<набор>`, создан — `made:<набор>`). Бот правит лишь паки, которые создал сам.
+ * Пак — один на игрока (`pack`, «Массовка · Имя · @бот»): бесплатные, «за игру» и купленные наборы; последней —
+ * приманка «Собери свой пак!». Бот правит лишь паки, которые создал сам.
  * Стикеры набора попадают в пак только после записанной оплаты. Стикеры — видео WEBM из apps/server/stickers
  * (`pnpm --filter web stickers`). Выдача — очередью по игроку: что выдано, записано в учёте; упало — дошлётся
  * при следующем заходе в гардероб.
@@ -29,7 +33,32 @@ import type { ShopPayment, ShopUser, Store } from './store';
  * Учёт: у игрового сервера — его Postgres; у сервера бота базы нет — RemoteLedger, по туннелю к игровому.
  */
 
-export type ShopLedger = Pick<Store, 'shopUser' | 'saveShopUser' | 'saveShopPayment' | 'refundShopPayment'>;
+export type ShopLedger = Pick<Store, 'shopUser' | 'saveShopUser' | 'saveShopPayment' | 'refundShopPayment'> & {
+  /** Связать игрока игрового сервера (по его токену — проверяет игровой сервер) с пользователем Telegram. false — токен чужой. */
+  linkGame(token: string, link: Omit<TgLink, 'gameUser'>): Promise<boolean>;
+};
+
+/** Проверка токена игрока (auth.ts › verify): id игрока или null. */
+export type VerifyToken = (token: string) => Promise<string | null>;
+
+/** Учёт в своей базе (бот и игровой сервер в одном процессе: разработка, тесты). */
+export function localLedger(store: Store, verify?: VerifyToken): ShopLedger {
+  return {
+    shopUser: (id) => store.shopUser(id),
+    saveShopUser: (u) => store.saveShopUser(u),
+    saveShopPayment: (p) => store.saveShopPayment(p),
+    refundShopPayment: (c) => store.refundShopPayment(c),
+    async linkGame(token, link) {
+      const gameUser = verify ? await verify(token) : null;
+      if (!gameUser) return false;
+      await store.linkTelegram({ gameUser, ...link });
+      return true;
+    },
+  };
+}
+
+/** Токен игрока: JWT (три части base64url), не длиннее 1 КБ. */
+const TOKEN = /^[A-Za-z0-9_-]{1,512}\.[A-Za-z0-9_-]{1,512}\.[A-Za-z0-9_-]{1,512}$/;
 
 const ITEM = /^(?:starter|(?:st|in|own|made):[A-Za-z]{1,24}|[A-Za-z]{1,24})$/;
 const PACK = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
@@ -65,6 +94,9 @@ export class RemoteLedger implements ShopLedger {
   refundShopPayment(charge: string) {
     return this.op<ShopPayment | null>({ op: 'refund', charge });
   }
+  linkGame(token: string, link: Omit<TgLink, 'gameUser'>) {
+    return this.op<boolean>({ op: 'link', token, link });
+  }
 }
 
 const userId = (x: unknown): x is number => typeof x === 'number' && Number.isSafeInteger(x) && x > 0;
@@ -80,7 +112,7 @@ function parseUser(x: unknown): ShopUser | null {
 
 /** /internal/shop на игровом сервере: операция учёта от сервера бота. Маршрут внутренний, но вход всё равно проверяем. */
 export async function shopLedgerOp(store: ShopLedger, raw: unknown): Promise<{ status: number; body: unknown }> {
-  const b = raw as { op?: unknown; userId?: unknown; user?: unknown; payment?: unknown; charge?: unknown } | null;
+  const b = raw as { op?: unknown; userId?: unknown; user?: unknown; payment?: unknown; charge?: unknown; token?: unknown; link?: unknown } | null;
   const bad = { status: 400, body: { error: 'bad_request' } };
   if (b?.op === 'get') return userId(b.userId) ? { status: 200, body: { result: await store.shopUser(b.userId) } } : bad;
   if (b?.op === 'save') {
@@ -94,6 +126,11 @@ export async function shopLedgerOp(store: ShopLedger, raw: unknown): Promise<{ s
     if (!p || typeof p.charge !== 'string' || !CHARGE.test(p.charge) || !userId(p.userId) || !shopItem(p.item) || !Number.isInteger(p.stars) || p.stars! < 1) return bad;
     return { status: 200, body: { result: await store.saveShopPayment({ charge: p.charge, userId: p.userId, item: p.item!, stars: p.stars!, refunded: false }) } };
   }
+  if (b?.op === 'link') {
+    const l = b.link as Partial<TgLink> | null;
+    if (typeof b.token !== 'string' || !TOKEN.test(b.token) || !l || !userId(l.tgUser) || typeof l.name !== 'string' || l.name.length > 32 || (l.lang !== 'ru' && l.lang !== 'en')) return bad;
+    return { status: 200, body: { result: await store.linkGame(b.token, { tgUser: l.tgUser, name: packName(l.name), lang: l.lang }) } };
+  }
   if (b?.op === 'refund') return typeof b.charge === 'string' && CHARGE.test(b.charge) ? { status: 200, body: { result: await store.refundShopPayment(b.charge) } } : bad;
   return bad;
 }
@@ -104,18 +141,18 @@ export async function shopLedgerOp(store: ShopLedger, raw: unknown): Promise<{ s
  */
 export function wantedStickers(items: string[]): StickerMeta[] {
   const has = new Set(items);
+  if (!has.has('pack')) return [];
   return STICKER_LIST.filter((s) =>
-    s.set === 'starter'
-      ? has.has('starter') && has.has('pack')
-      : // «за игру» — нарисованы, выдача за события матча появится вместе со связкой с Telegram
-        s.set === 'play'
-        ? false
-        : has.has(s.set) && (has.has(`in:${s.set}`) || has.has(`own:${s.set}`)) && (s.now || has.has(`st:${s.id}`)),
+    // приманка — в любом паке; стартовый — когда забран бесплатный пак; «за игру» — с ним же, когда открыт в матче
+    s.lure
+      ? true
+      : s.set === 'starter'
+        ? has.has('starter')
+        : s.set === 'play'
+          ? has.has('starter') && has.has(`st:${s.id}`)
+          : has.has(s.set) && (s.now || has.has(`st:${s.id}`)),
   );
 }
-
-/** Имя отдельного пака набора: <набор><игрок>_by_<бот>. */
-const ownPack = (set: string, id: number, bot: string) => `${set.toLowerCase()}${id}_by_${bot}`.slice(0, 64);
 
 /** Имя игрока в названии пака: без @, ссылок и невидимых символов. */
 export function packName(raw: unknown): string {
@@ -138,6 +175,10 @@ export interface ShopDeps {
   stickersDir: string;
   /** Канал игры — в /paysupport. */
   channel: string;
+  /** Адрес игры (кнопка «Играть» в сообщении о новом стикере). */
+  site?: string;
+  /** Канал игры для проверки подписки (getChatMember; бот должен быть админом канала): «@имя». */
+  channelId?: string;
   /** Подмена ожидания (тесты). */
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
@@ -153,11 +194,6 @@ export interface ShopReply {
 }
 
 type Lang = 'ru' | 'en';
-/** Какой пак показать после выдачи: отдельный пак набора (own:) или свой. */
-const link0 = (st: { pack: string | null; packs: Record<string, string> }, add: string[]) => {
-  const own = add.find((i) => i.startsWith('own:'));
-  return (own && st.packs[own.slice(4)]) || st.pack;
-};
 const langOf = (code?: string): Lang => (code && /^(ru|uk|be|kk)/.test(code) ? 'ru' : 'en');
 
 export class Shop {
@@ -172,15 +208,17 @@ export class Shop {
   }
 
   /** Маршрут /tg/shop… с проверенным initData. */
-  async route(path: string, init: ShopInit, body: { item?: unknown; mode?: unknown }): Promise<ShopReply> {
+  async route(path: string, init: ShopInit, body: { item?: unknown; mode?: unknown; token?: unknown }): Promise<ShopReply> {
     const id = init.user.id;
     const now = (this.d.now ?? Date.now)();
     if (!this.rate.take(String(id), now)) return { status: 429, body: { error: 'rate_limited' } };
     this.rate.sweep(now);
     if (path === '/shop') return { status: 200, body: await this.state(id, true) };
     if (path === '/shop/claim') return { status: 200, body: await this.claim(init.user) };
-    if (path === '/shop/pack') return this.makePack(init.user, body.item, body.mode);
+    // старые вкладки гардероба («В мой пак» / «Новый пак»): пак теперь один и наполняется сам — просто состояние
+    if (path === '/shop/pack') return { status: 200, body: await this.state(id, true) };
     if (path === '/shop/buy') return this.buy(init, body.item);
+    if (path === '/shop/link') return this.link(init.user, body.token);
     return { status: 404, body: { error: 'not_found' } };
   }
 
@@ -190,12 +228,11 @@ export class Shop {
     const missing = u ? want.filter((s) => !u.issued.includes(s.id)).length : 0;
     // недовыданное (сбой Telegram, перезапуск) — дослать в фоне
     if (kick && missing && !this.queue.has(id)) void this.issue(id);
-    const bot = u && SHOP_ITEMS.some((x) => u.items.includes(`made:${x.id}`)) ? await this.d.username() : '';
     return {
-      items: (u?.items ?? []).filter((i) => i === 'starter' || i === 'pack' || shopItem(i) || /^(?:in|own):/.test(i)),
+      items: (u?.items ?? []).filter((i) => i === 'starter' || i === 'pack' || shopItem(i)),
       pack: u?.pack ? `https://t.me/addstickers/${u.pack}` : null,
-      /** Отдельные паки наборов: набор → ссылка. */
-      packs: Object.fromEntries(SHOP_ITEMS.filter((x) => u?.items.includes(`made:${x.id}`)).map((x) => [x.id, `https://t.me/addstickers/${ownPack(x.id, u!.userId, bot)}`])),
+      /** Отдельных паков больше нет (один пак на игрока); поле — для старых вкладок гардероба. */
+      packs: {} as Record<string, string>,
       issued: u?.issued.length ?? 0,
       wanted: want.length,
       error: this.failed.get(id) ?? null,
@@ -228,37 +265,145 @@ export class Shop {
     const before = u.issued.length;
     await this.issue(u.userId);
     const st = await this.state(u.userId, false);
-    const link = link0(st, add);
-    if (st.issued > before && link) await this.notify(u.userId, u.lang, text(u.lang), link);
+    if (st.issued > before && st.pack) await this.notify(u.userId, u.lang, text(u.lang), st.pack);
     return st;
   }
 
-  /** Бесплатный пак с обычным актёром: из гардероба на главной или по внешней ссылке (/start stickers). */
-  claim(from: ShopInit['user']) {
-    return this.grant(from, ['starter', 'pack'], (l) => DICTS[l].shop.botFree);
+  /** Связать игрока игрового сервера (его токен из Mini App) с этим пользователем Telegram. */
+  private async link(from: ShopInit['user'], token: unknown): Promise<ShopReply> {
+    if (typeof token !== 'string' || !TOKEN.test(token)) return { status: 400, body: { error: 'bad_token' } };
+    const ok = await this.d.ledger.linkGame(token, { tgUser: from.id, name: packName(from.first_name) || packName(from.username) || 'Актёр', lang: langOf(from.language_code) });
+    return ok ? { status: 200, body: { ok: true } } : { status: 403, body: { error: 'bad_token' } };
   }
 
   /**
-   * Стикеры купленного набора: в свой пак (`in`, его нет — создастся) или отдельным паком (`own`).
-   * Только если набор куплен (оплата записана); выбор делается один раз.
+   * Стикеры, открытые в матче (от игрового сервера, /internal/tg/stickers). Кладём только стикеры наборов,
+   * которые у игрока есть (стартовый — всем); каждый — один раз. Выдача — в той же очереди, что и остальное.
    */
-  async makePack(from: ShopInit['user'], rawItem: unknown, mode: unknown): Promise<ShopReply> {
-    const item = shopItem(rawItem);
-    if (!item || (mode !== 'in' && mode !== 'own')) return { status: 400, body: { error: 'bad_request' } };
-    const u = await this.d.ledger.shopUser(from.id);
-    if (!u?.items.includes(item.id)) return { status: 403, body: { error: 'not_owned' } };
-    if (u.items.includes(`in:${item.id}`) || u.items.includes(`own:${item.id}`)) return { status: 200, body: await this.state(u.userId, true) };
-    return { status: 200, body: await this.grant(from, [`${mode}:${item.id}`], (l) => DICTS[l].shop.botPackReady) };
+  earn(raw: unknown): Promise<{ users: number }> {
+    const list = (raw as { users?: unknown } | null)?.users;
+    if (!Array.isArray(list)) return Promise.resolve({ users: 0 });
+    const ok = list.slice(0, 8).filter(
+      (x): x is { tgUser: number; name: string; lang: Lang; stickers: string[] } =>
+        !!x && userId(x.tgUser) && typeof x.name === 'string' && x.name.length <= 32 && (x.lang === 'ru' || x.lang === 'en') && Array.isArray(x.stickers) && x.stickers.length <= 32 && x.stickers.every(isStickerId),
+    );
+    return Promise.all(ok.map((x) => this.earnOne(x))).then(() => ({ users: ok.length }));
   }
 
-  /** Кнопки под сообщением о покупке: «pk:in:<набор>» — в мой пак, «pk:own:<набор>» — новый пак. */
+  private earnOne(x: { tgUser: number; name: string; lang: Lang; stickers: string[] }): Promise<void> {
+    const id = x.tgUser;
+    // в очередь игрока: запись предметов не перетрётся выдачей, которая идёт прямо сейчас
+    const prev = this.queue.get(id) ?? Promise.resolve();
+    const run = prev
+      .then(async () => {
+        const u = (await this.d.ledger.shopUser(id)) ?? { userId: id, lang: x.lang, name: packName(x.name) || 'Актёр', items: [], pack: null, issued: [] };
+        const fresh = STICKER_LIST.filter(
+          (s) => x.stickers.includes(s.id) && !s.now && (s.set === 'starter' || s.set === 'play' || u.items.includes(s.set)) && !u.items.includes(`st:${s.id}`),
+        );
+        // первый сыгранный матч открывает бесплатный пак: бот предлагает его забрать
+        const first = !u.items.includes('played');
+        if (first) u.items.push('played');
+        if (!fresh.length && !first) return;
+        u.items.push(...fresh.map((s) => `st:${s.id}`));
+        await this.d.ledger.saveShopUser(u);
+        if (first && !u.items.includes('starter')) await this.offerFree(u);
+        if (!fresh.length) return;
+        this.d.log('info', 'shop_earned', { n: fresh.length });
+        const before = new Set(u.issued);
+        await this.issueRun(id);
+        const after = await this.d.ledger.shopUser(id);
+        const got = fresh.filter((s) => after?.issued.includes(s.id) && !before.has(s.id));
+        if (!got.length || !after) return;
+        const st = await this.state(id, false);
+        const t = DICTS[after.lang].shop;
+        const set = got[0].set;
+        const inSet = STICKER_LIST.filter((s) => s.set === set);
+        const text = fmt(t.botEarned, { sticker: got.map((s) => `«${t.stickers[s.id].join(' ')}»`).join(', '), n: inSet.filter((s) => after.issued.includes(s.id)).length, of: inSet.length });
+        await this.notify(id, after.lang, text, st.pack, true);
+      })
+      .catch((e: unknown) => this.d.log('warn', 'shop_earn', errFields(e)));
+    this.queue.set(id, run);
+    void run.finally(() => {
+      if (this.queue.get(id) === run) this.queue.delete(id);
+    });
+    return run;
+  }
+
+  /**
+   * После первого матча (писать можно, если игрок открывал бота): подписан — «Забрать стикерпак»,
+   * нет — сначала «Подписаться на канал» и «Я подписался».
+   */
+  private async offerFree(u: ShopUser): Promise<void> {
+    const t = DICTS[u.lang].shop;
+    try {
+      if (!(await this.subscribed(u.userId))) return await this.askSub(u.userId, u.lang);
+      await this.d.api('sendMessage', { chat_id: u.userId, text: t.botFreeOffer, reply_markup: { inline_keyboard: [[{ text: t.botFreeClaim, callback_data: 'free:claim' }]] } });
+    } catch (e) {
+      this.d.log('warn', 'shop_notify', { err: String(e).slice(0, 200) });
+    }
+  }
+
+  /** Бесплатный пак с обычным актёром: из гардероба на главной или по внешней ссылке (/start stickers). */
+  async claim(from: ShopInit['user']) {
+    const u = await this.d.ledger.shopUser(from.id);
+    // бесплатный пак — за сыгранный матч (сервер видел игрока в матче, `played`) и подписку на канал
+    if (!u?.items.includes('starter')) {
+      const miss = !u?.items.includes('played') ? 'need_match' : !(await this.subscribed(from.id)) ? 'need_sub' : null;
+      if (miss) return { ...(await this.state(from.id, false)), error: miss, channel: this.d.channel };
+    }
+    return this.grant(from, ['starter', 'pack'], (l) => DICTS[l].shop.botFree);
+  }
+
+  /** Бесплатный пак по ссылке /start stickers: нет матча — «Играть», нет подписки — «Подписаться» и «Я подписался». */
+  async claimInChat(from: ShopInit['user']): Promise<void> {
+    const st = await this.claim(from);
+    const lang = langOf(from.language_code);
+    if (st.error === 'need_sub') await this.askSub(from.id, lang);
+    else if (st.error === 'need_match') {
+      const t = DICTS[lang].shop;
+      await this.d.api('sendMessage', { chat_id: from.id, text: t.botNeedMatch, ...(this.d.site ? { reply_markup: { inline_keyboard: [[{ text: t.botPlay, web_app: { url: `${this.d.site}/?src=tg_sticker` } }]] } } : {}) });
+    }
+  }
+
+  private async askSub(chat: number, lang: Lang): Promise<void> {
+    const t = DICTS[lang].shop;
+    await this.d.api('sendMessage', {
+      chat_id: chat,
+      text: t.botNeedSub,
+      reply_markup: { inline_keyboard: [[{ text: t.botSubscribe, url: this.d.channel }], [{ text: t.botSubscribed, callback_data: 'free:claim' }]] },
+    });
+  }
+
+  /**
+   * Подписан ли игрок на канал игры. Проверить нельзя (бот не админ канала, сбой Telegram) — считаем, что да:
+   * пак бесплатный, из-за настройки канала игроку отказывать не стоит.
+   */
+  private async subscribed(id: number): Promise<boolean> {
+    if (!this.d.channelId) return true;
+    try {
+      const m = await this.d.api<{ status?: string; is_member?: boolean }>('getChatMember', { chat_id: this.d.channelId, user_id: id });
+      if (m?.status === 'left' || m?.status === 'kicked') return false;
+      if (m?.status === 'restricted') return m.is_member !== false;
+      return true;
+    } catch (e) {
+      this.d.log('warn', 'shop_sub_check', { err: String(e).slice(0, 200) });
+      return true;
+    }
+  }
+
+  /** Кнопки бота: «Забрать стикерпак» / «Я подписался» (free:claim); старые «pk:…» — просто ответить. */
   async onCallback(q: { id: string; from: ShopInit['user']; data?: string }): Promise<void> {
-    const m = /^pk:(in|own):([A-Za-z]{1,24})$/.exec(q.data ?? '');
-    if (!m) return;
-    // ответить сразу (кнопка перестаёт крутиться), пак собирается несколько секунд
-    const r = this.makePack(q.from, m[2], m[1]);
-    await this.d.api('answerCallbackQuery', { callback_query_id: q.id });
-    await r;
+    // «Забрать стикерпак» (после первого матча) и «Я подписался» (по ссылке)
+    if (q.data === 'free:claim') {
+      const r = this.claim(q.from);
+      const first = await Promise.race([r, new Promise<null>((ok) => setTimeout(() => ok(null), 1500))]);
+      const t = DICTS[langOf(q.from.language_code)].shop;
+      const no = first?.error === 'need_sub' ? t.botNoSub : first?.error === 'need_match' ? t.botNeedMatch : '';
+      await this.d.api('answerCallbackQuery', no ? { callback_query_id: q.id, text: no, show_alert: true } : { callback_query_id: q.id });
+      await r;
+      return;
+    }
+    if (q.data?.startsWith('pk:')) await this.d.api('answerCallbackQuery', { callback_query_id: q.id });
   }
 
   private async buy(init: ShopInit, raw: unknown): Promise<ShopReply> {
@@ -309,18 +454,18 @@ export class Shop {
     }
     const fresh = await this.d.ledger.saveShopPayment({ charge: sp.telegram_payment_charge_id, userId: from.id, item: p.item.id, stars: sp.total_amount, refunded: false });
     const u = await this.user(from);
-    if (!u.items.includes(p.item.id)) {
-      u.items.push(p.item.id);
+    // набор и пак (один на игрока: «Массовка · Имя»; нет — создастся) — записать до выдачи
+    const add = [p.item.id, 'pack'].filter((i) => !u.items.includes(i));
+    if (add.length) {
+      u.items.push(...add);
       await this.d.ledger.saveShopUser(u);
     }
     if (!fresh) return;
     this.d.log('info', 'shop_paid', { item: p.item.id, stars: sp.total_amount });
-    // пак — по желанию: свой пак от бота уже есть — «Добавить в мой пак» или «Создать новый», нет — «Создать»
-    const t = DICTS[u.lang].shop;
-    const rows = u.pack
-      ? [[{ text: t.botAddPack, callback_data: `pk:in:${p.item.id}` }], [{ text: t.botNewPack, callback_data: `pk:own:${p.item.id}` }]]
-      : [[{ text: t.botMakePack, callback_data: `pk:own:${p.item.id}` }]];
-    await this.d.api('sendMessage', { chat_id: u.userId, text: t.botBought, reply_markup: { inline_keyboard: rows } });
+    // стикеры набора — сразу в пак; сбой Telegram — дошлётся при заходе в гардероб; сообщение — со ссылкой на пак
+    await this.issue(u.userId);
+    const st = await this.state(u.userId, false);
+    await this.notify(u.userId, u.lang, DICTS[u.lang].shop.botBought, st.pack);
   }
 
   /** Возврат звёзд (изнутри машины: /internal/tg/refund). Набор забираем, стикеры остаются в паке. */
@@ -347,10 +492,14 @@ export class Shop {
     await this.d.api('sendMessage', { chat_id: chat, text: fmt(DICTS[langOf(code)].shop.botSupport, { channel: this.d.channel }) });
   }
 
-  private async notify(chat: number, lang: Lang, text: string, pack: string | null): Promise<void> {
+  private async notify(chat: number, lang: Lang, text: string, pack: string | null, play = false): Promise<void> {
     const t = DICTS[lang].shop;
+    const rows: { text: string; url?: string; web_app?: { url: string } }[][] = [];
+    if (pack) rows.push([{ text: t.botPack, url: pack }]);
+    // «Играть» — Mini App игры: новый стикер зовёт обратно
+    if (play && this.d.site) rows.push([{ text: t.botPlay, web_app: { url: `${this.d.site}/?src=tg_sticker` } }]);
     try {
-      await this.d.api('sendMessage', { chat_id: chat, text, ...(pack ? { reply_markup: { inline_keyboard: [[{ text: t.botPack, url: pack }]] } } : {}) });
+      await this.d.api('sendMessage', { chat_id: chat, text, ...(rows.length ? { reply_markup: { inline_keyboard: rows } } : {}) });
     } catch (e) {
       // игрок не нажимал «Старт» — писать ему нельзя; пак всё равно в гардеробе
       this.d.log('warn', 'shop_notify', { err: String(e).slice(0, 200) });
@@ -381,18 +530,16 @@ export class Shop {
     const file = async (s: StickerMeta) => new Blob([await readFile(join(this.d.stickersDir, u.lang, `${s.id}.webm`))], { type: 'video/webm' });
     const input = (s: StickerMeta, i: number) => ({ sticker: `attach://f${i}`, format: 'video', emoji_list: s.emoji });
     const t = DICTS[u.lang].shop;
-    // куда стикер: отдельный пак набора (own:) или свой пак (туда же — бесплатные «за игру»)
-    const target = (s: StickerMeta) =>
-      s.set !== 'starter' && s.set !== 'play' && u.items.includes(`own:${s.set}`)
-        ? { name: ownPack(s.set, id, bot), made: u.items.includes(`made:${s.set}`), title: fmt(t.packTitleItem, { item: t.items[s.set].name, name: u.name }), mark: () => u.items.push(`made:${s.set}`) }
-        : { name: `m${id}_by_${bot}`.slice(0, 64), made: !!u.pack, title: fmt(t.packTitle, { name: u.name }), mark: () => (u.pack = `m${id}_by_${bot}`.slice(0, 64)) };
+    // один пак на игрока: «Массовка · Имя · @бот» — бесплатные, «за игру» и купленные наборы
+    const name = `m${id}_by_${bot}`.slice(0, 64);
+    const to = { name, title: fmt(t.packTitle, { name: u.name }) };
+    let added = false;
     for (;;) {
       const left = missing();
       if (!left.length) break;
-      const to = target(left[0]);
-      const batch = left.filter((s) => target(s).name === to.name);
-      if (!to.made) {
-        const list = batch.slice(0, 50);
+      if (!u.pack) {
+        // приманка — последней и при создании
+        const list = [...left.filter((s) => !s.lure), ...left.filter((s) => s.lure)].slice(-50);
         const form = new FormData();
         form.set('user_id', String(id));
         form.set('name', to.name);
@@ -406,11 +553,11 @@ export class Shop {
           // пак уже есть (упали между созданием и записью) — дальше добавляем по одному
           if (!/already occupied/i.test(String(e))) throw e;
         }
-        to.mark();
+        u.pack = name;
         await this.d.ledger.saveShopUser(u);
         continue;
       }
-      const s = batch[0];
+      const s = left[0];
       const form = new FormData();
       form.set('user_id', String(id));
       form.set('name', to.name);
@@ -419,8 +566,25 @@ export class Shop {
       await this.call('addStickerToSet', form);
       u.issued.push(s.id);
       await this.d.ledger.saveShopUser(u);
+      added = true;
     }
+    // приманка «Собери свой пак» — снова в конец пака
+    if (added) await this.lureLast(name);
     this.failed.delete(id);
+  }
+
+  /** Приманка (первое эмодзи 🎬 есть только у неё) — последним стикером пака. Не вышло — не страшно. */
+  private async lureLast(name: string): Promise<void> {
+    const lure = STICKER_LIST.find((s) => s.lure);
+    if (!lure) return;
+    try {
+      const set = await this.d.api<{ stickers?: { file_id: string; emoji?: string }[] }>('getStickerSet', { name });
+      const list = set?.stickers ?? [];
+      const at = list.findIndex((s) => s.emoji === lure.emoji[0]);
+      if (at >= 0 && at !== list.length - 1) await this.d.api('setStickerPositionInSet', { sticker: list[at].file_id, position: list.length - 1 });
+    } catch (e) {
+      this.d.log('warn', 'shop_lure', { err: String(e).slice(0, 200) });
+    }
   }
 
   /** Вызов Telegram с ожиданием при «Too Many Requests: retry after N» (до трёх раз, не дольше 30 с). */
