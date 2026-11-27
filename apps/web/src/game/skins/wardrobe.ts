@@ -178,3 +178,44 @@ export function oldPrice(item: ShopItemId): string {
 export function buyLabel(lang: Lang, item: ShopItemId): string {
   return fmt(DICTS[lang].shop.buy, { n: shopItem(item)?.stars ?? 0 });
 }
+
+/**
+ * Звезда Telegram (валюта Stars) в пикселях игры: пятиконечная, золотой ободок, светлая серединка.
+ * Рисуется по многоугольнику звезды в 15×15 (с контуром — 17×17), цвета — только из палитры.
+ */
+export function starsIcon(): HTMLCanvasElement {
+  const N = 15;
+  const { c, g } = canvas(N, N);
+  const pts = (scale: number) =>
+    Array.from({ length: 10 }, (_, i) => {
+      const a = -Math.PI / 2 + (i * Math.PI) / 5;
+      const r = (i % 2 ? 0.58 : 1) * scale;
+      return [7.5 + Math.cos(a) * r, 8.4 + Math.sin(a) * r] as const;
+    });
+  const inside = (p: readonly (readonly [number, number])[], x: number, y: number) => {
+    let s = false;
+    for (let i = 0, j = p.length - 1; i < p.length; j = i++) {
+      const [xi, yi] = p[i];
+      const [xj, yj] = p[j];
+      if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) s = !s;
+    }
+    return s;
+  };
+  const outer = pts(7.6);
+  const mid = pts(5.2);
+  const core = pts(2.4);
+  for (let y = 0; y < N; y++) {
+    for (let x = 0; x < N; x++) {
+      const px = x + 0.5;
+      const py = y + 0.5;
+      if (!inside(outer, px, py)) continue;
+      g.fillStyle = inside(core, px, py) ? PAL.white : inside(mid, px, py) ? PAL.yellow : py > 9 ? PAL.orange : PAL.amber;
+      g.fillRect(x, y, 1, 1);
+    }
+  }
+  // тёмный контур — чтобы звезда читалась и на оранжевой кнопке
+  const o = canvas(N + 2, N + 2);
+  outlineOf(g, N, N, o.g, 0, 0, PAL.ink);
+  o.g.drawImage(c, 1, 1);
+  return o.c;
+}

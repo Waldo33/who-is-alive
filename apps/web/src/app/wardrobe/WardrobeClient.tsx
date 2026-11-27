@@ -11,7 +11,7 @@ import { detectLang } from '@/lib/lang';
 import { bootTelegram, haptic, inTelegram, openTelegram, shopBuy, shopClaim, shopState } from '@/lib/telegram';
 import type { ShopState } from '@/lib/telegram';
 import { TopBar } from '@/ui/TopBarView';
-import { CARD_H, CARD_W, buyLabel, drawCard } from '@/game/skins/wardrobe';
+import { CARD_H, CARD_W, buyLabel, drawCard, starsIcon } from '@/game/skins/wardrobe';
 
 const ITEM: ShopItemId = 'kotBanan';
 
@@ -35,6 +35,8 @@ export default function WardrobeClient() {
   const [busy, setBusy] = useState<'buy' | 'claim' | null>(null);
   const [note, setNote] = useState('');
   const [scale, setScale] = useState(0);
+  // звезда Telegram (Stars) — пиксельная, из палитры игры
+  const [star, setStar] = useState('');
   const slotRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const owned = !!st?.items.includes(ITEM);
@@ -51,6 +53,7 @@ export default function WardrobeClient() {
     document.documentElement.lang = l;
     document.title = `${DICTS[l].shop.title} · ${DICTS[l].meta.title}`;
     setCanFree(played());
+    setStar(starsIcon().toDataURL());
     track('shop_view', {});
     const tgNow = inTelegram();
     setTgOn(tgNow);
@@ -163,7 +166,8 @@ export default function WardrobeClient() {
           <>
             <button className="btn" onClick={() => void buy()} aria-disabled={!tgOn || !!busy}>
               {was && <s className="wardrobe-was">{was}</s>}
-              {buyLabel(lang, ITEM)} ⭐
+              {buyLabel(lang, ITEM)}
+              {star && <img className="wardrobe-star" src={star} alt="" width={26} height={26} />}
             </button>
             {!tgOn && <p className="muted">{t.onlyTg}</p>}
           </>
