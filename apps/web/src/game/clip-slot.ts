@@ -98,6 +98,42 @@ function reelPos(e: number, b: number): { p: number; targetK: number; landedAt: 
   return { p: from + SPEED * u - (SPEED * u * u) / (2 * dur), targetK, landedAt };
 }
 
+/** Барабаны вращения в момент now (мс от рывка — pe; рывок — как у автомата, сам в своё время). */
+export interface SlotSpinState {
+  /** Какое вращение идёт: следующее начинается с рывка в своём окне, до него видно, где встало прошлое. */
+  k: number;
+  spin: SlotRecord;
+  pe: number;
+  tease: boolean;
+  reels: { p: number; targetK: number; landedAt: number }[];
+  done: boolean;
+}
+
+export function slotSpinAt(showAt: number, spins: readonly SlotRecord[], now: number): SlotSpinState {
+  let k = 0;
+  for (let j = 1; j < spins.length; j++) if (now >= slotWindow(showAt, j).auto) k = j;
+  const spin = spins[k];
+  const pe = now - slotWindow(showAt, k).auto;
+  const tease = spin.reels[0] === spin.reels[1];
+  const reels = slotStops(tease).map((s) => reelPos(pe, s));
+  return { k, spin, pe, tease, reels, done: pe >= reels[2].landedAt };
+}
+
+/** Когда (мс от рывка) барабаны начинают тормозить: третий при двух одинаковых — позже, с интригой. */
+export function slotStops(tease: boolean): number[] {
+  return SLOT_STOP_MS.map((s, i) => s + (i === 2 && tease ? SLOT_TEASE_MS : 0));
+}
+
+/** Когда (мс от рывка) встаёт барабан, начавший тормозить в b. */
+export function reelLandMs(b: number): number {
+  return reelPos(0, b).landedAt;
+}
+
+/** Символ на ленте барабана r под номером k (как на автомате). */
+export function stripSymbol(r: number, k: number): number {
+  return strip(r, k);
+}
+
 export interface ClipSlotFrame {
   /** Холст клипа (логические пиксели 180×320, поле — от ay до py). */
   g: CanvasRenderingContext2D;
@@ -139,16 +175,7 @@ export function drawClipSlot(f: ClipSlotFrame): void {
   g.globalAlpha = 1;
   g.drawImage(a.body, bx, by);
 
-  // какое вращение идёт: следующее начинается с рывка в своём окне, до него видно, где встало прошлое
-  let k = 0;
-  for (let j = 1; j < f.spins.length; j++) if (now >= slotWindow(f.showAt, j).auto) k = j;
-  const spin = f.spins[k];
-  const win = slotWindow(f.showAt, k);
-  const pe = now - win.auto;
-  const tease = spin.reels[0] === spin.reels[1];
-  const stops = SLOT_STOP_MS.map((s, i) => s + (i === 2 && tease ? SLOT_TEASE_MS : 0));
-  const reels = stops.map((s) => reelPos(pe, s));
-  const done = pe >= reels[2].landedAt;
+  const { k, spin, pe, tease, reels, done } = slotSpinAt(f.showAt, f.spins, now);
   const nextWin = k + 1 < f.spins.length ? slotWindow(f.showAt, k + 1) : null;
   const btnOpen = pe < 0 || (!!nextWin && now >= nextWin.from);
   const key = `${f.warnAt}:${k}:`;
