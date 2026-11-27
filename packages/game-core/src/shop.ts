@@ -79,11 +79,11 @@ export const STICKER_LIST: StickerMeta[] = [
   { id: 'oops', set: 'starter', emoji: ['😵', '💫'], now: true },
   { id: 'who', set: 'starter', emoji: ['🤨', '👀'], now: true },
   { id: 'lure', set: 'starter', emoji: ['🎁', '🎬'], now: true, lure: true },
-  { id: 'notCrying', set: 'kotBanan', emoji: ['😭'], now: true },
   { id: 'justBanana', set: 'kotBanan', emoji: ['🍌', '😅'], now: true },
   { id: 'splat', set: 'kotBanan', emoji: ['🫠', '💫'], now: false, earn: 'cut' },
   { id: 'allGood', set: 'kotBanan', emoji: ['🌧', '🙂'], now: false, earn: 'lose' },
-  { id: 'aaa', set: 'kotBanan', emoji: ['😱', '😭'], now: false, earn: 'paranoid' },
+  // «ААААА!» — сразу при покупке (27.11.2026 заменил похожий «Я не плачу»)
+  { id: 'aaa', set: 'kotBanan', emoji: ['😱', '😭'], now: true },
   { id: 'happyTears', set: 'kotBanan', emoji: ['🥲', '👑'], now: false, earn: 'win' },
   { id: 'freeze', set: 'kotBanan', emoji: ['🥶', '🧊'], now: false, earn: 'unsuspected' },
   { id: 'meow', set: 'kotBanan', emoji: ['🐱', '❓'], now: false, earn: 'clairvoyant' },
@@ -105,6 +105,12 @@ export const STICKER_LIST: StickerMeta[] = [
   { id: 'kupala', set: 'play', emoji: ['🔥', '🌿'], now: false, earn: 'theme', theme: 'kupala' },
   { id: 'casino', set: 'play', emoji: ['🎲', '💰'], now: false, earn: 'theme', theme: 'casino' },
 ];
+
+/**
+ * Стикеры, убранные из наборов: id → первое эмодзи, по нему бот найдёт и удалит их из уже выданных паков.
+ * Id больше не переиспользовать.
+ */
+export const RETIRED_STICKERS: Readonly<Record<string, string>> = { notCrying: '😭' };
 
 export const shopItem = (id: unknown): ShopItem | undefined => SHOP_ITEMS.find((x) => x.id === id);
 export const isStickerId = (id: unknown): id is StickerId => STICKER_LIST.some((s) => s.id === id);

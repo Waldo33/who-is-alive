@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { DICTS, MY_FIGS, MY_ISSUED, MY_MARKS, MY_MAX, MY_POSE_EMOJI, SHOP_ITEMS, STICKER_LIST, canDrop, fmt, isMySticker, isSkin, isStickerId, myFigOpen, myIssued, offSticker, parseMySticker, shopItem, skinOf, wearItems } from '@kto/game-core';
+import { DICTS, MY_FIGS, MY_ISSUED, MY_MARKS, MY_MAX, MY_POSE_EMOJI, RETIRED_STICKERS, SHOP_ITEMS, STICKER_LIST, canDrop, fmt, isMySticker, isSkin, isStickerId, myFigOpen, myIssued, offSticker, parseMySticker, shopItem, skinOf, wearItems } from '@kto/game-core';
 import type { MySticker, StickerId, StickerMeta } from '@kto/game-core';
 import { RateWindow } from './limits';
 import { errFields } from './log';
@@ -112,7 +112,7 @@ const strs = (x: unknown, max: number, re: RegExp): x is string[] => Array.isArr
 function parseUser(x: unknown): ShopUser | null {
   const u = x as Partial<ShopUser> | null;
   if (!u || !userId(u.userId) || (u.lang !== 'ru' && u.lang !== 'en') || typeof u.name !== 'string' || u.name.length > 32) return null;
-  if (!strs(u.items, 120, ITEM) || !Array.isArray(u.issued) || u.issued.length > 120 || !u.issued.every((x) => isStickerId(x) || (typeof x === 'string' && MY_ISSUED.test(x)))) return null;
+  if (!strs(u.items, 120, ITEM) || !Array.isArray(u.issued) || u.issued.length > 120 || !u.issued.every((x) => isStickerId(x) || (typeof x === 'string' && (MY_ISSUED.test(x) || Object.hasOwn(RETIRED_STICKERS, x))))) return null;
   if (u.pack !== null && !(typeof u.pack === 'string' && PACK.test(u.pack))) return null;
   // свои стикеры: старый бот их не присылает — оставляем как есть (undefined), новый — проверяем каждый
   const my = u.my === undefined ? undefined : Array.isArray(u.my) && u.my.length <= MY_MAX && u.my.every(isMySticker) && new Set(u.my.map((m) => m.slot)).size === u.my.length ? u.my.map((m) => ({ ...m, text: [...m.text] })) : null;
@@ -206,6 +206,8 @@ export function syncPlan(u: ShopUser): { add: Entry[]; drop: { key: string; emoj
   const drop = [
     ...u.issued.filter((x) => isStickerId(x) && u.items.includes(offSticker(x as StickerId))).map((x) => ({ key: x, emoji: STICKER_LIST.find((s) => s.id === x)!.emoji[0] })),
     ...u.issued.filter((x) => MY_ISSUED.test(x) && !my.some((m) => m.slot === slotOf(x))).map((x) => ({ key: x, emoji: MY_MARKS[slotOf(x)] })),
+    // убранные из наборов совсем (RETIRED_STICKERS)
+    ...u.issued.filter((x) => Object.hasOwn(RETIRED_STICKERS, x)).map((x) => ({ key: x, emoji: RETIRED_STICKERS[x] })),
   ];
   const replace = my.flatMap((m) => {
     const old = u.issued.find((x) => slotOf(x) === m.slot);

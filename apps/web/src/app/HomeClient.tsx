@@ -34,6 +34,7 @@ export default function HomeClient() {
   const [newbie, setNewbie] = useState(false);
   // на сайте (не внутри Telegram) — кнопка «Играть в Telegram»: там приглашения и клипы удобнее
   const [web, setWeb] = useState(false);
+  const [tg, setTg] = useState(false);
   // кастинг дня: номер и пройден ли сегодня (localStorage — как на /daily)
   const [daily, setDaily] = useState({ on: false, n: 0, done: false });
   // бесплатный стикерпак с актёром — плашкой после первого матча, пока не забран (за тем же флагом)
@@ -75,6 +76,7 @@ export default function HomeClient() {
     const first = !tutorialDone();
     setNewbie(first);
     setWeb(!inTelegram());
+    setTg(inTelegram());
     track('page_view', first ? { page: 'home', first: true } : { page: 'home' });
     getAudio().setMusic('menu');
     // «С друзьями» в конце матча с ИИ: сразу создать комнату и позвать
@@ -187,6 +189,13 @@ export default function HomeClient() {
             <span className="daily-tile-sub">
               {t.shop.isNew}: {t.shop.items.kotBanan.name}
             </span>
+          </Link>
+        )}
+        {/* в Telegram кнопки «Играть в Telegram» нет — место есть и для своего стикерпака (после бесплатного пака) */}
+        {tg && stickers === 'off' && (
+          <Link className="daily-tile" href="/stickers" onClick={() => track('stickers_tap', { from: 'home_tile' })}>
+            <span className="daily-tile-title">{t.shop.build.title}</span>
+            <span className="daily-tile-sub">{t.shop.build.homeSub}</span>
           </Link>
         )}
         {stickers !== 'off' && (

@@ -506,7 +506,7 @@ export const en: Dict = {
     worn: 'On. During a take only you see it on the set',
     unworn: 'Off. In the game you blend in with the extras',
     gift: '8 stickers as a gift',
-    giftHow: '2 now, 6 for awards',
+    giftHow: '2 now, 5 for awards',
     paying: 'Paying…',
     paid: 'Done! Stickers are on their way to your pack',
     failed: 'Something went wrong. Try again',
@@ -516,7 +516,7 @@ export const en: Dict = {
     freeTitle: 'Your sticker pack',
     freeText: '4 stickers with your actor, free',
     freeClaim: 'Get my stickers',
-    packHint: 'Your pack: 2 now, 6 for awards',
+    packHint: 'Your pack: 2 now, 5 for awards',
     sending: 'The bot is drawing stickers…',
     openPack: 'Open my sticker pack',
     needSub: 'Join the game channel and tap again',
@@ -531,7 +531,6 @@ export const en: Dict = {
       oops: ['Oops'],
       who: ['Actor?'],
       lure: ['Get your', 'own pack!'],
-      notCrying: ['Not crying'],
       justBanana: ['Just a', 'banana'],
       splat: ['Splat!'],
       allGood: ['All good'],
@@ -559,6 +558,8 @@ export const en: Dict = {
     /** «Build your sticker pack» (/stickers): which stickers are in the pack, plus your own. */
     build: {
       title: 'My sticker pack',
+      /** Home tile (in Telegram). */
+      homeSub: 'Make your own sticker',
       open: 'Build your sticker pack',
       tabPack: 'Stickers',
       tabMake: 'Make one',
@@ -626,7 +627,7 @@ export const en: Dict = {
     packTitle: 'Be Nobody · {name}',
     invoiceTitle: 'Catnana',
     invoiceText: 'A Be Nobody set: the Catnana costume and 8 Telegram stickers.',
-    botBought: '🍌 Catnana is yours! Its stickers are already in your pack: 2 now, 6 more unlock in matches.',
+    botBought: '🍌 Catnana is yours! Its stickers are already in your pack: 2 now, 5 more unlock in matches.',
     botFree: '🎬 Your sticker pack is ready: 4 stickers with your actor.',
     botPack: '📦 Open the sticker pack',
     botEarned: '🎬 New sticker in your pack: {sticker}. {n} of {of} collected — more unlock in the next takes.',

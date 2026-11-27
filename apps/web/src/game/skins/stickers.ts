@@ -139,15 +139,6 @@ const ART: Art[] = [
   },
   // ── набор «Кот-банан» ──
   {
-    id: 'notCrying',
-    draw(g, t, lang) {
-      const y0 = 16;
-      put(g, wailFace(kotBananFrame(F.D, 'D', 0, 0)), CX, y0 - (t % 2));
-      tearArcs(g, CX, y0 - (t % 2), K, t, 6 + t * 3);
-      cap(g, 'notCrying', lang, 84);
-    },
-  },
-  {
     id: 'justBanana',
     draw(g, t, lang) {
       const bob = Math.floor(t / 5) % 2;
