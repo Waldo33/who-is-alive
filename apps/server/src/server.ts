@@ -23,6 +23,7 @@ import { errFields, jsonLogger } from './log';
 import type { Logger } from './log';
 import type { Bot, CardNotice, FilmNotice } from './bot';
 import { Room } from './room';
+import { shopLedgerOp } from './shop';
 import { MemoryStore, parseEvents } from './store';
 import type { Store } from './store';
 import type { Peer, RoomCard, RoomFilm, RoomSnapshot } from './room';
@@ -511,6 +512,17 @@ export class GameServer {
       // сервер бота: игровой сервер сообщает, что на карточке комнаты по приглашению (сбор, съёмка)
       if (!this.o.bot) return this.reply(res, 503, { error: 'no_bot' });
       const r = await this.o.bot.card(((await readJson(req, 4096)) ?? {}) as CardNotice);
+      return this.reply(res, r.status, r.body);
+    }
+    // гардероб: учёт покупок и стикеров для сервера бота (без своей базы) — по туннелю, в базу игрового
+    if (p === '/internal/shop' && req.method === 'POST') {
+      const r = await shopLedgerOp(this.store, await readJson(req, 16_384));
+      return this.reply(res, r.status, r.body);
+    }
+    // возврат звёзд за покупку (руками, по SSH на сервере бота): набор забирается
+    if (p === '/internal/tg/refund' && req.method === 'POST') {
+      if (!this.o.bot) return this.reply(res, 503, { error: 'no_bot' });
+      const r = await this.o.bot.shop.refund(((await readJson(req, 4096)) as { charge?: unknown } | null)?.charge);
       return this.reply(res, r.status, r.body);
     }
     // группы ошибок от сервера бота (Нидерланды, без своей базы) — по туннелю

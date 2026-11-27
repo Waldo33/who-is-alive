@@ -19,3 +19,4 @@ export * from './sanity';
 export * from './boss';
 export * from './film-puzzle';
 export * from './slots';
+export * from './shop';

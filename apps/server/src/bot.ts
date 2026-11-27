@@ -2,6 +2,8 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypt
 import { DICTS } from '@kto/game-core';
 import { errFields } from './log';
 import type { Logger } from './log';
+import { Shop } from './shop';
+import type { ShopLedger } from './shop';
 import type { Store } from './store';
 
 /**
@@ -15,6 +17,7 @@ import type { Store } from './store';
  *   POST /daily   — результат «Кастинга дня» из Mini App (подписанный initData) → рейтинг этого чата;
  *   POST /board   — рейтинг «Кастинга дня» в чате;
  *   POST /film    — (только изнутри, /internal/tg/film) фильм матча готов — заменить им карточку «Собрать комнату»;
+ *   POST /shop…  — гардероб: покупка за звёзды и личный стикерпак (shop.ts);
  *   POST /prepare — карточка «поделиться» для WebApp.shareMessage (комната, кастинг, приглашение,
  *                   клип — видео лежит на игровом сервере в Москве, `clips.ts`, сюда приходит только id).
  *
@@ -41,6 +44,10 @@ export interface BotOptions {
   clipPublic?: string;
   /** Подмена api.telegram.org (тесты). */
   fetchImpl?: typeof fetch;
+  /** Учёт гардероба (shop.ts): нет — своё хранилище (store). */
+  shopLedger?: ShopLedger;
+  /** Видеостикеры (<язык>/<id>.webm); нет — гардероб без выдачи стикеров. */
+  stickersDir?: string;
 }
 
 /** Канал игры в Telegram (новости, ролики). */
@@ -149,7 +156,14 @@ export function dailyNow(now = Date.now()): number {
 }
 
 interface Update {
-  message?: { chat: { id: number; type: string }; text?: string; from?: { language_code?: string } };
+  message?: {
+    chat: { id: number; type: string };
+    text?: string;
+    from?: { id: number; first_name?: string; username?: string; language_code?: string };
+    successful_payment?: { currency: string; total_amount: number; invoice_payload: string; telegram_payment_charge_id: string };
+  };
+  callback_query?: { id: string; from: { id: number; first_name?: string; username?: string; language_code?: string }; data?: string };
+  pre_checkout_query?: { id: string; from: { id: number }; currency: string; total_amount: number; invoice_payload: string };
   inline_query?: { id: string; query: string; from: { language_code?: string } };
   /** Карточку выбрали и отправили в чат (нужна «обратная связь» инлайн-режима в BotFather: /setinlinefeedback). */
   chosen_inline_result?: { result_id: string; inline_message_id?: string; from: { language_code?: string } };
@@ -225,6 +239,7 @@ export class Bot {
   private me: { username: string; supports_inline_queries?: boolean } | null = null;
   private meAt = 0;
   readonly hookSecret: string;
+  readonly shop: Shop;
 
   constructor(private readonly o: BotOptions) {
     this.app = o.app ?? 'play';
@@ -232,18 +247,28 @@ export class Bot {
     this.f = o.fetchImpl ?? fetch;
     // секрет вебхука выводится из ключа бота — хранить отдельно не нужно (так же было в Supabase)
     this.hookSecret = createHash('sha256').update('kto-hook:' + o.token).digest('hex').slice(0, 48);
+    this.shop = new Shop({
+      api: (m, b) => this.api(m, b),
+      username: async () => (await this.getMe()).username,
+      ledger: o.shopLedger ?? o.store,
+      log: o.log,
+      stickersDir: o.stickersDir ?? '',
+      channel: CHANNEL,
+    });
   }
 
   private get hookUrl(): string {
     return `${this.o.apiBase}/tg/hook`;
   }
 
-  async api<R = unknown>(method: string, body: Record<string, unknown> = {}): Promise<R> {
+  /** Метод Bot API; FormData — с файлами (стикеры). */
+  async api<R = unknown>(method: string, body: Record<string, unknown> | FormData = {}): Promise<R> {
+    const form = body instanceof FormData;
     const r = await this.f(`https://api.telegram.org/bot${this.o.token}/${method}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(15_000),
+      ...(form ? {} : { headers: { 'Content-Type': 'application/json' } }),
+      body: form ? body : JSON.stringify(body),
+      signal: AbortSignal.timeout(form ? 60_000 : 15_000),
     });
     const j = (await r.json()) as { ok: boolean; result?: R; description?: string };
     if (!j.ok) throw new Error(`${method}: ${j.description}`);
@@ -296,14 +321,35 @@ export class Bot {
         const got = String(headers['x-telegram-bot-api-secret-token'] ?? '');
         if (!safeEqual(got, this.hookSecret)) return { status: 403, body: { error: 'forbidden' } };
         const u = body as Update;
+        // оплата: ошибка учёта — не 200, чтобы Telegram повторил обновление (повтор не выдаст набор дважды)
+        if (u?.message?.successful_payment) {
+          try {
+            await this.shop.paid(u.message);
+          } catch (e) {
+            this.o.log('error', 'shop_paid', errFields(e));
+            return { status: 500, body: { error: 'retry' } };
+          }
+          return { status: 200, body: { ok: true } };
+        }
         try {
-          if (u?.message?.text?.startsWith('/start')) await this.onStart(u.message);
+          if (u?.pre_checkout_query) await this.shop.preCheckout(u.pre_checkout_query);
+          else if (u?.callback_query) await this.shop.onCallback(u.callback_query);
+          // бесплатный стикерпак по внешней ссылке t.me/<бот>?start=stickers (только в личке: пак — этого игрока)
+          else if (u?.message?.text === '/start stickers' && u.message.chat.type === 'private' && u.message.from) await this.shop.claim(u.message.from);
+          else if (u?.message?.text?.startsWith('/paysupport')) await this.shop.support(u.message.chat.id, u.message.from?.language_code);
+          else if (u?.message?.text?.startsWith('/start')) await this.onStart(u.message);
           else if (u?.inline_query) await this.onInline(u.inline_query);
           else if (u?.chosen_inline_result) await this.onChosen(u.chosen_inline_result);
         } catch (e) {
           this.o.log('error', 'tg_hook', errFields(e));
         }
         return { status: 200, body: { ok: true } };
+      }
+      if (method === 'POST' && (path === '/shop' || path.startsWith('/shop/'))) {
+        const b = (body ?? {}) as { initData?: string; item?: unknown };
+        const init = this.verify(b.initData ?? '');
+        if (!init) return { status: 401, body: { error: 'bad_init' } };
+        return await this.shop.route(path, init, b);
       }
       if (method === 'POST' && path === '/prepare') return await this.onPrepare(body as PrepareBody);
       if (method === 'POST' && (path === '/daily' || path === '/board')) return await this.onDaily(body as { initData?: string; n?: number; tries?: number; won?: boolean }, path === '/daily');
@@ -316,7 +362,7 @@ export class Bot {
 
   /** Вебхук на этот сервер и профиль бота на двух языках. */
   async setup(): Promise<void> {
-    await this.api('setWebhook', { url: this.hookUrl, secret_token: this.hookSecret, allowed_updates: ['message', 'inline_query', 'chosen_inline_result'], drop_pending_updates: false });
+    await this.api('setWebhook', { url: this.hookUrl, secret_token: this.hookSecret, allowed_updates: ['message', 'inline_query', 'chosen_inline_result', 'pre_checkout_query', 'callback_query'], drop_pending_updates: false });
     const P = {
       ru: {
         description:

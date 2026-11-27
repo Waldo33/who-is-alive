@@ -3,6 +3,7 @@ import { jsonLogger } from './log';
 import { ErrorTracker } from './errors';
 import type { LogLevel } from './log';
 import { Bot } from './bot';
+import { RemoteLedger } from './shop';
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -80,6 +81,7 @@ process.on('unhandledRejection', (e) => {
   log('error', 'unhandled_rejection', { err: String(e).slice(0, 600), stack: e instanceof Error ? e.stack : undefined });
 });
 
+const here = dirname(fileURLToPath(import.meta.url));
 // Telegram-бот: ключ — в секретах сервера (/etc/massovka/secrets.env), без ключа бота нет
 const bot = env.TELEGRAM_BOT_TOKEN
   ? new Bot({
@@ -94,6 +96,10 @@ const bot = env.TELEGRAM_BOT_TOKEN
       clipBase: env.CLIP_BASE || env.PUBLIC_API_BASE || undefined,
       // клипы в S3 открыты по прямой ссылке (clips.ts) — Telegram берёт их оттуда; CLIP_PUBLIC_BASE=off — только сервер
       clipPublic: env.CLIP_PUBLIC_BASE === 'off' ? undefined : env.CLIP_PUBLIC_BASE || 'https://s3.twcstorage.ru/massovka-media/clips',
+      // гардероб: покупки — в базе игрового сервера (у сервера бота её нет — по туннелю, как аналитика)
+      shopLedger: store instanceof MemoryStore && env.EVENTS_UPSTREAM ? new RemoteLedger(env.EVENTS_UPSTREAM) : undefined,
+      // видеостикеры: рядом с server.mjs (выкладка) или apps/server/stickers (разработка)
+      stickersDir: env.STICKERS_DIR || [join(here, 'stickers'), join(here, '..', 'stickers')].find((d) => existsSync(d)),
     })
   : undefined;
 if (!bot) log('warn', 'TELEGRAM_BOT_TOKEN не задан — бота нет');

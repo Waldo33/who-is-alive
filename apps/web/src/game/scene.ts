@@ -1409,6 +1409,14 @@ export class GameScene extends Phaser.Scene {
       }
       if (n.phase === 'results' && !this.init0.spectator) this.trackRound();
       if (n.phase === 'match_end') {
+        // первый матч сыгран — в «Гардеробе» открывается бесплатный стикерпак (app/wardrobe)
+        if (!this.init0.tutorial && !this.init0.spectator) {
+          try {
+            localStorage.setItem('kto:played', '1');
+          } catch {
+            /* приватный режим */
+          }
+        }
         // «Снято!»: хлопушка и логотип (общая фанфара была безлика); «Слишком живые!» — тромбон
         this.audio.play(this.sim.match?.tooAlive ? 'sad' : 'wrap');
         this.spawnConfetti();

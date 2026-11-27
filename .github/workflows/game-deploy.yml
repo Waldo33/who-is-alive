@@ -136,7 +136,7 @@ jobs:
           npm install --no-save --no-package-lock --omit=dev "@napi-rs/canvas@$(v @napi-rs/canvas)" "node-web-audio-api@$(v node-web-audio-api)"
           rm package.json
           node --input-type=module -e "await import('@napi-rs/canvas'); await import('node-web-audio-api'); console.log('нативные модули грузятся')"
-          tar -czf ../film.tar.gz node_modules fonts film-worker.mjs film-worker.mjs.map massovka-film.node
+          tar -czf ../film.tar.gz node_modules fonts stickers film-worker.mjs film-worker.mjs.map massovka-film.node
           ls -la ../film.tar.gz
 
       - name: Дождаться зелёного CI

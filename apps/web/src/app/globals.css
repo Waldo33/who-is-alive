@@ -10,6 +10,9 @@
   --mist: #c0cbdc;
   --slate: #8b9bb4;
   --steel: #5a6988;
+  --dusk: #3a4466;
+  --green: #63c74d;
+  --magenta: #ff0044;
   --font-pixel: 'Press Start 2P';
   /* безопасные зоны: системные или Telegram (полноэкранный Mini App: шапка Telegram поверх страницы, lib/telegram.ts) */
   --sat: max(env(safe-area-inset-top), var(--tg-top, 0px));
@@ -303,3 +306,23 @@ button.summary { color: var(--sand); cursor: pointer; }
 .daily-board-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .daily-board li > span:last-child { flex-shrink: 0; white-space: nowrap; }
 .daily .muted { color: var(--slate); }
+
+/* «Гардероб» (/wardrobe, за флагом shop): та же раскладка, что у кастинга, — экран без прокрутки */
+.wardrobe .btn { gap: 10px; }
+.wardrobe .btn.small { min-height: 44px; padding: 10px 14px; font-size: 10px; }
+.wardrobe-was { color: var(--rust); font-size: 10px; }
+.wardrobe-owned { color: var(--yellow); font-size: 12px !important; }
+.wardrobe-note { color: var(--sand); }
+.wardrobe .btn[aria-disabled='true'] { background: var(--night); color: var(--steel); box-shadow: 0 0 0 2px var(--ink); pointer-events: none; }
+.wardrobe-star { width: 26px; height: 26px; image-rendering: pixelated; }
+.wardrobe-sets { display: flex; gap: 8px; flex-shrink: 0; max-width: 100%; overflow-x: auto; padding: 4px; scroll-snap-type: x mandatory;
+  touch-action: pan-x; scrollbar-width: none; }
+.wardrobe-sets::-webkit-scrollbar { display: none; }
+.wardrobe-set { position: relative; flex: 0 0 auto; scroll-snap-align: start; width: 52px; height: 52px; display: flex; align-items: center; justify-content: center; overflow: hidden; padding: 0; font: inherit; font-size: 16px;
+  color: var(--steel); background: var(--night); border: 0; box-shadow: 0 0 0 2px var(--ink), 0 0 0 4px var(--dusk); }
+.wardrobe-set img { image-rendering: pixelated; margin-top: 18px; }
+.wardrobe-set.on { box-shadow: 0 0 0 2px var(--ink), 0 0 0 4px var(--yellow); }
+.wardrobe-set:focus-visible { outline: 2px solid var(--yellow); outline-offset: 4px; }
+.wardrobe-mark { position: absolute; top: 2px; right: 2px; font-style: normal; font-size: 8px; line-height: 1; }
+.wardrobe-mark.mine { color: var(--ink); background: var(--green); padding: 2px; }
+.wardrobe-mark.new { width: 6px; height: 6px; background: var(--magenta); }
