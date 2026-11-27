@@ -30,7 +30,8 @@ export interface Art {
   draw(g: Ctx, t: number, lang: Lang): void;
 }
 
-export const FONT = '"Press Start 2P"';
+/** Второе семейство — латиница на сервере (film-render.ts регистрирует два файла шрифта); в браузере его нет и оно не мешает. */
+export const FONT = '"Press Start 2P", "Press Start 2P Latin"';
 const K = 2;
 const CX = ST_SIZE / 2 - KB_W;
 
@@ -280,7 +281,7 @@ function stickerize(c: HTMLCanvasElement): HTMLCanvasElement {
 }
 
 /** Кадр стикера 96×96 с обводкой. */
-export function stickerFrame(def: StickerDef, t: number, lang: Lang): HTMLCanvasElement {
+export function stickerFrame(def: Pick<StickerDef, 'draw'>, t: number, lang: Lang): HTMLCanvasElement {
   const { c, g } = canvas(ST_SIZE, ST_SIZE);
   g.imageSmoothingEnabled = false;
   def.draw(g, t, lang);
@@ -288,7 +289,7 @@ export function stickerFrame(def: StickerDef, t: number, lang: Lang): HTMLCanvas
 }
 
 /** Файл для Telegram: 512×512, стикер ×5 по центру. */
-export function stickerFile(def: StickerDef, t: number, lang: Lang): HTMLCanvasElement {
+export function stickerFile(def: Pick<StickerDef, 'draw'>, t: number, lang: Lang): HTMLCanvasElement {
   const s = stickerFrame(def, t, lang);
   const { c, g } = canvas(512, 512);
   g.imageSmoothingEnabled = false;

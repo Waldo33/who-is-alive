@@ -203,6 +203,10 @@ export default function WardrobeClient() {
           </>
         )}
         {note && <p className="wardrobe-note">{note}</p>}
+        {/* какие стикеры в паке и свои стикеры — отдельная страница */}
+        <button className="link" onClick={() => router.push('/stickers')}>
+          {t.build.open}
+        </button>
         {st?.error === 'need_bot' && (
           <button className="link" onClick={() => openTelegram(bot)}>
             {bot.replace('https://', '')}

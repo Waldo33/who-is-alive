@@ -16,6 +16,8 @@ import type { LocalSession } from '@kto/game-core';
 import { deathClipJob } from './death-clip';
 import { renderClip, renderFilm, warmRender } from './film-render';
 import type { ClipJob, FilmJob, FilmRenderOpts } from './film-render';
+import { renderMyWebm } from './sticker-draw';
+import type { StickerMsg, StickerReply } from './sticker-render';
 
 try {
   writeFileSync('/proc/self/oom_score_adj', '1000');
@@ -106,7 +108,15 @@ async function warm(o: Pick<FilmRenderOpts, 'fonts' | 'native'>): Promise<void> 
   await Promise.all([warmRender(o), import('node-web-audio-api')]);
 }
 
-process.on('message', (msg: WorkerMsg) => {
+if (process.argv.includes('--sticker')) {
+  // свой стикер игрока (sticker-render.ts): одна задача — и выход
+  process.once('message', (msg: StickerMsg) => {
+    void renderMyWebm(msg.look, { fonts: msg.fonts, ffmpeg: msg.ffmpeg })
+      .then((webm): StickerReply => ({ ok: true, webm }))
+      .catch((e: unknown): StickerReply => ({ ok: false, err: String(e instanceof Error ? e.message : e).slice(0, 600) }))
+      .then((r) => process.send!(r, () => process.exit(0)));
+  });
+} else process.on('message', (msg: WorkerMsg) => {
   if ('warm' in msg) {
     void warm(msg.warm).catch(() => {
       // прогрев не вышел — задача попробует сама и скажет, что не так

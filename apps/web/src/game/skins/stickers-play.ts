@@ -38,7 +38,7 @@ function gameStar(f: number): HTMLCanvasElement {
 // ───────────── костюмы тем ─────────────
 
 const themeSheets = new Map<number, CharSheets>();
-function sheetsOf(theme: number): CharSheets {
+export function sheetsOf(theme: number): CharSheets {
   let s = themeSheets.get(theme);
   if (!s) {
     const look = themeLook(theme, 0);
@@ -57,7 +57,7 @@ const BASE_ACT: Partial<Record<ActKind, number[]>> = {
 };
 
 /** Герой темы в её движении: кадр, разворот, подскок на шаге t (шаг стикера 100 мс). */
-function themeActor(theme: number, act: ActKind, t: number): { fr: HTMLCanvasElement; flip: boolean; dy: number } {
+export function themeActor(theme: number, act: ActKind, t: number): { fr: HTMLCanvasElement; flip: boolean; dy: number } {
   const look = themeLook(theme, 0);
   const a = look.acts?.[act];
   const sheets = sheetsOf(theme);
