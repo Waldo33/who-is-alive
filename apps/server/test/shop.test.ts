@@ -57,7 +57,7 @@ const payment = (over: Record<string, unknown> = {}) => ({
   message: {
     chat: { id: 77, type: 'private' },
     from: ANYA,
-    successful_payment: { currency: 'XTR', total_amount: 199, invoice_payload: 'kotBanan:77', telegram_payment_charge_id: 'ch_1', ...over },
+    successful_payment: { currency: 'XTR', total_amount: 49, invoice_payload: 'kotBanan:77', telegram_payment_charge_id: 'ch_1', ...over },
   },
 });
 
@@ -87,13 +87,13 @@ describe('гардероб', () => {
     const buy = await bot.handle('POST', '/shop/buy', {}, { initData: initData(ANYA), item: 'kotBanan' });
     expect(buy).toEqual({ status: 200, body: { link: 'https://t.me/$invoice' } });
     const inv = calls.find((c) => c.method === 'createInvoiceLink')!.body;
-    expect(inv).toMatchObject({ currency: 'XTR', payload: 'kotBanan:77', prices: [{ amount: 199 }] });
+    expect(inv).toMatchObject({ currency: 'XTR', payload: 'kotBanan:77', prices: [{ amount: 49 }] });
     expect(inv.provider_token).toBeUndefined();
     expect((await bot.handle('POST', '/shop/buy', {}, { initData: initData(ANYA), item: 'nope' })).status).toBe(400);
 
     const pre = async (q: Record<string, unknown>) => {
       calls.length = 0;
-      await hook(bot, { pre_checkout_query: { id: 'q', from: { id: 77 }, currency: 'XTR', total_amount: 199, invoice_payload: 'kotBanan:77', ...q } });
+      await hook(bot, { pre_checkout_query: { id: 'q', from: { id: 77 }, currency: 'XTR', total_amount: 49, invoice_payload: 'kotBanan:77', ...q } });
       return calls.find((c) => c.method === 'answerPreCheckoutQuery')!.body.ok;
     };
     expect(await pre({})).toBe(true);

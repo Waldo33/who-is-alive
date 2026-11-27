@@ -25,7 +25,7 @@ export interface ShopItem {
   isNew?: boolean;
 }
 
-export const SHOP_ITEMS: ShopItem[] = [{ id: 'kotBanan', stars: 199, was: 275, isNew: true }];
+export const SHOP_ITEMS: ShopItem[] = [{ id: 'kotBanan', stars: 49, was: 99, isNew: true }];
 
 export interface StickerMeta {
   id: StickerId;
