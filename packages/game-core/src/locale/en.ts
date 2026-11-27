@@ -497,6 +497,7 @@ export const en: Dict = {
     soon: 'New sets coming soon',
     isNew: 'NEW',
     buy: 'Buy {n}',
+    buyTg: 'Buy in Telegram',
     owned: 'Already yours',
     gift: '8 stickers as a gift',
     giftHow: '2 now, 6 for awards',

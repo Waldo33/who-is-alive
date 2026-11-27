@@ -572,6 +572,7 @@ export const ru = {
     soon: 'Скоро новые наборы',
     isNew: 'НОВОЕ',
     buy: 'Купить {n}',
+    buyTg: 'Купить в Telegram',
     owned: 'Уже твой',
     gift: 'В подарок 8 стикеров',
     giftHow: '2 сразу, 6 за награды',

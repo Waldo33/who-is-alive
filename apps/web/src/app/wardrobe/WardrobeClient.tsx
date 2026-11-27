@@ -188,11 +188,18 @@ export default function WardrobeClient() {
           </>
         ) : (
           <>
-            <button className="btn" onClick={() => void buy()} aria-disabled={!!busy}>
-              {was && <s className="wardrobe-was">{was}</s>}
-              {buyLabel(lang, ITEM)}
-              {star && <img className="wardrobe-star" src={star} alt="" width={26} height={26} />}
-            </button>
+            {tgOn ? (
+              <button className="btn" onClick={() => void buy()} aria-disabled={!!busy}>
+                {was && <s className="wardrobe-was">{was}</s>}
+                {buyLabel(lang, ITEM)}
+                {star && <img className="wardrobe-star" src={star} alt="" width={26} height={26} />}
+              </button>
+            ) : (
+              // вне Telegram цену не показываем — синяя кнопка ведёт в гардероб внутри бота
+              <button className="btn tg" onClick={() => void buy()}>
+                {t.buyTg}
+              </button>
+            )}
           </>
         )}
         {note && <p className="wardrobe-note">{note}</p>}
