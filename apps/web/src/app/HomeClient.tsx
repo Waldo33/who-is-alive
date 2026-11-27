@@ -13,7 +13,7 @@ import type { TopBar as Bar } from '@/ui/topbar';
 import { playerName } from '@/lib/name';
 import { track } from '@/lib/analytics';
 import { featureOn } from '@/lib/features';
-import { inTelegram, openTelegram, shopClaim, telegramStartTarget, tgLink } from '@/lib/telegram';
+import { bootTelegram, inTelegram, openTelegram, shopClaim, telegramStartTarget, tgLink } from '@/lib/telegram';
 import { TG_APP } from '@/lib/env';
 import { Garland, Snow, useNewYear } from '@/ui/Festive';
 import { shareContent, withLang } from '@/lib/share';
@@ -79,14 +79,17 @@ export default function HomeClient() {
     getAudio().setMusic('menu');
     // «С друзьями» в конце матча с ИИ: сразу создать комнату и позвать
     const q = new URLSearchParams(location.search);
+    // адрес чистим, но хвост #tgWebAppData… оставляем: SDK Telegram читает его при загрузке (грузится позже),
+    // без него нет initData — приложение не разворачивается на весь экран и не знает игрока
+    const clean = '/' + location.hash;
     if (q.has('create')) {
-      history.replaceState(null, '', '/');
+      history.replaceState(null, '', clean);
       track('invite_create', { from: 'sandbox' });
       void createRef.current();
     } else if (q.get('invite')) {
       // карточка бота «Собрать комнату»: первый нажавший создаёт лобби, остальные — в него же
       const invite = q.get('invite')!;
-      history.replaceState(null, '', '/');
+      history.replaceState(null, '', clean);
       track('invite_create', { from: 'tg_card' });
       void createRef.current(invite);
     }
@@ -101,6 +104,8 @@ export default function HomeClient() {
     try {
       const c = await createRoom(playerName(t), undefined, lang, invite);
       track('room_create', { code: c });
+      // в Telegram — дождаться SDK до перехода: он сохранит параметры запуска (полный экран, профиль)
+      if (inTelegram()) await bootTelegram();
       router.push(`/r/${c}`);
     } catch (e) {
       const key = e instanceof AuthError ? 'auth' : ((e as Error).message as keyof typeof t.lobby.errors);

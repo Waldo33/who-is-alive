@@ -511,6 +511,8 @@ export const en: Dict = {
     paid: 'Done! Stickers are on their way to your pack',
     failed: 'Something went wrong. Try again',
     cancelled: 'Payment cancelled',
+    paidWait: 'Payment received — your set arrives in a couple of minutes',
+    paidLate: 'Your set is late. Send /paysupport to the bot and we will sort it out',
     freeTitle: 'Your sticker pack',
     freeText: '4 stickers with your actor, free',
     freeClaim: 'Get my stickers',
