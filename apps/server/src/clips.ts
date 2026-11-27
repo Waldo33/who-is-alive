@@ -7,7 +7,7 @@
  *   POST /v1/clips/<id>/thumb   — обложка JPEG (до 400 КБ)
  *   GET  /v1/clips/<id>.<ext>   — файл (mp4 | webm | jpg)
  *
- * Хранится 2 суток под случайным именем, папка не больше 1 ГБ (сначала уходят старые).
+ * Хранится 2 суток под случайным именем, папка не больше 5 ГБ (сначала уходят старые).
  * Тело пишется на диск потоком — в памяти 1-гигабайтного сервера не копится.
  *
  * Есть S3 (s3.ts, бакет из infra/terraform/storage.tf) — видео живёт там (`clips/<id>.<ext>`, бакет сам
@@ -35,7 +35,8 @@ import type { S3Client } from './s3';
 export const CLIP_MAX = 12 * 1024 * 1024;
 export const THUMB_MAX = 400 * 1024;
 const CLIP_TTL_MS = 48 * 3600_000;
-export const CLIPS_DIR_MAX = 1024 * 1024 * 1024;
+/** Папка клипов: 5 ГБ (диск 40 ГБ; фильм ~7 МБ — около 700 фильмов за 2 суток). */
+export const CLIPS_DIR_MAX = 5 * 1024 * 1024 * 1024;
 /** Сколько смонтированный здесь фильм живёт и на диске (кроме S3): за это время его делят в чаты. */
 export const LOCAL_KEEP_MS = 6 * 3600_000;
 const DIR_MAX = CLIPS_DIR_MAX;
@@ -51,6 +52,11 @@ export type ClipResult = { status: number; body: unknown };
 /** Копия в S3: куда класть и как сообщать о сбоях. */
 export interface ClipRemote {
   s3: S3Client;
+  /**
+   * Только читать (с 27.11 так в проде): новые клипы и фильмы живут на диске сервера, в бакет не идут; из него
+   * отдаётся лишь то, что попало туда раньше (2 суток). Telegram брал видео из Петербурга не всегда.
+   */
+  readOnly?: boolean;
   log?: (level: 'info' | 'warn' | 'error', msg: string, f?: Record<string, unknown>) => void;
 }
 
@@ -88,7 +94,7 @@ export class ClipStore {
   /** Положить файл в S3; true — лежит там. Сбой S3 не ломает клип — он остаётся на диске, как раньше. */
   private async put(id: string, ext: string): Promise<boolean> {
     const r = this.remote;
-    if (!r) return false;
+    if (!r || r.readOnly) return false;
     const key = `clips/${id}.${ext}`;
     try {
       // открыт по прямой ссылке (бот отдаёт её Telegram — без нашего сервера посередине); бакет не принял
@@ -110,7 +116,7 @@ export class ClipStore {
 
   /** Копия в S3 в фоне (клип, пришедший с телефона через сервер): локальный файл остаётся. */
   private mirror(id: string, ext: string): void {
-    if (!this.remote) return;
+    if (!this.remote || this.remote.readOnly) return;
     // ушёл в бакет — с диска долой (отдаёт S3 или сервер из S3); не ушёл — остаётся на диске
     const job = this.moveToRemote(id, ext).finally(() => this.pending.delete(job));
     this.pending.add(job);
@@ -175,7 +181,8 @@ export class ClipStore {
    */
   direct(user: string, b: { ext?: unknown; size?: unknown } | null): ClipResult {
     const r = this.remote;
-    if (!r) return { status: 404, body: { error: 'no_s3' } };
+    // только чтение из S3 — телефон грузит сюда, по-старому (POST /v1/clips)
+    if (!r || r.readOnly) return { status: 404, body: { error: 'no_s3' } };
     const ext = b?.ext === 'mp4' || b?.ext === 'webm' ? b.ext : null;
     const size = typeof b?.size === 'number' && Number.isInteger(b.size) ? b.size : 0;
     if (!ext || size < 1000) return { status: 400, body: { error: 'bad_clip' } };
@@ -207,7 +214,7 @@ export class ClipStore {
   directThumb(id: string, b: { size?: unknown } | null, user: string): ClipResult {
     const r = this.remote;
     const t = this.issued.get(id);
-    if (!r || t === undefined || this.now() - t > 3600_000 || !this.owns(id, user)) return { status: 404, body: { error: 'no_clip' } };
+    if (!r || r.readOnly || t === undefined || this.now() - t > 3600_000 || !this.owns(id, user)) return { status: 404, body: { error: 'no_clip' } };
     const size = typeof b?.size === 'number' && Number.isInteger(b.size) ? b.size : 0;
     if (size < 100 || size > THUMB_MAX) return { status: 400, body: { error: 'bad_thumb' } };
     return {
@@ -285,7 +292,7 @@ export class ClipStore {
   async drainLocal(): Promise<{ moved: number; left: number }> {
     let moved = 0;
     let left = 0;
-    if (!this.remote) return { moved, left };
+    if (!this.remote || this.remote.readOnly) return { moved, left };
     for (const name of await readdir(this.dir).catch(() => [] as string[])) {
       const m = /^([0-9a-f]{20})\.(mp4|webm|jpg)$/.exec(name);
       if (!m) continue;
@@ -362,7 +369,7 @@ export class ClipStore {
     }
   }
 
-  /** Убрать клипы старше двух суток; папка больше 1 ГБ — сначала самые старые. */
+  /** Убрать клипы старше двух суток; папка больше 5 ГБ — сначала самые старые. */
   async sweep(): Promise<void> {
     const files: { path: string; t: number; size: number }[] = [];
     try {

@@ -153,9 +153,12 @@ if (s3) {
 } else log('info', 's3_off');
 
 // клипы для Telegram и фильмы матча: systemd StateDirectory=massovka-clips (/var/lib/massovka-clips)
-const clips = new ClipStore(env.CLIP_DIR || env.STATE_DIRECTORY || undefined, undefined, s3 ? { s3, log } : undefined);
-// клипы с дисковых времён — в бакет и с диска долой (папка 1 ГБ больше не копится)
-if (s3) {
+// с 27.11 клипы и фильмы — только на диске сервера (Нидерланды): Telegram брал видео из бакета в Петербурге
+// не всегда. Из S3 лишь читаем то, что попало туда раньше; CLIPS_S3=on — снова класть в бакет
+const clipsToS3 = env.CLIPS_S3 === 'on';
+const clips = new ClipStore(env.CLIP_DIR || env.STATE_DIRECTORY || undefined, undefined, s3 ? { s3, log, readOnly: !clipsToS3 } : undefined);
+// клипы с дисковых времён — в бакет и с диска долой
+if (s3 && clipsToS3) {
   void clips
     .drainLocal()
     .then((r) => log('info', 's3_drain', r))

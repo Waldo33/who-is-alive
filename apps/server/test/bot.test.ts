@@ -284,7 +284,7 @@ describe('клипы на игровом сервере (/v1/clips)', () => {
       const m = await (await fetch(`${base}/metrics`)).text();
       expect(m).toContain('game_clips_count 1');
       expect(m).toMatch(new RegExp(`game_clips_bytes ${video.length + jpg.length}\\b`));
-      expect(m).toContain(`game_clips_limit_bytes ${1024 * 1024 * 1024}`);
+      expect(m).toContain(`game_clips_limit_bytes ${5 * 1024 * 1024 * 1024}`);
     } finally {
       await srv.close();
     }

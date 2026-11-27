@@ -163,6 +163,33 @@ describe('клипы в S3', () => {
     expect(await (await fetch(`${http}/metrics`)).text()).toContain('game_clips_s3_redirects_total 1');
   });
 
+  it('бакет только для чтения (прод с 27.11): новое — на диске, старое из бакета по-прежнему отдаётся', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'clips-s3-'));
+    const s3 = fakeS3();
+    // клип, попавший в бакет до переключения
+    const old = 'b'.repeat(20);
+    await s3.client().putBytes(`clips/${old}.mp4`, Buffer.alloc(2000, 9), 'video/mp4');
+    const store = new ClipStore(dir, Date.now, { s3: s3.client(), readOnly: true });
+    const up = await store.upload('u1', body(Buffer.alloc(5000, 7), 'video/mp4'));
+    expect(up.status).toBe(200);
+    await store.flushRemote();
+    const { id } = up.body as { id: string };
+    expect(await store.file(id, 'mp4')).not.toBeNull();
+    expect(s3.objects.has(`clips/${id}.mp4`)).toBe(false);
+    // телефон не получает ссылку в бакет — грузит сюда
+    expect(store.direct('u1', { ext: 'mp4', size: 5000 })).toEqual({ status: 404, body: { error: 'no_s3' } });
+    const tmp = join(dir, 'film.mp4');
+    await writeFile(tmp, Buffer.alloc(3000, 1));
+    const film = await store.adopt(tmp, 'mp4');
+    expect(await store.file(film.id, 'mp4')).not.toBeNull();
+    expect(s3.objects.has(`clips/${film.id}.mp4`)).toBe(false);
+    expect(store.remoteStats.uploaded).toBe(0);
+    srv = new GameServer({ authSecret: 'test-secret-test-secret-test-secret!!', log: silentLogger, clips: store });
+    const http = `http://127.0.0.1:${await srv.listen(0, '127.0.0.1')}`;
+    expect((await fetch(`${http}/v1/clips/${old}.mp4`)).status).toBe(200);
+    expect((await fetch(`${http}/v1/clips/${film.id}.mp4`)).status).toBe(200);
+  });
+
   it('S3 не отвечает — клип всё равно сохранён и отдаётся с диска', async () => {
     dir = await mkdtemp(join(tmpdir(), 'clips-s3-'));
     const s3 = fakeS3();
