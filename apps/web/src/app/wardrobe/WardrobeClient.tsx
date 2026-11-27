@@ -8,7 +8,7 @@ import { track } from '@/lib/analytics';
 import { TG_APP } from '@/lib/env';
 import { featureOn } from '@/lib/features';
 import { detectLang } from '@/lib/lang';
-import { bootTelegram, haptic, inTelegram, openTelegram, shopBuy, shopPack, shopState } from '@/lib/telegram';
+import { bootTelegram, haptic, inTelegram, openTelegram, shopBuy, shopState } from '@/lib/telegram';
 import type { ShopState } from '@/lib/telegram';
 import { TopBar } from '@/ui/TopBarView';
 import { CARD_H, CARD_W, buyLabel, drawCard, itemIcon, starsIcon } from '@/game/skins/wardrobe';
@@ -16,7 +16,7 @@ import { CARD_H, CARD_W, buyLabel, drawCard, itemIcon, starsIcon } from '@/game/
 /** Ячеек в списке наборов: пока набор один — остальные под знаком вопроса. */
 const SLOTS = 4;
 
-/** «Гардероб» (/wardrobe, за флагом shop): витрина Кот-банана, покупка за звёзды, стикеры набора — в свой пак или новый. */
+/** «Гардероб» (/wardrobe, за флагом shop): витрина Кот-банана, покупка за звёзды, стикеры набора — в личный пак игрока. */
 export default function WardrobeClient() {
   const router = useRouter();
   const [ITEM, setItem] = useState<ShopItemId>(SHOP_ITEMS[0].id);
@@ -26,7 +26,7 @@ export default function WardrobeClient() {
   const [ready, setReady] = useState(false);
   const [tgOn, setTgOn] = useState(false);
   const [st, setSt] = useState<ShopState | null>(null);
-  const [busy, setBusy] = useState<'buy' | 'pack' | null>(null);
+  const [busy, setBusy] = useState<'buy' | null>(null);
   const [note, setNote] = useState('');
   const [scale, setScale] = useState(0);
   // звезда Telegram (Stars) — пиксельная, из палитры игры
@@ -128,21 +128,8 @@ export default function WardrobeClient() {
     setBusy(null);
   };
 
-  // стикеры набора — по желанию: в свой пак от бота (in) или новым паком (own)
-  const makePack = async (mode: 'in' | 'own') => {
-    if (busy || !tgOn) return;
-    setBusy('pack');
-    setNote(t.sending);
-    track('shop_pack_tap', { mode });
-    const s = await shopPack(ITEM, mode);
-    if (s) setSt(s);
-    const link = s && (s.packs[ITEM] ?? s.pack);
-    setNote(!s ? t.failed : s.error === 'need_bot' ? t.needBot : link && s.issued >= s.wanted ? '' : t.failed);
-    if (link) haptic('success');
-    setBusy(null);
-  };
-  const chosen = !!st?.items.some((i) => i === `in:${ITEM}` || i === `own:${ITEM}`);
-  const packLink = st ? (st.items.includes(`own:${ITEM}`) ? st.packs[ITEM] : st.pack) : null;
+  // один пак на игрока: стикеры набора бот кладёт туда сам после оплаты
+  const packLink = st?.pack ?? null;
 
   const bot = TG_APP ? `https://t.me/${TG_APP.split('/')[0]}` : 'https://t.me/be_nobody_bot';
   const was = shopItem(ITEM)?.was;
@@ -181,25 +168,14 @@ export default function WardrobeClient() {
         {owned ? (
           <>
             <p className="wardrobe-owned">{t.owned}</p>
-            {chosen && packLink ? (
+            {packLink ? (
               <button className="btn small" onClick={() => openTelegram(packLink)}>
                 {t.openPack}
               </button>
             ) : (
-              <>
-                <p className="muted">{t.packHint}</p>
-                <div className="daily-buttons">
-                  {st?.pack && (
-                    <button className="btn small" onClick={() => void makePack('in')} aria-disabled={!!busy}>
-                      {t.addPack}
-                    </button>
-                  )}
-                  <button className={st?.pack ? 'btn small alt' : 'btn small'} onClick={() => void makePack('own')} aria-disabled={!!busy}>
-                    {st?.pack ? t.newPack : t.makePack}
-                  </button>
-                </div>
-              </>
+              <p className="muted">{t.sending}</p>
             )}
+            <p className="muted">{t.packHint}</p>
           </>
         ) : (
           <>

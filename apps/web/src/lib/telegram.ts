@@ -448,11 +448,6 @@ export async function shopClaim(): Promise<ShopState | null> {
   return botPost<ShopState>('/shop/claim', {}, 25_000);
 }
 
-/** Стикеры купленного набора: в свой пак (in) или новым паком (own). */
-export function shopPack(item: string, mode: 'in' | 'own'): Promise<ShopState | null> {
-  return botPost<ShopState>('/shop/pack', { item, mode }, 25_000);
-}
-
 /** Купить набор: счёт в звёздах поверх игры. Итог — как у Telegram; 'owned' — уже куплено. */
 export async function shopBuy(item: string): Promise<'paid' | 'cancelled' | 'failed' | 'pending' | 'owned'> {
   const w = await bootTelegram();
