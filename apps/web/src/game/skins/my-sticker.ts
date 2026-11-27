@@ -26,7 +26,8 @@ function poseFrame(pose: MyPose, t: number): { frame: number; dx: number; dy: nu
   if (pose === 'wave') return { frame: [F.WAVE, F.WAVE + 1, F.WAVE + 2, F.WAVE + 1][i], dx: 0, dy: 0 };
   if (pose === 'dance') return { frame: F.DANCE + i, dx: [-1, 0, 1, 0][i], dy: -(i % 2) };
   if (pose === 'stun') return { frame: F.STUN, dx: 0, dy: 0 };
-  if (pose === 'startle') return { frame: Math.floor(t / 4) % 2 ? F.STARTLE + 1 : F.STARTLE, dx: 0, dy: 0 };
+  // «Вопрос» — тот же испуг, только над головой «?»
+  if (pose === 'startle' || pose === 'ask') return { frame: Math.floor(t / 4) % 2 ? F.STARTLE + 1 : F.STARTLE, dx: 0, dy: 0 };
   if (pose === 'jump') return t % 10 < 5 ? { frame: F.JUMP, dx: 0, dy: -2 } : { frame: F.D, dx: 0, dy: 0 };
   return { frame: F.FREEZE, dx: 0, dy: 0 };
 }
@@ -80,6 +81,7 @@ export function drawMy(g: Ctx, s: MyLook, t: number): void {
   // украшение позы цветом подписи
   if (s.pose === 'stun') orbit(g, MID, top + 2, t);
   if (s.pose === 'startle' && Math.floor(t / 5) % 2 === 0) say(g, '!', 82, top - 4, col, 2);
+  if (s.pose === 'ask' && Math.floor(t / 5) % 2 === 0) say(g, '?', 82, top - 4, col, 2);
   if (s.pose === 'dance' || s.pose === 'jump') for (const [sx, sy, ph] of [[12, top + 8, 0], [84, top + 4, 1], [10, top + 44, 1], [86, top + 40, 0]]) if ((Math.floor(t / 3) + ph) % 2) star(g, sx, sy, col);
   if (s.pose === 'wave' && t % 10 < 5) {
     // «привет» — штрихи у поднятой руки

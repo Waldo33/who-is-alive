@@ -199,9 +199,9 @@ export const MY_FIGS = [
 export type MyFig = (typeof MY_FIGS)[number]['id'];
 
 /** Позы (те же движения, что в игре) и эмодзи стикера для поиска в Telegram. */
-export const MY_POSES = ['wave', 'dance', 'stun', 'startle', 'jump', 'freeze'] as const;
+export const MY_POSES = ['wave', 'dance', 'stun', 'startle', 'jump', 'freeze', 'ask'] as const;
 export type MyPose = (typeof MY_POSES)[number];
-export const MY_POSE_EMOJI: Record<MyPose, string> = { wave: '👋', dance: '💃', stun: '😵', startle: '😱', jump: '🤩', freeze: '🥶' };
+export const MY_POSE_EMOJI: Record<MyPose, string> = { wave: '👋', dance: '💃', stun: '😵', startle: '😱', jump: '🤩', freeze: '🥶', ask: '🤔' };
 /** Цвет подписи и искр — имена из палитры PAL (рисует клиент). */
 export const MY_COLORS = ['white', 'yellow', 'orange', 'cyan', 'green', 'orchid'] as const;
 /**

@@ -608,7 +608,7 @@ export const en: Dict = {
         full: 'You already have 5 of your own',
         bad: 'Something went wrong, try again',
       },
-      poses: { wave: 'Hi', dance: 'Dance', stun: 'Stunned', startle: 'Startled', jump: 'Jump', freeze: 'Freeze' },
+      poses: { wave: 'Hi', dance: 'Dance', stun: 'Stunned', startle: 'Startled', jump: 'Jump', freeze: 'Freeze', ask: 'Question' },
       figs: { actor: 'Actor', kotBanan: 'Catnana' },
       /** What unlocks stickers and figures. */
       earn: {
