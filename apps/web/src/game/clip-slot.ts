@@ -151,6 +151,8 @@ export interface ClipSlotFrame {
   spins: readonly SlotRecord[];
   /** Звук (один раз на ключ — повтор кадра не повторяет звук). */
   sound?: (key: string, sfx: Sfx, step?: number) => void;
+  /** Без автомата: только лампы и «КРУТКА!» до стоп-кадра (вращения — табло над головами, drawSlotHeads). */
+  warnOnly?: boolean;
 }
 
 /** Нарисовать «Крутку» в кадре клипа. Вызывать каждый кадр, пока мир внутри [warnAt, resumeAt + RISE_MS). */
@@ -159,6 +161,10 @@ export function drawClipSlot(f: ClipSlotFrame): void {
   if (now < f.warnAt || now >= f.resumeAt + RISE_MS) return;
   const a = getArt();
   const ts = f.t.slot;
+  if (f.warnOnly) {
+    if (now < f.showAt) drawWarn(f, ts.warn);
+    return;
+  }
   // лампы и «КРУТКА!» — до автомата (и всю паузу, если чьё вращение неизвестно)
   if (now < f.showAt || !f.spins.length) {
     if (now < f.resumeAt) drawWarn(f, ts.warn);
@@ -253,6 +259,51 @@ export function drawClipSlot(f: ClipSlotFrame): void {
     g.fillStyle = spin.outcome === 'skull' ? PAL.red : PAL.yellow;
     g.fillRect(0, ay, 180, py - ay);
     g.globalAlpha = 1;
+  }
+}
+
+/** Табло над головой: x — середина, y — низ (над плашкой имени). */
+export interface SlotHead {
+  x: number;
+  y: number;
+  color: string;
+  spins: readonly SlotRecord[];
+}
+
+/** Ширина и высота табло над головой: три символа ленты в рамке цвета игрока. */
+export const HEAD_W = SYM_W * 3 + 2 + 4;
+export const HEAD_H = SYM_W + 4;
+
+/**
+ * Повтор «Крутки» без автомата: над каждым актёром — табло из трёх символов, барабаны идут, как у автомата
+ * (slotSpinAt). Рамка — цвет игрока; 777 и звезда мигают золотом, череп — красным. Без clip(): символы целиком.
+ */
+export function drawSlotHeads(g: CanvasRenderingContext2D, now: number, wall: number, showAt: number, heads: readonly SlotHead[], minY: number): void {
+  const a = getArt();
+  const placed: { x: number; y: number }[] = [];
+  for (const h of heads) {
+    if (!h.spins.length) continue;
+    const st = slotSpinAt(showAt, h.spins, now);
+    const x = Math.max(1, Math.min(179 - HEAD_W, Math.round(h.x) - Math.floor(HEAD_W / 2)));
+    let y = Math.round(h.y) - HEAD_H;
+    while (placed.some((p) => Math.abs(p.x - x) < HEAD_W + 1 && Math.abs(p.y - y) < HEAD_H + 1)) y -= HEAD_H + 1;
+    if (y < minY) continue;
+    placed.push({ x, y });
+    const out = st.done ? st.spin.outcome : null;
+    const blink = Math.floor(wall / 140) % 2 === 0;
+    const frame = out === 'skull' && blink ? PAL.red : (out === 'seven' || out === 'star') && blink ? PAL.yellow : h.color;
+    fill(g, x, y, HEAD_W, HEAD_H, frame);
+    fill(g, Math.round(h.x) - 1, y + HEAD_H, 3, 1, frame);
+    fill(g, x + 1, y + 1, HEAD_W - 2, HEAD_H - 2, PAL.ink);
+    for (let i = 0; i < 3; i++) {
+      const cx = x + 2 + i * (SYM_W + 1);
+      fill(g, cx, y + 2, SYM_W, SYM_W, PAL.white);
+      const landed = st.pe >= st.reels[i].landedAt;
+      const idx = landed ? SLOT_SYMBOLS.indexOf(st.spin.reels[i]) : strip(i, st.pe < 0 ? 0 : Math.floor(st.reels[i].p / 40));
+      g.globalAlpha = st.pe < 0 ? 0.35 : 1;
+      g.drawImage(a.syms, idx * SYM_W, 0, SYM_W, SYM_W, cx, y + 2, SYM_W, SYM_W);
+      g.globalAlpha = 1;
+    }
   }
 }
 
