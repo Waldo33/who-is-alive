@@ -3,7 +3,7 @@ import { DICTS } from '@kto/game-core';
 import { errFields } from './log';
 import type { Logger } from './log';
 import { Shop, localLedger } from './shop';
-import type { ShopLedger, VerifyToken } from './shop';
+import type { ShopDeps, ShopLedger, VerifyToken } from './shop';
 import type { Store } from './store';
 
 /**
@@ -50,6 +50,8 @@ export interface BotOptions {
   verifyGameToken?: VerifyToken;
   /** Видеостикеры (<язык>/<id>.webm); нет — гардероб без выдачи стикеров. */
   stickersDir?: string;
+  /** Нарисовать свой стикер игрока (WEBM): sticker-render.ts здесь или игровой сервер по туннелю. */
+  drawMy?: ShopDeps['drawMy'];
 }
 
 /** Канал игры в Telegram (новости, ролики). */
@@ -258,6 +260,7 @@ export class Bot {
       channel: CHANNEL,
       site: o.site,
       channelId: '@' + CHANNEL.split('/').pop(),
+      drawMy: o.drawMy,
     });
   }
 
@@ -350,7 +353,7 @@ export class Bot {
         return { status: 200, body: { ok: true } };
       }
       if (method === 'POST' && (path === '/shop' || path.startsWith('/shop/'))) {
-        const b = (body ?? {}) as { initData?: string; item?: unknown; mode?: unknown; token?: unknown };
+        const b = (body ?? {}) as { initData?: string; item?: unknown; mode?: unknown; token?: unknown; id?: unknown; on?: unknown; slot?: unknown; sticker?: unknown };
         const init = this.verify(b.initData ?? '');
         if (!init) return { status: 401, body: { error: 'bad_init' } };
         return await this.shop.route(path, init, b);

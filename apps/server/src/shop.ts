@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { DICTS, SHOP_ITEMS, STICKER_LIST, fmt, isStickerId, shopItem } from '@kto/game-core';
-import type { StickerMeta } from '@kto/game-core';
+import { DICTS, MY_FIGS, MY_ISSUED, MY_MARKS, MY_MAX, MY_POSE_EMOJI, SHOP_ITEMS, STICKER_LIST, canDrop, fmt, isMySticker, isStickerId, myFigOpen, myIssued, offSticker, parseMySticker, shopItem } from '@kto/game-core';
+import type { MySticker, StickerId, StickerMeta } from '@kto/game-core';
 import { RateWindow } from './limits';
 import { errFields } from './log';
 import type { Logger } from './log';
@@ -60,7 +60,7 @@ export function localLedger(store: Store, verify?: VerifyToken): ShopLedger {
 /** Токен игрока: JWT (три части base64url), не длиннее 1 КБ. */
 const TOKEN = /^[A-Za-z0-9_-]{1,512}\.[A-Za-z0-9_-]{1,512}\.[A-Za-z0-9_-]{1,512}$/;
 
-const ITEM = /^(?:starter|(?:st|in|own|made):[A-Za-z]{1,24}|[A-Za-z]{1,24})$/;
+const ITEM = /^(?:starter|(?:st|in|own|made|off):[A-Za-z]{1,24}|[A-Za-z]{1,24})$/;
 const PACK = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
 const CHARGE = /^[A-Za-z0-9_:.-]{1,128}$/;
 
@@ -105,9 +105,12 @@ const strs = (x: unknown, max: number, re: RegExp): x is string[] => Array.isArr
 function parseUser(x: unknown): ShopUser | null {
   const u = x as Partial<ShopUser> | null;
   if (!u || !userId(u.userId) || (u.lang !== 'ru' && u.lang !== 'en') || typeof u.name !== 'string' || u.name.length > 32) return null;
-  if (!strs(u.items, 64, ITEM) || !Array.isArray(u.issued) || u.issued.length > 120 || !u.issued.every(isStickerId)) return null;
+  if (!strs(u.items, 120, ITEM) || !Array.isArray(u.issued) || u.issued.length > 120 || !u.issued.every((x) => isStickerId(x) || (typeof x === 'string' && MY_ISSUED.test(x)))) return null;
   if (u.pack !== null && !(typeof u.pack === 'string' && PACK.test(u.pack))) return null;
-  return { userId: u.userId, lang: u.lang, name: u.name, items: [...u.items], pack: u.pack, issued: [...u.issued] };
+  // свои стикеры: старый бот их не присылает — оставляем как есть (undefined), новый — проверяем каждый
+  const my = u.my === undefined ? undefined : Array.isArray(u.my) && u.my.length <= MY_MAX && u.my.every(isMySticker) && new Set(u.my.map((m) => m.slot)).size === u.my.length ? u.my.map((m) => ({ ...m, text: [...m.text] })) : null;
+  if (my === null) return null;
+  return { userId: u.userId, lang: u.lang, name: u.name, items: [...u.items], pack: u.pack, issued: [...u.issued], ...(my ? { my } : {}) };
 }
 
 /** /internal/shop на игровом сервере: операция учёта от сервера бота. Маршрут внутренний, но вход всё равно проверяем. */
@@ -136,10 +139,10 @@ export async function shopLedgerOp(store: ShopLedger, raw: unknown): Promise<{ s
 }
 
 /**
- * Стикеры, которые положены игроку: стартовый пак, «сразу» у наборов и открытые наградами (`st:<id>`) —
- * если игрок захотел пак (`pack`).
+ * Стикеры, которые открыты игроку: стартовый пак, «сразу» у наборов и открытые наградами (`st:<id>`) —
+ * если игрок захотел пак (`pack`). Что из них в паке — решает сам игрок (`wantedStickers`).
  */
-export function wantedStickers(items: string[]): StickerMeta[] {
+export function openStickers(items: string[]): StickerMeta[] {
   const has = new Set(items);
   if (!has.has('pack')) return [];
   return STICKER_LIST.filter((s) =>
@@ -154,6 +157,14 @@ export function wantedStickers(items: string[]): StickerMeta[] {
   );
 }
 
+/** Стикеры, которые должны быть в паке: открытые, кроме убранных игроком на странице «Собери свой стикерпак». */
+export function wantedStickers(items: string[]): StickerMeta[] {
+  return openStickers(items).filter((s) => !items.includes(offSticker(s.id)));
+}
+
+/** Первое эмодзи без «варианта отображения» (U+FE0F): Telegram может вернуть его и так, и так. */
+const em = (s: string | undefined) => (s ?? '').replace(/\uFE0F/g, '');
+
 /** Имя игрока в названии пака: без @, ссылок и невидимых символов. */
 export function packName(raw: unknown): string {
   return typeof raw === 'string'
@@ -164,6 +175,45 @@ export function packName(raw: unknown): string {
         .trim()
         .slice(0, 20)
     : '';
+}
+
+/** Что положить в пак: стандартный стикер (файл) или свой (рисует сервер). `key` — запись в `issued`. */
+interface Entry {
+  key: string;
+  emoji: string[];
+  lure?: boolean;
+  my?: MySticker;
+}
+
+/** Что боту сделать с паком игрока, чтобы он совпал с выбором. */
+export function syncPlan(u: ShopUser): { add: Entry[]; drop: { key: string; emoji: string }[]; replace: { e: Entry; old: string }[]; total: number } {
+  const want = wantedStickers(u.items);
+  const my = u.items.includes('pack') ? (u.my ?? []) : [];
+  const mine = (m: MySticker): Entry => ({ key: myIssued(m), emoji: [MY_MARKS[m.slot], MY_POSE_EMOJI[m.pose]], my: m });
+  const slotOf = (x: string) => Number(MY_ISSUED.exec(x)?.[1] ?? -1);
+  const add: Entry[] = [
+    ...want.filter((s) => !u.issued.includes(s.id)).map((s) => ({ key: s.id, emoji: s.emoji, lure: s.lure })),
+    ...my.filter((m) => !u.issued.some((x) => slotOf(x) === m.slot)).map(mine),
+  ];
+  // убранные игроком стандартные (возврат звёзд стикеры не забирает) и удалённые свои
+  const drop = [
+    ...u.issued.filter((x) => isStickerId(x) && u.items.includes(offSticker(x as StickerId))).map((x) => ({ key: x, emoji: STICKER_LIST.find((s) => s.id === x)!.emoji[0] })),
+    ...u.issued.filter((x) => MY_ISSUED.test(x) && !my.some((m) => m.slot === slotOf(x))).map((x) => ({ key: x, emoji: MY_MARKS[slotOf(x)] })),
+  ];
+  const replace = my.flatMap((m) => {
+    const old = u.issued.find((x) => slotOf(x) === m.slot);
+    return old && old !== myIssued(m) ? [{ e: mine(m), old }] : [];
+  });
+  // «положено в пак» для полосы прогресса: стандартные по выбору и свои
+  return { add, drop, replace, total: want.length + my.length };
+}
+const total = (p: ReturnType<typeof syncPlan>) => p.add.length + p.drop.length + p.replace.length;
+
+/** Простой вызов Telegram формой (call() ждёт FormData). */
+function jsonForm(o: Record<string, string>): FormData {
+  const f = new FormData();
+  for (const [k, v] of Object.entries(o)) f.set(k, v);
+  return f;
 }
 
 export interface ShopDeps {
@@ -179,6 +229,8 @@ export interface ShopDeps {
   site?: string;
   /** Канал игры для проверки подписки (getChatMember; бот должен быть админом канала): «@имя». */
   channelId?: string;
+  /** Нарисовать свой стикер (WEBM): игровой сервер — у себя, сервер бота — по туннелю (/internal/sticker). */
+  drawMy?: (look: Pick<MySticker, 'fig' | 'pose' | 'color' | 'text'>) => Promise<Buffer>;
   /** Подмена ожидания (тесты). */
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
@@ -201,6 +253,8 @@ export class Shop {
   /** Почему не вышло выдать (покажет гардероб): need_bot — игрок не открыл бота. */
   private readonly failed = new Map<number, string>();
   private readonly rate = new RateWindow(20, 60_000);
+  /** Свои стикеры рисует сервер — не чаще 12 правок в час на игрока. */
+  private readonly myRate = new RateWindow(12, 3_600_000);
   private readonly sleep: (ms: number) => Promise<void>;
 
   constructor(private readonly d: ShopDeps) {
@@ -208,7 +262,7 @@ export class Shop {
   }
 
   /** Маршрут /tg/shop… с проверенным initData. */
-  async route(path: string, init: ShopInit, body: { item?: unknown; mode?: unknown; token?: unknown }): Promise<ShopReply> {
+  async route(path: string, init: ShopInit, body: { item?: unknown; mode?: unknown; token?: unknown; id?: unknown; on?: unknown; slot?: unknown; sticker?: unknown }): Promise<ShopReply> {
     const id = init.user.id;
     const now = (this.d.now ?? Date.now)();
     if (!this.rate.take(String(id), now)) return { status: 429, body: { error: 'rate_limited' } };
@@ -219,25 +273,107 @@ export class Shop {
     if (path === '/shop/pack') return { status: 200, body: await this.state(id, true) };
     if (path === '/shop/buy') return this.buy(init, body.item);
     if (path === '/shop/link') return this.link(init.user, body.token);
+    if (path === '/shop/pick') return this.pick(id, body.id, body.on);
+    if (path === '/shop/my') return this.saveMy(id, body.slot, body.sticker, now);
+    if (path === '/shop/my/del') return this.delMy(id, body.slot);
     return { status: 404, body: { error: 'not_found' } };
   }
 
   private async state(id: number, kick: boolean) {
     const u = await this.d.ledger.shopUser(id);
-    const want = u ? wantedStickers(u.items) : [];
-    const missing = u ? want.filter((s) => !u.issued.includes(s.id)).length : 0;
-    // недовыданное (сбой Telegram, перезапуск) — дослать в фоне
-    if (kick && missing && !this.queue.has(id)) void this.issue(id);
+    const plan = u ? syncPlan(u) : null;
+    const pending = plan ? plan.add.length + plan.drop.length + plan.replace.length : 0;
+    // недовыданное и неубранное (сбой Telegram, перезапуск) — дослать в фоне
+    if (kick && pending && !this.queue.has(id)) void this.issue(id);
+    const open = u ? openStickers(u.items) : [];
     return {
       items: (u?.items ?? []).filter((i) => i === 'starter' || i === 'pack' || shopItem(i)),
       pack: u?.pack ? `https://t.me/addstickers/${u.pack}` : null,
       /** Отдельных паков больше нет (один пак на игрока); поле — для старых вкладок гардероба. */
       packs: {} as Record<string, string>,
-      issued: u?.issued.length ?? 0,
-      wanted: want.length,
+      issued: plan ? plan.total - plan.add.length : 0,
+      wanted: plan?.total ?? 0,
       error: this.failed.get(id) ?? null,
       catalog: SHOP_ITEMS,
+      // «Собери свой стикерпак»: что открыто, что убрано, свои стикеры, открытые фигурки, сколько ещё делать боту
+      open: open.map((s) => s.id),
+      off: open.filter((s) => u?.items.includes(offSticker(s.id))).map((s) => s.id),
+      my: u?.my ?? [],
+      figs: MY_FIGS.filter((f) => myFigOpen(f.id, u?.items ?? [])).map((f) => f.id),
+      earned: (u?.items ?? []).filter((i) => i.startsWith('st:')).map((i) => i.slice(3)),
+      pending,
     };
+  }
+
+  /** Убрать стикер из пака или вернуть (только открытые; приманку — нельзя). */
+  private async pick(id: number, sticker: unknown, on: unknown): Promise<ShopReply> {
+    if (!isStickerId(sticker) || typeof on !== 'boolean' || !canDrop(sticker)) return { status: 400, body: { error: 'bad' } };
+    const err = await this.edit(id, (u) => {
+      if (!openStickers(u.items).some((s) => s.id === sticker)) return 'locked';
+      const off = offSticker(sticker);
+      u.items = u.items.filter((i) => i !== off);
+      if (!on) u.items.push(off);
+      return null;
+    });
+    if (err) return { status: 409, body: { error: err } };
+    return { status: 200, body: await this.state(id, true) };
+  }
+
+  /** Свой стикер: новый (slot нет) или правка (slot есть) — проверяет и сохраняет, рисует и кладёт бот в очереди. */
+  private async saveMy(id: number, slotRaw: unknown, raw: unknown, now: number): Promise<ShopReply> {
+    const u0 = await this.d.ledger.shopUser(id);
+    if (!u0?.items.includes('pack')) return { status: 409, body: { error: 'need_pack' } };
+    const v = parseMySticker(raw, u0.items);
+    if ('error' in v) return { status: 400, body: { error: v.error } };
+    if (slotRaw !== undefined && slotRaw !== null && !(Number.isInteger(slotRaw) && (slotRaw as number) >= 0 && (slotRaw as number) < MY_MAX)) return { status: 400, body: { error: 'bad' } };
+    if (!this.myRate.take(String(id), now)) return { status: 429, body: { error: 'rate' } };
+    this.myRate.sweep(now);
+    const err = await this.edit(id, (u) => {
+      const my = (u.my ??= []);
+      const slot = typeof slotRaw === 'number' ? slotRaw : [...Array(MY_MAX).keys()].find((i) => !my.some((m) => m.slot === i));
+      if (slot === undefined) return 'full';
+      const old = my.find((m) => m.slot === slot);
+      if (old && old.fig === v.fig && old.pose === v.pose && old.color === v.color && old.text.join('\n') === v.text.join('\n')) return null;
+      const next: MySticker = { slot, ...v, rev: (old?.rev ?? 0) + 1 };
+      u.my = [...my.filter((m) => m.slot !== slot), next].sort((a, b) => a.slot - b.slot);
+      return null;
+    });
+    if (err) return { status: 409, body: { error: err } };
+    this.d.log('info', 'shop_my_saved', { fig: v.fig, pose: v.pose });
+    return { status: 200, body: await this.state(id, true) };
+  }
+
+  private async delMy(id: number, slot: unknown): Promise<ShopReply> {
+    if (!Number.isInteger(slot)) return { status: 400, body: { error: 'bad' } };
+    await this.edit(id, (u) => {
+      u.my = (u.my ?? []).filter((m) => m.slot !== slot);
+      return null;
+    });
+    return { status: 200, body: await this.state(id, true) };
+  }
+
+  /** Правка учёта игрока в его очереди (не перетрётся выдачей, которая идёт прямо сейчас). */
+  private edit(id: number, f: (u: ShopUser) => string | null): Promise<string | null> {
+    const prev = this.queue.get(id) ?? Promise.resolve();
+    const run = prev.then(async () => {
+      const u = await this.d.ledger.shopUser(id);
+      if (!u) return 'need_pack';
+      const err = f(u);
+      if (!err) await this.d.ledger.saveShopUser(u);
+      return err;
+    });
+    const tail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.queue.set(id, tail);
+    void tail.finally(() => {
+      if (this.queue.get(id) === tail) this.queue.delete(id);
+    });
+    return run.catch((e: unknown) => {
+      this.d.log('warn', 'shop_edit', errFields(e));
+      return 'bad';
+    });
   }
 
   private async user(from: ShopInit['user']): Promise<ShopUser> {
@@ -496,6 +632,8 @@ export class Shop {
     const t = DICTS[lang].shop;
     const rows: { text: string; url?: string; web_app?: { url: string } }[][] = [];
     if (pack) rows.push([{ text: t.botPack, url: pack }]);
+    // «Собери свой стикерпак» — страница в Mini App (пока за флагом shop: ссылка включает его у игрока)
+    if (pack && this.d.site) rows.push([{ text: t.botBuild, web_app: { url: `${this.d.site}/stickers?ff=shop&src=tg_sticker` } }]);
     // «Играть» — Mini App игры: новый стикер зовёт обратно
     if (play && this.d.site) rows.push([{ text: t.botPlay, web_app: { url: `${this.d.site}/?src=tg_sticker` } }]);
     try {
@@ -521,34 +659,70 @@ export class Shop {
     return run;
   }
 
+  /**
+   * Привести пак к выбору игрока: убрать убранное, заменить изменённые свои стикеры на месте, добавить
+   * недостающее (стандартные — файлы WEBM, свои — рисует `drawMy`). Стикер в паке находим по первому эмодзи
+   * (у каждого своё: game-core/test/my-stickers.test.ts).
+   */
   private async issueRun(id: number): Promise<void> {
     const u = await this.d.ledger.shopUser(id);
     if (!u) return;
-    const missing = () => wantedStickers(u.items).filter((s) => !u.issued.includes(s.id));
-    if (!missing().length) return;
+    if (!total(syncPlan(u))) return;
     const bot = await this.d.username();
-    const file = async (s: StickerMeta) => new Blob([await readFile(join(this.d.stickersDir, u.lang, `${s.id}.webm`))], { type: 'video/webm' });
-    const input = (s: StickerMeta, i: number) => ({ sticker: `attach://f${i}`, format: 'video', emoji_list: s.emoji });
     const t = DICTS[u.lang].shop;
-    // один пак на игрока: «Массовка · Имя · @бот» — бесплатные, «за игру» и купленные наборы
+    // один пак на игрока: «Массовка · Имя · @бот» — бесплатные, «за игру», купленные наборы и свои
     const name = `m${id}_by_${bot}`.slice(0, 64);
-    const to = { name, title: fmt(t.packTitle, { name: u.name }) };
-    let added = false;
+    const title = fmt(t.packTitle, { name: u.name });
+    const blob = async (e: Entry) => new Blob([new Uint8Array(e.my ? await this.drawMy(e.my) : await readFile(join(this.d.stickersDir, u.lang, `${e.key}.webm`)))], { type: 'video/webm' });
+    const input = (e: Entry, i: number) => ({ sticker: `attach://f${i}`, format: 'video', emoji_list: e.emoji });
+    let changed = false;
+
+    // убрать и заменить — нужен список стикеров пака (file_id по первому эмодзи)
+    const first = syncPlan(u);
+    if (u.pack && (first.drop.length || first.replace.length)) {
+      const set = await this.d.api<{ stickers?: { file_id: string; emoji?: string }[] }>('getStickerSet', { name: u.pack });
+      const byEmoji = new Map((set?.stickers ?? []).map((x) => [em(x.emoji), x.file_id]));
+      for (const d of first.drop) {
+        const fid = byEmoji.get(em(d.emoji));
+        if (fid) await this.call('deleteStickerFromSet', jsonForm({ sticker: fid }));
+        u.issued = u.issued.filter((x) => x !== d.key);
+        await this.d.ledger.saveShopUser(u);
+        changed = true;
+      }
+      for (const r of first.replace) {
+        const fid = byEmoji.get(em(r.e.emoji[0]));
+        u.issued = u.issued.filter((x) => x !== r.old);
+        if (fid) {
+          const form = new FormData();
+          form.set('user_id', String(id));
+          form.set('name', u.pack);
+          form.set('old_sticker', fid);
+          form.set('sticker', JSON.stringify(input(r.e, 0)));
+          form.set('f0', await blob(r.e), `${r.e.key}.webm`);
+          await this.call('replaceStickerInSet', form);
+          u.issued.push(r.e.key);
+        }
+        // не нашли в паке (убрали руками в Telegram) — добавится ниже как новый
+        await this.d.ledger.saveShopUser(u);
+        changed = true;
+      }
+    }
+
     for (;;) {
-      const left = missing();
+      const left = syncPlan(u).add;
       if (!left.length) break;
       if (!u.pack) {
         // приманка — последней и при создании
-        const list = [...left.filter((s) => !s.lure), ...left.filter((s) => s.lure)].slice(-50);
+        const list = [...left.filter((e) => !e.lure), ...left.filter((e) => e.lure)].slice(-50);
         const form = new FormData();
         form.set('user_id', String(id));
-        form.set('name', to.name);
-        form.set('title', `${to.title} · @${bot}`.slice(0, 64));
+        form.set('name', name);
+        form.set('title', `${title} · @${bot}`.slice(0, 64));
         form.set('stickers', JSON.stringify(list.map(input)));
-        for (const [i, s] of list.entries()) form.set(`f${i}`, await file(s), `${s.id}.webm`);
+        for (const [i, e] of list.entries()) form.set(`f${i}`, await blob(e), `${e.key}.webm`);
         try {
           await this.call('createNewStickerSet', form);
-          u.issued.push(...list.map((s) => s.id));
+          u.issued.push(...list.map((e) => e.key));
         } catch (e) {
           // пак уже есть (упали между созданием и записью) — дальше добавляем по одному
           if (!/already occupied/i.test(String(e))) throw e;
@@ -557,20 +731,25 @@ export class Shop {
         await this.d.ledger.saveShopUser(u);
         continue;
       }
-      const s = left[0];
+      const e = left[0];
       const form = new FormData();
       form.set('user_id', String(id));
-      form.set('name', to.name);
-      form.set('sticker', JSON.stringify(input(s, 0)));
-      form.set('f0', await file(s), `${s.id}.webm`);
+      form.set('name', u.pack);
+      form.set('sticker', JSON.stringify(input(e, 0)));
+      form.set('f0', await blob(e), `${e.key}.webm`);
       await this.call('addStickerToSet', form);
-      u.issued.push(s.id);
+      u.issued.push(e.key);
       await this.d.ledger.saveShopUser(u);
-      added = true;
+      changed = true;
     }
     // приманка «Собери свой пак» — снова в конец пака
-    if (added) await this.lureLast(name);
+    if (changed && u.pack) await this.lureLast(u.pack);
     this.failed.delete(id);
+  }
+
+  private async drawMy(m: MySticker): Promise<Buffer> {
+    if (!this.d.drawMy) throw new Error('no_sticker_renderer');
+    return this.d.drawMy({ fig: m.fig, pose: m.pose, color: m.color, text: m.text });
   }
 
   /** Приманка (первое эмодзи 🎬 есть только у неё) — последним стикером пака. Не вышло — не страшно. */

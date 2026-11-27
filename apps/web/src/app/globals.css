@@ -326,3 +326,43 @@ button.summary { color: var(--sand); cursor: pointer; }
 .wardrobe-mark { position: absolute; top: 2px; right: 2px; font-style: normal; font-size: 8px; line-height: 1; }
 .wardrobe-mark.mine { color: var(--ink); background: var(--green); padding: 2px; }
 .wardrobe-mark.new { width: 6px; height: 6px; background: var(--magenta); }
+
+/* «Собери свой стикерпак» (/stickers, за флагом shop): сетка пака и конструктор — экран без прокрутки */
+.stickers-tabs { display: flex; gap: 8px; flex-shrink: 0; }
+.stickers-tabs button { font: inherit; font-size: 10px; padding: 10px 12px; min-height: 40px; color: var(--slate); background: var(--night); border: 0;
+  box-shadow: 0 0 0 2px var(--ink), 0 0 0 4px var(--dusk); }
+.stickers-tabs button.on { color: var(--ink); background: var(--yellow); }
+.stickers-grid-slot { flex: 1 1 0; min-height: 0; width: 100%; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+.stickers-grid { display: grid; gap: 6px; justify-content: center; align-content: center; }
+.stickers-tile { position: relative; padding: 0; border: 0; font: inherit; font-size: 18px; color: var(--sand); background: var(--night);
+  box-shadow: 0 0 0 2px var(--ink); display: flex; align-items: center; justify-content: center; }
+.stickers-tile img { width: 100%; height: 100%; image-rendering: pixelated; }
+.stickers-tile.off img { opacity: 0.45; }
+.stickers-tile.locked img { opacity: 0.18; filter: grayscale(1); }
+.stickers-tile.sel { box-shadow: 0 0 0 2px var(--ink), 0 0 0 4px var(--yellow); }
+.stickers-tile.mine { background: #3e2731; }
+.stickers-tile.add { color: var(--yellow); box-shadow: 0 0 0 2px var(--ink), inset 0 0 0 2px var(--amber); }
+.stickers-mark { position: absolute; top: 1px; right: 1px; font-style: normal; font-size: 8px; line-height: 1; padding: 2px; }
+.stickers-mark.ok { color: var(--ink); background: var(--green); }
+.stickers-mark.lock { color: var(--sand); background: var(--ink); }
+.stickers-mark.back { color: var(--ink); background: var(--amber); }
+.stickers-mark.pin { color: var(--ink); background: var(--yellow); }
+.stickers-note { margin: 0; font-size: 9px !important; line-height: 1.8; color: var(--sand); min-height: 2.2em; }
+.stickers-note b { color: var(--yellow); font-weight: normal; }
+.stickers-note.err { color: var(--coral); }
+.stickers-stage { background: repeating-conic-gradient(#3a4466 0 25%, #262b44 0 50%) 0 0 / 16px 16px; }
+.stickers-form { display: flex; flex-direction: column; align-items: center; gap: 8px; flex-shrink: 0; width: 100%; max-width: 420px; }
+.stickers-row { display: flex; gap: 6px; justify-content: center; max-width: 100%; }
+.stickers-figs { overflow-x: auto; justify-content: flex-start; padding: 4px; touch-action: pan-x; scrollbar-width: none; }
+.stickers-figs::-webkit-scrollbar { display: none; }
+.stickers-fig { position: relative; flex: 0 0 auto; width: 48px; height: 48px; padding: 0; border: 0; background: var(--night); box-shadow: 0 0 0 2px var(--ink), 0 0 0 4px var(--dusk); }
+.stickers-fig img { width: 48px; height: 48px; image-rendering: pixelated; }
+.stickers-fig.on { box-shadow: 0 0 0 2px var(--ink), 0 0 0 4px var(--yellow); }
+.stickers-fig.locked img { opacity: 0.2; filter: grayscale(1); }
+.stickers-poses { flex-wrap: wrap; }
+.stickers-poses button { font: inherit; font-size: 9px; padding: 8px 6px; min-height: 34px; color: var(--sand); background: var(--night); border: 0; box-shadow: 0 0 0 2px var(--ink); }
+.stickers-poses button.on { color: var(--ink); background: var(--amber); }
+.stickers-colors button { width: 30px; height: 30px; padding: 0; border: 0; box-shadow: 0 0 0 2px var(--ink); }
+.stickers-colors button.on { box-shadow: 0 0 0 2px var(--ink), 0 0 0 4px var(--yellow); }
+.stickers-input { font: inherit; font-size: 16px; width: min(100%, 320px); text-align: center; background: var(--ink); color: #fff; border: 2px solid var(--amber); padding: 8px; border-radius: 0; }
+.stickers .btn[aria-disabled='true'] { background: var(--night); color: var(--steel); box-shadow: 0 0 0 2px var(--ink); pointer-events: none; }

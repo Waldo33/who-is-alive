@@ -145,3 +145,162 @@ export function earnedStickers(pid: string, rounds: EarnRound[], match: Pick<Mat
   const themes = new Set(rounds.filter((r) => r.theme !== undefined).map((r) => THEME_RULES[r.theme!]?.id));
   return STICKER_LIST.filter((s) => (s.earn === 'theme' ? !!s.theme && themes.has(s.theme) : s.earn && ev.has(s.earn))).map((s) => s.id);
 }
+
+// ───────────── «Собери свой стикерпак»: выбор стикеров и свои стикеры ─────────────
+
+/** Своих стикеров в паке — не больше. */
+export const MY_MAX = 5;
+/** Подпись своего стикера: строк и знаков в строке (стикер 96 пикс., шрифт 8 пикс.). */
+export const MY_LINES = 2;
+export const MY_LINE = 10;
+
+/**
+ * Фигурки конструктора: обычный актёр — у всех; Кот-банан — за покупку набора; герои площадок — когда
+ * открыт стикер этой площадки (сыграл на ней дубль). Порядок — порядок на странице.
+ */
+export const MY_FIGS = [
+  { id: 'actor' },
+  { id: 'kotBanan', item: 'kotBanan' },
+  { id: 'chef', sticker: 'chef', theme: 'chefs' },
+  { id: 'penguin', sticker: 'penguin', theme: 'penguins' },
+  { id: 'cosmo', sticker: 'cosmo', theme: 'cosmonauts' },
+  { id: 'office', sticker: 'office', theme: 'office' },
+  { id: 'miami', sticker: 'miami', theme: 'miami' },
+  { id: 'party', sticker: 'party', theme: 'party' },
+  { id: 'kupala', sticker: 'kupala', theme: 'kupala' },
+  { id: 'casino', sticker: 'casino', theme: 'casino' },
+] as const satisfies readonly { id: string; item?: ShopItemId; sticker?: StickerId; theme?: ThemeId }[];
+export type MyFig = (typeof MY_FIGS)[number]['id'];
+
+/** Позы (те же движения, что в игре) и эмодзи стикера для поиска в Telegram. */
+export const MY_POSES = ['wave', 'dance', 'stun', 'startle', 'jump', 'freeze'] as const;
+export type MyPose = (typeof MY_POSES)[number];
+export const MY_POSE_EMOJI: Record<MyPose, string> = { wave: '👋', dance: '💃', stun: '😵', startle: '😱', jump: '🤩', freeze: '🥶' };
+/** Цвет подписи и искр — имена из палитры PAL (рисует клиент). */
+export const MY_COLORS = ['white', 'yellow', 'orange', 'cyan', 'green', 'orchid'] as const;
+/**
+ * Первое эмодзи своего стикера — метка места (своё у каждого, нет у стандартных): по нему бот находит
+ * стикер в паке, чтобы заменить или убрать. Второе — эмодзи позы.
+ */
+export const MY_MARKS = ['✏️', '🖍', '🖌', '🖊', '🖋'] as const;
+
+export interface MySticker {
+  /** Место 0…MY_MAX-1 (метка `MY_MARKS[slot]`). */
+  slot: number;
+  fig: MyFig;
+  pose: MyPose;
+  /** Индекс в MY_COLORS. */
+  color: number;
+  /** Строки подписи (0–2), уже проверенные `myCaption`. */
+  text: string[];
+  /** Номер правки: изменился — бот заменяет стикер в паке на месте. */
+  rev: number;
+}
+
+/** Открыта ли фигурка игроку с такими предметами (items из учёта гардероба). */
+export function myFigOpen(fig: MyFig, items: readonly string[]): boolean {
+  const f = MY_FIGS.find((x) => x.id === fig) as { item?: string; sticker?: string } | undefined;
+  if (!f) return false;
+  if (f.item) return items.includes(f.item);
+  if (f.sticker) return items.includes(`st:${f.sticker}`);
+  return true;
+}
+
+/** Знаки подписи: буквы (кириллица, латиница), цифры, пробел и простая пунктуация — то, что есть в шрифте. */
+const CAP_CHARS = /^[A-Za-zА-Яа-яЁё0-9 !?.,:;'"()+*-]*$/u;
+/** Похожие латинские буквы и цифры → кириллица (обход фильтра «xуй», «3ае6ал»). */
+const LOOK: Record<string, string> = { a: 'а', b: 'в', c: 'с', e: 'е', h: 'н', k: 'к', m: 'м', o: 'о', p: 'р', t: 'т', x: 'х', y: 'у', u: 'и', '0': 'о', '3': 'з', '6': 'б', '4': 'ч', ё: 'е' };
+/** Корни мата, где бы ни стояли в слове (после склейки букв). */
+const RUDE_ANY = ['хуй', 'хуе', 'хуя', 'хуи', 'хуё', 'пизд', 'пезд', 'ебан', 'ебат', 'ебал', 'ебло', 'еблан', 'ебуч', 'ебну', 'ебош', 'заеб', 'выеб', 'уеб', 'въеб', 'наеб', 'бляд', 'блят', 'мудак', 'мудил', 'пидор', 'пидар', 'пидр', 'залуп', 'шлюх', 'гандон', 'гондон', 'дроч', 'манда', 'сучар'];
+/** Корни, которые ловим только в начале слова (иначе «рубля», «херсон», «посуда»). */
+const RUDE_START = ['бля', 'сука', 'суки', 'суке', 'сукой', 'сучк', 'ебу', 'ебе', 'еби', 'жоп', 'муда', 'член', 'срак', 'хер'];
+const RUDE_EN = ['fuck', 'shit', 'bitch', 'cunt', 'dick', 'cock', 'pussy', 'nigg', 'whore', 'slut', 'fag', 'asshole', 'porn', 'penis', 'sex'];
+const RUDE_EN_WORD = ['ass', 'cum', 'tits'];
+/** Исключения: обычные слова, в которых случайно есть корень. */
+const RUDE_OK = ['херсон', 'херувим', 'мандарин', 'команд', 'мандат', 'class', 'pass', 'mass', 'grass', 'bass', 'assist', 'sussex', 'essex', 'dickens', 'cocktail', 'peacock', 'shitake', 'scunthorpe'];
+
+/** Есть ли в тексте мат (по-русски и по-английски, с подменой похожих букв). */
+export function rude(s: string): boolean {
+  const low = s.toLowerCase().replace(/ё/g, 'е');
+  const words = low.split(/[^a-zа-я0-9]+/u).filter(Boolean);
+  const ok = (w: string) => RUDE_OK.some((x) => w.includes(x));
+  for (const w of words) {
+    if (!ok(w) && (RUDE_EN.some((r) => w.includes(r)) || RUDE_EN_WORD.includes(w))) return true;
+    const ru = [...w].map((ch) => LOOK[ch] ?? ch).join('').replace(/(.)\1+/g, '$1');
+    if (ok(ru)) continue;
+    if (RUDE_ANY.some((r) => ru.includes(r)) || RUDE_START.some((r) => ru.startsWith(r))) return true;
+  }
+  // буквы через пробел или точку: «х у й», «бл.я» — склеиваем подряд идущие кусочки по 1–2 буквы
+  let run = '';
+  const check = () => {
+    const ru = [...run].map((ch) => LOOK[ch] ?? ch).join('').replace(/(.)\1+/g, '$1');
+    const hit = run.length > 2 && !ok(ru) && (RUDE_ANY.some((r) => ru.includes(r)) || RUDE_START.some((r) => ru.startsWith(r)) || RUDE_EN.some((r) => run.includes(r)));
+    run = '';
+    return hit;
+  };
+  for (const w of words) {
+    if (w.length <= 2) run += w;
+    else if (check()) return true;
+  }
+  return check();
+}
+
+/** Ошибки подписи: длинно, чужие знаки (@, ссылки, эмодзи), похоже на адрес сайта, мат. */
+export type CaptionError = 'long' | 'chars' | 'link' | 'rude';
+
+/**
+ * Подпись своего стикера: одна строка с телефона → до двух строк по MY_LINE знаков (перенос по пробелу).
+ * Решает сервер; клиент проверяет тем же кодом, чтобы сразу показать ошибку.
+ */
+export function myCaption(raw: unknown): { lines: string[] } | { error: CaptionError } {
+  if (typeof raw !== 'string') return { error: 'chars' };
+  const s = raw.replace(/\s+/g, ' ').trim();
+  if (s.length > MY_LINE * MY_LINES + 1) return { error: 'long' };
+  if (!CAP_CHARS.test(s)) return { error: 'chars' };
+  // адрес сайта: «что-то.ru», «www», «http»
+  if (/[a-zа-я0-9]\.[a-zа-я]{2}/iu.test(s) || /www|https?/i.test(s)) return { error: 'link' };
+  if (rude(s)) return { error: 'rude' };
+  if (!s) return { lines: [] };
+  if (s.length <= MY_LINE) return { lines: [s] };
+  // перенос по последнему пробелу, который даёт обе строки не длиннее MY_LINE
+  for (let i = Math.min(s.length - 1, MY_LINE); i > 0; i--) {
+    if (s[i] !== ' ') continue;
+    const a = s.slice(0, i);
+    const b = s.slice(i + 1);
+    if (a.length <= MY_LINE && b.length <= MY_LINE) return { lines: [a, b] };
+  }
+  return { error: 'long' };
+}
+
+/** Свой стикер с телефона → проверенный (без rev и slot — их ставит сервер) или код ошибки. */
+export function parseMySticker(x: unknown, items: readonly string[]): Omit<MySticker, 'slot' | 'rev'> | { error: CaptionError | 'bad' | 'locked' } {
+  const v = x as Partial<Record<keyof MySticker, unknown>> & { caption?: unknown } | null;
+  if (!v || typeof v !== 'object') return { error: 'bad' };
+  const fig = MY_FIGS.find((f) => f.id === v.fig)?.id;
+  const pose = MY_POSES.find((p) => p === v.pose);
+  const color = typeof v.color === 'number' && Number.isInteger(v.color) && v.color >= 0 && v.color < MY_COLORS.length ? v.color : -1;
+  if (!fig || !pose || color < 0) return { error: 'bad' };
+  if (!myFigOpen(fig, items)) return { error: 'locked' };
+  const cap = myCaption(v.caption ?? '');
+  if ('error' in cap) return cap;
+  return { fig, pose, color, text: cap.lines };
+}
+
+/** Проверка уже сохранённого своего стикера (учёт по туннелю: всё, что пришло по сети, — снова проверяем). */
+export function isMySticker(x: unknown): x is MySticker {
+  const v = x as MySticker | null;
+  if (!v || typeof v !== 'object') return false;
+  if (!Number.isInteger(v.slot) || v.slot < 0 || v.slot >= MY_MAX || !Number.isInteger(v.rev) || v.rev < 0 || v.rev > 1e6) return false;
+  if (!MY_FIGS.some((f) => f.id === v.fig) || !MY_POSES.includes(v.pose) || !Number.isInteger(v.color) || v.color < 0 || v.color >= MY_COLORS.length) return false;
+  if (!Array.isArray(v.text) || v.text.length > MY_LINES) return false;
+  const cap = myCaption(v.text.join(' '));
+  return !('error' in cap) && cap.lines.join(' ') === v.text.join(' ');
+}
+
+/** Запись «свой стикер в паке» в `issued`: место и номер правки (`my2.5`). */
+export const myIssued = (s: Pick<MySticker, 'slot' | 'rev'>) => `my${s.slot}.${s.rev}`;
+export const MY_ISSUED = /^my([0-4])\.(\d{1,7})$/;
+
+/** Стандартные стикеры, которые игрок убрал из пака (`off:<id>` в предметах). Приманку убрать нельзя. */
+export const offSticker = (id: StickerId) => `off:${id}`;
+export const canDrop = (id: StickerId) => !STICKER_LIST.find((s) => s.id === id)?.lure;
