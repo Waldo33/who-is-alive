@@ -39,7 +39,7 @@ export default function HomeClient() {
   // «Гардероб» — за флагом shop (lib/features.ts)
   const [shop, setShop] = useState(false);
   // бесплатный стикерпак с актёром — плашкой после первого матча, пока не забран (за тем же флагом)
-  const [stickers, setStickers] = useState<'off' | 'offer' | 'busy'>('off');
+  const [stickers, setStickers] = useState<'off' | 'offer' | 'busy' | 'sub'>('off');
   useEffect(() => {
     const n = dailyNumber(localDateKey(new Date()));
     let done = false;
@@ -198,12 +198,16 @@ export default function HomeClient() {
                   done();
                   setStickers('off');
                   openTelegram(s.pack);
+                } else if (s?.error === 'need_sub' && s.channel) {
+                  // ни матча на сервере, ни подписки: открыть канал, следующее нажатие проверит снова
+                  setStickers('sub');
+                  openTelegram(s.channel);
                 } else setStickers('offer');
               });
             }}
           >
             <span className="daily-tile-title">{t.shop.freeTitle}</span>
-            <span className="daily-tile-sub">{stickers === 'busy' ? t.shop.sending : t.shop.freeText}</span>
+            <span className="daily-tile-sub">{stickers === 'busy' ? t.shop.sending : stickers === 'sub' ? t.shop.needSub : t.shop.freeText}</span>
           </a>
         )}
         {web && (

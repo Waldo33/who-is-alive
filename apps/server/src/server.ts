@@ -724,7 +724,7 @@ export class GameServer {
       .then(async (links) => {
         const users = links.flatMap((l) => {
           const e = earned.find((x) => x.pid === l.gameUser);
-          return e?.stickers.length ? [{ tgUser: l.tgUser, name: l.name, lang: l.lang, stickers: e.stickers }] : [];
+          return e ? [{ tgUser: l.tgUser, name: l.name, lang: l.lang, stickers: e.stickers }] : [];
         });
         if (!users.length) return;
         if (!base) return void (await bot!.shop.earn({ users }));

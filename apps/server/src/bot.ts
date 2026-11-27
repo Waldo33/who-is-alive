@@ -257,6 +257,7 @@ export class Bot {
       stickersDir: o.stickersDir ?? '',
       channel: CHANNEL,
       site: o.site,
+      channelId: '@' + CHANNEL.split('/').pop(),
     });
   }
 
@@ -338,7 +339,7 @@ export class Bot {
           if (u?.pre_checkout_query) await this.shop.preCheckout(u.pre_checkout_query);
           else if (u?.callback_query) await this.shop.onCallback(u.callback_query);
           // бесплатный стикерпак по внешней ссылке t.me/<бот>?start=stickers (только в личке: пак — этого игрока)
-          else if (u?.message?.text === '/start stickers' && u.message.chat.type === 'private' && u.message.from) await this.shop.claim(u.message.from);
+          else if (u?.message?.text === '/start stickers' && u.message.chat.type === 'private' && u.message.from) await this.shop.claimInChat(u.message.from);
           else if (u?.message?.text?.startsWith('/paysupport')) await this.shop.support(u.message.chat.id, u.message.from?.language_code);
           else if (u?.message?.text?.startsWith('/start')) await this.onStart(u.message);
           else if (u?.inline_query) await this.onInline(u.inline_query);

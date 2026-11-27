@@ -432,8 +432,10 @@ export interface ShopState {
   packs: Record<string, string>;
   issued: number;
   wanted: number;
-  /** need_bot — игрок не открывал бота, стикеры выдать нельзя. */
+  /** need_bot — игрок не открывал бота, стикеры выдать нельзя; need_sub — бесплатный пак: ни матча, ни подписки. */
   error: string | null;
+  /** Канал игры (при need_sub). */
+  channel?: string;
 }
 
 /** Что есть у игрока (и дослать недовыданные стикеры). null — не в Telegram или сервер недоступен. */

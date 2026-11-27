@@ -66,7 +66,7 @@ export interface RoomOptions {
   onFilm?: (room: Room, film: RoomFilm) => void;
   /** Комната по приглашению из Telegram: что показать на карточке в чате (сбор, съёмка) — server.ts › cardToChat. */
   onCard?: (room: Room, card: RoomCard) => void;
-  /** Стикеры за матч (game-core › earnedStickers): игрокам-людям, что открылось — server.ts отдаст боту. */
+  /** Матч сыгран: всем людям — что им открылось (game-core › earnedStickers, может быть пусто) — server.ts отдаст боту. */
   onStickers?: (room: Room, earned: { pid: string; stickers: string[] }[]) => void;
   /** Комната переехала с соседнего экземпляра сервера (выкладка без обрыва): состав и настройки — оттуда. */
   restore?: RoomSnapshot;
@@ -758,7 +758,8 @@ export class Room {
     const match = r.host.sim.outcome();
     const rounds = takes.map((t) => t.summary);
     const earned = r.players.filter((p) => !p.ai).map((p) => ({ pid: p.pid, stickers: earnedStickers(p.pid, rounds, match) as string[] }));
-    if (earned.some((e) => e.stickers.length)) this.o.onStickers(this, earned.filter((e) => e.stickers.length));
+    // всех людей: сыгранный матч сам по себе открывает бесплатный пак (shop.ts › earn)
+    if (earned.length) this.o.onStickers(this, earned);
   }
 
   /**

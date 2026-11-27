@@ -26,7 +26,7 @@ interface Call {
   files: string[];
 }
 
-function makeBot(opts: { fail?: (method: string) => string | null; store?: MemoryStore; ledger?: ConstructorParameters<typeof Bot>[0]['shopLedger'] } = {}) {
+function makeBot(opts: { result?: (method: string) => unknown; fail?: (method: string) => string | null; store?: MemoryStore; ledger?: ConstructorParameters<typeof Bot>[0]['shopLedger'] } = {}) {
   const calls: Call[] = [];
   const fetchImpl = (async (url: string, init: { body: string | FormData }) => {
     const method = url.split('/').pop()!;
@@ -41,7 +41,7 @@ function makeBot(opts: { fail?: (method: string) => string | null; store?: Memor
     calls.push({ method, body, files });
     const err = opts.fail?.(method);
     if (err) return new Response(JSON.stringify({ ok: false, description: err }));
-    const result = method === 'getMe' ? { username: 'be_nobody_bot' } : method === 'createInvoiceLink' ? 'https://t.me/$invoice' : true;
+    const result = opts.result?.(method) ?? (method === 'getMe' ? { username: 'be_nobody_bot' } : method === 'createInvoiceLink' ? 'https://t.me/$invoice' : true);
     return new Response(JSON.stringify({ ok: true, result }));
   }) as unknown as typeof fetch;
   const store = opts.store ?? new MemoryStore();
@@ -289,7 +289,8 @@ describe('гардероб', () => {
     expect(adds.map((c) => c.body.name)).toEqual(['kotbanan77_by_be_nobody_bot', 'kotbanan77_by_be_nobody_bot']);
     expect(adds.flatMap((c) => c.files.map((f) => f.split(':')[1]))).toEqual(['splat.webm', 'happyTears.webm']);
     expect((await store.shopUser(77))?.issued).toEqual(['notCrying', 'justBanana', 'splat', 'happyTears']);
-    const msg = calls.find((c) => c.method === 'sendMessage')!.body;
+    // первый матч — ещё и предложение бесплатного пака; новое в паке — отдельным сообщением
+    const msg = calls.find((c) => c.method === 'sendMessage' && String(c.body.text).includes('Новый стикер'))!.body;
     expect(msg.text).toContain('«Шмяк!»');
     expect(msg.text).toContain('4 из 8');
     expect(JSON.stringify(msg.reply_markup)).toContain('https://site.example/?src=tg_sticker');
@@ -302,8 +303,10 @@ describe('гардероб', () => {
 
     // набор не куплен — стикеры не выдаются и не копятся; мусор во входе отбрасывается
     await bot.shop.earn({ users: [{ tgUser: 78, name: 'Петя', lang: 'ru', stickers: ['splat', 'meow'] }, { tgUser: -1, name: 'x', lang: 'ru', stickers: [] }, { tgUser: 79, name: 'x', lang: 'ru', stickers: ['evil'] }] });
-    expect(await store.shopUser(78)).toBeNull();
-    expect(calls.filter((c) => /StickerSet|StickerToSet|sendMessage/.test(c.method))).toHaveLength(0);
+    // матч засчитан (бесплатный пак), но стикеры набора — нет
+    expect((await store.shopUser(78))?.items).toEqual(['played']);
+    expect((await store.shopUser(79))?.items).toBeUndefined();
+    expect(calls.filter((c) => /StickerSet|StickerToSet/.test(c.method))).toHaveLength(0);
   });
 
   it('набор куплен, но пак ещё не выбран: стикер запомнен и придёт вместе с паком', async () => {
@@ -311,9 +314,48 @@ describe('гардероб', () => {
     await hook(bot, payment());
     calls.length = 0;
     await bot.shop.earn({ users: [{ tgUser: 77, name: 'Аня', lang: 'ru', stickers: ['meow'] }] });
-    expect(calls.filter((c) => /StickerSet|StickerToSet|sendMessage/.test(c.method))).toHaveLength(0);
+    expect(calls.filter((c) => /StickerSet|StickerToSet/.test(c.method) || (c.method === 'sendMessage' && String(c.body.text).includes('Новый')))).toHaveLength(0);
     expect((await store.shopUser(77))?.items).toContain('st:meow');
     await hook(bot, { callback_query: { id: 'cb', from: ANYA, data: 'pk:own:kotBanan' } });
     expect((await store.shopUser(77))?.issued).toEqual(['notCrying', 'justBanana', 'meow']);
+  });
+
+  it('бесплатный пак: за первый матч (бот сам предлагает) или за подписку на канал; без того и другого — кнопки канала', async () => {
+    let status = 'left';
+    const { bot, calls, store } = makeBot({ result: (m) => (m === 'getChatMember' ? { status } : undefined) });
+    await hook(bot, { message: { chat: { id: 77, type: 'private' }, from: ANYA, text: '/start stickers' } });
+    expect(await store.shopUser(77)).toBeNull();
+    expect(calls.find((c) => c.method === 'getChatMember')?.body).toEqual({ chat_id: '@benobody_app', user_id: 77 });
+    const ask = calls.find((c) => c.method === 'sendMessage')!.body;
+    expect(JSON.stringify(ask.reply_markup)).toContain('https://t.me/benobody_app');
+    expect(JSON.stringify(ask.reply_markup)).toContain('free:claim');
+    expect((await bot.handle('POST', '/shop/claim', {}, { initData: initData(ANYA) })).body).toMatchObject({ error: 'need_sub', channel: 'https://t.me/benobody_app' });
+    // «Я подписался», а подписки нет — всплывашка, пака нет
+    calls.length = 0;
+    await hook(bot, { callback_query: { id: 'cb', from: ANYA, data: 'free:claim' } });
+    expect(calls.find((c) => c.method === 'answerCallbackQuery')?.body.show_alert).toBe(true);
+    expect(calls.some((c) => c.method === 'createNewStickerSet')).toBe(false);
+    // подписался — пак
+    status = 'member';
+    await hook(bot, { callback_query: { id: 'cb', from: ANYA, data: 'free:claim' } });
+    expect((await store.shopUser(77))?.issued).toHaveLength(4);
+
+    // другой игрок без подписки сыграл первый матч: бот сам предлагает пак, повторный матч — не предлагает
+    status = 'left';
+    const PETYA = { id: 88, first_name: 'Петя', language_code: 'ru' };
+    calls.length = 0;
+    await bot.shop.earn({ users: [{ tgUser: 88, name: 'Петя', lang: 'ru', stickers: [] }] });
+    expect(JSON.stringify(calls.find((c) => c.method === 'sendMessage')?.body.reply_markup)).toContain('free:claim');
+    calls.length = 0;
+    await bot.shop.earn({ users: [{ tgUser: 88, name: 'Петя', lang: 'ru', stickers: [] }] });
+    expect(calls.filter((c) => c.method === 'sendMessage')).toHaveLength(0);
+    await hook(bot, { callback_query: { id: 'cb2', from: PETYA, data: 'free:claim' } });
+    expect((await store.shopUser(88))?.issued).toHaveLength(4);
+  });
+
+  it('проверить подписку нельзя (бот не админ канала) — пак всё равно выдаём', async () => {
+    const { bot, store } = makeBot({ fail: (m) => (m === 'getChatMember' ? 'Bad Request: member list is inaccessible' : null) });
+    await bot.handle('POST', '/shop/claim', {}, { initData: initData(ANYA) });
+    expect((await store.shopUser(77))?.issued).toHaveLength(4);
   });
 });

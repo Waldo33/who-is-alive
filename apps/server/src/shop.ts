@@ -174,6 +174,8 @@ export interface ShopDeps {
   channel: string;
   /** Адрес игры (кнопка «Играть» в сообщении о новом стикере). */
   site?: string;
+  /** Канал игры для проверки подписки (getChatMember; бот должен быть админом канала): «@имя». */
+  channelId?: string;
   /** Подмена ожидания (тесты). */
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
@@ -301,9 +303,14 @@ export class Shop {
         const fresh = STICKER_LIST.filter(
           (s) => x.stickers.includes(s.id) && !s.now && (s.set === 'starter' || u.items.includes(s.set)) && !u.items.includes(`st:${s.id}`),
         );
-        if (!fresh.length) return;
+        // первый сыгранный матч открывает бесплатный пак: бот предлагает его забрать
+        const first = !u.items.includes('played');
+        if (first) u.items.push('played');
+        if (!fresh.length && !first) return;
         u.items.push(...fresh.map((s) => `st:${s.id}`));
         await this.d.ledger.saveShopUser(u);
+        if (first && !u.items.includes('starter')) await this.offerFree(u);
+        if (!fresh.length) return;
         this.d.log('info', 'shop_earned', { n: fresh.length });
         const before = new Set(u.issued);
         await this.issueRun(id);
@@ -325,9 +332,53 @@ export class Shop {
     return run;
   }
 
+  /** После первого матча: «Твой стикерпак готов — забрать?» с кнопкой (писать можно, если игрок открывал бота). */
+  private async offerFree(u: ShopUser): Promise<void> {
+    const t = DICTS[u.lang].shop;
+    try {
+      await this.d.api('sendMessage', { chat_id: u.userId, text: t.botFreeOffer, reply_markup: { inline_keyboard: [[{ text: t.botFreeClaim, callback_data: 'free:claim' }]] } });
+    } catch (e) {
+      this.d.log('warn', 'shop_notify', { err: String(e).slice(0, 200) });
+    }
+  }
+
   /** Бесплатный пак с обычным актёром: из гардероба на главной или по внешней ссылке (/start stickers). */
-  claim(from: ShopInit['user']) {
+  async claim(from: ShopInit['user']) {
+    const u = await this.d.ledger.shopUser(from.id);
+    // бесплатный пак — за сыгранный матч (сервер видел игрока в матче, `played`) или за подписку на канал
+    if (!u?.items.includes('starter') && !u?.items.includes('played') && !(await this.subscribed(from.id))) {
+      return { ...(await this.state(from.id, false)), error: 'need_sub', channel: this.d.channel };
+    }
     return this.grant(from, ['starter', 'pack'], (l) => DICTS[l].shop.botFree);
+  }
+
+  /** Бесплатный пак по ссылке /start stickers: нет ни матча, ни подписки — кнопки «Подписаться» и «Я подписался». */
+  async claimInChat(from: ShopInit['user']): Promise<void> {
+    const st = await this.claim(from);
+    if (st.error !== 'need_sub') return;
+    const t = DICTS[langOf(from.language_code)].shop;
+    await this.d.api('sendMessage', {
+      chat_id: from.id,
+      text: t.botNeedSub,
+      reply_markup: { inline_keyboard: [[{ text: t.botSubscribe, url: this.d.channel }], [{ text: t.botSubscribed, callback_data: 'free:claim' }]] },
+    });
+  }
+
+  /**
+   * Подписан ли игрок на канал игры. Проверить нельзя (бот не админ канала, сбой Telegram) — считаем, что да:
+   * пак бесплатный, из-за настройки канала игроку отказывать не стоит.
+   */
+  private async subscribed(id: number): Promise<boolean> {
+    if (!this.d.channelId) return true;
+    try {
+      const m = await this.d.api<{ status?: string; is_member?: boolean }>('getChatMember', { chat_id: this.d.channelId, user_id: id });
+      if (m?.status === 'left' || m?.status === 'kicked') return false;
+      if (m?.status === 'restricted') return m.is_member !== false;
+      return true;
+    } catch (e) {
+      this.d.log('warn', 'shop_sub_check', { err: String(e).slice(0, 200) });
+      return true;
+    }
   }
 
   /**
@@ -345,6 +396,15 @@ export class Shop {
 
   /** Кнопки под сообщением о покупке: «pk:in:<набор>» — в мой пак, «pk:own:<набор>» — новый пак. */
   async onCallback(q: { id: string; from: ShopInit['user']; data?: string }): Promise<void> {
+    // «Забрать стикерпак» (после первого матча) и «Я подписался» (по ссылке)
+    if (q.data === 'free:claim') {
+      const r = this.claim(q.from);
+      const first = await Promise.race([r, new Promise<null>((ok) => setTimeout(() => ok(null), 1500))]);
+      const t = DICTS[langOf(q.from.language_code)].shop;
+      await this.d.api('answerCallbackQuery', first?.error === 'need_sub' ? { callback_query_id: q.id, text: t.botNoSub, show_alert: true } : { callback_query_id: q.id });
+      await r;
+      return;
+    }
     const m = /^pk:(in|own):([A-Za-z]{1,24})$/.exec(q.data ?? '');
     if (!m) return;
     // ответить сразу (кнопка перестаёт крутиться), пак собирается несколько секунд
