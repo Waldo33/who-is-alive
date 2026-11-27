@@ -129,15 +129,13 @@ jobs:
               s, rc = t.get('source') or {}, t.get('receiver') or {}
               print(t.get('date'), t.get('amount'), 'id', str(t.get('id'))[:12] + '…', 'src', s.get('type'), s.get('transaction_type'), s.get('invoice_payload'), (s.get('user') or {}).get('id'), 'rcv', rc.get('type'))
           PY
-      - name: Стикерпак после «Добавить к себе» — журналы и запись игрока (27.11, ночь)
+      - name: Откуда открылись стикеры набора (27.11, ночь)
         env:
           IP: ${{ steps.infra.outputs.ip }}
         run: |
-          echo "── бот (Нидерланды)"
-          ssh $SSH_OPTS root@$IP "journalctl -u 'massovka-game*' --since -50min --no-pager -o cat | grep -E 'shop|sticker|tg_error|Set|pack' | grep -v '\"/metrics' | tail -50 | cut -c1-500" || true
-          echo "── игра (Европа)"
-          ssh $SSH_OPTS root@72.56.22.216 "journalctl -u 'massovka-game@*' --since -50min --no-pager -o cat | grep -E 'shop|sticker|skin' | tail -30 | cut -c1-400" || true
-          ssh $SSH_OPTS root@72.56.22.216 "sudo -u postgres psql massovka -P pager=off -Atc \"select user_id, items, issued, my, updated_at from shop_users\"" || true
+          ssh $SSH_OPTS root@72.56.22.216 "journalctl -u 'massovka-game@*' --since -3h --no-pager -o cat | grep -E 'stickers_to_bot|match_end|earned' | tail -20 | cut -c1-300" || true
+          ssh $SSH_OPTS root@$IP "journalctl -u 'massovka-game*' --since -3h --no-pager -o cat | grep -E 'shop_earn|tg/stickers|new_sticker|stickers' | grep -v metrics | tail -20 | cut -c1-300" || true
+          ssh $SSH_OPTS root@72.56.22.216 "sudo -u postgres psql massovka -P pager=off -Atc \"select user_id, items, issued, updated_at from shop_users\"" || true
       - name: Фильм матча в чат — журналы бота и игры за 3 часа (27.11, ночь)
         env:
           IP: ${{ steps.infra.outputs.ip }}

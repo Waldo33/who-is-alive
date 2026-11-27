@@ -522,6 +522,11 @@ export const en: Dict = {
     needSub: 'Join the game channel and tap again',
     needMatch: 'Play a match in Telegram and join the channel',
     needBot: 'Press “Start” in the bot first',
+    login: 'Log in with Telegram',
+    loginHint: 'Bought in the bot? Get it all here too',
+    loginFail: 'Login failed. Try again',
+    loggedAs: 'Logged in: {name}',
+    logout: 'Log out',
     items: {
       kotBanan: { name: 'CATNANA', tagline: 'Crying, but a banana' },
     },
