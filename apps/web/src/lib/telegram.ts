@@ -58,6 +58,8 @@ export interface TgWebApp {
   openTelegramLink(url: string): void;
   shareMessage?(id: string, cb?: (sent: boolean) => void): void;
   shareToStory?(mediaUrl: string, params?: { text?: string; widget_link?: { url: string; name?: string } }): void;
+  openInvoice?(url: string, cb?: (status: 'paid' | 'cancelled' | 'failed' | 'pending') => void): void;
+  requestWriteAccess?(cb?: (allowed: boolean) => void): void;
   downloadFile?(params: { url: string; file_name: string }, cb?: (accepted: boolean) => void): void;
   onEvent(e: string, cb: () => void): void;
   BackButton: TgButton;
@@ -322,11 +324,11 @@ export async function telegramReady(): Promise<TgWebApp | null> {
  */
 const BOT_FN = `${GAME_API}/tg`;
 
-async function botPost<T>(path: string, body: Record<string, unknown>): Promise<T | null> {
+async function botPost<T>(path: string, body: Record<string, unknown>, timeoutMs = 6000): Promise<T | null> {
   const w = await bootTelegram();
   if (!w?.initData) return null;
   const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), 6000);
+  const timer = setTimeout(() => ctl.abort(), timeoutMs);
   try {
     const r = await fetch(`${BOT_FN}${path}`, {
       method: 'POST',
@@ -416,4 +418,52 @@ export function telegramClipSave(clip: SharedClip): boolean {
   } catch {
     return false;
   }
+}
+
+// ───────────── гардероб (за флагом shop): покупка за звёзды и личный стикерпак ─────────────
+
+export interface ShopState {
+  /** Что есть: `starter` (бесплатный пак), наборы. */
+  items: string[];
+  /** Ссылка на личный пак (t.me/addstickers/…) или null. */
+  pack: string | null;
+  issued: number;
+  wanted: number;
+  /** need_bot — игрок не открывал бота, стикеры выдать нельзя. */
+  error: string | null;
+}
+
+/** Что есть у игрока (и дослать недовыданные стикеры). null — не в Telegram или сервер недоступен. */
+export function shopState(): Promise<ShopState | null> {
+  return botPost<ShopState>('/shop', {});
+}
+
+/** Забрать бесплатный пак: бот рисует пак и присылает ссылку (до ~20 с). */
+export async function shopClaim(): Promise<ShopState | null> {
+  const w = await bootTelegram();
+  // боту нужно разрешение писать игроку (сообщение «пак готов»); отказ — пак всё равно будет
+  if (w?.requestWriteAccess && at('6.9')) await new Promise<void>((r) => w.requestWriteAccess!(() => r()));
+  return botPost<ShopState>('/shop/claim', {}, 25_000);
+}
+
+/** Купить набор: счёт в звёздах поверх игры. Итог — как у Telegram; 'owned' — уже куплено. */
+export async function shopBuy(item: string): Promise<'paid' | 'cancelled' | 'failed' | 'pending' | 'owned'> {
+  const w = await bootTelegram();
+  if (!w?.openInvoice || !at('6.1')) return 'failed';
+  const r = await botPost<{ link?: string; error?: string }>('/shop/buy', { item });
+  if (!r?.link) return 'failed';
+  return new Promise((res) => {
+    try {
+      w.openInvoice!(r.link!, (status) => res(status));
+    } catch {
+      res('failed');
+    }
+  });
+}
+
+/** Открыть ссылку Telegram (пак стикеров, бот) поверх игры. */
+export function openTelegram(url: string): void {
+  const w = tg();
+  if (w) w.openTelegramLink(url);
+  else window.open(url, '_blank', 'noopener');
 }

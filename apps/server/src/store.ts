@@ -28,8 +28,37 @@ export interface Store {
   saveErrors(rows: ErrorRow[]): Promise<string[]>;
   /** Уборка: группы и дни старше 90 суток. */
   cleanupErrors(): Promise<void>;
+  /** Гардероб (shop.ts): покупки и личный стикерпак игрока Telegram. */
+  shopUser(userId: number): Promise<ShopUser | null>;
+  saveShopUser(u: ShopUser): Promise<void>;
+  /** Записать оплату. false — этот платёж уже записан (Telegram повторил обновление). */
+  saveShopPayment(p: ShopPayment): Promise<boolean>;
+  /** Отметить возврат. null — платежа нет или он уже возвращён. */
+  refundShopPayment(charge: string): Promise<ShopPayment | null>;
   ping(): Promise<boolean>;
   close(): Promise<void>;
+}
+
+export interface ShopUser {
+  userId: number;
+  lang: 'ru' | 'en';
+  /** Имя в названии пака. */
+  name: string;
+  /** Что есть у игрока: `starter` (бесплатный пак), наборы (`kotBanan`), открытые стикеры (`st:<id>`). */
+  items: string[];
+  /** Имя стикерпака в Telegram (…_by_<бот>), пока не создан — null. */
+  pack: string | null;
+  /** Стикеры, уже добавленные в пак. */
+  issued: string[];
+}
+
+export interface ShopPayment {
+  /** telegram_payment_charge_id */
+  charge: string;
+  userId: number;
+  item: string;
+  stars: number;
+  refunded: boolean;
 }
 
 export interface DailyScore {
@@ -121,6 +150,24 @@ const MIGRATIONS: string[] = [
      tries integer not null,
      created_at timestamptz not null default now(),
      primary key (code, device)
+   )`,
+  // гардероб (shop.ts): у игрока Telegram — наборы и личный стикерпак; оплаты звёздами — по charge id
+  `create table if not exists shop_users (
+     user_id bigint primary key,
+     lang text not null default 'ru',
+     name text not null default '',
+     items text[] not null default '{}',
+     pack text,
+     issued text[] not null default '{}',
+     updated_at timestamptz not null default now()
+   )`,
+  `create table if not exists shop_payments (
+     charge text primary key,
+     user_id bigint not null,
+     item text not null,
+     stars integer not null,
+     refunded boolean not null default false,
+     created_at timestamptz not null default now()
    )`,
 ];
 
@@ -234,6 +281,31 @@ export class PgStore implements Store {
     await this.pool.query(`DELETE FROM error_daily WHERE day < current_date - 90`);
   }
 
+  async shopUser(userId: number): Promise<ShopUser | null> {
+    const res = await this.pool.query(`select user_id, lang, name, items, pack, issued from shop_users where user_id = $1`, [userId]);
+    const x = res.rows[0];
+    return x ? { userId: Number(x.user_id), lang: x.lang === 'en' ? 'en' : 'ru', name: x.name, items: x.items, pack: x.pack, issued: x.issued } : null;
+  }
+
+  async saveShopUser(u: ShopUser): Promise<void> {
+    await this.pool.query(
+      `insert into shop_users (user_id, lang, name, items, pack, issued) values ($1, $2, $3, $4, $5, $6)
+       on conflict (user_id) do update set lang = excluded.lang, name = excluded.name, items = excluded.items, pack = excluded.pack, issued = excluded.issued, updated_at = now()`,
+      [u.userId, u.lang, u.name, u.items, u.pack, u.issued],
+    );
+  }
+
+  async saveShopPayment(p: ShopPayment): Promise<boolean> {
+    const res = await this.pool.query(`insert into shop_payments (charge, user_id, item, stars) values ($1, $2, $3, $4) on conflict do nothing`, [p.charge, p.userId, p.item, p.stars]);
+    return res.rowCount === 1;
+  }
+
+  async refundShopPayment(charge: string): Promise<ShopPayment | null> {
+    const res = await this.pool.query(`update shop_payments set refunded = true where charge = $1 and not refunded returning charge, user_id, item, stars`, [charge]);
+    const x = res.rows[0];
+    return x ? { charge: x.charge, userId: Number(x.user_id), item: x.item, stars: x.stars, refunded: true } : null;
+  }
+
   async ping(): Promise<boolean> {
     try {
       await this.pool.query('select 1');
@@ -317,6 +389,31 @@ export class MemoryStore implements Store {
   }
 
   async cleanupErrors(): Promise<void> {}
+
+  shop = new Map<number, ShopUser>();
+  payments = new Map<string, ShopPayment>();
+
+  async shopUser(userId: number): Promise<ShopUser | null> {
+    const u = this.shop.get(userId);
+    return u ? structuredClone(u) : null;
+  }
+
+  async saveShopUser(u: ShopUser): Promise<void> {
+    this.shop.set(u.userId, structuredClone(u));
+  }
+
+  async saveShopPayment(p: ShopPayment): Promise<boolean> {
+    if (this.payments.has(p.charge)) return false;
+    this.payments.set(p.charge, { ...p, refunded: false });
+    return true;
+  }
+
+  async refundShopPayment(charge: string): Promise<ShopPayment | null> {
+    const p = this.payments.get(charge);
+    if (!p || p.refunded) return null;
+    p.refunded = true;
+    return { ...p };
+  }
 
   async ping(): Promise<boolean> {
     return true;

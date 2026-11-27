@@ -303,3 +303,14 @@ button.summary { color: var(--sand); cursor: pointer; }
 .daily-board-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .daily-board li > span:last-child { flex-shrink: 0; white-space: nowrap; }
 .daily .muted { color: var(--slate); }
+
+/* «Гардероб» (/wardrobe, за флагом shop): та же раскладка, что у кастинга, — экран без прокрутки */
+.wardrobe .btn { gap: 10px; }
+.wardrobe .btn.small { min-height: 44px; padding: 10px 14px; font-size: 10px; }
+.wardrobe-was { color: var(--rust); font-size: 10px; }
+.wardrobe-owned { color: var(--yellow); font-size: 12px !important; }
+.wardrobe-note { color: var(--sand); }
+.wardrobe-free { display: flex; flex-direction: column; align-items: center; gap: 8px; width: min(300px, 90vw); padding: 8px 12px;
+  background: var(--night); box-shadow: 0 0 0 2px var(--ink), 0 0 0 4px #68386c; }
+.wardrobe-free-title { color: var(--yellow); }
+.wardrobe .btn[aria-disabled='true'] { background: var(--night); color: var(--steel); box-shadow: 0 0 0 2px var(--ink); pointer-events: none; }

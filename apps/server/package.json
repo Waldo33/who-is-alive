@@ -8,7 +8,7 @@
     "dev": "tsx watch src/main.ts",
     "start": "node dist/server.mjs",
     "build": "esbuild src/main.ts --bundle --platform=node --target=node22 --format=esm --sourcemap --outfile=dist/server.mjs --banner:js=\"import { createRequire } from 'module'; const require = createRequire(import.meta.url);\" && pnpm build:film",
-    "build:film": "esbuild src/film-worker.ts --bundle --platform=node --target=node22 --format=esm --sourcemap --outfile=dist/film-worker.mjs --external:@napi-rs/canvas --external:node-web-audio-api --banner:js=\"import { createRequire } from 'module'; const require = createRequire(import.meta.url);\" && mkdir -p dist/fonts && cp ../web/assets/og/press-start-2p-*.woff dist/fonts/",
+    "build:film": "esbuild src/film-worker.ts --bundle --platform=node --target=node22 --format=esm --sourcemap --outfile=dist/film-worker.mjs --external:@napi-rs/canvas --external:node-web-audio-api --banner:js=\"import { createRequire } from 'module'; const require = createRequire(import.meta.url);\" && mkdir -p dist/fonts && cp ../web/assets/og/press-start-2p-*.woff dist/fonts/ && rm -rf dist/stickers && cp -r stickers dist/stickers",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "smoke": "tsx scripts/smoke.ts",

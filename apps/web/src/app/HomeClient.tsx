@@ -35,6 +35,8 @@ export default function HomeClient() {
   const [web, setWeb] = useState(false);
   // кастинг дня: номер и пройден ли сегодня (localStorage — как на /daily)
   const [daily, setDaily] = useState({ on: false, n: 0, done: false });
+  // «Гардероб» — за флагом shop (lib/features.ts)
+  const [shop, setShop] = useState(false);
   useEffect(() => {
     const n = dailyNumber(localDateKey(new Date()));
     let done = false;
@@ -44,6 +46,7 @@ export default function HomeClient() {
       /* нет записей */
     }
     setDaily({ on: featureOn('casting'), n, done });
+    setShop(featureOn('shop'));
   }, []);
   const bar = useRef<Bar | null>(null);
   const ny = useNewYear();
@@ -154,6 +157,14 @@ export default function HomeClient() {
               {daily.n > 0 && ` ${fmt(t.daily.numShort, { n: daily.n })}`}
             </span>
             <span className="daily-tile-sub">{daily.done ? t.start.dailyDone : t.daily.task}</span>
+          </Link>
+        )}
+        {shop && (
+          <Link className="daily-tile" href="/wardrobe" onClick={() => track('shop_tap', { from: 'home' })}>
+            <span className="daily-tile-title">{t.shop.title}</span>
+            <span className="daily-tile-sub">
+              {t.shop.isNew}: {t.shop.items.kotBanan.name}
+            </span>
           </Link>
         )}
         {web && (
