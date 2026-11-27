@@ -156,6 +156,8 @@ export function earnedEvents(pid: string, rounds: EarnRound[], match: Pick<Match
 
 /** Сколько новых стикеров открывает один матч: условий за матч набирается много, весь пак не должен падать за пару игр. */
 export const EARN_PER_MATCH = 2;
+/** И не больше стольких за сутки (по Москве): весь пак за игру — не быстрее недели, а не за вечер. */
+export const EARN_PER_DAY = 3;
 /** Если условий набралось больше, чем `EARN_PER_MATCH`, — сначала редкие. */
 const EARN_RANK: readonly EarnId[] = ['jackpot', 'clairvoyant', 'stars', 'unsuspected', 'paranoid', 'win', 'theme', 'cut', 'accuse', 'survive', 'lose', 'played'];
 /** Какие из новых для игрока стикеров открыть за этот матч (порядок STICKER_LIST при равной редкости). */

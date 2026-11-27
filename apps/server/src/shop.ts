@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { DICTS, MY_FIGS, MY_ISSUED, MY_MARKS, MY_MAX, MY_POSE_EMOJI, RETIRED_STICKERS, SHOP_ITEMS, STICKER_LIST, TEST_ITEM, buyItem, canDrop, fmt, isMySticker, isSkin, isStickerId, myFigOpen, myIssued, offSticker, parseMySticker, pickEarned, skinOf, wearItems } from '@kto/game-core';
+import { DICTS, EARN_PER_DAY, EARN_PER_MATCH, MY_FIGS, MY_ISSUED, MY_MARKS, MY_MAX, MY_POSE_EMOJI, RETIRED_STICKERS, SHOP_ITEMS, STICKER_LIST, TEST_ITEM, buyItem, canDrop, fmt, isMySticker, isSkin, isStickerId, myFigOpen, myIssued, offSticker, parseMySticker, pickEarned, skinOf, wearItems } from '@kto/game-core';
 import type { MySticker, StickerId, StickerMeta } from '@kto/game-core';
 import { RateWindow } from './limits';
 import { errFields } from './log';
@@ -62,7 +62,17 @@ export function localLedger(store: Store, verify?: VerifyToken, onLink?: (gameUs
 /** Токен игрока: JWT (три части base64url), не длиннее 1 КБ. */
 const TOKEN = /^[A-Za-z0-9_-]{1,512}\.[A-Za-z0-9_-]{1,512}\.[A-Za-z0-9_-]{1,512}$/;
 
-const ITEM = /^(?:starter|(?:st|in|own|made|off|wear):[A-Za-z]{1,24}|[A-Za-z]{1,24})$/;
+/** Сутки по Москве (UTC+3) для лимита стикеров за матчи: «20261128». */
+const MSK = 3 * 3600_000;
+const DAY = 24 * 3600_000;
+const dayKey = (ms: number): string => new Date(ms + MSK).toISOString().slice(0, 10).replace(/-/g, '');
+/** Когда начнутся следующие сутки по Москве. */
+const nextDay = (ms: number): number => (Math.floor((ms + MSK) / DAY) + 1) * DAY - MSK;
+/** Сколько стикеров за матчи игрок уже получил сегодня (отметка `day:<сутки>:<n>`). */
+const earnedToday = (items: readonly string[], now: number): number => Number(items.find((i) => i.startsWith(`day:${dayKey(now)}:`))?.split(':')[2]) || 0;
+/** Стикеры, которые игрок ещё может открыть за матчи (набор есть, стикера нет). */
+const earnable = (items: readonly string[]) => STICKER_LIST.filter((s) => !s.now && !!s.earn && (s.set === 'starter' || s.set === 'play' || items.includes(s.set)) && !items.includes(`st:${s.id}`));
+const ITEM = /^(?:starter|(?:st|in|own|made|off|wear):[A-Za-z]{1,24}|[A-Za-z]{1,24}|day:\d{8}:\d{1,2})$/;
 const PACK = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
 /**
  * Номер платежа Telegram (telegram_payment_charge_id): у звёзд — длинный «stx…» с символами base64 и прочими.
@@ -316,6 +326,7 @@ export class Shop {
     // недовыданное и неубранное (сбой Telegram, перезапуск) — дослать в фоне
     if (kick && pending && !this.queue.has(id)) void this.issue(id);
     const open = u ? openStickers(u.items) : [];
+    const now = (this.d.now ?? Date.now)();
     // бесплатный пак ещё не забран — шаги для экрана-замка: сыгран ли матч, есть ли подписка на канал
     const free = u?.items.includes('starter') ? undefined : { played: !!u?.items.includes('played'), sub: await this.subscribed(id), channel: this.d.channel };
     return {
@@ -335,6 +346,8 @@ export class Shop {
       my: u?.my ?? [],
       figs: MY_FIGS.filter((f) => myFigOpen(f.id, u?.items ?? [])).map((f) => f.id),
       earned: (u?.items ?? []).filter((i) => i.startsWith('st:')).map((i) => i.slice(3)),
+      /** Дневной лимит стикеров за матчи исчерпан — когда снова (мс); null — можно открывать. */
+      earnNext: u && earnedToday(u.items, now) >= EARN_PER_DAY && earnable(u.items).length ? nextDay(now) : null,
       pending,
       free,
     };
@@ -471,15 +484,20 @@ export class Shop {
     const run = prev
       .then(async () => {
         const u = (await this.d.ledger.shopUser(id)) ?? { userId: id, lang: x.lang, name: packName(x.name) || 'Актёр', items: [], pack: null, issued: [] };
-        // не больше EARN_PER_MATCH новых за матч, сначала редкие — остальное откроется в следующих
+        // не больше EARN_PER_MATCH новых за матч и EARN_PER_DAY за сутки, сначала редкие — остальное откроется потом
+        const now = (this.d.now ?? Date.now)();
+        const today = dayKey(now);
+        const usedToday = earnedToday(u.items, now);
         const fresh = pickEarned(
-          STICKER_LIST.filter((s) => x.stickers.includes(s.id) && !s.now && (s.set === 'starter' || s.set === 'play' || u.items.includes(s.set)) && !u.items.includes(`st:${s.id}`)),
+          earnable(u.items).filter((s) => x.stickers.includes(s.id)),
+          Math.max(0, Math.min(EARN_PER_MATCH, EARN_PER_DAY - usedToday)),
         );
         // первый сыгранный матч открывает бесплатный пак: бот предлагает его забрать
         const first = !u.items.includes('played');
         if (first) u.items.push('played');
         if (!fresh.length && !first) return;
         u.items.push(...fresh.map((s) => `st:${s.id}`));
+        if (fresh.length) u.items = [...u.items.filter((i) => !i.startsWith('day:')), `day:${today}:${usedToday + fresh.length}`];
         await this.d.ledger.saveShopUser(u);
         if (first && !u.items.includes('starter')) await this.offerFree(u);
         if (!fresh.length) return;
@@ -493,7 +511,9 @@ export class Shop {
         const t = DICTS[after.lang].shop;
         const set = got[0].set;
         const inSet = STICKER_LIST.filter((s) => s.set === set);
-        const text = fmt(t.botEarned, { sticker: got.map((s) => `«${t.stickers[s.id].join(' ')}»`).join(', '), n: inSet.filter((s) => after.issued.includes(s.id)).length, of: inSet.length });
+        // лимит на сегодня исчерпан, а открывать ещё есть что — сказать, что завтра будут новые
+        const last = usedToday + fresh.length >= EARN_PER_DAY && earnable(after.items).length > 0;
+        const text = fmt(last ? t.botEarnedLast : t.botEarned, { sticker: got.map((s) => `«${t.stickers[s.id].join(' ')}»`).join(', '), n: inSet.filter((s) => after.issued.includes(s.id)).length, of: inSet.length });
         await this.notify(id, after.lang, text, st.pack, true);
       })
       .catch((e: unknown) => this.d.log('warn', 'shop_earn', errFields(e)));

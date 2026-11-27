@@ -597,6 +597,9 @@ export const en: Dict = {
       save: 'Save',
       del: 'Remove from pack',
       tapHint: 'Tap a sticker to remove it from the pack or bring it back',
+      nextIn: 'New stickers for takes in {time}',
+      hm: '{h}h {m}m',
+      m: '{m}m',
       back: 'Back to stickers',
       errors: {
         long: 'Too long: 2 lines of 10',
@@ -648,6 +651,7 @@ export const en: Dict = {
     botFree: '🎬 Your sticker pack is ready: 4 stickers with your actor.',
     botPack: '📦 Open the sticker pack',
     botEarned: '🎬 New sticker in your pack: {sticker}. {n} of {of} collected — more unlock in the next takes.',
+    botEarnedLast: '🎬 New sticker in your pack: {sticker}. {n} of {of} collected. That’s it for today — come back tomorrow for more.',
     botFreeOffer: '🎬 First take is in the can! A free sticker pack with your actor is yours — want it?',
     botFreeClaim: '🎁 Get the sticker pack',
     botNeedSub: '🎬 First take is in the can! Join the Be Nobody channel and the free sticker pack with your actor is yours.',
