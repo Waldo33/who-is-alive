@@ -3,12 +3,12 @@
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { DICTS, MY_COLORS, MY_FIGS, MY_MAX, MY_POSES, STICKER_LIST, THEME_RULES, canDrop, fmt, myCaption } from '@kto/game-core';
-import type { Lang, MyFig, MyPose, MySticker, StickerMeta } from '@kto/game-core';
+import type { Lang, MyFig, MyPose, MySticker, ShopItemId, StickerMeta } from '@kto/game-core';
 import { PAL } from '@kto/assets';
 import { track } from '@/lib/analytics';
 import { featureOn } from '@/lib/features';
 import { detectLang } from '@/lib/lang';
-import { bootTelegram, haptic, inTelegram, linkTelegramOnce, openTelegram, shopClaim, shopMy, shopMyDel, shopPick, shopState } from '@/lib/telegram';
+import { bootTelegram, haptic, inTelegram, linkTelegramOnce, openTelegram, shopClaim, shopMy, shopMyDel, shopPick, shopState, tgLink } from '@/lib/telegram';
 import type { ShopState } from '@/lib/telegram';
 import { TopBar } from '@/ui/TopBarView';
 import { ST_SIZE, STICKERS, stickerFrame } from '@/game/skins/stickers';
@@ -46,6 +46,9 @@ const themeName = (lang: Lang, id: string) => DICTS[lang].themes[THEME_RULES.fin
  * убирает и возвращает открытые, видит, за что откроются закрытые, и собирает свои стикеры в конструкторе
  * (фигурка, поза, цвет, надпись). Превью рисует тот же код, что файл для Telegram на сервере; пак правит бот.
  */
+/** Канал игры — если сервер бота старый и не прислал ссылку. */
+const CHANNEL = 'https://t.me/benobody_app';
+
 export default function StickersClient() {
   const router = useRouter();
   const [lang, setLang] = useState<Lang>('ru');
@@ -112,6 +115,20 @@ export default function StickersClient() {
 
   // картинки своих стикеров (первый кадр с подписью)
   const myPics = useMemo(() => (ready ? Object.fromEntries(my.map((m) => [m.slot, png(stickerFrame(myDef(m), 5, lang))])) : {}), [ready, my, lang]);
+
+  // экран-замок: вернулись из канала (подписка) — проверить шаги заново
+  useEffect(() => {
+    if (!tgOn || hasPack) return;
+    const back = () => {
+      if (document.visibilityState === 'visible') void shopState().then((x) => x && setSt(x));
+    };
+    document.addEventListener('visibilitychange', back);
+    window.addEventListener('kto:back', back);
+    return () => {
+      document.removeEventListener('visibilitychange', back);
+      window.removeEventListener('kto:back', back);
+    };
+  }, [tgOn, hasPack]);
 
   // пока бот правит пак — спрашиваем, как дела (до минуты)
   useEffect(() => {
@@ -245,9 +262,18 @@ export default function StickersClient() {
     setTab('make');
   };
 
+  // вне Telegram пак не собрать — сразу в бота, на эту же страницу
+  const toTg = (from: string) => {
+    track('stickers_to_tg', { from });
+    const link = tgLink('ff_stickers');
+    if (link) location.href = link;
+  };
+
   const saveMy = async () => {
     if (busy || capErr) return;
-    if (!tgOn) return setNote(b.onlyTg);
+    if (!tgOn) return toTg('make');
+    // фигурка из набора гардероба ещё не куплена — сразу к покупке
+    if (lockedItemFig) return toShop(lockedItemFig);
     if (!hasPack) return setNote(b.needPack);
     if (!figs.has(draft.fig)) return setNote(b.errors.locked);
     setBusy(true);
@@ -282,8 +308,31 @@ export default function StickersClient() {
     setNote(r?.error === 'need_sub' ? t.needSub : r?.error === 'need_match' ? t.needMatch : r?.error === 'need_bot' ? t.needBot : r ? '' : t.failed);
   };
 
+  // фигурка набора, который ещё не куплен (кнопка конструктора — «Купить …»)
+  const lockedItemFig = ((): ShopItemId | null => {
+    const d = MY_FIGS.find((f) => f.id === draft.fig);
+    return d && 'item' in d && !figs.has(draft.fig) ? d.item : null;
+  })();
+
+  // экран-замок: в Telegram, бесплатный пак ещё не забран — два шага поверх сетки
+  const locked = tgOn && !!st && !hasPack;
+  const free = st?.free;
+
   const status = st?.pending ? b.syncing : note;
   const selMeta = STICKER_LIST.find((x) => x.id === sel);
+  const buyItem = selMeta && !open.has(selMeta.id) && selMeta.set !== 'play' && selMeta.set !== 'starter' && !st?.items.includes(selMeta.set) ? (selMeta.set as ShopItemId) : null;
+  const toPlay = () => {
+    track('stickers_lock', { step: 'match' });
+    router.push('/?create=1');
+  };
+  const toChannel = () => {
+    track('stickers_lock', { step: 'sub' });
+    openTelegram(free?.channel || CHANNEL);
+  };
+  const toShop = (item: string) => {
+    track('stickers_to_shop', { item });
+    router.push(`/wardrobe?item=${encodeURIComponent(item)}`);
+  };
   const pack = st?.pack ?? null;
 
   return (
@@ -301,7 +350,34 @@ export default function StickersClient() {
 
       {tab === 'pack' ? (
         <>
-          <div className="stickers-grid-slot" ref={gridRef}>
+          <div className={locked ? 'stickers-grid-slot dim' : 'stickers-grid-slot'} ref={gridRef}>
+            {locked && (
+              <div className="stickers-lock" role="dialog" aria-label={b.lockTitle}>
+                <h2>{b.lockTitle}</h2>
+                <p>{b.lockText}</p>
+                <ol>
+                  <li className={free?.played ? 'done' : ''}>
+                    <i>{free?.played ? '✓' : '1'}</i>
+                    <span>{b.stepMatch}</span>
+                    {!free?.played && (
+                      <button className="btn small" onClick={() => toPlay()}>
+                        {b.stepPlay}
+                      </button>
+                    )}
+                  </li>
+                  <li className={free?.sub ? 'done' : ''}>
+                    <i>{free?.sub ? '✓' : '2'}</i>
+                    <span>{b.stepSub}</span>
+                    {!free?.sub && (
+                      <button className="btn small tg" onClick={() => toChannel()}>
+                        {b.stepSubBtn}
+                      </button>
+                    )}
+                  </li>
+                </ol>
+                <p className="muted">{b.lockHint}</p>
+              </div>
+            )}
             {ready && (
               <div className="stickers-grid" style={{ gridTemplateColumns: `repeat(${cols}, ${tile}px)`, gridAutoRows: `${tile}px` }}>
                 {STICKER_LIST.map((m) => {
@@ -335,8 +411,13 @@ export default function StickersClient() {
               {selMeta ? ' · ' : ''}
               {status || fmt(b.myFull, { n: MY_MAX })}
             </p>
-            {tgOn && st && !hasPack ? (
-              <button className="btn small" onClick={() => void claim()} aria-disabled={busy}>
+            {buyItem ? (
+              // закрытый стикер набора из гардероба — сразу покупка этого набора
+              <button className="btn small" onClick={() => toShop(buyItem)}>
+                {fmt(b.buyFor, { item: t.items[buyItem].name })}
+              </button>
+            ) : tgOn && st && !hasPack ? (
+              <button className="btn small" onClick={() => void claim()} aria-disabled={busy || (!!free && !(free.played && free.sub))}>
                 {t.freeClaim}
               </button>
             ) : pack ? (
@@ -344,7 +425,11 @@ export default function StickersClient() {
                 {t.openPack}
               </button>
             ) : (
-              !tgOn && <p className="muted">{b.onlyTg}</p>
+              !tgOn && (
+                <button className="btn small tg" onClick={() => toTg('pack')}>
+                  {b.toTg}
+                </button>
+              )
             )}
           </div>
         </>
@@ -368,8 +453,10 @@ export default function StickersClient() {
                     aria-checked={draft.fig === f.id}
                     className={['stickers-fig', draft.fig === f.id ? 'on' : '', isOpen ? '' : 'locked'].join(' ')}
                     onClick={() => {
-                      if (!isOpen) return setNote(`${figName(f.id)}: ${fmt(b.locked, { how: figHow(f.id) })}`);
+                      // фигурку набора из гардероба можно примерить до покупки: кнопка станет «Купить …»
+                      if (!isOpen && !('item' in f)) return setNote(`${figName(f.id)}: ${fmt(b.locked, { how: figHow(f.id) })}`);
                       setDraft((d) => ({ ...d, fig: f.id }));
+                      if (!isOpen) return setNote(`${figName(f.id)}: ${fmt(b.locked, { how: figHow(f.id) })}`);
                       setNote(figName(f.id));
                     }}
                     aria-label={figName(f.id)}
@@ -405,8 +492,8 @@ export default function StickersClient() {
             />
             <p className={capErr ? 'stickers-note err' : 'stickers-note'}>{capErr || note || ' '}</p>
             <div className="daily-buttons">
-              <button className="btn small" onClick={() => void saveMy()} aria-disabled={busy || !!capErr || !tgOn || !figs.has(draft.fig) || (draft.slot === null && my.length >= MY_MAX)}>
-                {draft.slot === null ? b.add : b.save}
+              <button className="btn small" onClick={() => void saveMy()} aria-disabled={busy || !!capErr || (tgOn && !lockedItemFig && (!figs.has(draft.fig) || (draft.slot === null && my.length >= MY_MAX)))}>
+                {!tgOn ? b.toTg : lockedItemFig ? fmt(b.buyFor, { item: t.items[lockedItemFig].name }) : draft.slot === null ? b.add : b.save}
               </button>
               {draft.slot !== null && (
                 <button className="btn small alt" onClick={() => void delMy()} aria-disabled={busy}>

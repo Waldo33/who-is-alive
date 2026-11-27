@@ -55,7 +55,11 @@ export default function WardrobeClient() {
     document.title = `${DICTS[l].shop.title} · ${DICTS[l].meta.title}`;
     setStar(starsIcon().toDataURL());
     setIcons(Object.fromEntries(SHOP_ITEMS.map((x) => [x.id, itemIcon(x.id).toDataURL()])));
-    track('shop_view', {});
+    // со страницы стикерпака: /wardrobe?item=kotBanan — сразу нужный набор
+    const want = new URLSearchParams(location.search).get('item');
+    const pick = SHOP_ITEMS.find((x) => x.id === want);
+    if (pick) setItem(pick.id);
+    track('shop_view', pick ? { item: pick.id } : {});
     const tgNow = inTelegram();
     setTgOn(tgNow);
     void (async () => {
@@ -237,10 +241,12 @@ export default function WardrobeClient() {
             )}
           </>
         )}
-        {/* какие стикеры в паке и свои стикеры — отдельная страница */}
-        <button className="link" onClick={() => router.push('/stickers')}>
-          {t.build.open}
-        </button>
+        {/* какие стикеры в паке и свои стикеры — отдельная страница; до покупки не отвлекаем от неё */}
+        {owned && (
+          <button className="link" onClick={() => router.push('/stickers')}>
+            {t.build.open}
+          </button>
+        )}
         {st?.error === 'need_bot' && (
           <button className="link" onClick={() => openTelegram(bot)}>
             {bot.replace('https://', '')}

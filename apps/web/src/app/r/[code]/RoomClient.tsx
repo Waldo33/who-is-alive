@@ -532,7 +532,7 @@ export function Lobby({
               }}>
               {t.lobby.start}
             </button>
-            {!allReady && <p className="muted">{t.lobby.waitReady}</p>}
+            {!allReady ? <p className="muted">{t.lobby.waitReady}</p> : online.length === 1 && st.aiFill && <p className="muted">{t.lobby.soloHint}</p>}
             </>
           )
         ) : (
