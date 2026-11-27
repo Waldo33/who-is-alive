@@ -13,7 +13,7 @@
  *
  * Вне Telegram всё здесь — пустые вызовы. Скрипт Telegram грузится только внутри Telegram.
  */
-import type { MyFig, MySticker, StickerId } from '@kto/game-core';
+import type { EffectId, MyFig, MySticker, StickerId } from '@kto/game-core';
 import { GAME_API, TG_APP } from './env';
 import { ensureGameUser } from './game-server';
 import type { SharedClip } from './clips';
@@ -482,6 +482,9 @@ export interface ShopState {
   earnNext?: number | null;
   /** Игрок нажал «Напомнить» — бот напишет, когда стикеры снова откроются. */
   remind?: boolean;
+  /** Эффекты на стандартных стикерах пака (id → эффект) и купленные эффекты. */
+  fx?: Record<string, EffectId>;
+  effects?: EffectId[];
   /** Сколько ещё боту добавить, убрать или заменить в паке. */
   pending?: number;
   /** Бесплатный пак ещё не забран: сыгран ли матч, есть ли подписка на канал (экран-замок; старый сервер не шлёт). */
@@ -512,8 +515,13 @@ export function shopPick(id: StickerId, on: boolean) {
 }
 
 /** Свой стикер: новый (slot нет) или правка места slot. Рисует и кладёт в пак бот. */
-export function shopMy(sticker: { fig: MyFig; pose: string; color: number; caption: string }, slot?: number) {
+export function shopMy(sticker: { fig: MyFig; pose: string; color: number; caption: string; fx?: EffectId }, slot?: number) {
   return botCall<ShopState>('/shop/my', { sticker, slot });
+}
+
+/** Эффект на стандартный стикер пака (null — снять): бот заменит стикер на месте. */
+export function shopFx(id: string, fx: EffectId | null) {
+  return botCall<ShopState>('/shop/fx', { id, fx });
 }
 
 /** «Напомнить»: бот напишет, когда стикеры за дубли снова откроются (дневной лимит). */

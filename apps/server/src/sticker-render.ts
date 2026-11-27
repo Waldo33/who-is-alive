@@ -8,15 +8,18 @@
  * По одному за раз, очередь короткая; сервер бота без ffmpeg просит игровой (/internal/sticker по туннелю).
  */
 import { fork } from 'node:child_process';
-import { isMySticker } from '@kto/game-core';
-import type { MySticker } from '@kto/game-core';
+import { isEffect, isMySticker, isStickerId } from '@kto/game-core';
+import type { EffectId, Lang, MySticker, StickerId } from '@kto/game-core';
 import { workerPath } from './film';
 import type { Logger } from './log';
 
-export type MyLook = Pick<MySticker, 'fig' | 'pose' | 'color' | 'text'>;
+export type MyLook = Pick<MySticker, 'fig' | 'pose' | 'color' | 'text' | 'fx'>;
+/** Стандартный стикер пака с эффектом (товар «Эффекты»): файлы без эффекта лежат готовыми, с эффектом — рисуем. */
+export type StdLook = { std: StickerId; fx: EffectId; lang: Lang };
+export type StickerJob = MyLook | StdLook;
 
 /** Задача процессу рисования и его ответ. */
-export type StickerMsg = { look: MyLook; fonts: string; ffmpeg?: string };
+export type StickerMsg = { look: StickerJob; fonts: string; ffmpeg?: string };
 export type StickerReply = { ok: true; webm: Buffer } | { ok: false; err: string };
 
 export interface StickerRenderOpts {
@@ -34,17 +37,24 @@ export class StickerRender {
   constructor(private readonly o: StickerRenderOpts) {}
 
   render(look: unknown): Promise<Buffer> {
-    const v = { ...(look as MyLook), slot: 0, rev: 0 };
-    if (!isMySticker(v)) return Promise.reject(new Error('bad_sticker'));
+    let clean: StickerJob;
+    const s = look as Partial<StdLook> | null;
+    if (s && typeof s === 'object' && 'std' in s) {
+      if (!isStickerId(s.std) || !isEffect(s.fx) || (s.lang !== 'ru' && s.lang !== 'en')) return Promise.reject(new Error('bad_sticker'));
+      clean = { std: s.std, fx: s.fx, lang: s.lang };
+    } else {
+      const v = { ...(look as MyLook), slot: 0, rev: 0 };
+      if (!isMySticker(v)) return Promise.reject(new Error('bad_sticker'));
+      clean = { fig: v.fig, pose: v.pose, color: v.color, text: [...v.text], ...(v.fx ? { fx: v.fx } : {}) };
+    }
     if (this.waiting >= 4) return Promise.reject(new Error('busy'));
     this.waiting++;
-    const clean: MyLook = { fig: v.fig, pose: v.pose, color: v.color, text: [...v.text] };
     const p = this.chain.then(() => this.once(clean)).finally(() => this.waiting--);
     this.chain = p.catch(() => undefined);
     return p;
   }
 
-  private once(look: MyLook): Promise<Buffer> {
+  private once(look: StickerJob): Promise<Buffer> {
     const w = workerPath();
     const t0 = Date.now();
     return new Promise((ok, fail) => {

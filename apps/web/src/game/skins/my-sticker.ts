@@ -5,7 +5,7 @@ import { F } from '../sprites';
 import { canvas } from '../pixels';
 import type { Ctx } from '../pixels';
 import { kotBananFrame } from './kot-banan';
-import { iceFrost, iceOver } from './shine';
+import { iceFrost, iceOver, withFx } from './shine';
 import { ST_SIZE, actorFrame, orbit, put, say, star } from './stickers';
 import type { StickerDef } from './stickers';
 import { sheetsOf, themeActor } from './stickers-play';
@@ -17,7 +17,7 @@ import { sheetsOf, themeActor } from './stickers-play';
  * (`loadAllThemes` до рисования).
  */
 
-export type MyLook = Pick<MySticker, 'fig' | 'pose' | 'color' | 'text'>;
+export type MyLook = Pick<MySticker, 'fig' | 'pose' | 'color' | 'text' | 'fx'>;
 
 const MID = ST_SIZE / 2;
 /** Кадры человечка по позе на шаге t (100 мс). */
@@ -93,4 +93,4 @@ export function drawMy(g: Ctx, s: MyLook, t: number): void {
 }
 
 /** Как стикер пака (для stickerFrame / stickerFile в stickers.ts). */
-export const myDef = (s: MyLook): Pick<StickerDef, 'draw'> => ({ draw: (g, t) => drawMy(g, s, t) });
+export const myDef = (s: MyLook): Pick<StickerDef, 'draw'> => withFx({ draw: (g: Ctx, t: number) => drawMy(g, s, t) }, s.fx);

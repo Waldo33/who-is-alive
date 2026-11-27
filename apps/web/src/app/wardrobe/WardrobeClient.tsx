@@ -2,7 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
-import { DICTS, SHOP_ITEMS, STICKER_LIST, TEST_ITEM, fmt, shopItem } from '@kto/game-core';
+import { DICTS, SHOP_ITEMS, STICKER_LIST, TEST_ITEM, fmt, isEffect, shopItem } from '@kto/game-core';
 import type { Lang, ShopItemId } from '@kto/game-core';
 import { track } from '@/lib/analytics';
 import { TG_APP } from '@/lib/env';
@@ -380,7 +380,8 @@ export default function WardrobeClient() {
         ) : owned ? (
           <>
             <p className="wardrobe-owned">{t.owned}</p>
-            {tgOn && (
+            {/* эффект не надевается — он на стикерах: выбор на странице стикерпака */}
+            {tgOn && !isEffect(ITEM) && (
               <button className={worn ? 'btn small alt' : 'btn small'} onClick={() => void wear()} aria-disabled={!!busy} aria-pressed={worn}>
                 {worn ? t.unwear : t.wear}
               </button>
@@ -393,7 +394,7 @@ export default function WardrobeClient() {
               <p className="muted">{t.sending}</p>
             )}
             {/* в браузере место подсказки занимает строка входа (iPhone SE: витрина должна влезть) */}
-            {inTg && <p className="muted">{t.packHint}</p>}
+            {inTg && !isEffect(ITEM) && <p className="muted">{t.packHint}</p>}
           </>
         ) : (
           <>
