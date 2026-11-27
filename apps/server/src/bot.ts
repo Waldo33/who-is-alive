@@ -1,4 +1,5 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { LOGIN_CODE, WebLogins } from './web-login';
 import { DICTS } from '@kto/game-core';
 import { RateWindow } from './limits';
 import { errFields } from './log';
@@ -73,6 +74,10 @@ const T = {
     stickersText: '🎨 Твой стикерпак: какие стикеры в паке и свои стикеры с подписью.',
     startCasting: ' А каждый день — «Кастинг дня»: найди актёра в массовке.',
     play: '▶ Играть',
+    loginAsk: '🔑 Вход на сайт benobody.app.\n\nНажми «Войти», если входишь ты. Чужие ссылки для входа не нажимай.',
+    loginBtn: '✅ Войти',
+    loginDone: '✅ Готово! Вернись в браузер — ты вошёл.',
+    loginGone: 'Ссылка для входа устарела. Нажми «Войти через Telegram» на сайте ещё раз.',
     friends: '👥 С друзьями',
     stickers: '🎨 Мой стикерпак',
     wardrobe: '👗 Гардероб',
@@ -118,6 +123,10 @@ const T = {
     stickersText: '🎨 Your sticker pack: pick what goes in it and make your own with a caption.',
     startCasting: ' Plus a daily casting: spot the actor among the extras.',
     play: '▶ Play',
+    loginAsk: '🔑 Logging in to benobody.app.\n\nTap “Log in” if this is you. Never tap login links from others.',
+    loginBtn: '✅ Log in',
+    loginDone: '✅ Done! Go back to your browser — you are logged in.',
+    loginGone: 'This login link has expired. Tap “Log in with Telegram” on the site again.',
     friends: '👥 With friends',
     stickers: '🎨 My sticker pack',
     wardrobe: '👗 Wardrobe',
@@ -185,7 +194,7 @@ interface Update {
     reply_to_message?: { text?: string; from?: { id: number; is_bot?: boolean } };
     successful_payment?: { currency: string; total_amount: number; invoice_payload: string; telegram_payment_charge_id: string };
   };
-  callback_query?: { id: string; from: { id: number; first_name?: string; username?: string; language_code?: string }; data?: string };
+  callback_query?: { id: string; from: { id: number; first_name?: string; username?: string; language_code?: string }; data?: string; message?: { message_id: number; chat: { id: number } } };
   pre_checkout_query?: { id: string; from: { id: number }; currency: string; total_amount: number; invoice_payload: string };
   inline_query?: { id: string; query: string; from: { language_code?: string } };
   /** Карточку выбрали и отправили в чат (нужна «обратная связь» инлайн-режима в BotFather: /setinlinefeedback). */
@@ -264,6 +273,8 @@ export class Bot {
   private readonly app: string;
   private readonly casting: boolean;
   private readonly f: typeof fetch;
+  /** Вход на сайт через бота (web-login.ts): одноразовые коды. */
+  readonly logins: WebLogins;
   private me: { username: string; supports_inline_queries?: boolean } | null = null;
   private meAt = 0;
   readonly hookSecret: string;
@@ -274,6 +285,7 @@ export class Bot {
   private readonly supportRate = new RateWindow(5, 10 * 60_000);
 
   constructor(private readonly o: BotOptions) {
+    this.logins = new WebLogins(o.token);
     this.app = o.app ?? 'play';
     this.casting = (o.features ?? []).includes('casting');
     this.f = o.fetchImpl ?? fetch;
@@ -425,12 +437,14 @@ export class Bot {
         }
         try {
           if (u?.pre_checkout_query) await this.shop.preCheckout(u.pre_checkout_query);
+          else if (u?.callback_query?.data?.startsWith('login:')) await this.onLoginConfirm(u.callback_query);
           else if (u?.callback_query) await this.shop.onCallback(u.callback_query);
           // бесплатный стикерпак по внешней ссылке t.me/<бот>?start=stickers (только в личке: пак — этого игрока)
           else if (u?.message?.text === '/start stickers' && u.message.chat.type === 'private' && u.message.from) await this.shop.claimInChat(u.message.from);
           else if (u?.message?.text?.startsWith('/paysupport') && u.message.chat.type === 'private' && u.message.from) await this.onSupport(u.message.from, u.message.text.slice('/paysupport'.length), true);
           else if (u?.message && String(u.message.chat.id) === this.supportChat) await this.onSupportReply(u.message);
           else if (u?.message?.text?.startsWith('/stickers') && u.message.chat.type === 'private') await this.onStickers(u.message);
+          else if (u?.message?.text?.startsWith('/start login_') && u.message.chat.type === 'private') await this.onLoginStart(u.message);
           else if (u?.message?.text?.startsWith('/start')) await this.onStart(u.message);
           else if (u?.message?.text && u.message.chat.type === 'private' && u.message.from && this.supportOpen(u.message.from.id)) await this.onSupport(u.message.from, u.message.text, false);
           else if (u?.inline_query) await this.onInline(u.inline_query);
@@ -448,6 +462,18 @@ export class Bot {
         // покупка — только в Telegram: счёт открывается поверх Mini App
         if (path === '/shop/buy' && !b.initData) return { status: 401, body: { error: 'bad_init' } };
         return await this.shop.route(path, init, b);
+      }
+      // вход на сайт через бота: код и ссылка на бота; опрос — пока игрок не нажмёт «Войти» в чате
+      if (method === 'POST' && path === '/login/start') {
+        const c = this.logins.start();
+        if (!c) return { status: 503, body: { error: 'busy' } };
+        const { username } = await this.getMe();
+        return { status: 200, body: { ...c, link: `https://t.me/${username}?start=login_${c.code}` } };
+      }
+      if (method === 'POST' && path === '/login/poll') {
+        const b = (body ?? {}) as { code?: unknown; secret?: unknown };
+        const r = this.logins.poll(b.code, b.secret);
+        return { status: 200, body: typeof r === 'string' ? { state: r } : { state: 'ok', login: r } };
       }
       if (method === 'POST' && path === '/prepare') return await this.onPrepare(body as PrepareBody);
       if (method === 'POST' && (path === '/daily' || path === '/board')) return await this.onDaily(body as { initData?: string; n?: number; tries?: number; won?: boolean }, path === '/daily');
@@ -522,6 +548,27 @@ export class Bot {
       text: t.stickersText,
       reply_markup: { inline_keyboard: [[{ text: t.stickers, web_app: { url: `${this.o.site}/stickers?src=tg` } }]] },
     });
+  }
+
+  /** Сайт прислал игрока по ссылке входа: спросить кнопкой — вход подтверждает нажатие, а не сама ссылка. */
+  private async onLoginStart(msg: NonNullable<Update['message']>): Promise<void> {
+    const t = T[langOf(msg.from?.language_code)];
+    const code = (msg.text ?? '').split(' ')[1]?.slice('login_'.length) ?? '';
+    const ok = LOGIN_CODE.test(code) && this.logins.waiting(code);
+    await this.api('sendMessage', {
+      chat_id: msg.chat.id,
+      text: ok ? t.loginAsk : t.loginGone,
+      ...(ok ? { reply_markup: { inline_keyboard: [[{ text: t.loginBtn, callback_data: `login:${code}` }]] } } : {}),
+    });
+  }
+
+  /** «Войти» в чате: браузер с этим кодом получит вход этого игрока Telegram. */
+  private async onLoginConfirm(q: NonNullable<Update['callback_query']>): Promise<void> {
+    const t = T[langOf(q.from.language_code)];
+    const code = q.data!.slice('login:'.length);
+    const ok = LOGIN_CODE.test(code) && this.logins.confirm(code, q.from);
+    await this.api('answerCallbackQuery', { callback_query_id: q.id, ...(ok ? {} : { text: t.loginGone, show_alert: true }) });
+    if (ok && q.message) await this.api('editMessageText', { chat_id: q.message.chat.id, message_id: q.message.message_id, text: t.loginDone });
   }
 
   private async onStart(msg: NonNullable<Update['message']>): Promise<void> {

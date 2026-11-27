@@ -9,7 +9,7 @@ import { TG_APP } from '@/lib/env';
 import { featureOn } from '@/lib/features';
 import { detectLang } from '@/lib/lang';
 import { bootTelegram, haptic, inTelegram, linkTelegramOnce, openTelegram, shopBuy, shopCached, shopRefund, shopSignedIn, shopState, shopWear, tgLink } from '@/lib/telegram';
-import { currentWebLogin, prepareWebLogin, startWebLogin, webLogout } from '@/lib/tg-login';
+import { currentWebLogin, prepareWebLogin, resumeWebLogin, startWebLogin, webLogout } from '@/lib/tg-login';
 import type { TgLogin } from '@/lib/tg-login';
 import type { ShopState } from '@/lib/telegram';
 import { TopBar } from '@/ui/TopBarView';
@@ -99,7 +99,10 @@ export default function WardrobeClient() {
     setTestOn(featureOn('shoptest'));
     if (!inTgNow) {
       setLogin(currentWebLogin());
-      if (!tgNow) void prepareWebLogin().then(setLoginReady);
+      // вернулись из Telegram на перезагруженную страницу — дождаться начатого входа
+      const back = tgNow ? null : resumeWebLogin();
+      if (back) void back.then((l) => (l ? void signedIn(l) : undefined));
+      else if (!tgNow) void prepareWebLogin().then(setLoginReady);
     }
     void (async () => {
       try {
@@ -187,13 +190,29 @@ export default function WardrobeClient() {
     return () => cancelAnimationFrame(raf);
   }, [ready, scale]);
 
-  // вход через Telegram в браузере: окно Telegram открывается прямо из нажатия
+  // код входа живёт 10 минут: страница открыта долго — берём свежий заранее
+  useEffect(() => {
+    if (inTg || tgOn) return;
+    const id = window.setInterval(() => void prepareWebLogin().then(setLoginReady), 5 * 60_000);
+    return () => clearInterval(id);
+  }, [inTg, tgOn]);
+
+  // вход через Telegram в браузере: бот открывается прямо из нажатия, там — «Войти», сайт ждёт подтверждения
   const signIn = async () => {
     if (busy) return;
     track('tg_login_tap', {});
-    const l = await startWebLogin(lang);
+    setNote(t.loginWait);
+    const l = await startWebLogin();
     track('tg_login', { ok: !!l });
-    if (!l) return flash(t.loginFail);
+    if (!l) {
+      flash(t.loginFail);
+      void prepareWebLogin().then(setLoginReady);
+      return;
+    }
+    await signedIn(l);
+  };
+  const signedIn = async (l: TgLogin) => {
+    setNote('');
     setLogin(l);
     setTgOn(true);
     // этот браузер — тот же игрок Telegram: скин в комнате и стикеры за матчи
