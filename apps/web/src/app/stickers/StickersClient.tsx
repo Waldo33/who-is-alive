@@ -7,7 +7,7 @@ import type { Lang, MyFig, MyPose, MySticker, ShopItemId, StickerMeta } from '@k
 import { PAL } from '@kto/assets';
 import { track } from '@/lib/analytics';
 import { detectLang } from '@/lib/lang';
-import { bootTelegram, haptic, inTelegram, linkTelegramOnce, openTelegram, shopClaim, shopMy, shopMyDel, shopPick, shopState, tgLink } from '@/lib/telegram';
+import { bootTelegram, haptic, inTelegram, linkTelegramOnce, openTelegram, shopClaim, shopMy, shopMyDel, shopPick, shopCached, shopState, tgLink } from '@/lib/telegram';
 import type { ShopState } from '@/lib/telegram';
 import { TopBar } from '@/ui/TopBarView';
 import { ST_SIZE, STICKERS, stickerFrame } from '@/game/skins/stickers';
@@ -101,11 +101,20 @@ export default function StickersClient() {
       await loadAllThemes(20000).catch(() => undefined);
       setPics(Object.fromEntries(STICKERS.map((x) => [x.id, png(stickerFrame(x, 5, l))])));
       setFigPics(Object.fromEntries(MY_FIGS.map((f) => [f.id, png(stickerFrame(myDef({ fig: f.id, pose: 'wave', color: 0, text: [] }), 0, l))])));
-      setReady(true);
       if (tgNow) {
         await bootTelegram();
+        // прошлый ответ — сразу, свежий следом (иначе экран сначала «пака нет», потом пак)
+        const c = shopCached();
+        if (c) {
+          setSt(c);
+          setKnown(true);
+        }
+      }
+      setReady(true);
+      if (tgNow) {
         void linkTelegramOnce();
-        setSt(await shopState());
+        const s = await shopState();
+        if (s) setSt(s);
       }
       setKnown(true);
     })();
@@ -348,7 +357,7 @@ export default function StickersClient() {
 
       {tab === 'pack' ? (
         <>
-          <div className={locked ? 'stickers-grid-slot dim' : 'stickers-grid-slot'} ref={gridRef}>
+          <div className={locked ? 'stickers-grid-slot dim' : 'stickers-grid-slot'} ref={gridRef} style={{ visibility: known ? 'visible' : 'hidden' }}>
             {locked && (
               <div className="stickers-lock" role="dialog" aria-label={b.lockTitle}>
                 <h2>{b.lockTitle}</h2>

@@ -7,7 +7,7 @@ import type { Lang, ShopItemId } from '@kto/game-core';
 import { track } from '@/lib/analytics';
 import { TG_APP } from '@/lib/env';
 import { detectLang } from '@/lib/lang';
-import { bootTelegram, haptic, inTelegram, linkTelegramOnce, openTelegram, shopBuy, shopState, shopWear, tgLink } from '@/lib/telegram';
+import { bootTelegram, haptic, inTelegram, linkTelegramOnce, openTelegram, shopBuy, shopCached, shopState, shopWear, tgLink } from '@/lib/telegram';
 import type { ShopState } from '@/lib/telegram';
 import { TopBar } from '@/ui/TopBarView';
 import { CARD_H, CARD_W, buyLabel, drawCard, itemIcon, starsIcon } from '@/game/skins/wardrobe';
@@ -89,9 +89,18 @@ export default function WardrobeClient() {
       } catch {
         /* системный моноширинный */
       }
-      setReady(true);
       if (tgNow) {
         await bootTelegram();
+        // что куплено — сразу из прошлого ответа, свежий придёт следом: иначе витрина сначала «не куплено», потом «твой»
+        const c = shopCached();
+        if (c) {
+          setSt(c);
+          setPaidAt(paidSince(ITEM));
+          setKnown(true);
+        }
+      }
+      setReady(true);
+      if (tgNow) {
         // купил набор — стикеры за матчи пойдут в пак: сервер узнаёт, какой это аккаунт Telegram
         void linkTelegramOnce();
         setPaidAt(paidSince(ITEM));
@@ -242,7 +251,7 @@ export default function WardrobeClient() {
       </div>
       <div className="daily-slot" ref={slotRef}>
         {ready && (
-          <div className="daily-stage" style={{ width: (CARD_W * scale) / (globalThis.devicePixelRatio || 1), height: (CARD_H * scale) / (globalThis.devicePixelRatio || 1), visibility: scale ? 'visible' : 'hidden' }}>
+          <div className="daily-stage" style={{ width: (CARD_W * scale) / (globalThis.devicePixelRatio || 1), height: (CARD_H * scale) / (globalThis.devicePixelRatio || 1), visibility: scale && known ? 'visible' : 'hidden' }}>
             <canvas ref={canvasRef} className="daily-canvas" style={{ width: '100%', height: '100%' }} />
             {/* подсказка — поверх витрины, а не строкой под кнопкой: иначе поле сжимается и карточка прыгает */}
             {note && (
