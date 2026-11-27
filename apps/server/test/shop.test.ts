@@ -131,6 +131,31 @@ describe('гардероб', () => {
     expect(await pre({})).toBe(false);
   });
 
+  it('уведомление об оплате потерялось — гардероб сверяется с Telegram и выдаёт набор; возвращённое не выдаёт', async () => {
+    let txs: unknown[] = [];
+    const { bot, calls, store } = makeBot({ result: (m) => (m === 'getStarTransactions' ? { transactions: txs } : undefined) });
+    const pay = (id: string, user = 77) => ({ id, amount: 49, date: 1, source: { type: 'user', user: { id: user }, invoice_payload: `kotBanan:${user}` } });
+    // чужая оплата и оплата с возвратом (встречная транзакция с тем же id) — не наши
+    txs = [pay('ch_other', 78), pay('ch_back'), { id: 'ch_back', amount: 49, date: 2, receiver: { type: 'user', user: { id: 77 } } }];
+    const st0 = await bot.handle('POST', '/shop', {}, { initData: initData(ANYA) });
+    expect((st0.body as { items: string[] }).items).not.toContain('kotBanan');
+
+    // новая оплата появилась, но сверка — не чаще раза в 30 с
+    txs.push(pay('ch_lost'));
+    calls.length = 0;
+    await bot.handle('POST', '/shop', {}, { initData: initData(ANYA) });
+    expect(calls.some((c) => c.method === 'getStarTransactions')).toBe(false);
+    expect((await store.shopUser(77))?.items ?? []).not.toContain('kotBanan');
+
+    // другой экземпляр (или позже) — сверка находит оплату: набор записан и выдан, как при обычной оплате
+    const second = makeBot({ store, result: (m) => (m === 'getStarTransactions' ? { transactions: txs } : undefined) });
+    const st = await second.bot.handle('POST', '/shop', {}, { initData: initData(ANYA) });
+    expect((st.body as { items: string[] }).items).toContain('kotBanan');
+    expect(second.calls.some((c) => c.method === 'sendMessage' && String(c.body.text).includes('Кот-банан'))).toBe(true);
+    // теперь платёж в учёте — возврат по нему пройдёт
+    expect(await store.saveShopPayment({ charge: 'ch_lost', userId: 77, item: 'kotBanan', stars: 49, refunded: false })).toBe(false);
+  });
+
   it('бесплатный пак есть — купленный набор сразу добавляется в него; пак по внешней ссылке /start stickers', async () => {
     // пак в Telegram: приманка (🎁) уже не последняя — бот переставит её в конец
     const set = { stickers: [...['👋', '💃', '😵', '🤨'].map((e, i) => ({ file_id: `f${i}`, emoji: e })), { file_id: 'lure_id', emoji: '🎁' }, { file_id: 'f5', emoji: '😭' }, { file_id: 'f6', emoji: '🍌' }] };

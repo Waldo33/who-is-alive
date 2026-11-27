@@ -248,6 +248,14 @@ export interface ShopReply {
 }
 
 type Lang = 'ru' | 'en';
+/** Оплата в звёздах из getStarTransactions: source — от кого (покупка), receiver — кому (возврат, тот же id). */
+interface StarTx {
+  id: string;
+  amount: number;
+  date: number;
+  source?: { type: string; user?: { id: number }; invoice_payload?: string };
+  receiver?: { type: string; user?: { id: number } };
+}
 const langOf = (code?: string): Lang => (code && /^(ru|uk|be|kk)/.test(code) ? 'ru' : 'en');
 
 export class Shop {
@@ -258,6 +266,9 @@ export class Shop {
   /** Свои стикеры рисует сервер — не чаще 12 правок в час на игрока. */
   private readonly myRate = new RateWindow(12, 3_600_000);
   private readonly sleep: (ms: number) => Promise<void>;
+  /** Сверка оплат с Telegram: когда игрока сверяли последний раз; список оплат бота — общий на 15 с. */
+  private readonly synced = new Map<number, number>();
+  private txCache: { at: number; list: Promise<StarTx[]> } | null = null;
 
   constructor(private readonly d: ShopDeps) {
     this.sleep = d.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
@@ -269,7 +280,10 @@ export class Shop {
     const now = (this.d.now ?? Date.now)();
     if (!this.rate.take(String(id), now)) return { status: 429, body: { error: 'rate_limited' } };
     this.rate.sweep(now);
-    if (path === '/shop') return { status: 200, body: await this.state(id, true) };
+    if (path === '/shop') {
+      await this.reconcile(init.user, now);
+      return { status: 200, body: await this.state(id, true) };
+    }
     if (path === '/shop/claim') return { status: 200, body: await this.claim(init.user) };
     // старые вкладки гардероба («В мой пак» / «Новый пак»): пак теперь один и наполняется сам — просто состояние
     if (path === '/shop/pack') return { status: 200, body: await this.state(id, true) };
@@ -574,6 +588,51 @@ export class Shop {
       prices: [{ label: t.invoiceTitle, amount: item.stars }],
     });
     return { status: 200, body: { link } };
+  }
+
+  /** Все оплаты бота в звёздах (getStarTransactions, по 100 в хронологическом порядке); на 15 с — из кэша. */
+  private starTransactions(now: number): Promise<StarTx[]> {
+    if (this.txCache && now - this.txCache.at < 15_000) return this.txCache.list;
+    const list = (async () => {
+      const all: StarTx[] = [];
+      for (let offset = 0; offset < 20_000; offset += 100) {
+        const r = await this.d.api<{ transactions?: StarTx[] }>('getStarTransactions', { offset, limit: 100 });
+        const page = r?.transactions ?? [];
+        all.push(...page);
+        if (page.length < 100) break;
+      }
+      return all;
+    })();
+    this.txCache = { at: now, list };
+    list.catch(() => (this.txCache = null));
+    return list;
+  }
+
+  /**
+   * Сверка с Telegram: оплата есть, а набора у игрока нет (уведомление об оплате потерялось — бот перезапускался,
+   * учёт был недоступен) — записать и выдать, как при обычной оплате. Возвращённые оплаты (у них в Telegram
+   * есть встречная транзакция с тем же id) пропускаем. Не чаще раза в 30 с на игрока; сбой — тихо, в журнал.
+   */
+  private async reconcile(user: ShopInit['user'], now: number): Promise<void> {
+    if (now - (this.synced.get(user.id) ?? -Infinity) < 30_000) return;
+    if (this.synced.size > 5000) this.synced.clear();
+    this.synced.set(user.id, now);
+    try {
+      const txs = await this.starTransactions(now);
+      const refunded = new Set(txs.filter((t) => t.receiver?.type === 'user').map((t) => t.id));
+      for (const t of txs) {
+        const src = t.source;
+        if (src?.type !== 'user' || src.user?.id !== user.id || refunded.has(t.id) || !CHARGE.test(t.id)) continue;
+        const p = this.payload(src.invoice_payload);
+        if (!p || p.userId !== user.id) continue;
+        const u = await this.d.ledger.shopUser(user.id);
+        if (u?.items.includes(p.item.id)) continue;
+        this.d.log('warn', 'shop_reconciled', { item: p.item.id, stars: t.amount });
+        await this.paid({ from: user, successful_payment: { currency: 'XTR', total_amount: t.amount, invoice_payload: src.invoice_payload!, telegram_payment_charge_id: t.id } });
+      }
+    } catch (e) {
+      this.d.log('warn', 'shop_reconcile', errFields(e));
+    }
   }
 
   /** Разбор payload счёта: «набор:игрок». */
