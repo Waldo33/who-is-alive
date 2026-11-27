@@ -6,8 +6,11 @@ import type { Dict } from './locale';
  */
 export type ShopItemId = keyof Dict['shop']['items'];
 export type StickerId = keyof Dict['shop']['stickers'];
-/** `starter` — бесплатный пак с обычным актёром (после первого матча); остальные — наборы гардероба. */
-export type StickerSet = 'starter' | ShopItemId;
+/**
+ * `starter` — бесплатный пак с обычным актёром (после первого матча); `play` — бесплатные «за игру»:
+ * открываются в матчах (выдачу за события матча делает связка с Telegram); остальные — наборы гардероба.
+ */
+export type StickerSet = 'starter' | 'play' | ShopItemId;
 
 export interface ShopItem {
   id: ShopItemId;
@@ -44,6 +47,23 @@ export const STICKER_LIST: StickerMeta[] = [
   { id: 'happyTears', set: 'kotBanan', emoji: ['🥲', '👑'], now: false },
   { id: 'freeze', set: 'kotBanan', emoji: ['🥶', '🧊'], now: false },
   { id: 'meow', set: 'kotBanan', emoji: ['🐱', '❓'], now: false },
+  // «за игру»: атрибуты площадки, потом костюмы тем
+  { id: 'cut', set: 'play', emoji: ['✂️', '😵'], now: false },
+  { id: 'star', set: 'play', emoji: ['⭐', '🤩'], now: false },
+  { id: 'jackpot', set: 'play', emoji: ['🎰', '🤑'], now: false },
+  { id: 'action', set: 'play', emoji: ['🎬'], now: false },
+  { id: 'retake', set: 'play', emoji: ['📣', '🔁'], now: false },
+  { id: 'extra', set: 'play', emoji: ['👥', '😐'], now: false },
+  { id: 'offscreen', set: 'play', emoji: ['👻', '👀'], now: false },
+  { id: 'still', set: 'play', emoji: ['⏸', '🥶'], now: false },
+  { id: 'chef', set: 'play', emoji: ['😋', '🍲'], now: false },
+  { id: 'penguin', set: 'play', emoji: ['🐧', '🥶'], now: false },
+  { id: 'cosmo', set: 'play', emoji: ['🚀', '🧑‍🚀'], now: false },
+  { id: 'office', set: 'play', emoji: ['📞', '💼'], now: false },
+  { id: 'miami', set: 'play', emoji: ['🌴', '🥵'], now: false },
+  { id: 'party', set: 'play', emoji: ['🥳', '🎉'], now: false },
+  { id: 'kupala', set: 'play', emoji: ['🔥', '🌿'], now: false },
+  { id: 'casino', set: 'play', emoji: ['🎲', '💰'], now: false },
 ];
 
 export const shopItem = (id: unknown): ShopItem | undefined => SHOP_ITEMS.find((x) => x.id === id);

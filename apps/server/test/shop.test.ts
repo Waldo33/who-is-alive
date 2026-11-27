@@ -251,4 +251,9 @@ describe('гардероб', () => {
     expect(wantedStickers(['in:kotBanan', 'pack', 'starter']).map((s) => s.id)).toEqual(['hi', 'dance', 'oops', 'who']);
     expect(packName('  Вася‮ https://x.y @boss ')).toBe('Вася x.y boss');
   });
+
+  it('стикеры «за игру» пока не выдаются ни при каком наборе отметок', () => {
+    const all = ['starter', 'pack', 'play', 'in:play', 'own:play', 'st:cut', 'st:jackpot', 'kotBanan', 'own:kotBanan'];
+    expect(wantedStickers(all).filter((s) => s.set === 'play')).toEqual([]);
+  });
 });

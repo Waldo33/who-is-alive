@@ -107,7 +107,10 @@ export function wantedStickers(items: string[]): StickerMeta[] {
   return STICKER_LIST.filter((s) =>
     s.set === 'starter'
       ? has.has('starter') && has.has('pack')
-      : has.has(s.set) && (has.has(`in:${s.set}`) || has.has(`own:${s.set}`)) && (s.now || has.has(`st:${s.id}`)),
+      : // «за игру» — нарисованы, выдача за события матча появится вместе со связкой с Telegram
+        s.set === 'play'
+        ? false
+        : has.has(s.set) && (has.has(`in:${s.set}`) || has.has(`own:${s.set}`)) && (s.now || has.has(`st:${s.id}`)),
   );
 }
 
@@ -378,9 +381,9 @@ export class Shop {
     const file = async (s: StickerMeta) => new Blob([await readFile(join(this.d.stickersDir, u.lang, `${s.id}.webm`))], { type: 'video/webm' });
     const input = (s: StickerMeta, i: number) => ({ sticker: `attach://f${i}`, format: 'video', emoji_list: s.emoji });
     const t = DICTS[u.lang].shop;
-    // куда стикер: отдельный пак набора (own:) или свой пак
+    // куда стикер: отдельный пак набора (own:) или свой пак (туда же — бесплатные «за игру»)
     const target = (s: StickerMeta) =>
-      s.set !== 'starter' && u.items.includes(`own:${s.set}`)
+      s.set !== 'starter' && s.set !== 'play' && u.items.includes(`own:${s.set}`)
         ? { name: ownPack(s.set, id, bot), made: u.items.includes(`made:${s.set}`), title: fmt(t.packTitleItem, { item: t.items[s.set].name, name: u.name }), mark: () => u.items.push(`made:${s.set}`) }
         : { name: `m${id}_by_${bot}`.slice(0, 64), made: !!u.pack, title: fmt(t.packTitle, { name: u.name }), mark: () => (u.pack = `m${id}_by_${bot}`.slice(0, 64)) };
     for (;;) {
