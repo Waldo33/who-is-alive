@@ -55,6 +55,8 @@ export default function StickersClient() {
   const b = t.build;
   const [ready, setReady] = useState(false);
   const [tgOn, setTgOn] = useState(false);
+  // низ экрана — когда ясно, Telegram ли это и что в паке (иначе мелькает «Открыть в Telegram»)
+  const [known, setKnown] = useState(false);
   const [st, setSt] = useState<ShopState | null>(null);
   const [tab, setTab] = useState<Tab>('pack');
   const [pics, setPics] = useState<Record<string, string>>({});
@@ -105,6 +107,7 @@ export default function StickersClient() {
         void linkTelegramOnce();
         setSt(await shopState());
       }
+      setKnown(true);
     })();
   }, []);
 
@@ -400,11 +403,11 @@ export default function StickersClient() {
               </div>
             )}
           </div>
-          <div className="daily-actions">
+          <div className="daily-actions" style={{ visibility: known ? 'visible' : 'hidden' }}>
             <p className="stickers-note">
               {selMeta ? <b>{t.stickers[selMeta.id].join(' ')}</b> : null}
               {selMeta ? ' · ' : ''}
-              {status || fmt(b.myFull, { n: MY_MAX })}
+              {status || (hasPack ? b.tapHint : fmt(b.myFull, { n: MY_MAX }))}
             </p>
             {buyItem ? (
               // закрытый стикер набора из гардероба — сразу покупка этого набора

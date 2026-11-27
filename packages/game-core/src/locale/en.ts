@@ -590,6 +590,7 @@ export const en: Dict = {
       add: 'Add to pack',
       save: 'Save',
       del: 'Remove from pack',
+      tapHint: 'Tap a sticker to remove it from the pack or bring it back',
       back: 'Back to stickers',
       errors: {
         long: 'Too long: 2 lines of 10',
