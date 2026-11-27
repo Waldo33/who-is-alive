@@ -123,10 +123,12 @@ export function drawCard(g: Ctx, ms: number, st: CardState): void {
   R(46, FLOOR - 2, 88, 6, PAL.navy);
   R(56, FLOOR - 1, 68, 4, PAL.blue);
   R(66, FLOOR, 18, 1, PAL.cyan);
-  // ярлык «НОВОЕ»
-  const tw = text(g, t.isNew, 0, -100, PAL.white, FONT, { outline: null });
-  R(CARD_W - tw - 12, SY + 6, tw + 6, 12, PAL.magenta);
-  text(g, t.isNew, CARD_W - 9 - tw / 2, SY + 8, PAL.white, FONT, { outline: null });
+  // ярлык «НОВОЕ» — у новых наборов (каталог: isNew)
+  if (shopItem(st.item)?.isNew) {
+    const tw = text(g, t.isNew, 0, -100, PAL.white, FONT, { outline: null });
+    R(CARD_W - tw - 12, SY + 6, tw + 6, 12, PAL.magenta);
+    text(g, t.isNew, CARD_W - 9 - tw / 2, SY + 8, PAL.white, FONT, { outline: null });
+  }
   // Кот-банан ×4
   const { p, k: pk } = poseAt(ms);
   const hs = 4;

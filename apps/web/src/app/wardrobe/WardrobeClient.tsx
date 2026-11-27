@@ -148,23 +148,26 @@ export default function WardrobeClient() {
 
   const bot = TG_APP ? `https://t.me/${TG_APP.split('/')[0]}` : 'https://t.me/be_nobody_bot';
   const was = shopItem(ITEM)?.was;
+  const list = [...SHOP_ITEMS].sort((a, b) => Number(!!st?.items.includes(b.id)) - Number(!!st?.items.includes(a.id)) || Number(!!b.isNew) - Number(!!a.isNew));
   return (
     <main className="daily wardrobe">
       <TopBar lang={lang} onBack={() => router.push('/')} />
       <h1 className="daily-title">{t.title}</h1>
-      {/* наборы: пока один — остальные ячейки под знаком вопроса */}
+      {/* наборы лентой (листается вбок): купленные первыми, потом новые; пустые ячейки — под вопросом */}
       <div className="wardrobe-sets" role="tablist">
         {Array.from({ length: Math.max(SLOTS, SHOP_ITEMS.length) }, (_, i) => {
-          const x = SHOP_ITEMS[i];
+          const x = list[i];
           if (!x)
             return (
               <button key={i} className="wardrobe-set locked" onClick={() => setNote(t.soon)} aria-label={t.soon}>
                 ?
               </button>
             );
+          const mine = !!st?.items.includes(x.id);
           return (
             <button key={x.id} role="tab" aria-selected={x.id === ITEM} className={x.id === ITEM ? 'wardrobe-set on' : 'wardrobe-set'} onClick={() => setItem(x.id)} aria-label={t.items[x.id].name}>
               {icons[x.id] && <img src={icons[x.id]} alt="" width={18 * 2} height={30 * 2} />}
+              {mine ? <i className="wardrobe-mark mine">✓</i> : x.isNew ? <i className="wardrobe-mark new" /> : null}
             </button>
           );
         })}

@@ -522,7 +522,7 @@ export const en: Dict = {
       hi: ['Hi!'],
       dance: ['Party'],
       oops: ['Oops'],
-      who: ['Who is', 'real?'],
+      who: ['Actor?'],
       notCrying: ['Not crying'],
       justBanana: ['Just a', 'banana'],
       splat: ['Splat!'],
