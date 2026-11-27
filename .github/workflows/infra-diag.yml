@@ -129,20 +129,15 @@ jobs:
               s, rc = t.get('source') or {}, t.get('receiver') or {}
               print(t.get('date'), t.get('amount'), 'id', str(t.get('id'))[:12] + '…', 'src', s.get('type'), s.get('transaction_type'), s.get('invoice_payload'), (s.get('user') or {}).get('id'), 'rcv', rc.get('type'))
           PY
-      # бот в Нидерландах писал покупки в свою базу, а не в базу игры (27.11): переносим их в Европу.
-      # Повторный запуск безопасен: запись игрока обновляется, оплата — только если её ещё нет
-      - name: Перенос покупок из базы бота в базу игры (27.11, вечер)
+      - name: Стикерпак после «Добавить к себе» — журналы и запись игрока (27.11, ночь)
         env:
           IP: ${{ steps.infra.outputs.ip }}
         run: |
-          ssh $SSH_OPTS root@$IP "sudo -u postgres psql massovka -Atc \"
-            select format('insert into shop_users (user_id, lang, name, items, pack, issued, my, updated_at) values (%s, %L, %L, %L::text[], %L, %L::text[], %L::jsonb, %L) on conflict (user_id) do update set lang = excluded.lang, name = excluded.name, items = excluded.items, pack = excluded.pack, issued = excluded.issued, my = excluded.my, updated_at = excluded.updated_at;', user_id, lang, name, items, pack, issued, my, updated_at) from shop_users
-            union all
-            select format('insert into shop_payments (charge, user_id, item, stars, refunded, created_at) values (%L, %s, %L, %s, %L, %L) on conflict (charge) do nothing;', charge, user_id, item, stars, refunded, created_at) from shop_payments\"" > moved.sql
-          echo "строк к переносу: $(wc -l < moved.sql)"
-          ssh $SSH_OPTS root@72.56.22.216 "sudo -u postgres psql massovka -v ON_ERROR_STOP=1 -q" < moved.sql
-          rm -f moved.sql
-          ssh $SSH_OPTS root@72.56.22.216 "sudo -u postgres psql massovka -Atc \"select user_id, items, cardinality(issued), (pack is not null), jsonb_array_length(my) from shop_users; select user_id, item, stars, refunded from shop_payments\""
+          echo "── бот (Нидерланды)"
+          ssh $SSH_OPTS root@$IP "journalctl -u 'massovka-game*' --since -50min --no-pager -o cat | grep -E 'shop|sticker|tg_error|Set|pack' | grep -v '\"/metrics' | tail -50 | cut -c1-500" || true
+          echo "── игра (Европа)"
+          ssh $SSH_OPTS root@72.56.22.216 "journalctl -u 'massovka-game@*' --since -50min --no-pager -o cat | grep -E 'shop|sticker|skin' | tail -30 | cut -c1-400" || true
+          ssh $SSH_OPTS root@72.56.22.216 "sudo -u postgres psql massovka -P pager=off -Atc \"select user_id, items, issued, my, updated_at from shop_users\"" || true
       # шлёт картинку и файлы в группу тревог и сразу удаляет — владельцу приходят уведомления о
       # «пропавших тревогах» (23.11.2026). Включать вручную: TG_REACH: '1' на время проверки.
       - name: Достаёт ли Telegram до наших серверов
