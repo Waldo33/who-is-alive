@@ -158,6 +158,12 @@ export default function HomeClient() {
         <button className="btn alt" onClick={() => void create()} disabled={busy}>
           {busy ? t.lobby.connecting : t.start.withFriends}
         </button>
+        {/* кнопки игры — вместе; карточки (гардероб, стикеры, кастинг) — ниже, отдельной группой */}
+        {web && (
+          <a className="btn tg" href={tgLink('play') ?? 'https://t.me/be_nobody_bot'} onClick={() => track('tg_tap', { what: 'play' })}>
+            {t.start.playTelegram}
+          </a>
+        )}
 {daily.on && (
         <Link className="daily-tile" href="/daily" onClick={() => track('daily_tap', { from: 'home' })}>
             <span className="daily-tile-title">
@@ -208,11 +214,6 @@ export default function HomeClient() {
           >
             <span className="daily-tile-title">{t.shop.freeTitle}</span>
             <span className="daily-tile-sub">{stickers === 'busy' ? t.shop.sending : stickers === 'sub' ? t.shop.needSub : stickers === 'match' ? t.shop.needMatch : t.shop.freeText}</span>
-          </a>
-        )}
-        {web && (
-          <a className="btn tg" href={tgLink('play') ?? 'https://t.me/be_nobody_bot'} onClick={() => track('tg_tap', { what: 'play' })}>
-            {t.start.playTelegram}
           </a>
         )}
       </div>

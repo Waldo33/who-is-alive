@@ -40,12 +40,16 @@ body { font-family: var(--font-pixel), monospace; overscroll-behavior: none; -we
 /* «Играть в Telegram» — на сайте вне Telegram; голубой из палитры, как у Telegram */
 .home-actions .btn.tg { background: #0099db; color: #fff; box-shadow: 0 4px 0 var(--ink); text-decoration: none; }
 .home-actions .btn.tg:active { box-shadow: 0 1px 0 var(--ink); }
+/* карточки под кнопками игры — отдельной группой, с отступом */
+.home-actions .btn + .daily-tile { margin-top: 14px; }
+.home-actions .daily-tile { padding: 12px 12px 8px; gap: 4px; }
 /* гардероб в браузере: «Купить в Telegram» — синяя, как у Telegram (PAL.blue) */
 .wardrobe .btn.tg { background: #0099db; color: #fff; box-shadow: 0 4px 0 var(--ink); }
 .wardrobe .btn.tg:active { box-shadow: 0 1px 0 var(--ink); }
 /* низкий экран (iPhone SE 1-го поколения): кнопки чуть ниже — экран без прокрутки */
 @media (max-height: 620px) {
   .home-actions { gap: 8px; }
+  .home-actions .btn + .daily-tile { margin-top: 6px; }
   .home-actions .btn { min-height: 46px; padding-top: 12px; padding-bottom: 12px; }
 }
 .daily-tile { display: flex; flex-direction: column; gap: 6px; padding: 16px 12px 12px; position: relative; text-decoration: none;
