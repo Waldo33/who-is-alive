@@ -736,7 +736,10 @@ export class ClipPlayerScene {
         if (since >= 0 && since < 360) list.push({ y: y + 1, draw: () => frame(g, a.poof, 24, 24, Math.min(5, Math.floor(since / 60)), x - 12, y - 20) });
         continue;
       }
-      let fr = frameFor(e, t, ch.acts);
+      // скин — только раскрытому: в загадке «найди актёра» банан выдал бы ответ
+      const sk = reveal && this.colors.get(e.eid) !== undefined && this.lit(e.eid, local) ? this.skins.get(e.eid) : undefined;
+      // свои позы площадки у скина не нарисованы — то же действие обычными позами
+      let fr = frameFor(e, t, sk ? undefined : ch.acts);
       // бьёт оружием: стоит боком к жертве, пока замахивается
       const sw = this.byAttacker.get(e.eid)?.find((k) => armed(gt(k)));
       if (sw) fr = { frame: F.S, flip: e.x > sw.x, yoff: 0 };
@@ -747,8 +750,6 @@ export class ClipPlayerScene {
       // на разборе тусклые все, кроме участников события и живых игроков
       const actor = e.eid === m.attacker || e.eid === m.victim;
       const dim = reveal && !lit && !(zoomed && actor);
-      // скин — только раскрытому: в загадке «найди актёра» банан выдал бы ответ
-      const sk = lit ? this.skins.get(e.eid) : undefined;
       list.push({
         y,
         draw: () => {

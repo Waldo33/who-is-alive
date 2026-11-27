@@ -3114,8 +3114,10 @@ export class GameScene extends Phaser.Scene {
       }
       v.poof.setVisible(false);
       const acting = !!e.act && t < e.actEnd;
-      const dz = mode === 'live' ? this.dressFrame(i, acting) : null;
-      const base = this.frameFor(e, t);
+      // скин: свои позы площадки (≥ F.COUNT) у него не нарисованы — то же действие он играет обычными позами
+      const sk = this.skinAt(e.eid, myEid, open);
+      const dz = mode === 'live' && !sk ? this.dressFrame(i, acting) : null;
+      const base = sk ? frameFor(e, t) : this.frameFor(e, t);
       let frame = dz?.frame ?? base.frame;
       let flip = dz?.frame != null ? false : base.flip;
       let yoff = dz?.frame != null ? 0 : base.yoff;
@@ -3137,7 +3139,6 @@ export class GameScene extends Phaser.Scene {
       // лучший в дубле — с короной над головой (момент триумфа на финальном кадре разоблачения)
       if (mode === 'final' && e.eid === this.crownEid) {
         crownShown = true;
-        const sk = this.skinAt(e.eid, myEid, open);
         this.crown.setVisible(true).setFrame(this.icon('crown')).setPosition(x, sy + jumpOff - (sk ? sk.art.ay - 3 : CH_H) - 1).setDepth(sy + 0.5);
       }
       // замах своего персонажа (только на своём экране)
@@ -3153,7 +3154,6 @@ export class GameScene extends Phaser.Scene {
       }
       const flashKey = mode === 'live' && !(e.act && t < e.actEnd) ? this.subliminalKey(e.eid) : null;
       const fig = dz?.fig ?? this.charKey(flashKey ?? this.lookKey, i);
-      const sk = this.skinAt(e.eid, myEid, open);
       frame = this.dressSprite(v, fig, frame, sk);
       // над головой (оглушение, метка, «?»): у скина голова выше
       const top = sk ? sk.art.ay - 3 : CH_H;
