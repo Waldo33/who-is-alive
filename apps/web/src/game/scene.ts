@@ -37,8 +37,12 @@ import {
   BOSS_SPREAD,
   WALK_TOP,
   hasSlots,
+  SLOT_SYMBOLS,
+  slotWindow,
 } from '@kto/game-core';
 import { SlotScreen } from './slot-ui';
+import { reelLandMs, slotSpinAt, slotStops, stripSymbol } from './clip-slot';
+import { SYM_W, makeSlotSymbols } from './slot-art';
 import type { AwardId, ClientSession, CrowdKind, Dict, Entity, GameConfig, Lang, Moment, Notice, RoundSummary, SlotRecord, ThemeText, World, WorldEvent } from '@kto/game-core';
 import { resultCardFile } from './card';
 import { Tutorial, tutorialDone } from './tutorial';
@@ -398,6 +402,12 @@ export class GameScene extends Phaser.Scene {
   /** Удары Лешего в журнале дубля: warnAt его «Тсс!» → где и когда забрал. */
   private replayLeshy = new Map<number, { x: number; y: number; at: number }>();
   private replayDeaths: { at: number; leshy: boolean }[] = [];
+  /** «Казино» в повторе: когда встаёт третий череп (звук и вспышка — один раз). */
+  private replaySkulls: { land: number; done: boolean }[] = [];
+  /** «Казино» в повторе: последняя «Крутка» — табло над актёрами держится ещё чуть после неё. */
+  private slotLinger: { warnAt: number; showAt: number; resumeAt: number } | null = null;
+  /** Символы табло над актёрами (по три на актёра). */
+  private miniSyms: Phaser.GameObjects.Image[] = [];
   private replayDeathIdx = 0;
   private pxCache = new Map<string, number>();
   private noPoof = new Set<number>();
@@ -3207,6 +3217,9 @@ export class GameScene extends Phaser.Scene {
     this.replayLeshy.clear();
     this.replayDeaths = [];
     this.replayDeathIdx = 0;
+    this.replaySkulls = [];
+    this.slotLinger = null;
+    if (hasSlots(this.sim.theme)) return this.buildSlotWarp(s, from, to, dur);
     if (!hasSanity(this.sim.theme)) return;
     // смерти без нападавшего (Леший, туман) — из журнала; от рук игроков — тоже замедляем
     const night = new Map(nightDeaths(cfg, this.sim.world.log, s.kills).map((d) => [d.at * 100000 + d.target, d]));
@@ -3251,6 +3264,60 @@ export class GameScene extends Phaser.Scene {
         k.push([wall, world]);
       }
       go(x.b, SLOW);
+    }
+    if (to > world) go(to, v);
+    this.replayWarp = k;
+  }
+
+  /**
+   * «Казино»: кого вырезали черепа — повтор у третьего черепа замедляется втрое, череп встаёт в стоп-кадре
+   * с красной вспышкой, потом в живую скорость до «вырезан»; остальное быстрее, общая длина та же.
+   */
+  private buildSlotWarp(s: RoundSummary, from: number, to: number, dur: number): void {
+    const cfg = this.cfg;
+    const SLOW = 0.3; // мировых мс на мс экрана
+    const HOLD = 700;
+    const segs: { a: number; land: number; b: number }[] = [];
+    for (const ev of this.sim.world.log) {
+      if (ev.t !== 'hit' || ev.result !== 'player' || ev.at < from || ev.at > to) continue;
+      const r = skullSpin(s.slots, ev.target, ev.at, cfg);
+      if (!r) continue;
+      this.replayDeaths.push({ at: ev.at, leshy: false });
+      const win = slotWindow(r.at + cfg.slotWarnMs, r.n ?? 0);
+      // три черепа — первые два одинаковые, третий тормозит с интригой
+      const brake = win.auto + slotStops(true)[2];
+      const land = win.auto + reelLandMs(slotStops(true)[2]);
+      if (this.replaySkulls.some((x) => x.land === land)) continue; // двое на одной «Крутке» — один стоп-кадр
+      this.replaySkulls.push({ land, done: false });
+      const a = Math.max(from, brake - 300);
+      const b = Math.min(to, ev.at + 300);
+      if (land < a || b < land) continue;
+      const last = segs[segs.length - 1];
+      if (last && a < last.b) continue;
+      segs.push({ a, land, b });
+    }
+    const wallOf = (x: (typeof segs)[number]) => (x.land - x.a) / SLOW + HOLD + (x.b - x.land);
+    const wallSlow = () => segs.reduce((n, x) => n + wallOf(x), 0);
+    // не влезает — замедляем только последние
+    while (segs.length && wallSlow() > dur * 0.6) segs.shift();
+    if (!segs.length) return;
+    const slowWorld = segs.reduce((n, x) => n + (x.b - x.a), 0);
+    const v = (to - from - slowWorld) / (dur - wallSlow());
+    if (!(v > 0)) return;
+    const k: [number, number][] = [[0, from]];
+    let wall = 0;
+    let world = from;
+    const go = (w2: number, speed: number) => {
+      wall += (w2 - world) / speed;
+      world = w2;
+      k.push([wall, world]);
+    };
+    for (const x of segs) {
+      if (x.a > world) go(x.a, v);
+      go(x.land, SLOW);
+      wall += HOLD;
+      k.push([wall, world]);
+      go(x.b, 1);
     }
     if (to > world) go(to, v);
     this.replayWarp = k;
@@ -3331,6 +3398,13 @@ export class GameScene extends Phaser.Scene {
         }
       }
       if (warp) {
+        // «Казино»: третий череп встал — звук автомата и толчок
+        for (const sk of this.replaySkulls) {
+          if (sk.done || this.replay.time < sk.land) continue;
+          sk.done = true;
+          this.audio.play('slotSkull');
+          haptic('heavy');
+        }
         // смерть в повторе — снова слышно: Леший забрал / вырезан
         const d = this.replayDeaths[this.replayDeathIdx];
         if (d && this.replay.time >= d.at) {
@@ -3402,6 +3476,7 @@ export class GameScene extends Phaser.Scene {
     const g = this.slotFxG;
     g.clear();
     this.peekT.setVisible(false);
+    this.renderSlotTables(w);
     if (!hasSlots(this.sim.theme)) return;
     const now = performance.now();
     const pos = (e: Entity) => [Math.round(e.px + (e.x - e.px) * alpha), AY + Math.round(e.py + (e.y - e.py) * alpha)] as const;
@@ -3438,6 +3513,65 @@ export class GameScene extends Phaser.Scene {
       g.fillRect(cx, dy > 0 ? cy : cy - 3, 1, 4);
     }
     this.peekT.setVisible(true).setPosition(x, y0 - 1);
+  }
+
+  /**
+   * «Казино» в повторе: над каждым актёром — табло из трёх символов, его вращения на той «Крутке» (барабаны
+   * идут, как у автомата, с рывком в своё время). Рамка — цвет игрока; 777 и звезда — золотом, череп — красным.
+   * В стоп-кадре третьего черепа поле вспыхивает красным.
+   */
+  private renderSlotTables(w: World): void {
+    const g = this.slotFxG;
+    let used = 0;
+    const done = () => {
+      for (let i = used; i < this.miniSyms.length; i++) this.miniSyms[i].setVisible(false);
+    };
+    const s = this.sim.summary;
+    if (!hasSlots(this.sim.theme) || this.sim.phase !== 'reveal' || !this.replayOn || w !== this.replay || !s?.slots?.length) return done();
+    const now = performance.now();
+    if (this.replayHold) g.fillStyle(hexToInt(PAL.red), Math.floor(now / 120) % 2 ? 0.22 : 0.32).fillRect(0, AY, 180, 260);
+    const c = w.crowd;
+    if (c?.slot) this.slotLinger = { warnAt: c.warnAt, showAt: c.showAt, resumeAt: c.resumeAt };
+    const L = this.slotLinger;
+    if (!L || w.time < L.showAt || w.time >= L.resumeAt + 1500) return done();
+    if (!this.textures.exists('slotsyms')) this.textures.addSpriteSheet('slotsyms', makeSlotSymbols() as unknown as HTMLImageElement, { frameWidth: SYM_W, frameHeight: SYM_W });
+    const BW = SYM_W * 3 + 2 * 1 + 4;
+    const BH = SYM_W + 4;
+    const placed: { x: number; y: number }[] = [];
+    for (const r of s.reveal) {
+      const spins = s.slots.filter((x) => x.eid === r.eid && x.at === L.warnAt).sort((p, q) => (p.n ?? 0) - (q.n ?? 0));
+      const e = w.get(r.eid);
+      if (!spins.length || !e) continue;
+      const last = spins[spins.length - 1];
+      // вырезанный черепами — табло ещё секунду над местом, где он стоял
+      if (!e.alive && (last.outcome !== 'skull' || w.time > slotWindow(L.showAt, last.n ?? 0).to + 1200)) continue;
+      const st = slotSpinAt(L.showAt, spins, w.time);
+      const ex = Math.round(e.x);
+      const ey = AY + Math.round(e.y);
+      const x = Math.max(1, Math.min(179 - BW, ex - Math.floor(BW / 2)));
+      let y = ey - 22 - BH;
+      // табло соседей не налезают друг на друга: следующее — выше
+      while (placed.some((p) => Math.abs(p.x - x) < BW + 1 && Math.abs(p.y - y) < BH + 1)) y -= BH + 1;
+      if (y < AY + 1) y = ey + 4;
+      placed.push({ x, y });
+      const col = hexToInt(PLAYER_COLORS[this.sim.info(r.pid)!.color]);
+      const out = st.done ? st.spin.outcome : null;
+      const blink = Math.floor(now / 140) % 2 === 0;
+      const frame = out === 'skull' && blink ? hexToInt(PAL.red) : (out === 'seven' || out === 'star') && blink ? hexToInt(PAL.yellow) : col;
+      g.fillStyle(frame).fillRect(x, y, BW, BH).fillRect(ex - 1, y + BH, 3, 1).fillRect(ex, y + BH + 1, 1, 1);
+      g.fillStyle(hexToInt(PAL.ink)).fillRect(x + 1, y + 1, BW - 2, BH - 2);
+      for (let i = 0; i < 3; i++) {
+        const cx = x + 2 + i * (SYM_W + 1);
+        g.fillStyle(hexToInt(PAL.white)).fillRect(cx, y + 2, SYM_W, SYM_W);
+        const landed = st.pe >= st.reels[i].landedAt;
+        const idx = landed ? SLOT_SYMBOLS.indexOf(st.spin.reels[i]) : stripSymbol(i, st.pe < 0 ? 0 : Math.floor(st.reels[i].p / 40));
+        let img = this.miniSyms[used];
+        if (!img) this.miniSyms.push((img = this.add.image(0, 0, 'slotsyms', 0).setOrigin(0).setDepth(959)));
+        used++;
+        img.setFrame(idx).setPosition(cx, y + 2).setVisible(true).setAlpha(st.pe < 0 ? 0.35 : 1);
+      }
+    }
+    done();
   }
 
   private renderHedge(w: World): void {
