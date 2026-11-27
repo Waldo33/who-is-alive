@@ -50,6 +50,8 @@ function makeBot(opts: { result?: (method: string) => unknown; fail?: (method: s
 }
 
 const ANYA = { id: 77, first_name: 'Аня @spam', language_code: 'ru' };
+/** Сервер засчитал игроку сыгранный матч (бесплатный пак — после матча и подписки на канал). */
+const played = (bot: Bot, id = 77) => bot.shop.earn({ users: [{ tgUser: id, name: 'Аня @spam', lang: 'ru', stickers: [] }] });
 const hook = (bot: Bot, upd: unknown) => bot.handle('POST', '/hook', { 'x-telegram-bot-api-secret-token': bot.hookSecret }, upd);
 const payment = (over: Record<string, unknown> = {}) => ({
   message: {
@@ -62,6 +64,8 @@ const payment = (over: Record<string, unknown> = {}) => ({
 describe('гардероб', () => {
   it('бесплатный пак: один пак на игрока с 4 стикерами актёра, повтор ничего не создаёт', async () => {
     const { bot, calls } = makeBot();
+    await played(bot);
+    calls.length = 0;
     const r = await bot.handle('POST', '/shop/claim', {}, { initData: initData(ANYA) });
     expect(r.status).toBe(200);
     expect(r.body).toMatchObject({ items: ['starter', 'pack'], pack: 'https://t.me/addstickers/m77_by_be_nobody_bot', issued: 4, wanted: 4 });
@@ -132,6 +136,8 @@ describe('гардероб', () => {
 
   it('бесплатный пак есть — купленный набор сразу добавляется в него; пак по внешней ссылке /start stickers', async () => {
     const { bot, calls, store } = makeBot();
+    await played(bot);
+    calls.length = 0;
     await hook(bot, { message: { chat: { id: 77, type: 'private' }, from: ANYA, text: '/start stickers' } });
     expect((await store.shopUser(77))?.issued).toHaveLength(4);
     calls.length = 0;
@@ -157,6 +163,8 @@ describe('гардероб', () => {
 
   it('стикеры набора без покупки не выдаются: ни кнопкой, ни маршрутом, ни бесплатным паком', async () => {
     const { bot, calls, store } = makeBot();
+    await played(bot);
+    calls.length = 0;
     expect((await bot.handle('POST', '/shop/pack', {}, { initData: initData(ANYA), item: 'kotBanan', mode: 'in' })).status).toBe(403);
     expect((await bot.handle('POST', '/shop/pack', {}, { initData: initData(ANYA), item: 'kotBanan', mode: 'x' })).status).toBe(400);
     await hook(bot, { callback_query: { id: 'cb', from: ANYA, data: 'pk:in:kotBanan' } });
@@ -169,6 +177,7 @@ describe('гардероб', () => {
   it('сбой Telegram: выдано записано, остальное дошлётся при заходе в гардероб; без «Старт» у бота — need_bot', async () => {
     let down = true;
     const { bot, calls } = makeBot({ fail: (m) => (m === 'createNewStickerSet' && down ? 'Bad Request: PEER_ID_INVALID' : null) });
+    await played(bot);
     const r = await bot.handle('POST', '/shop/claim', {}, { initData: initData(ANYA) });
     expect(r.body).toMatchObject({ pack: null, issued: 0, wanted: 4, error: 'need_bot' });
     down = false;
@@ -320,41 +329,49 @@ describe('гардероб', () => {
     expect((await store.shopUser(77))?.issued).toEqual(['notCrying', 'justBanana', 'meow']);
   });
 
-  it('бесплатный пак: за первый матч (бот сам предлагает) или за подписку на канал; без того и другого — кнопки канала', async () => {
+  it('бесплатный пак: нужен и сыгранный матч, и подписка на канал', async () => {
     let status = 'left';
     const { bot, calls, store } = makeBot({ result: (m) => (m === 'getChatMember' ? { status } : undefined) });
+    // по ссылке без матча — «сыграй дубль» и кнопка «Играть», пака нет (даже с подпиской)
+    status = 'member';
     await hook(bot, { message: { chat: { id: 77, type: 'private' }, from: ANYA, text: '/start stickers' } });
     expect(await store.shopUser(77)).toBeNull();
+    expect(JSON.stringify(calls.find((c) => c.method === 'sendMessage')!.body.reply_markup)).toContain('web_app');
+    expect((await bot.handle('POST', '/shop/claim', {}, { initData: initData(ANYA) })).body).toMatchObject({ error: 'need_match' });
+
+    // первый матч без подписки — бот просит подписаться: кнопки канала и «Я подписался»
+    status = 'left';
+    calls.length = 0;
+    await played(bot);
     expect(calls.find((c) => c.method === 'getChatMember')?.body).toEqual({ chat_id: '@benobody_app', user_id: 77 });
-    const ask = calls.find((c) => c.method === 'sendMessage')!.body;
-    expect(JSON.stringify(ask.reply_markup)).toContain('https://t.me/benobody_app');
-    expect(JSON.stringify(ask.reply_markup)).toContain('free:claim');
+    const ask = JSON.stringify(calls.find((c) => c.method === 'sendMessage')!.body.reply_markup);
+    expect(ask).toContain('https://t.me/benobody_app');
+    expect(ask).toContain('free:claim');
     expect((await bot.handle('POST', '/shop/claim', {}, { initData: initData(ANYA) })).body).toMatchObject({ error: 'need_sub', channel: 'https://t.me/benobody_app' });
     // «Я подписался», а подписки нет — всплывашка, пака нет
     calls.length = 0;
     await hook(bot, { callback_query: { id: 'cb', from: ANYA, data: 'free:claim' } });
     expect(calls.find((c) => c.method === 'answerCallbackQuery')?.body.show_alert).toBe(true);
     expect(calls.some((c) => c.method === 'createNewStickerSet')).toBe(false);
-    // подписался — пак
+    // подписался — пак; второй матч ничего не предлагает
     status = 'member';
     await hook(bot, { callback_query: { id: 'cb', from: ANYA, data: 'free:claim' } });
     expect((await store.shopUser(77))?.issued).toHaveLength(4);
-
-    // другой игрок без подписки сыграл первый матч: бот сам предлагает пак, повторный матч — не предлагает
-    status = 'left';
-    const PETYA = { id: 88, first_name: 'Петя', language_code: 'ru' };
     calls.length = 0;
-    await bot.shop.earn({ users: [{ tgUser: 88, name: 'Петя', lang: 'ru', stickers: [] }] });
-    expect(JSON.stringify(calls.find((c) => c.method === 'sendMessage')?.body.reply_markup)).toContain('free:claim');
-    calls.length = 0;
-    await bot.shop.earn({ users: [{ tgUser: 88, name: 'Петя', lang: 'ru', stickers: [] }] });
+    await played(bot);
     expect(calls.filter((c) => c.method === 'sendMessage')).toHaveLength(0);
-    await hook(bot, { callback_query: { id: 'cb2', from: PETYA, data: 'free:claim' } });
-    expect((await store.shopUser(88))?.issued).toHaveLength(4);
+
+    // подписан заранее — после первого матча сразу «Забрать стикерпак»
+    calls.length = 0;
+    await played(bot, 88);
+    const offer = calls.find((c) => c.method === 'sendMessage')!.body;
+    expect(offer.text).toContain('Первый дубль снят');
+    expect(JSON.stringify(offer.reply_markup)).toContain('free:claim');
   });
 
   it('проверить подписку нельзя (бот не админ канала) — пак всё равно выдаём', async () => {
     const { bot, store } = makeBot({ fail: (m) => (m === 'getChatMember' ? 'Bad Request: member list is inaccessible' : null) });
+    await played(bot);
     await bot.handle('POST', '/shop/claim', {}, { initData: initData(ANYA) });
     expect((await store.shopUser(77))?.issued).toHaveLength(4);
   });

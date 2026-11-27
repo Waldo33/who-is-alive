@@ -332,10 +332,14 @@ export class Shop {
     return run;
   }
 
-  /** После первого матча: «Твой стикерпак готов — забрать?» с кнопкой (писать можно, если игрок открывал бота). */
+  /**
+   * После первого матча (писать можно, если игрок открывал бота): подписан — «Забрать стикерпак»,
+   * нет — сначала «Подписаться на канал» и «Я подписался».
+   */
   private async offerFree(u: ShopUser): Promise<void> {
     const t = DICTS[u.lang].shop;
     try {
+      if (!(await this.subscribed(u.userId))) return await this.askSub(u.userId, u.lang);
       await this.d.api('sendMessage', { chat_id: u.userId, text: t.botFreeOffer, reply_markup: { inline_keyboard: [[{ text: t.botFreeClaim, callback_data: 'free:claim' }]] } });
     } catch (e) {
       this.d.log('warn', 'shop_notify', { err: String(e).slice(0, 200) });
@@ -345,20 +349,29 @@ export class Shop {
   /** Бесплатный пак с обычным актёром: из гардероба на главной или по внешней ссылке (/start stickers). */
   async claim(from: ShopInit['user']) {
     const u = await this.d.ledger.shopUser(from.id);
-    // бесплатный пак — за сыгранный матч (сервер видел игрока в матче, `played`) или за подписку на канал
-    if (!u?.items.includes('starter') && !u?.items.includes('played') && !(await this.subscribed(from.id))) {
-      return { ...(await this.state(from.id, false)), error: 'need_sub', channel: this.d.channel };
+    // бесплатный пак — за сыгранный матч (сервер видел игрока в матче, `played`) и подписку на канал
+    if (!u?.items.includes('starter')) {
+      const miss = !u?.items.includes('played') ? 'need_match' : !(await this.subscribed(from.id)) ? 'need_sub' : null;
+      if (miss) return { ...(await this.state(from.id, false)), error: miss, channel: this.d.channel };
     }
     return this.grant(from, ['starter', 'pack'], (l) => DICTS[l].shop.botFree);
   }
 
-  /** Бесплатный пак по ссылке /start stickers: нет ни матча, ни подписки — кнопки «Подписаться» и «Я подписался». */
+  /** Бесплатный пак по ссылке /start stickers: нет матча — «Играть», нет подписки — «Подписаться» и «Я подписался». */
   async claimInChat(from: ShopInit['user']): Promise<void> {
     const st = await this.claim(from);
-    if (st.error !== 'need_sub') return;
-    const t = DICTS[langOf(from.language_code)].shop;
+    const lang = langOf(from.language_code);
+    if (st.error === 'need_sub') await this.askSub(from.id, lang);
+    else if (st.error === 'need_match') {
+      const t = DICTS[lang].shop;
+      await this.d.api('sendMessage', { chat_id: from.id, text: t.botNeedMatch, ...(this.d.site ? { reply_markup: { inline_keyboard: [[{ text: t.botPlay, web_app: { url: `${this.d.site}/?src=tg_sticker` } }]] } } : {}) });
+    }
+  }
+
+  private async askSub(chat: number, lang: Lang): Promise<void> {
+    const t = DICTS[lang].shop;
     await this.d.api('sendMessage', {
-      chat_id: from.id,
+      chat_id: chat,
       text: t.botNeedSub,
       reply_markup: { inline_keyboard: [[{ text: t.botSubscribe, url: this.d.channel }], [{ text: t.botSubscribed, callback_data: 'free:claim' }]] },
     });
@@ -401,7 +414,8 @@ export class Shop {
       const r = this.claim(q.from);
       const first = await Promise.race([r, new Promise<null>((ok) => setTimeout(() => ok(null), 1500))]);
       const t = DICTS[langOf(q.from.language_code)].shop;
-      await this.d.api('answerCallbackQuery', first?.error === 'need_sub' ? { callback_query_id: q.id, text: t.botNoSub, show_alert: true } : { callback_query_id: q.id });
+      const no = first?.error === 'need_sub' ? t.botNoSub : first?.error === 'need_match' ? t.botNeedMatch : '';
+      await this.d.api('answerCallbackQuery', no ? { callback_query_id: q.id, text: no, show_alert: true } : { callback_query_id: q.id });
       await r;
       return;
     }
