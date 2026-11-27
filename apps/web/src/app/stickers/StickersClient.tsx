@@ -452,7 +452,8 @@ export default function StickersClient() {
           </div>
           <div className="stickers-form">
             <div className="stickers-row stickers-figs" role="radiogroup" aria-label={b.fig}>
-              {MY_FIGS.map((f) => {
+              {/* открытые фигурки — первыми, закрытые — дальше в ленте (порядок внутри групп — как в MY_FIGS) */}
+              {[...MY_FIGS.filter((f) => figs.has(f.id)), ...MY_FIGS.filter((f) => !figs.has(f.id))].map((f) => {
                 const isOpen = figs.has(f.id);
                 return (
                   <button
