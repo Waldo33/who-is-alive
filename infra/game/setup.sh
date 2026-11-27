@@ -61,8 +61,10 @@ fi
 # ключ Telegram-бота привозит выкладка из GitHub Secrets TELEGRAM_BOT_TOKEN (в /tmp/deploy/bot.env),
 # на диске — /etc/massovka/bot.env, только root; читает его systemd при запуске игрового сервера
 if [ -s "$D/bot.env" ]; then install -m 600 "$D/bot.env" /etc/massovka/bot.env; rm -f "$D/bot.env"; fi
-# бот живёт только на сервере бота (infra): на игровом ключа быть не должно
-if [ "${ROLE:-game}" = game ]; then rm -f /etc/massovka/bot.env; fi
+# ключ — только там, где живёт бот (BOT_HOME из infra/game/bot-home: infra | both | eu). Ключ появился или
+# пропал — envsum ниже меняется, и новый экземпляр (синий/зелёный) поднимается уже с ботом или без него
+if [ "${BOT_HOME:-infra}" = infra ] && [ "${ROLE:-game}" = game ]; then rm -f /etc/massovka/bot.env; fi
+if [ "${BOT_HOME:-infra}" = eu ] && [ "${ROLE:-game}" = infra ]; then rm -f /etc/massovka/bot.env; fi
 # ключи S3 для видео (apps/server/src/s3.ts) — выкладка берёт их из API Timeweb по TWC_TOKEN (s3-env.py).
 # Нет файла в этой выкладке (бакет не куплен, API не ответил) — прежний файл не трогаем
 if [ -s "$D/s3.env" ]; then install -m 600 "$D/s3.env" /etc/massovka/s3.env; rm -f "$D/s3.env"; fi

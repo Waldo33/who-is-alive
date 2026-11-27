@@ -45,8 +45,14 @@ jobs:
           # только цифры (Telegram id) или символы charge id — ничего лишнего в команду на сервере
           echo "$WHO" | grep -Eq '^([0-9]{1,16}|[][!#%&()*+,./0-9:;<=>?@A-Z^_a-z{|}~-]{1,256})$' || { echo "::error::нужен Telegram id или charge id"; exit 1; }
       - run: python3 -m venv /tmp/py && /tmp/py/bin/pip install -q cryptography
+      - name: Где живёт бот (infra/game/bot-home)
+        run: |
+          h=$(tr -d ' \n' < infra/game/bot-home)
+          # бот и учёт в одном процессе игры (eu) — туда; иначе — сервер бота в Нидерландах (both: вебхук ещё там)
+          if [ "$h" = eu ]; then echo "BOT_SERVER=massovka-eu" >> "$GITHUB_ENV"; else echo "BOT_SERVER=massovka-infra" >> "$GITHUB_ENV"; fi
+          echo "BOT_HOME=$h" >> "$GITHUB_ENV"
       - id: infra
-        env: { SERVER_NAME: massovka-infra }
+        env: { SERVER_NAME: '${{ env.BOT_SERVER }}' }
         run: /tmp/py/bin/python infra/game/provision.py
       - name: Вернуть
         env:
@@ -54,22 +60,26 @@ jobs:
           WHO: ${{ inputs.who }}
           ITEM: ${{ inputs.item }}
         run: |
-          ssh $SSH_OPTS root@$IP "WHO='$WHO' ITEM='$ITEM' bash -s" <<'SH' | tee /tmp/out.txt
+          ssh $SSH_OPTS root@$IP "WHO='$WHO' ITEM='$ITEM' BOT_HOME='$BOT_HOME' bash -s" <<'SH' | tee /tmp/out.txt
           set -e
           charge="$WHO"
           if echo "$WHO" | grep -Eq '^[0-9]{1,16}$'; then
-            # покупки — в базе игры (Европа), отсюда — по туннелю, только чтение
+            # покупки — в базе игры (Европа): там — своя база, из Нидерландов — по туннелю, только чтение
             filter=""
             [ -z "$ITEM" ] || filter="and item = '$ITEM'"
-            list=$(PGPASSWORD=$(. /etc/massovka-grafana/pgro.env; echo $PGRO_PASSWORD) psql -h 127.0.0.1 -p 25432 -U grafana_ro -d massovka -AtF ' ' -c \
-              "select charge, item, stars, to_char(created_at, 'YYYY-MM-DD HH24:MI') from shop_payments where user_id = $WHO and not refunded $filter order by created_at desc")
+            sql="select charge, item, stars, to_char(created_at, 'YYYY-MM-DD HH24:MI') from shop_payments where user_id = $WHO and not refunded $filter order by created_at desc"
+            if [ "$BOT_HOME" = eu ]; then
+              list=$(sudo -u postgres psql massovka -AtF ' ' -c "$sql")
+            else
+              list=$(PGPASSWORD=$(. /etc/massovka-grafana/pgro.env; echo $PGRO_PASSWORD) psql -h 127.0.0.1 -p 25432 -U grafana_ro -d massovka -AtF ' ' -c "$sql")
+            fi
             [ -n "$list" ] || { echo "у игрока $WHO нет невозвращённых покупок ${ITEM:+«$ITEM»}"; exit 1; }
             if [ "$(echo "$list" | wc -l)" -gt 1 ]; then
               echo "LIST"; echo "$list"; exit 0
             fi
             charge=$(echo "$list" | cut -d' ' -f1)
           fi
-          # бот — в этом же процессе игрового сервера Нидерландов, вход /internal — только изнутри машины
+          # бот — в процессе игрового сервера этой машины, вход /internal — только изнутри машины
           printf '%s' "{\"charge\":\"$charge\"}" | curl -sS -m 30 -X POST -H 'Content-Type: application/json' --data-binary @- -w '\nHTTP %{http_code}\n' http://127.0.0.1:8080/internal/tg/refund
           SH
           if grep -q '^LIST$' /tmp/out.txt; then

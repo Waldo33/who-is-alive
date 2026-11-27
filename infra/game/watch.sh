@@ -86,8 +86,9 @@ command -v dig >/dev/null && for h in benobody.app www.benobody.app api.benobody
 done
 [ -z "$v6" ]; check dns_aaaa $? "у домена есть записи AAAA (IPv6), а у серверов IPv6 нет:$v6— удалить в панели DNS"
 
-# бот у себя: вебхук на месте, Telegram не жалуется на доставку
-st=$(curl -s -m 15 http://127.0.0.1:8080/tg/status || true)
+# бот: вебхук на месте, Telegram не жалуется на доставку. Бот здесь — у себя; переехал в игровой сервер
+# (infra/game/bot-home: eu, здесь /tg/* отвечает 503) — у него, через туннель (:28080 → вход :8079 в Европе)
+st=$(curl -sf -m 15 http://127.0.0.1:8080/tg/status || curl -s -m 15 http://127.0.0.1:28080/tg/status || true)
 if echo "$st" | jq -e '.webhook == true and ((.pending // 0) < 100)' >/dev/null 2>&1; then r=0; else r=1; fi
 check bot_webhook $r "вебхук Telegram-бота (ошибка: $(echo "$st" | jq -r '.lastError // "нет ответа"' 2>/dev/null))"
 

@@ -20,7 +20,7 @@
 ```
 телефон ──HTTPS/WSS──> Caddy (Европа) ──127.0.0.1──> игра (синий/зелёный)
                          │  /tg/*  ──туннель SSH──> Caddy :8080 (Нидерланды) ──> бот
-Нидерланды ──туннель──> Европа: база :5432, node_exporter :9100, вход :8079 (только /metrics, /v1/events, /internal/errors, /internal/shop — учёт гардероба, /internal/sticker — рисование своего стикера)
+Нидерланды ──туннель──> Европа: база :5432, node_exporter :9100, вход :8079 (только /metrics, /v1/events, /internal/errors, /internal/shop — учёт гардероба, /internal/sticker — рисование своего стикера, /tg/status — состояние бота для сторожа)
 GitHub Actions ──SSH (ключ из TWC_TOKEN)──> обе машины
 ```
 

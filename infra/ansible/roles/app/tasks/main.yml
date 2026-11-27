@@ -37,11 +37,13 @@
   notify: настройка игры поменялась
   loop: [blue, green]
 
-- name: Ключ бота — только серверу бота
+- name: Ключ бота — только там, где живёт бот (infra/game/bot-home; кладёт его setup.sh из GitHub Secrets)
   ansible.builtin.file:
     path: /etc/massovka/bot.env
     state: absent
-  when: "'game' in group_names"
+  when: "('game' in group_names and bot_home | default('infra') == 'infra') or ('infra' in group_names and bot_home | default('infra') == 'eu')"
+  # ключ убрали — экземпляр с ботом надо сменить на экземпляр без него (setup.sh, синий/зелёный)
+  notify: настройка игры поменялась
 
 - name: Службы игрового сервера и Caddy
   ansible.builtin.copy:

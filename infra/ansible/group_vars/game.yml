@@ -15,4 +15,6 @@ app_site_url: https://benobody.app
 app_site_redirect: https://who-is-alive.vercel.app
 # переезд комнат при выкладке — на тот адрес, что сейчас работает снаружи (до DNS — sslip.io); считает inventory.py
 app_peer_host: "{{ peer_host | default('api.benobody.app') }}"
-app_bot_upstream: "{{ 'http://127.0.0.1:9090' if infra_tunnel_pub | default('') != '' else '' }}"
+# бот изнутри: туннель на сервер бота; бот в самом игровом сервере (bot_home=eu, infra/game/bot-home) — пусто:
+# фильм, карточки и стикеры за матч идут ему напрямую, /tg/* Caddy ведёт к активному экземпляру
+app_bot_upstream: "{{ 'http://127.0.0.1:9090' if infra_tunnel_pub | default('') != '' and bot_home | default('infra') != 'eu' else '' }}"

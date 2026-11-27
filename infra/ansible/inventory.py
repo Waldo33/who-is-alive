@@ -42,7 +42,13 @@ def main():
         dns = None
     peer = 'api.benobody.app' if eu_ip and dns == eu_ip else (f"{eu_ip.replace('.', '-')}.sslip.io" if eu_ip else '')
     print(f'api.benobody.app → {dns}; переезд комнат — на {peer}')
-    lines += ['[all:vars]', f'peer_host={peer}', '']
+    # где живёт Telegram-бот (infra | both | eu) — как в game-deploy: infra/game/bot-home
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'game', 'bot-home')) as f:
+        bot_home = f.read().strip()
+    if bot_home not in ('infra', 'both', 'eu'):
+        sys.exit(f'infra/game/bot-home: «{bot_home}» — нужно infra, both или eu')
+    print(f'бот: {bot_home}')
+    lines += ['[all:vars]', f'peer_host={peer}', f'bot_home={bot_home}', '']
     with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'inventory.ini'), 'w') as f:
         f.write('\n'.join(lines))
 
