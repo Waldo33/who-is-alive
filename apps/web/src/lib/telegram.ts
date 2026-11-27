@@ -13,7 +13,7 @@
  *
  * Вне Telegram всё здесь — пустые вызовы. Скрипт Telegram грузится только внутри Telegram.
  */
-import type { MyFig, MySticker, StickerId } from '@kto/game-core';
+import type { BadgeState, MyFig, MySticker, StickerId } from '@kto/game-core';
 import { GAME_API, TG_APP } from './env';
 import { ensureGameUser } from './game-server';
 import type { SharedClip } from './clips';
@@ -64,6 +64,7 @@ export interface TgWebApp {
   openInvoice?(url: string, cb?: (status: 'paid' | 'cancelled' | 'failed' | 'pending') => void): void;
   requestWriteAccess?(cb?: (allowed: boolean) => void): void;
   downloadFile?(params: { url: string; file_name: string }, cb?: (accepted: boolean) => void): void;
+  setEmojiStatus?(customEmojiId: string, params?: { duration?: number }, cb?: (set: boolean) => void): void;
   onEvent(e: string, cb: () => void): void;
   BackButton: TgButton;
   HapticFeedback: {
@@ -257,6 +258,7 @@ export function telegramStartTarget(): string | null {
   // проверочная покупка за 1 звезду (владельцу): гардероб с флагом shoptest
   if (start === 'shoptest') return '/wardrobe?ff=shoptest&src=tg';
   if (start === 'stickers' || start === 'ff_stickers') return '/stickers?src=tg';
+  if (start === 'badges') return '/badges?src=tg';
   // загадка из фильма матча: кнопка «Найди актёра» под видео в чате
   const puzzle = /^c_([A-Z2-9]{5})$/.exec(start);
   if (puzzle) return `/${puzzle[1]}?src=tg_film`;
@@ -486,6 +488,31 @@ export interface ShopState {
   pending?: number;
   /** Бесплатный пак ещё не забран: сыгран ли матч, есть ли подписка на канал (экран-замок; старый сервер не шлёт). */
   free?: { played: boolean; sub: boolean; channel?: string };
+  /** Значки для статуса (game-core/badges.ts) и id их эмодзи в наборе бота (null — набор ещё готовится); старый сервер не шлёт. */
+  badges?: (BadgeState & { emoji: string | null })[];
+}
+
+/** Можно ли ставить эмодзи-статус: Telegram 8.0+ и Telegram Premium (без него статус не ставится). */
+export function emojiStatusCaps(): { ok: boolean; premium: boolean } {
+  const ok = !!app?.setEmojiStatus && at('8.0');
+  return { ok, premium: !!app?.initDataUnsafe.user?.is_premium };
+}
+
+/**
+ * Поставить значок в эмодзи-статус: Telegram сам спрашивает игрока. `until` — срок (мс, «Звезда дубля»):
+ * статус снимется сам. true — поставлен.
+ */
+export function setEmojiStatus(emoji: string, until: number | null): Promise<boolean> {
+  const a = app;
+  if (!a?.setEmojiStatus || !at('8.0')) return Promise.resolve(false);
+  const duration = until !== null ? Math.max(60, Math.floor((until - Date.now()) / 1000)) : undefined;
+  return new Promise((done) => {
+    try {
+      a.setEmojiStatus!(emoji, duration ? { duration } : {}, (set) => done(!!set));
+    } catch {
+      done(false);
+    }
+  });
 }
 
 /** Ответ бота с кодом ошибки (400/409/429 — `{ error }`); null — нет сети или не в Telegram. */

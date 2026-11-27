@@ -275,7 +275,9 @@ describe('фильм матча в комнате', () => {
       onFilm: (r, f) => toChat.push({ code: r.code, ...f }),
       onCard: (_r, c) => cards.push(c),
       onStickers: (_r, e) => earned.push(...e),
+      onBadges: (_r, m) => badges.push(m),
     });
+    const badges: import('../src/room').MatchBadges[] = [];
     const cards: import('../src/room').RoomCard[] = [];
     const earned: { pid: string; stickers: string[] }[] = [];
     // комнату собрала карточка из Telegram — готовый фильм уйдёт и в тот чат
@@ -303,6 +305,8 @@ describe('фильм матча в комнате', () => {
     // стикеры за матч — один раз на матч, обоим: победителю «Плачу от счастья», остальным «Всё хорошо»
     expect(earned.map((e) => e.pid).sort()).toEqual(['a', 'b']);
     for (const e of earned) expect(e.stickers).toContain(room.runner!.host.match!.winners.includes(e.pid) ? 'happyTears' : 'allGood');
+    // значки: матч засчитан обоим, победители — из итога; двое живых — комната режиссёру не засчитана
+    expect(badges).toEqual([{ humans: ['a', 'b'], winners: room.runner!.host.match!.winners, director: null }]);
     await new Promise((r) => setTimeout(r, 0));
     for (const p of [pa, pb]) {
       const f = p.got.filter((m) => m.t === 'film');
@@ -325,6 +329,44 @@ describe('фильм матча в комнате', () => {
     expect(cards.every((c) => c.state !== 'lobby' || cards.indexOf(c) < 2)).toBe(true);
     room.close('test');
     expect(cards.length).toBe(before);
+  });
+
+  it('значок «Режиссёр»: комната с четырьмя живыми засчитывается режиссёру один раз, и после переезда тоже', async () => {
+    let now = 1_000_000;
+    const badges: import('../src/room').MatchBadges[] = [];
+    const opts = {
+      code: 'DIRS',
+      directorId: 'a',
+      directorName: 'A',
+      settings: { roundSec: 60 as const, maxRounds: 3 as const, kidsMode: false, aiFill: false },
+      lang: 'ru' as const,
+      now: () => now,
+      log: silentLogger,
+      speed: 50,
+      onBadges: (_r: Room, m: import('../src/room').MatchBadges) => void badges.push(m),
+    };
+    const room = new Room(opts);
+    for (const id of ['a', 'b', 'c', 'd']) {
+      room.join(id, id.toUpperCase(), fakePeer());
+      if (id !== 'a') room.setReady(id, true);
+    }
+    expect(room.start('a')).toBeNull();
+    for (let i = 0; i < 40000 && room.runner?.host.phase !== 'match_end'; i++) {
+      now += 50;
+      room.pump();
+      await Promise.resolve();
+    }
+    expect(room.runner!.host.phase).toBe('match_end');
+    expect(badges).toHaveLength(1);
+    expect(badges[0]!.humans.sort()).toEqual(['a', 'b', 'c', 'd']);
+    expect(badges[0]!.director).toBe('a');
+    // комната переехала на соседний экземпляр (выкладка) — засчитанная остаётся засчитанной
+    const snap = room.snapshot();
+    expect(snap.directorCounted).toBe(true);
+    const moved = new Room({ ...opts, restore: snap });
+    expect(moved.snapshot().directorCounted).toBe(true);
+    room.close('test');
+    moved.close('test');
   });
 
   it('лобби по карточке закрылось без матча — карточке «съёмку отменили»; без приглашения — молчим', () => {

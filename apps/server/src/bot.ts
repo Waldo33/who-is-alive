@@ -1,10 +1,12 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { join } from 'node:path';
 import { LOGIN_CODE, WebLogins } from './web-login';
 import { DICTS } from '@kto/game-core';
 import { RateWindow } from './limits';
 import { errFields } from './log';
 import type { Logger } from './log';
 import { cleanName } from './room';
+import { BadgeSet } from './badges';
 import { Shop, localLedger } from './shop';
 import type { ShopDeps, ShopLedger, VerifyToken } from './shop';
 import type { Store } from './store';
@@ -53,6 +55,10 @@ export interface BotOptions {
   verifyGameToken?: VerifyToken;
   /** Видеостикеры (<язык>/<id>.webm); нет — гардероб без выдачи стикеров. */
   stickersDir?: string;
+  /** Картинки значков для статуса (<id>.png, badges.ts); нет — `<stickersDir>/badges`. */
+  badgesDir?: string;
+  /** Владелец набора значков в Telegram (id человека); нет — создатель чата поддержки. */
+  badgesOwner?: number;
   /** Чат поддержки (бот — его участник): сюда бот пересылает /paysupport, ответ на пересылку уходит игроку. */
   supportChat?: string;
   /** Нарисовать свой стикер игрока (WEBM): sticker-render.ts здесь или игровой сервер по туннелю. */
@@ -281,6 +287,7 @@ export class Bot {
   private meAt = 0;
   readonly hookSecret: string;
   readonly shop: Shop;
+  readonly badges: BadgeSet;
   private readonly supportChat: string;
   /** Кто недавно написал /paysupport: id → до какого времени пересылать его сообщения. */
   private readonly supportUntil = new Map<number, number>();
@@ -294,6 +301,14 @@ export class Bot {
     // секрет вебхука выводится из ключа бота — хранить отдельно не нужно (так же было в Supabase)
     this.supportChat = o.supportChat ?? SUPPORT_CHAT;
     this.hookSecret = createHash('sha256').update('kto-hook:' + o.token).digest('hex').slice(0, 48);
+    this.badges = new BadgeSet({
+      api: (m, b) => this.api(m, b),
+      username: async () => (await this.getMe()).username,
+      log: o.log,
+      dir: o.badgesDir ?? join(o.stickersDir ?? '', 'badges'),
+      supportChat: this.supportChat,
+      owner: o.badgesOwner,
+    });
     this.shop = new Shop({
       api: (m, b) => this.api(m, b),
       username: async () => (await this.getMe()).username,
@@ -305,6 +320,7 @@ export class Bot {
       channelId: '@' + CHANNEL.split('/').pop(),
       drawMy: o.drawMy,
       lease: o.lease,
+      badgeEmoji: () => this.badges.ids(),
     });
   }
 
