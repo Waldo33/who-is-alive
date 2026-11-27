@@ -12,6 +12,7 @@ import type { ShopState } from '@/lib/telegram';
 import { TopBar } from '@/ui/TopBarView';
 import { ST_SIZE, STICKERS, stickerFrame } from '@/game/skins/stickers';
 import { drawMy, myDef } from '@/game/skins/my-sticker';
+import { holoStrip } from '@/game/skins/shine';
 import type { MyLook } from '@/game/skins/my-sticker';
 import { loadAllThemes } from '@/game/themes';
 
@@ -48,6 +49,9 @@ const themeName = (lang: Lang, id: string) => DICTS[lang].themes[THEME_RULES.fin
 /** Канал игры — если сервер бота старый и не прислал ссылку. */
 const CHANNEL = 'https://t.me/benobody_app';
 
+/** Стикеры платных наборов (не стартовый пак и не «за игру») — с голограммой. */
+const PAID = new Set<string>(STICKER_LIST.filter((m) => m.set !== 'starter' && m.set !== 'play').map((m) => m.id));
+
 export default function StickersClient() {
   const router = useRouter();
   const [lang, setLang] = useState<Lang>('ru');
@@ -69,6 +73,8 @@ export default function StickersClient() {
   }, [earnNext]);
   const [tab, setTab] = useState<Tab>('pack');
   const [pics, setPics] = useState<Record<string, string>>({});
+  // платные стикеры (из купленных наборов) переливаются голограммой — лента кадров для CSS-анимации
+  const [holo, setHolo] = useState<Record<string, string>>({});
   const [figPics, setFigPics] = useState<Record<string, string>>({});
   const [note, setNote] = useState('');
   const [sel, setSel] = useState<string | null>(null);
@@ -110,6 +116,7 @@ export default function StickersClient() {
       // костюмы тем — для стикеров «за игру» и героев площадок
       await loadAllThemes(20000).catch(() => undefined);
       setPics(Object.fromEntries(STICKERS.map((x) => [x.id, png(stickerFrame(x, 5, l))])));
+      setHolo(Object.fromEntries(STICKERS.filter((x) => PAID.has(x.id)).map((x) => [x.id, png(holoStrip(stickerFrame(x, 5, l), 3))])));
       setFigPics(Object.fromEntries(MY_FIGS.map((f) => [f.id, png(stickerFrame(myDef({ fig: f.id, pose: 'wave', color: 0, text: [] }), 0, l))])));
       if (tgNow) {
         await bootTelegram();
@@ -418,7 +425,13 @@ export default function StickersClient() {
                   const cls = ['stickers-tile', !isOpen ? 'locked' : isOff ? 'off' : 'in', sel === m.id ? 'sel' : ''].join(' ');
                   return (
                     <button key={m.id} className={cls} onClick={() => void tapSticker(m)} aria-label={t.stickers[m.id].join(' ')} aria-pressed={isOpen && !isOff}>
-                      {pics[m.id] && <img src={pics[m.id]} alt="" />}
+                      {isOpen && !isOff && holo[m.id] ? (
+                        <span className="stickers-holo">
+                          <img src={holo[m.id]} alt="" />
+                        </span>
+                      ) : (
+                        pics[m.id] && <img src={pics[m.id]} alt="" />
+                      )}
                       {!isOpen ? <i className="stickers-mark lock">?</i> : !canDrop(m.id) ? <i className="stickers-mark pin">★</i> : !isOff ? <i className="stickers-mark ok">✓</i> : <i className="stickers-mark back">+</i>}
                     </button>
                   );

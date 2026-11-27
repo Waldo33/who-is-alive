@@ -1,4 +1,5 @@
 import { PAL } from '@kto/assets';
+import { canvas } from '../pixels';
 import type { Ctx } from '../pixels';
 
 /**
@@ -72,8 +73,8 @@ export function iceFrost(g: Ctx, t: number, b: Box): void {
   }
 }
 
-/** «Голограмма» по силуэту: радужные диагонали плывут, по ним проходит блик. alpha — сила радуги. */
-export function holoOver(g: Ctx, t: number, b: Box, alpha = 0.28): void {
+/** «Голограмма» по силуэту: радужные диагонали плывут, по ним проходит блик. alpha — сила радуги, period — блика. */
+export function holoOver(g: Ctx, t: number, b: Box, alpha = 0.28, period = 20): void {
   const cols = Math.ceil(b.w / b.k);
   const rows = Math.ceil(b.h / b.k);
   g.save();
@@ -81,8 +82,28 @@ export function holoOver(g: Ctx, t: number, b: Box, alpha = 0.28): void {
   g.globalAlpha = alpha;
   for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) px(g, b, i, j, HOLO[((i + j + t) >> 2) % HOLO.length]);
   g.globalAlpha = 1;
-  band(g, t, b, 1, 20);
+  band(g, t, b, 1, period);
   g.restore();
+}
+
+/** Кадров в ленте голограммы: радуга (6 цветов × 4) и блик сходятся — лента зациклена без скачка. */
+export const HOLO_FRAMES = 24;
+
+/**
+ * Лента кадров «переливается» для неподвижной картинки (платные стикеры в стикерпаке): кадры слева направо,
+ * листать CSS-анимацией steps(HOLO_FRAMES). k — пиксель спрайта на картинке.
+ */
+export function holoStrip(src: HTMLCanvasElement, k: number): HTMLCanvasElement {
+  const { width: w, height: h } = src;
+  const out = canvas(w * HOLO_FRAMES, h);
+  const one = canvas(w, h);
+  for (let t = 0; t < HOLO_FRAMES; t++) {
+    one.g.clearRect(0, 0, w, h);
+    one.g.drawImage(src, 0, 0);
+    holoOver(one.g, t, { x: 0, y: 0, w, h, k }, 0.3, HOLO_FRAMES);
+    out.g.drawImage(one.c, t * w, 0);
+  }
+  return out.c;
 }
 
 /** Искры вокруг голограммы — по очереди, рисовать на общем холсте после фигурки. */
