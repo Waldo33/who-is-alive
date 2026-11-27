@@ -289,6 +289,8 @@ export class Shop {
     // недовыданное и неубранное (сбой Telegram, перезапуск) — дослать в фоне
     if (kick && pending && !this.queue.has(id)) void this.issue(id);
     const open = u ? openStickers(u.items) : [];
+    // бесплатный пак ещё не забран — шаги для экрана-замка: сыгран ли матч, есть ли подписка на канал
+    const free = u?.items.includes('starter') ? undefined : { played: !!u?.items.includes('played'), sub: await this.subscribed(id), channel: this.d.channel };
     return {
       items: (u?.items ?? []).filter((i) => i === 'starter' || i === 'pack' || shopItem(i)),
       pack: u?.pack ? `https://t.me/addstickers/${u.pack}` : null,
@@ -307,6 +309,7 @@ export class Shop {
       figs: MY_FIGS.filter((f) => myFigOpen(f.id, u?.items ?? [])).map((f) => f.id),
       earned: (u?.items ?? []).filter((i) => i.startsWith('st:')).map((i) => i.slice(3)),
       pending,
+      free,
     };
   }
 
