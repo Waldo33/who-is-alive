@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { DICTS, MY_FIGS, MY_ISSUED, MY_MARKS, MY_MAX, MY_POSE_EMOJI, RETIRED_STICKERS, SHOP_ITEMS, STICKER_LIST, canDrop, fmt, isMySticker, isSkin, isStickerId, myFigOpen, myIssued, offSticker, parseMySticker, shopItem, skinOf, wearItems } from '@kto/game-core';
+import { DICTS, MY_FIGS, MY_ISSUED, MY_MARKS, MY_MAX, MY_POSE_EMOJI, RETIRED_STICKERS, SHOP_ITEMS, STICKER_LIST, TEST_ITEM, buyItem, canDrop, fmt, isMySticker, isSkin, isStickerId, myFigOpen, myIssued, offSticker, parseMySticker, skinOf, wearItems } from '@kto/game-core';
 import type { MySticker, StickerId, StickerMeta } from '@kto/game-core';
 import { RateWindow } from './limits';
 import { errFields } from './log';
@@ -133,7 +133,7 @@ export async function shopLedgerOp(store: ShopLedger, raw: unknown): Promise<{ s
   }
   if (b?.op === 'pay') {
     const p = b.payment as Partial<ShopPayment> | null;
-    if (!p || typeof p.charge !== 'string' || !CHARGE.test(p.charge) || !userId(p.userId) || !shopItem(p.item) || !Number.isInteger(p.stars) || p.stars! < 1) return bad;
+    if (!p || typeof p.charge !== 'string' || !CHARGE.test(p.charge) || !userId(p.userId) || !buyItem(p.item) || !Number.isInteger(p.stars) || p.stars! < 1) return bad;
     return { status: 200, body: { result: await store.saveShopPayment({ charge: p.charge, userId: p.userId, item: p.item!, stars: p.stars!, refunded: false }) } };
   }
   if (b?.op === 'link') {
@@ -240,6 +240,11 @@ export interface ShopDeps {
   channelId?: string;
   /** Нарисовать свой стикер (WEBM): игровой сервер — у себя, сервер бота — по туннелю (/internal/sticker). */
   drawMy?: (look: Pick<MySticker, 'fig' | 'pose' | 'color' | 'text'>) => Promise<Buffer>;
+  /**
+   * Аренда сверки по расписанию (store.ts › lease): синий и зелёный живут вместе при выкладке — сверяет один.
+   * Нет — сверяет этот процесс (он один: сервер бота, разработка).
+   */
+  lease?: (name: string, ms: number) => Promise<boolean>;
   /** Подмена ожидания (тесты). */
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
@@ -260,7 +265,7 @@ interface StarTx {
   id: string;
   amount: number;
   date: number;
-  source?: { type: string; user?: { id: number }; invoice_payload?: string };
+  source?: { type: string; user?: ShopInit['user']; invoice_payload?: string };
   receiver?: { type: string; user?: { id: number } };
 }
 const langOf = (code?: string): Lang => (code && /^(ru|uk|be|kk)/.test(code) ? 'ru' : 'en');
@@ -295,6 +300,7 @@ export class Shop {
     // старые вкладки гардероба («В мой пак» / «Новый пак»): пак теперь один и наполняется сам — просто состояние
     if (path === '/shop/pack') return { status: 200, body: await this.state(id, true) };
     if (path === '/shop/buy') return this.buy(init, body.item);
+    if (path === '/shop/refund') return this.refundOwn(init.user, body.item, now);
     if (path === '/shop/link') return this.link(init.user, body.token);
     if (path === '/shop/wear') return this.wear(id, body.item);
     if (path === '/shop/pick') return this.pick(id, body.id, body.on);
@@ -313,7 +319,7 @@ export class Shop {
     // бесплатный пак ещё не забран — шаги для экрана-замка: сыгран ли матч, есть ли подписка на канал
     const free = u?.items.includes('starter') ? undefined : { played: !!u?.items.includes('played'), sub: await this.subscribed(id), channel: this.d.channel };
     return {
-      items: (u?.items ?? []).filter((i) => i === 'starter' || i === 'pack' || shopItem(i)),
+      items: (u?.items ?? []).filter((i) => i === 'starter' || i === 'pack' || buyItem(i)),
       pack: u?.pack ? `https://t.me/addstickers/${u.pack}` : null,
       /** Отдельных паков больше нет (один пак на игрока); поле — для старых вкладок гардероба. */
       packs: {} as Record<string, string>,
@@ -585,17 +591,18 @@ export class Shop {
   }
 
   private async buy(init: ShopInit, raw: unknown): Promise<ShopReply> {
-    const item = shopItem(raw);
+    const item = buyItem(raw);
     if (!item) return { status: 400, body: { error: 'bad_item' } };
     const u = await this.user(init.user);
     if (u.items.includes(item.id)) return { status: 409, body: { error: 'owned' } };
     const t = DICTS[u.lang].shop;
+    const test = item.id === TEST_ITEM.id;
     const link = await this.d.api<string>('createInvoiceLink', {
-      title: t.invoiceTitle,
-      description: t.invoiceText,
+      title: test ? t.test.invoiceTitle : t.invoiceTitle,
+      description: test ? t.test.invoiceText : t.invoiceText,
       payload: `${item.id}:${u.userId}`,
       currency: 'XTR',
-      prices: [{ label: t.invoiceTitle, amount: item.stars }],
+      prices: [{ label: test ? t.test.invoiceTitle : t.invoiceTitle, amount: item.stars }],
     });
     return { status: 200, body: { link } };
   }
@@ -621,34 +628,83 @@ export class Shop {
   /**
    * Сверка с Telegram: оплата есть, а набора у игрока нет (уведомление об оплате потерялось — бот перезапускался,
    * учёт был недоступен) — записать и выдать, как при обычной оплате. Возвращённые оплаты (у них в Telegram
-   * есть встречная транзакция с тем же id) пропускаем. Не чаще раза в 30 с на игрока; сбой — тихо, в журнал.
+   * есть встречная транзакция с тем же id) пропускаем. При заходе в гардероб — не чаще раза в 30 с на игрока;
+   * сбой — тихо, в журнал.
    */
   private async reconcile(user: ShopInit['user'], now: number): Promise<void> {
     if (now - (this.synced.get(user.id) ?? -Infinity) < 30_000) return;
     if (this.synced.size > 5000) this.synced.clear();
     this.synced.set(user.id, now);
     try {
-      const txs = await this.starTransactions(now);
-      const refunded = new Set(txs.filter((t) => t.receiver?.type === 'user').map((t) => t.id));
-      for (const t of txs) {
-        const src = t.source;
-        if (src?.type !== 'user' || src.user?.id !== user.id || refunded.has(t.id) || !CHARGE.test(t.id)) continue;
-        const p = this.payload(src.invoice_payload);
-        if (!p || p.userId !== user.id) continue;
-        const u = await this.d.ledger.shopUser(user.id);
-        if (u?.items.includes(p.item.id)) continue;
-        this.d.log('warn', 'shop_reconciled', { item: p.item.id, stars: t.amount });
-        await this.paid({ from: user, successful_payment: { currency: 'XTR', total_amount: t.amount, invoice_payload: src.invoice_payload!, telegram_payment_charge_id: t.id } });
-      }
+      await this.settle(await this.starTransactions(now), user);
     } catch (e) {
       this.d.log('warn', 'shop_reconcile', errFields(e));
     }
   }
 
+  /**
+   * Сверка всех оплат (по расписанию, `sweepEvery`): игрок мог заплатить и не вернуться в гардероб — набор
+   * всё равно придёт. Ответ — сколько оплат выдано по сверке.
+   */
+  async reconcileAll(): Promise<number> {
+    const now = (this.d.now ?? Date.now)();
+    // список — свежий: кэш на 15 с нужен гардеробу, а не расписанию
+    this.txCache = null;
+    return this.settle(await this.starTransactions(now));
+  }
+
+  /** Сверять раз в `ms` (первый раз — через минуту после старта). Ответ — остановить. */
+  sweepEvery(ms: number): () => void {
+    let running = false;
+    const tick = async () => {
+      if (running) return;
+      running = true;
+      try {
+        // аренда — на два периода: экземпляр, который сверял, сверяет и дальше, пока жив
+        if (this.d.lease && !(await this.d.lease('shop_reconcile', ms * 2))) return;
+        const n = await this.reconcileAll();
+        this.d.log(n ? 'warn' : 'info', 'shop_sweep', { settled: n });
+      } catch (e) {
+        this.d.log('warn', 'shop_sweep', errFields(e));
+      } finally {
+        running = false;
+      }
+    };
+    const first = setTimeout(() => void tick(), Math.min(ms, 60_000));
+    const every = setInterval(() => void tick(), ms);
+    first.unref?.();
+    every.unref?.();
+    return () => {
+      clearTimeout(first);
+      clearInterval(every);
+    };
+  }
+
+  /** Оплаты из списка Telegram, которых нет в учёте (только этого игрока, если он указан), — выдать. */
+  private async settle(txs: StarTx[], only?: ShopInit['user']): Promise<number> {
+    const refunded = new Set(txs.filter((t) => t.receiver?.type === 'user').map((t) => t.id));
+    let n = 0;
+    for (const t of txs) {
+      const src = t.source;
+      const id = src?.user?.id;
+      if (src?.type !== 'user' || typeof id !== 'number' || (only && id !== only.id) || refunded.has(t.id) || !CHARGE.test(t.id)) continue;
+      const p = this.payload(src.invoice_payload);
+      if (!p || p.userId !== id) continue;
+      const u = await this.d.ledger.shopUser(id);
+      if (u?.items.includes(p.item.id)) continue;
+      this.d.log('warn', 'shop_reconciled', { item: p.item.id, stars: t.amount, sweep: !only });
+      // имя и язык — из гардероба (только что) или из самой оплаты (Telegram кладёт туда пользователя)
+      const from = only ?? { id, first_name: src.user?.first_name, username: src.user?.username, language_code: src.user?.language_code };
+      await this.paid({ from, successful_payment: { currency: 'XTR', total_amount: t.amount, invoice_payload: src.invoice_payload!, telegram_payment_charge_id: t.id } });
+      n++;
+    }
+    return n;
+  }
+
   /** Разбор payload счёта: «набор:игрок». */
-  private payload(s: unknown): { item: NonNullable<ReturnType<typeof shopItem>>; userId: number } | null {
+  private payload(s: unknown): { item: NonNullable<ReturnType<typeof buyItem>>; userId: number } | null {
     const m = typeof s === 'string' ? /^([A-Za-z]{1,24}):(\d{1,16})$/.exec(s) : null;
-    const item = m ? shopItem(m[1]) : undefined;
+    const item = m ? buyItem(m[1]) : undefined;
     return m && item ? { item, userId: Number(m[2]) } : null;
   }
 
@@ -677,8 +733,10 @@ export class Shop {
     }
     const fresh = await this.d.ledger.saveShopPayment({ charge: sp.telegram_payment_charge_id, userId: from.id, item: p.item.id, stars: sp.total_amount, refunded: false });
     const u = await this.user(from);
+    // проверочная покупка — только отметка (без пака, стикеров и сообщения): её сразу возвращают кнопкой
+    const test = p.item.id === TEST_ITEM.id;
     // набор и пак (один на игрока: «Массовка · Имя»; нет — создастся) — записать до выдачи
-    const add = [p.item.id, 'pack'].filter((i) => !u.items.includes(i));
+    const add = (test ? [p.item.id] : [p.item.id, 'pack']).filter((i) => !u.items.includes(i));
     if (add.length) {
       u.items.push(...add);
       // купленный скин сразу надет (даже если раньше был «Снять»): без отметки надет последний купленный
@@ -687,6 +745,7 @@ export class Shop {
     }
     if (!fresh) return;
     this.d.log('info', 'shop_paid', { item: p.item.id, stars: sp.total_amount });
+    if (test) return;
     // стикеры набора — сразу в пак; сбой Telegram — дошлётся при заходе в гардероб; сообщение — со ссылкой на пак
     await this.issue(u.userId);
     const st = await this.state(u.userId, false);
@@ -698,6 +757,31 @@ export class Shop {
    * (и с «Надеть»), стикеры набора удаляются из пака игрока. Открытые в матчах (`st:<id>`) помним — при новой
    * покупке они вернутся в пак.
    */
+  /**
+   * «Вернуть звёзды» в карточке покупки (сам игрок): пока только проверочная покупка. Номер платежа ищем
+   * в списке Telegram — его оплата этой покупки, ещё не возвращённая.
+   */
+  private async refundOwn(user: ShopInit['user'], raw: unknown, now: number): Promise<ShopReply> {
+    if (raw !== TEST_ITEM.id) return { status: 403, body: { error: 'not_refundable' } };
+    let txs: StarTx[];
+    try {
+      this.txCache = null;
+      txs = await this.starTransactions(now);
+    } catch (e) {
+      this.d.log('warn', 'shop_refund_own', errFields(e));
+      return { status: 502, body: { error: 'telegram' } };
+    }
+    const refunded = new Set(txs.filter((t) => t.receiver?.type === 'user').map((t) => t.id));
+    const tx = txs.find((t) => t.source?.type === 'user' && t.source.user?.id === user.id && !refunded.has(t.id) && this.payload(t.source.invoice_payload)?.item.id === raw && this.payload(t.source.invoice_payload)?.userId === user.id);
+    if (!tx) return { status: 404, body: { error: 'not_found' } };
+    // оплата есть, а в учёте её нет (уведомление ещё не дошло) — сначала записать, потом вернуть
+    const u = await this.d.ledger.shopUser(user.id);
+    if (!u?.items.includes(raw)) await this.settle([tx], user);
+    const r = await this.refund(tx.id);
+    if (r.status !== 200) return r;
+    return { status: 200, body: await this.state(user.id, false) };
+  }
+
   async refund(charge: unknown): Promise<ShopReply> {
     if (typeof charge !== 'string' || !CHARGE.test(charge)) return { status: 400, body: { error: 'bad_charge' } };
     const p = await this.d.ledger.refundShopPayment(charge);
@@ -752,7 +836,7 @@ export class Shop {
   /** Что куплено (наборы, без стикеров и меток) — для запроса в поддержку. */
   async itemsOf(id: number): Promise<string[]> {
     const u = await this.d.ledger.shopUser(id);
-    return (u?.items ?? []).filter((i) => !!shopItem(i));
+    return (u?.items ?? []).filter((i) => !!buyItem(i));
   }
 
   private async notify(chat: number, lang: Lang, text: string, pack: string | null, play = false): Promise<void> {

@@ -119,9 +119,13 @@ const bot = env.TELEGRAM_BOT_TOKEN
         env.EVENTS_UPSTREAM
           ? drawMyRemote(env.EVENTS_UPSTREAM)
           : (look) => (stickers ? stickers.render(look) : Promise.reject(new Error('no_sticker_renderer'))),
+      // сверку оплат по расписанию делает один экземпляр: аренда в общей базе (синий и зелёный при выкладке)
+      lease: (name, ms) => store.lease(name, `${env.INSTANCE || 'one'}:${process.pid}`, ms),
     })
   : undefined;
 if (!bot) log('warn', 'TELEGRAM_BOT_TOKEN не задан — бота нет');
+// оплаты, о которых Telegram не сообщил (перезапуск, сбой учёта), — раз в 10 минут, даже если игрок не зайдёт в гардероб
+bot?.shop.sweepEvery(10 * 60_000);
 
 // S3 для видео (s3.ts, бакет — infra/terraform/storage.tf; ключи — /etc/massovka/s3.env от выкладки). Нет — всё на диске
 const s3cfg = s3FromEnv(env);

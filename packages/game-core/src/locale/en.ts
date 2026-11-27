@@ -625,6 +625,18 @@ export const en: Dict = {
     },
     botBuild: '🎨 Build your pack',
     packTitle: 'Be Nobody · {name}',
+    /** Test purchase for 1 star (shoptest flag): buy and refund right away with the button on the same card. */
+    test: {
+      title: 'Payment check',
+      hint: 'Gives nothing: buy for 1 star and refund right away.',
+      buy: 'Buy for 1',
+      bought: 'Payment went through',
+      refund: 'Refund stars',
+      refunded: 'Stars refunded',
+      failed: 'Did not work, try again',
+      invoiceTitle: 'Payment check',
+      invoiceText: 'A Be Nobody test purchase: gives nothing, refund the star right away in the wardrobe.',
+    },
     invoiceTitle: 'Catnana',
     invoiceText: 'A Be Nobody set: the Catnana costume and 8 Telegram stickers.',
     botBought: '🍌 Catnana is yours! Its stickers are already in your pack: 2 now, 5 more unlock in matches.',

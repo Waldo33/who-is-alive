@@ -113,6 +113,16 @@ export const STICKER_LIST: StickerMeta[] = [
 export const RETIRED_STICKERS: Readonly<Record<string, string>> = { notCrying: '😭' };
 
 export const shopItem = (id: unknown): ShopItem | undefined => SHOP_ITEMS.find((x) => x.id === id);
+
+/**
+ * Проверочная покупка (не набор, на витрине её нет): 1 звезда, ничего не даёт, сразу возвращается кнопкой
+ * в своей карточке. Видна только по ссылке `startapp=shoptest` (флаг `shoptest`) — владельцу, чтобы
+ * проверить оплату и возврат на живом боте.
+ */
+export const TEST_ITEM = { id: 'test', stars: 1 } as const;
+export type BuyItem = ShopItem | typeof TEST_ITEM;
+/** Что можно купить: набор витрины или проверочная покупка. */
+export const buyItem = (id: unknown): BuyItem | undefined => (id === TEST_ITEM.id ? TEST_ITEM : shopItem(id));
 export const isStickerId = (id: unknown): id is StickerId => STICKER_LIST.some((s) => s.id === id);
 
 /** Итоги дубля, которых хватает для `earnedEvents` (RoundSummary целиком или запись матча). */

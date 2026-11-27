@@ -40,6 +40,11 @@ export interface Store {
   linkTelegram(link: TgLink): Promise<void>;
   /** Связи для этих игроков сервера (кого нет — нет в ответе). */
   telegramOf(gameUsers: string[]): Promise<TgLink[]>;
+  /**
+   * Аренда общей задачи (сверка оплат по расписанию): true — задача за этим экземпляром на `ms` (свою аренду
+   * продлевает); false — её держит другой (синий и зелёный живут вместе при выкладке, база общая).
+   */
+  lease(name: string, owner: string, ms: number): Promise<boolean>;
   ping(): Promise<boolean>;
   close(): Promise<void>;
 }
@@ -196,6 +201,12 @@ const MIGRATIONS: string[] = [
      lang text not null default 'ru',
      updated_at timestamptz not null default now()
    )`,
+  // аренда общих задач (сверка оплат): кто держит и до какого времени
+  `create table if not exists job_leases (
+     name text primary key,
+     owner text not null,
+     until timestamptz not null
+   )`,
 ];
 
 /** Неделя тишины — и группа считается вернувшейся (снова тревога). */
@@ -349,6 +360,18 @@ export class PgStore implements Store {
     return res.rows.map((x) => ({ gameUser: x.game_user, tgUser: Number(x.tg_user), name: x.name, lang: x.lang === 'en' ? 'en' : 'ru' }));
   }
 
+  async lease(name: string, owner: string, ms: number): Promise<boolean> {
+    // одна строка на задачу: занять свободную (или просроченную, или свою) — атомарно, одним запросом
+    const r = await this.pool.query(
+      `insert into job_leases (name, owner, until) values ($1, $2, now() + make_interval(secs => $3))
+       on conflict (name) do update set owner = excluded.owner, until = excluded.until
+       where job_leases.owner = excluded.owner or job_leases.until < now()
+       returning owner`,
+      [name, owner, ms / 1000],
+    );
+    return (r.rowCount ?? 0) > 0;
+  }
+
   async ping(): Promise<boolean> {
     try {
       await this.pool.query('select 1');
@@ -468,6 +491,15 @@ export class MemoryStore implements Store {
 
   async telegramOf(gameUsers: string[]): Promise<TgLink[]> {
     return gameUsers.flatMap((g) => (this.links.has(g) ? [{ ...this.links.get(g)! }] : []));
+  }
+
+  leases = new Map<string, { owner: string; until: number }>();
+
+  async lease(name: string, owner: string, ms: number): Promise<boolean> {
+    const l = this.leases.get(name);
+    if (l && l.owner !== owner && l.until > Date.now()) return false;
+    this.leases.set(name, { owner, until: Date.now() + ms });
+    return true;
   }
 
   async ping(): Promise<boolean> {
