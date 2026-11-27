@@ -361,7 +361,10 @@ export class Shop {
       if (slot === undefined) return 'full';
       const old = my.find((m) => m.slot === slot);
       if (old && old.fig === v.fig && old.pose === v.pose && old.color === v.color && old.text.join('\n') === v.text.join('\n')) return null;
-      const next: MySticker = { slot, ...v, rev: (old?.rev ?? 0) + 1 };
+      // номер правки растёт и через удаление: убрал стикер и сразу сделал новый в той же ячейке, пока бот не
+      // успел убрать старый из пака, — иначе новый получил бы тот же ключ (my0.1) и бот счёл бы его уже выданным
+      const was = Math.max(old?.rev ?? 0, ...u.issued.filter((x) => MY_ISSUED.exec(x)?.[1] === String(slot)).map((x) => Number(x.split('.')[1]) || 0));
+      const next: MySticker = { slot, ...v, rev: was + 1 };
       u.my = [...my.filter((m) => m.slot !== slot), next].sort((a, b) => a.slot - b.slot);
       return null;
     });
