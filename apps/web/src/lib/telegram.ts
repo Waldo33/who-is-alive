@@ -220,7 +220,7 @@ export function telegramLang(): 'ru' | 'en' | null {
 
 /**
  * Параметр запуска (?startapp=…): `r_КОД` — комната, `play` — сразу матч с ИИ, `friends` — новая
- * комната, `g_МЕТКА` — общее лобби по карточке бота «Собрать комнату», `c_КОД` — загадка из фильма, `daily` — загадка дня, `dev[_tN][_sN]` — песочница с дев-панелью (тема N, ускорение N). Telegram передаёт его
+ * комната, `g_МЕТКА` — общее лобби по карточке бота «Собрать комнату», `c_КОД` — загадка из фильма, `daily` — загадка дня, `dev[_tN][_sN]` — песочница с дев-панелью (тема N, ускорение N), `ff_shop` — включить и открыть «Гардероб». Telegram передаёт его
  * и в адресе (`tgWebAppStartParam`) — так он известен сразу, ещё до загрузки SDK.
  */
 export function telegramStart(): string | null {
@@ -250,6 +250,8 @@ export function telegramStartTarget(): string | null {
   const dev = /^dev(?:_t(\d{1,2}))?(?:_s(\d{1,2}))?$/.exec(start);
   if (dev) return `/sandbox?dev${dev[1] ? `&theme=${dev[1]}` : ''}${dev[2] ? `&speed=${dev[2]}` : ''}&src=tg`;
   if (start === 'friends') return '/?create=1&src=tg';
+  // флаг фичи для владельца (в Telegram адрес не поправить руками): ff_shop — включить «Гардероб» и открыть его
+  if (start === 'ff_shop') return '/wardrobe?ff=shop&src=tg';
   // загадка из фильма матча: кнопка «Найди актёра» под видео в чате
   const puzzle = /^c_([A-Z2-9]{5})$/.exec(start);
   if (puzzle) return `/${puzzle[1]}?src=tg_film`;
@@ -449,11 +451,6 @@ export async function shopClaim(): Promise<ShopState | null> {
   // боту нужно разрешение писать игроку (сообщение «пак готов»); отказ — пак всё равно будет
   if (w?.requestWriteAccess && at('6.9')) await new Promise<void>((r) => w.requestWriteAccess!(() => r()));
   return botPost<ShopState>('/shop/claim', {}, 25_000);
-}
-
-/** Стикеры купленного набора: в свой пак (in) или новым паком (own). */
-export function shopPack(item: string, mode: 'in' | 'own'): Promise<ShopState | null> {
-  return botPost<ShopState>('/shop/pack', { item, mode }, 25_000);
 }
 
 /** Купить набор: счёт в звёздах поверх игры. Итог — как у Telegram; 'owned' — уже куплено. */
