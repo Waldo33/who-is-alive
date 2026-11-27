@@ -554,6 +554,27 @@ describe('гардероб', () => {
     expect((await my({ fig: 'actor', pose: 'wave', color: 0 }, 9)).status).toBe(400);
   });
 
+  it('убрал свой стикер и сразу сделал новый на то же место — новый заменяет старый в паке (27.11)', async () => {
+    let set = { stickers: [...['👋', '💃', '😵', '🤨', '🎁'].map((e, i) => ({ file_id: `f${i}`, emoji: e }))] };
+    const { bot, calls, store } = makeBot({ result: (m) => (m === 'getStickerSet' ? set : undefined), drawMy: async () => Buffer.from('webm') });
+    const my = (caption: string) => bot.handle('POST', '/shop/my', {}, { initData: initData(ANYA), sticker: { fig: 'actor', pose: 'wave', color: 0, caption } });
+    await played(bot);
+    await bot.handle('POST', '/shop/claim', {}, { initData: initData(ANYA) });
+    await my('Старый');
+    await bot.shop.issue(77);
+    expect((await store.shopUser(77))?.issued).toContain('my0.1');
+    set = { stickers: [...set.stickers, { file_id: 'my0', emoji: '✏' }] };
+    // удаление и новый стикер успели раньше, чем бот убрал старый из пака: в учёте всё ещё my0.1
+    const u = (await store.shopUser(77))!;
+    await store.saveShopUser({ ...u, my: [] });
+    calls.length = 0;
+    await my('Новый');
+    expect((await store.shopUser(77))?.my?.[0]).toMatchObject({ slot: 0, rev: 2 });
+    await bot.shop.issue(77);
+    expect(calls.find((c) => c.method === 'replaceStickerInSet')?.body.old_sticker).toBe('my0');
+    expect((await store.shopUser(77))?.issued).toContain('my0.2');
+  });
+
   it('свои стикеры: не больше пяти, правки — не чаще 12 в час', async () => {
     const { bot } = makeBot({ drawMy: async () => Buffer.from('webm') });
     await played(bot);
