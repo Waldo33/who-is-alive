@@ -73,6 +73,7 @@ const T = {
     play: '▶ Играть',
     friends: '👥 С друзьями',
     stickers: '🎨 Мой стикерпак',
+    wardrobe: '👗 Гардероб',
     channel: '📣 Канал игры',
     daily: '🎬 Кастинг дня',
     inviteTitle: 'Позвать в «Массовку»',
@@ -117,6 +118,7 @@ const T = {
     play: '▶ Play',
     friends: '👥 With friends',
     stickers: '🎨 My sticker pack',
+    wardrobe: '👗 Wardrobe',
     channel: '📣 Game channel',
     daily: '🎬 Daily casting',
     inviteTitle: 'Invite to Be Nobody',
@@ -523,10 +525,10 @@ export class Bot {
     // канал игры — новости и ролики; кнопка ведёт в канал, игру не загораживает
     const channel = [{ text: t.channel, url: CHANNEL }];
     const rows = priv
-      ? [[web(t.play, path)], ...(room ? [] : [[web(t.stickers, '/stickers')]]), ...(this.casting ? [[web(t.daily, '/daily')]] : []), channel]
+      ? [[web(t.play, path)], ...(room ? [] : [[web(t.stickers, '/stickers'), web(t.wardrobe, '/wardrobe')]]), ...(this.casting ? [[web(t.daily, '/daily')]] : []), channel]
       : [
           [{ text: t.play, url: await this.link(room ? param : 'friends') }],
-          ...(room ? [] : [[{ text: t.stickers, url: await this.link('stickers') }]]),
+          ...(room ? [] : [[{ text: t.stickers, url: await this.link('stickers') }, { text: t.wardrobe, url: await this.link('shop') }]]),
           ...(this.casting ? [[{ text: t.daily, url: await this.link('daily') }]] : []),
           channel,
         ];

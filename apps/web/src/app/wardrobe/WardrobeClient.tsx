@@ -43,6 +43,9 @@ export default function WardrobeClient() {
   const t = DICTS[lang].shop;
   const [ready, setReady] = useState(false);
   const [tgOn, setTgOn] = useState(false);
+  // кнопки внизу — только когда ясно, Telegram ли это и что у игрока есть: иначе сначала мелькает
+  // «Купить в Telegram», потом «Купить 49», потом «Уже твой» — экран скачет
+  const [known, setKnown] = useState(false);
   const [st, setSt] = useState<ShopState | null>(null);
   const [busy, setBusy] = useState<'buy' | 'wear' | null>(null);
   const [note, setNote] = useState('');
@@ -95,6 +98,7 @@ export default function WardrobeClient() {
         const s = await shopState();
         if (s) setSt(s);
       }
+      setKnown(true);
     })();
   }, []);
 
@@ -249,7 +253,7 @@ export default function WardrobeClient() {
           </div>
         )}
       </div>
-      <div className="daily-actions">
+      <div className="daily-actions" style={{ visibility: known ? 'visible' : 'hidden' }}>
         {waiting ? (
           <p className="muted" role="status">
             {Date.now() - paidAt > PAID_LATE_MS ? t.paidLate : t.paidWait}
