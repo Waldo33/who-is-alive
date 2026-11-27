@@ -1,7 +1,7 @@
 # Возврат звёзд за покупку в гардеробе (apps/server/src/shop.ts › refund): звёзды — игроку, набор забирается,
 # скин пропадает, стикеры набора удаляются из его пака. Запуск: Actions → shop-refund → Run workflow →
-# Telegram id игрока (вернётся его последняя невозвращённая покупка) или charge id платежа.
-# Свой Telegram id можно узнать у @userinfobot.
+# номер покупателя (Telegram id — его присылает бот в чат поддержки после /paysupport) и, если покупок несколько, что
+# вернуть (kotBanan…); или сразу charge id платежа. Несколько покупок без выбора — список в итогах запуска, возврата нет.
 name: shop-refund
 
 on:
@@ -11,6 +11,11 @@ on:
         description: 'Telegram id игрока (последняя покупка) или charge id платежа'
         required: true
         type: string
+      item:
+        description: 'Что вернуть, если покупок несколько (например kotBanan); пусто — единственную'
+        required: false
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -34,7 +39,9 @@ jobs:
       - name: Проверить ввод
         env:
           WHO: ${{ inputs.who }}
+          ITEM: ${{ inputs.item }}
         run: |
+          echo "$ITEM" | grep -Eq '^[A-Za-z0-9]{0,32}$' || { echo "::error::покупка — имя набора, например kotBanan"; exit 1; }
           # только цифры (Telegram id) или символы charge id — ничего лишнего в команду на сервере
           echo "$WHO" | grep -Eq '^([0-9]{1,16}|[A-Za-z0-9_:.-]{1,128})$' || { echo "::error::нужен Telegram id или charge id"; exit 1; }
       - run: python3 -m venv /tmp/py && /tmp/py/bin/pip install -q cryptography
@@ -45,18 +52,30 @@ jobs:
         env:
           IP: ${{ steps.infra.outputs.ip }}
           WHO: ${{ inputs.who }}
+          ITEM: ${{ inputs.item }}
         run: |
-          ssh $SSH_OPTS root@$IP "WHO='$WHO' bash -s" <<'SH' | tee /tmp/out.txt
+          ssh $SSH_OPTS root@$IP "WHO='$WHO' ITEM='$ITEM' bash -s" <<'SH' | tee /tmp/out.txt
           set -e
           charge="$WHO"
           if echo "$WHO" | grep -Eq '^[0-9]{1,16}$'; then
             # покупки — в базе игры (Европа), отсюда — по туннелю, только чтение
-            charge=$(PGPASSWORD=$(. /etc/massovka-grafana/pgro.env; echo $PGRO_PASSWORD) psql -h 127.0.0.1 -p 25432 -U grafana_ro -d massovka -Atc \
-              "select charge from shop_payments where user_id = $WHO and not refunded order by created_at desc limit 1")
-            [ -n "$charge" ] || { echo "у игрока $WHO нет невозвращённых покупок"; exit 1; }
+            filter=""
+            [ -z "$ITEM" ] || filter="and item = '$ITEM'"
+            list=$(PGPASSWORD=$(. /etc/massovka-grafana/pgro.env; echo $PGRO_PASSWORD) psql -h 127.0.0.1 -p 25432 -U grafana_ro -d massovka -AtF ' ' -c \
+              "select charge, item, stars, to_char(created_at, 'YYYY-MM-DD HH24:MI') from shop_payments where user_id = $WHO and not refunded $filter order by created_at desc")
+            [ -n "$list" ] || { echo "у игрока $WHO нет невозвращённых покупок ${ITEM:+«$ITEM»}"; exit 1; }
+            if [ "$(echo "$list" | wc -l)" -gt 1 ]; then
+              echo "LIST"; echo "$list"; exit 0
+            fi
+            charge=$(echo "$list" | cut -d' ' -f1)
           fi
           # бот — в этом же процессе игрового сервера Нидерландов, вход /internal — только изнутри машины
           printf '%s' "{\"charge\":\"$charge\"}" | curl -sS -m 30 -X POST -H 'Content-Type: application/json' --data-binary @- -w '\nHTTP %{http_code}\n' http://127.0.0.1:8080/internal/tg/refund
           SH
+          if grep -q '^LIST$' /tmp/out.txt; then
+            { echo "У игрока несколько покупок — запусти ещё раз и укажи, что вернуть (поле «Что вернуть») или charge id:"; echo; echo '| charge | что | звёзды | когда (UTC) |'; echo '|---|---|---|---|'
+              sed '1,/^LIST$/d' /tmp/out.txt | awk '{print "| " $1 " | " $2 " | " $3 " | " $4 " " $5 " |"}'; } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::несколько покупок — выбери, что вернуть (список в итогах запуска)"; exit 1
+          fi
           grep -q '^HTTP 200' /tmp/out.txt || { echo "::error::возврат не прошёл"; exit 1; }
           echo "возврат: $(head -1 /tmp/out.txt)" >> "$GITHUB_STEP_SUMMARY"

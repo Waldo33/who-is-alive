@@ -50,6 +50,8 @@ function makeBot(opts: { result?: (method: string) => unknown; fail?: (method: s
   return { bot, calls, store };
 }
 
+/** Чат поддержки по умолчанию (bot.ts › SUPPORT_CHAT). */
+const SUPPORT = '-5387784292';
 const ANYA = { id: 77, first_name: 'Аня @spam', language_code: 'ru' };
 /** Сервер засчитал игроку сыгранный матч (бесплатный пак — после матча и подписки на канал). */
 const played = (bot: Bot, id = 77) => bot.shop.earn({ users: [{ tgUser: id, name: 'Аня @spam', lang: 'ru', stickers: [] }] });
@@ -165,10 +167,29 @@ describe('гардероб', () => {
     expect(calls.flatMap((c) => c.files).some((f) => /notCrying|justBanana/.test(f))).toBe(false);
   });
 
-  it('/paysupport: куда писать и номер покупателя для возврата', async () => {
+  it('/paysupport: запрос — в чат поддержки с номером и покупками, ответ оттуда — игроку', async () => {
     const { bot, calls } = makeBot();
+    const sent = (chat: number | string) => calls.filter((c) => c.method === 'sendMessage' && String(c.body.chat_id) === String(chat)).map((c) => String(c.body.text));
+    // пустой /paysupport — подсказка игроку, в поддержку ничего
     await hook(bot, { message: { chat: { id: 77, type: 'private' }, from: ANYA, text: '/paysupport' } });
-    expect(String(calls.find((c) => c.method === 'sendMessage')?.body.text)).toContain('77');
+    expect(sent(77).at(-1)).toContain('77');
+    expect(sent(SUPPORT)).toHaveLength(0);
+    // следующее сообщение — в поддержку: имя без @, номер, покупки, без чужих ссылок
+    await hook(bot, payment());
+    await hook(bot, { message: { chat: { id: 77, type: 'private' }, from: ANYA, text: 'скин не появился evil.example/x @spammer' } });
+    const card = sent(SUPPORT).at(-1)!;
+    expect(card).toContain('Номер покупателя: 77');
+    expect(card).toContain('kotBanan');
+    expect(card).toContain('скин не появился');
+    expect(card).not.toMatch(/evil\.example|@spam/);
+    expect(card).toMatch(/#u77$/);
+    // ответ на пересылку в чате поддержки — игроку; чужая группа и не ответ — никому
+    const before = sent(77).length;
+    await hook(bot, { message: { message_id: 5, chat: { id: Number(SUPPORT), type: 'group' }, from: { id: 1, first_name: 'Owner' }, text: 'Вернули звёзды', reply_to_message: { text: card, from: { id: 9, is_bot: true } } } });
+    expect(sent(77).at(-1)).toBe('Вернули звёзды');
+    await hook(bot, { message: { chat: { id: -100, type: 'group' }, from: { id: 1 }, text: 'чужое', reply_to_message: { text: card, from: { id: 9, is_bot: true } } } });
+    await hook(bot, { message: { chat: { id: Number(SUPPORT), type: 'group' }, from: { id: 1 }, text: 'просто так' } });
+    expect(sent(77).length).toBe(before + 1);
   });
 
   it('«Надеть» / «Снять»: только купленный скин; новая покупка надевается сама', async () => {

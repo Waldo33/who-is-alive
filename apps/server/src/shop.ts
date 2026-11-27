@@ -175,7 +175,7 @@ export interface ShopDeps {
   log: Logger;
   /** Папка с видеостикерами: <язык>/<id>.webm. */
   stickersDir: string;
-  /** Канал игры — в /paysupport. */
+  /** Канал игры (кнопка «Подписаться» за бесплатный пак). */
   channel: string;
   /** Адрес игры (кнопка «Играть» в сообщении о новом стикере). */
   site?: string;
@@ -535,9 +535,16 @@ export class Shop {
     return n;
   }
 
-  /** /paysupport: куда писать и номер покупателя (Telegram id) — по нему делается возврат (shop-refund.yml). */
-  async support(chat: number, code?: string, user?: number): Promise<void> {
-    await this.d.api('sendMessage', { chat_id: chat, text: fmt(DICTS[langOf(code)].shop.botSupport, { channel: this.d.channel, id: user ?? chat }) });
+  /** /paysupport: игроку — «запрос передан» (sent) или подсказка написать, что случилось; номер покупателя — в обоих. */
+  async support(chat: number, code: string | undefined, sent: boolean): Promise<void> {
+    const t = DICTS[langOf(code)].shop;
+    await this.d.api('sendMessage', { chat_id: chat, text: fmt(sent ? t.botSupportSent : t.botSupport, { id: chat }) });
+  }
+
+  /** Что куплено (наборы, без стикеров и меток) — для запроса в поддержку. */
+  async itemsOf(id: number): Promise<string[]> {
+    const u = await this.d.ledger.shopUser(id);
+    return (u?.items ?? []).filter((i) => !!shopItem(i));
   }
 
   private async notify(chat: number, lang: Lang, text: string, pack: string | null, play = false): Promise<void> {

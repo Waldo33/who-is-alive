@@ -567,7 +567,8 @@ export const en: Dict = {
     botSubscribed: '✅ I joined',
     botNoSub: "I don't see you in the channel yet. Join it and tap again.",
     botPlay: '▶ Play',
-    botSupport: 'Questions about a purchase or need a refund? Write to the game channel {channel} and include your buyer number: {id}. We will reply and refund the Stars if something went wrong.',
+    botSupport: 'Questions about a purchase or need a refund? Write here in one message what happened and which purchase to refund. Buyer number: {id}.',
+    botSupportSent: 'Request sent. We will reply in this chat and refund the Stars if something went wrong. Buyer number: {id}.',
   },
   share: {
     text: '{title} {name}: {points}, {kills}. {squares}',
