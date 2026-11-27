@@ -18,7 +18,7 @@ export interface DeathClipView {
   summary: RoundSummary | null;
   /** «Казино»: вращения игроков в этом дубле — кого вырезали черепа (в клип идёт только своё). */
   spins?: readonly SlotRecord[];
-  info(pid: string): { name: string; color: number } | undefined;
+  info(pid: string): { name: string; color: number; skin?: string } | undefined;
 }
 
 /** Задача на клип выбывшего pid (его сущность eid) или null: не выбит игроком, рано или нечего показать. */
@@ -49,9 +49,9 @@ export function deathClipJob(
   const players = known
     ? s.reveal.flatMap((r) => {
         const i = v.info(r.pid);
-        return i ? [{ eid: r.eid, name: i.name, color: i.color }] : [];
+        return i ? [{ eid: r.eid, name: i.name, color: i.color, ...(i.skin ? { skin: i.skin } : {}) }] : [];
       })
-    : [{ eid, name: me.name, color: me.color }];
+    : [{ eid, name: me.name, color: me.color, ...(me.skin ? { skin: me.skin } : {}) }];
   const rec = recordRound(w, { round: v.round, theme: v.theme, players: known ? s.reveal : [], playEnd: to, kills: s?.kills, slots: known ? s.slots : mine });
   // мир идёт дальше, пока задача ждёт в очереди: снимок того, что уже было
   rec.log = rec.log.slice();

@@ -42,7 +42,8 @@ export type ShopLedger = Pick<Store, 'shopUser' | 'saveShopUser' | 'saveShopPaym
 export type VerifyToken = (token: string) => Promise<string | null>;
 
 /** Учёт в своей базе (бот и игровой сервер в одном процессе: разработка, тесты). */
-export function localLedger(store: Store, verify?: VerifyToken): ShopLedger {
+/** onLink — игрок сервера связан с Telegram (его скин теперь известен: server.ts обновит комнату). */
+export function localLedger(store: Store, verify?: VerifyToken, onLink?: (gameUser: string) => void): ShopLedger {
   return {
     shopUser: (id) => store.shopUser(id),
     saveShopUser: (u) => store.saveShopUser(u),
@@ -52,6 +53,7 @@ export function localLedger(store: Store, verify?: VerifyToken): ShopLedger {
       const gameUser = verify ? await verify(token) : null;
       if (!gameUser) return false;
       await store.linkTelegram({ gameUser, ...link });
+      onLink?.(gameUser);
       return true;
     },
   };

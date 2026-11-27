@@ -66,6 +66,8 @@ import {
   makeArenaBackground, makeArrow, makeGear, makeHudIcons, makeCharacterSheets, makeHedge, makeIconSheet, makeIcons, makeAwardIcons, AWARD_ICON, AWARD_ICON_IDS, makeMark, makePigeon,
   makePoof, makeProp, makeRing, makeShadow, makeStar, makeStarFlash, makeStunStars, makeVignette,
 } from './sprites';
+import { skinArt, skinFrame } from './skins/skin-art';
+import type { SkinArt } from './skins/skin-art';
 import { isThemeLoaded, loadTheme, lookCount, preloadThemes, themeLook, themePack, variantOf } from './themes';
 import type { Look } from './themes';
 import { haptic, inviteLink, setClosingConfirmation } from '../lib/telegram';
@@ -91,6 +93,9 @@ export interface SceneInit {
   /** «Фильм матча» с игрового сервера (комната); нет — фильм монтирует телефон. */
   film?: FilmFeed;
   playerName: string;
+  /** Песочница: свой скин (`?dev&skin=kotBanan`); `skinAi` — и у первого ИИ (проверить, что чужой на поле не виден). */
+  skin?: string;
+  skinAi?: boolean;
   fontFamily: string;
   audio: Audio;
   cfg?: Partial<GameConfig>;
@@ -475,7 +480,12 @@ export class GameScene extends Phaser.Scene {
     this.cfg = makeConfig(this.init0.cfg);
     this.audio.setKids(this.cfg.kidsMode);
     const names = [this.init0.playerName || this.t.game.you, ...this.botNames()];
-    const players = names.map((name, i) => ({ pid: i === 0 ? ME : `ai${i}`, name, color: i }));
+    const players = names.map((name, i) => ({
+      pid: i === 0 ? ME : `ai${i}`,
+      name,
+      color: i,
+      ...(this.init0.skin && (i === 0 || (i === 1 && this.init0.skinAi)) ? { skin: this.init0.skin } : {}),
+    }));
     const seed = this.init0.seed ?? (Date.now() & 0x7fffffff);
     this.sim = this.init0.createSession?.(this.cfg, players, seed) ?? createLocalSession(this.cfg, players, seed, ME);
     this.cfg = this.sim.cfg; // по сети конфиг задаёт хост
@@ -2059,9 +2069,9 @@ export class GameScene extends Phaser.Scene {
     const players = known
       ? s!.reveal.map((r) => {
           const info = this.sim.info(r.pid)!;
-          return { eid: r.eid, name: info.name, color: info.color };
+          return { eid: r.eid, name: info.name, color: info.color, ...(info.skin ? { skin: info.skin } : {}) };
         })
-      : [{ eid: dc.eid, name: me.name, color: me.color }];
+      : [{ eid: dc.eid, name: me.name, color: me.color, ...(me.skin ? { skin: me.skin } : {}) }];
     const rec = recordRound(w, { round: this.sim.round, theme: this.sim.theme, players: known ? s!.reveal : [], playEnd: to, kills: s?.kills, slots: known ? s!.slots : mine });
     // «Купальская ночь»: забрал Леший или туман — подпись про них, а не «кто вырезал»
     const by = skull ? 'slot' : hasSanity(this.sim.theme) && dc.killer === undefined ? nightCause(this.cfg, w.log, dc.eid, dc.at, s?.kills) : undefined;
@@ -2685,6 +2695,46 @@ export class GameScene extends Phaser.Scene {
   }
 
   /** Текстура фигуры в облике key («тема_облик»): свой костюм из `Look.variants` по порядковому номеру. */
+  /** Текстуры скина (лента тела и белого контура) — один раз на сцену. Ключи: sk<id>, sko<id>. */
+  private skinTex(id: string): SkinArt | null {
+    const a = skinArt(id);
+    if (!a) return null;
+    this.addSheet('sk' + id, a.body, a.fw, a.fh);
+    this.addSheet('sko' + id, a.outline, a.ow, a.oh);
+    return a;
+  }
+
+  /**
+   * Чей скин у сущности на этом кадре. Свой — всегда (на своём телефоне). Чужой — только когда связь
+   * «игрок ↔ сущность» уже открыта всем (`open`: повтор и финал разоблачения, итоги): иначе банан в
+   * одинаковой массовке выдал бы актёра. Скины приходят по игроку (PlayerInfo.skin), сущность — из итогов.
+   */
+  private skinAt(eid: number, myEid: number, open: boolean): { id: string; art: SkinArt } | null {
+    const pid =
+      eid === myEid && myEid >= 0 ? this.sim.selfPid : open ? this.sim.summary?.reveal.find((r) => r.eid === eid)?.pid : undefined;
+    const id = pid ? this.sim.info(pid)?.skin : undefined;
+    const art = id ? this.skinTex(id) : null;
+    return id && art ? { id, art } : null;
+  }
+
+  /** Надеть на спрайт сущности её облик: человечка `fig` или скин (свои ленты и точка опоры). */
+  private dressSprite(v: EntityView, fig: string, frame: number, sk: { id: string; art: SkinArt } | null): number {
+    const body = sk ? 'sk' + sk.id : 'ch' + fig;
+    const ol = sk ? 'sko' + sk.id : 'ol' + fig;
+    const fr = sk ? skinFrame(frame) : frame;
+    if (v.spr.texture.key !== body) {
+      v.spr.setTexture(body, fr);
+      if (sk) v.spr.setOrigin(sk.art.ax / sk.art.fw, sk.art.ay / sk.art.fh);
+      else v.spr.setOrigin(6 / CH_W, 1);
+    }
+    if (v.ol.texture.key !== ol) {
+      v.ol.setTexture(ol, fr);
+      if (sk) v.ol.setOrigin(sk.art.oax / sk.art.ow, sk.art.oay / sk.art.oh);
+      else v.ol.setOrigin(7 / OL_W, 17 / OL_H);
+    }
+    return fr;
+  }
+
   private charKey(key: string, index: number): string {
     const [t, l] = key.split('_').map(Number);
     if (key === '0_0' || !isThemeLoaded(t)) return key;
@@ -2802,8 +2852,8 @@ export class GameScene extends Phaser.Scene {
       this.btnObjs.get('clap-' + k)?.icon?.setTexture(tex, fr);
     }
     for (const v of this.views) {
-      v.spr.setTexture('ch' + key, 0);
-      v.ol.setTexture('ol' + key, 0);
+      v.spr.setTexture('ch' + key, 0).setOrigin(6 / CH_W, 1);
+      v.ol.setTexture('ol' + key, 0).setOrigin(7 / OL_W, 17 / OL_H);
     }
     this.ground.setTexture('arena' + key);
     for (const p of this.props) p.spr.setTexture(`prop-${p.kind}-${key}`, 0);
@@ -3031,6 +3081,8 @@ export class GameScene extends Phaser.Scene {
     const mine = w.get(myEid);
     const showTargets = mode === 'live' && phase === 'play' && me?.alive && !me.autopilot && w.time >= (me?.stunUntil ?? 0);
     const pulse = 0.55 + 0.45 * Math.sin(performance.now() / 110);
+    // чужие скины — только когда игроки уже раскрыты: повтор, финал разоблачения (не дробь до него), итоги
+    const open = mode === 'replay' || (mode === 'final' && !!highlight) || (mode === 'live' && (phase === 'results' || phase === 'match_end') && this.sim.summary?.round === this.sim.round);
     let crownShown = false;
     w.entities.forEach((e, i) => {
       const v = this.views[i];
@@ -3044,8 +3096,7 @@ export class GameScene extends Phaser.Scene {
       const body = mode === 'replay' && since >= 0 ? this.replayKills.get(e.eid) : undefined;
       if (!e.alive && body) {
         const b = bodyPose(body);
-        const tex = 'ch' + this.charKey(this.lookKey, i);
-        if (v.spr.texture.key !== tex) v.spr.setTexture(tex, F.D);
+        this.dressSprite(v, this.charKey(this.lookKey, i), F.D, this.skinAt(e.eid, myEid, open));
         v.spr.setVisible(true).setFrame(F.D).setFlipX(false).setAngle(b.angle).setPosition(b.x, AY + b.y).setDepth(AY + body.y - 6).setAlpha(highlight && !highlight.has(e.eid) ? 0.45 : 1).clearTint();
         for (const o of [v.ol, v.shadow, v.stun, v.mark, v.q, v.poof]) o.setVisible(false);
         return;
@@ -3086,7 +3137,8 @@ export class GameScene extends Phaser.Scene {
       // лучший в дубле — с короной над головой (момент триумфа на финальном кадре разоблачения)
       if (mode === 'final' && e.eid === this.crownEid) {
         crownShown = true;
-        this.crown.setVisible(true).setFrame(this.icon('crown')).setPosition(x, sy + jumpOff - CH_H - 1).setDepth(sy + 0.5);
+        const sk = this.skinAt(e.eid, myEid, open);
+        this.crown.setVisible(true).setFrame(this.icon('crown')).setPosition(x, sy + jumpOff - (sk ? sk.art.ay - 3 : CH_H) - 1).setDepth(sy + 0.5);
       }
       // замах своего персонажа (только на своём экране)
       let lx = 0;
@@ -3101,8 +3153,10 @@ export class GameScene extends Phaser.Scene {
       }
       const flashKey = mode === 'live' && !(e.act && t < e.actEnd) ? this.subliminalKey(e.eid) : null;
       const fig = dz?.fig ?? this.charKey(flashKey ?? this.lookKey, i);
-      if (v.spr.texture.key !== 'ch' + fig) v.spr.setTexture('ch' + fig, frame);
-      if (v.ol.texture.key !== 'ol' + fig) v.ol.setTexture('ol' + fig, frame);
+      const sk = this.skinAt(e.eid, myEid, open);
+      frame = this.dressSprite(v, fig, frame, sk);
+      // над головой (оглушение, метка, «?»): у скина голова выше
+      const top = sk ? sk.art.ay - 3 : CH_H;
       v.spr.setVisible(true).setFrame(frame).setFlipX(flip).setAngle(0).setPosition(x + lx, sy + jumpOff + ly).setDepth(sy);
       // цель замаха на миг вспыхивает белым
       if (mode === 'live' && this.swingFx.some((s) => s.eid === e.eid && s.t < 90)) v.spr.setTintFill(0xffffff);
@@ -3131,13 +3185,13 @@ export class GameScene extends Phaser.Scene {
       v.shadow.setAlpha(dim ? 0.4 : 1);
       const stunned = e.act === 'stun' && t < e.actEnd;
       v.stun.setVisible(stunned);
-      if (stunned) v.stun.setFrame(Math.floor(t / 120) % 3).setPosition(x, sy - CH_H - 1).setDepth(sy + 0.3);
+      if (stunned) v.stun.setFrame(Math.floor(t / 120) % 3).setPosition(x, sy - top - 1).setDepth(sy + 0.3);
       const marked = e.markUntil > t;
       v.mark.setVisible(marked);
-      if (marked) v.mark.setPosition(x, sy - CH_H - 4 - (Math.floor(t / 150) % 2)).setDepth(sy + 0.4);
+      if (marked) v.mark.setPosition(x, sy - top - 4 - (Math.floor(t / 150) % 2)).setDepth(sy + 0.4);
       const q = mode === 'live' && (phase === 'play' || phase === 'accuse') && me?.accused === e.eid;
       v.q.setVisible(q);
-      if (q) v.q.setPosition(x + 5, sy - CH_H - 2).setDepth(sy + 0.4);
+      if (q) v.q.setPosition(x + 5, sy - top - 2).setDepth(sy + 0.4);
     });
     if (!crownShown) this.crown.setVisible(false);
     this.renderBoss(w, alpha, mode);
@@ -3155,7 +3209,8 @@ export class GameScene extends Phaser.Scene {
       const y = Math.round(mine.py + (mine.y - mine.py) * alpha) + AY;
       const { yoff } = this.frameFor(mine, t);
       const bounce = Math.floor(performance.now() / 180) % 2;
-      this.arrow.setVisible(true).setPosition(x, y + yoff - CH_H - 3 - bounce);
+      const mySk = this.skinAt(mine.eid, myEid, false);
+      this.arrow.setVisible(true).setPosition(x, y + yoff - (mySk ? mySk.art.ay - 3 : CH_H) - 3 - bounce);
       this.ring.setVisible(true).setPosition(x, y).setDepth(y - 0.6);
       // начало дубля: два расходящихся круга вокруг себя — глаз сразу находит своего
       if (phase === 'countdown' && this.findMeAt < 0) this.findMeAt = performance.now();
@@ -4472,9 +4527,20 @@ export class GameScene extends Phaser.Scene {
     bg.fillStyle(hexToInt(PAL.sand), 0.12).fillTriangle(90, AY, 52, cy + 4, 128, cy + 4);
     bg.fillStyle(hexToInt(PAL.sand), 0.25).fillEllipse(90, cy + 2, 64, 14);
     this.ov(bg, 2050);
-    const ol = this.ov(this.add.image(90, cy, 'ol' + fig, F.DANCE).setOrigin(7 / OL_W, 17 / OL_H).setScale(3).setTint(color), 2051);
-    const body = this.ov(this.add.image(90, cy, 'ch' + fig, F.DANCE).setOrigin(6 / CH_W, 1).setScale(3), 2052);
-    const crown = this.ov(this.add.image(90, cy - CH_H * 3 - 2, 'icons', this.icon('crown')).setOrigin(0.5, 1).setScale(3), 2053);
+    // скин победителя на триумфе видят все: он уже раскрыт
+    const sk = info.skin ? this.skinTex(info.skin) : null;
+    const ol = this.ov(
+      sk
+        ? this.add.image(90, cy, 'sko' + info.skin, F.DANCE).setOrigin(sk.oax / sk.ow, sk.oay / sk.oh)
+        : this.add.image(90, cy, 'ol' + fig, F.DANCE).setOrigin(7 / OL_W, 17 / OL_H),
+      2051,
+    ).setScale(3).setTint(color);
+    const body = this.ov(
+      sk ? this.add.image(90, cy, 'sk' + info.skin, F.DANCE).setOrigin(sk.ax / sk.fw, sk.ay / sk.fh) : this.add.image(90, cy, 'ch' + fig, F.DANCE).setOrigin(6 / CH_W, 1),
+      2052,
+    ).setScale(3);
+    const head = (sk ? sk.ay - 3 : CH_H) * 3;
+    const crown = this.ov(this.add.image(90, cy - head - 2, 'icons', this.icon('crown')).setOrigin(0.5, 1).setScale(3), 2053);
     const me = pid === sim.selfPid;
     const title = this.ovText(90, AY + 40, (me ? this.t.game.youWon : this.t.game.winner).replace(/:$/, ''), 'yellow');
     // крупно, если влезает в ширину поля
@@ -4496,7 +4562,7 @@ export class GameScene extends Phaser.Scene {
         const hop = k % 2 === 0 ? 0 : -3;
         body.setFrame(fr).setY(cy + hop);
         ol.setFrame(fr).setY(cy + hop);
-        crown.setY(cy - CH_H * 3 - 2 + hop);
+        crown.setY(cy - head - 2 + hop);
       },
     });
     let finished = false;
@@ -4544,9 +4610,18 @@ export class GameScene extends Phaser.Scene {
     }
     this.ov(bg, 2050);
     const glow = this.ov(this.add.graphics(), 2051);
-    const ol = this.ov(this.add.image(90, cy, 'ol' + fig, F.JUMP).setOrigin(7 / OL_W, 17 / OL_H).setScale(3).setTint(color), 2052);
-    this.ov(this.add.image(90, cy, 'ch' + fig, F.JUMP).setOrigin(6 / CH_W, 1).setScale(3).setTint(hexToInt(PAL.slate)), 2053);
-    const fy = cy - CH_H * 3 - 24;
+    const sk = info.skin ? this.skinTex(info.skin) : null;
+    const ol = this.ov(
+      sk
+        ? this.add.image(90, cy, 'sko' + info.skin, F.JUMP).setOrigin(sk.oax / sk.ow, sk.oay / sk.oh)
+        : this.add.image(90, cy, 'ol' + fig, F.JUMP).setOrigin(7 / OL_W, 17 / OL_H),
+      2052,
+    ).setScale(3).setTint(color);
+    this.ov(
+      sk ? this.add.image(90, cy, 'sk' + info.skin, F.JUMP).setOrigin(sk.ax / sk.fw, sk.ay / sk.fh) : this.add.image(90, cy, 'ch' + fig, F.JUMP).setOrigin(6 / CH_W, 1),
+      2053,
+    ).setScale(3).setTint(hexToInt(PAL.slate));
+    const fy = cy - (sk ? sk.ay - 3 : CH_H) * 3 - 24;
     const flower = this.ov(this.add.image(90, fy, 'fern', 0).setScale(3), 2054);
     const me = pid === sim.selfPid;
     this.ovText(90, AY + 30, me ? tr.you : tr.other, 'yellow');

@@ -145,3 +145,13 @@ export function earnedStickers(pid: string, rounds: EarnRound[], match: Pick<Mat
   const themes = new Set(rounds.filter((r) => r.theme !== undefined).map((r) => THEME_RULES[r.theme!]?.id));
   return STICKER_LIST.filter((s) => (s.earn === 'theme' ? !!s.theme && themes.has(s.theme) : s.earn && ev.has(s.earn))).map((s) => s.id);
 }
+
+/** Скины гардероба — наборы, которые меняют самого актёра (сейчас один: Кот-банан). */
+export type SkinId = 'kotBanan';
+export const SKINS: readonly SkinId[] = ['kotBanan'];
+export const isSkin = (x: unknown): x is SkinId => SKINS.includes(x as SkinId);
+/** Какой скин надет у игрока с этими покупками (`ShopUser.items`): последний купленный. */
+export function skinOf(items: readonly string[]): SkinId | undefined {
+  for (let i = items.length - 1; i >= 0; i--) if (isSkin(items[i])) return items[i] as SkinId;
+  return undefined;
+}

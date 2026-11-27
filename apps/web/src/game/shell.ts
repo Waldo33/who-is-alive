@@ -290,6 +290,8 @@ export function mountSandbox(root: HTMLElement, opts: ShellOptions): () => void 
         onInvite: standalone ? undefined : () => location.assign('/?create=1'),
         timeScale: speed,
         lang,
+        // ?dev&skin=kotBanan — свой скин гардероба (&skinai — и у первого ИИ: на поле его видно быть не должно)
+        ...(dev && new URLSearchParams(location.search).get('skin') ? { skin: new URLSearchParams(location.search).get('skin')!, skinAi: new URLSearchParams(location.search).has('skinai') } : {}),
       });
       if (dev) (window as unknown as { __kto: RunningGame }).__kto = running;
     }

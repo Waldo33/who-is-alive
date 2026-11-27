@@ -183,6 +183,12 @@ const FRAMES: FrameSpec[] = (() => {
   return out;
 })();
 
+/** Вид и сдвиг общего кадра `F.*` (скины рисуют свои кадры по тем же позам); позы тем (≥ F.COUNT) — как F.D. */
+export function frameSpec(i: number): { view: View; shift: number } {
+  const f = FRAMES[i] ?? FRAMES[F.D];
+  return { view: f.view, shift: f.shift ?? 0 };
+}
+
 export interface CharSheets {
   body: HTMLCanvasElement;
   outline: HTMLCanvasElement;
