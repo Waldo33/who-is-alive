@@ -535,6 +535,8 @@ describe('гардероб', () => {
     await bot.shop.issue(77);
     const rep = calls.find((c) => c.method === 'replaceStickerInSet')!;
     expect(rep.body.old_sticker).toBe('my0');
+    // правленый стикер — сообщением в чат: игрок сразу видит его, Telegram обновляет копию пака
+    expect(calls.find((c) => c.method === 'sendSticker')?.body).toEqual({ chat_id: 77, sticker: 'my0' });
     expect((await store.shopUser(77))?.issued).toContain('my0.2');
     expect((await store.shopUser(77))?.issued).not.toContain('my0.1');
     expect(calls.some((c) => c.method === 'addStickerToSet')).toBe(false);

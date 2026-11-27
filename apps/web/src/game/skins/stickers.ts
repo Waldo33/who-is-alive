@@ -142,8 +142,8 @@ const ART: Art[] = [
     id: 'notCrying',
     draw(g, t, lang) {
       const y0 = 16;
-      tearArcs(g, CX, y0, K, t, 6 + t * 3);
       put(g, wailFace(kotBananFrame(F.D, 'D', 0, 0)), CX, y0 - (t % 2));
+      tearArcs(g, CX, y0 - (t % 2), K, t, 6 + t * 3);
       cap(g, 'notCrying', lang, 84);
     },
   },
@@ -205,8 +205,8 @@ const ART: Art[] = [
     draw(g, t, lang) {
       const y0 = 26;
       const sh = t % 2 ? 1 : -1;
-      tearArcs(g, CX + sh, y0, K, t, 99, true);
       put(g, wailFace(kotBananFrame(F.D, 'D')), CX + sh, y0);
+      tearArcs(g, CX + sh, y0, K, t, 99, true);
       if (t % 2) for (const [x, y, w] of [[20, 40, 4], [18, 46, 5], [20, 52, 4], [72, 40, 4], [73, 46, 5], [72, 52, 4]]) R(g, x, y, w, 1, PAL.white);
       say(g, DICTS[lang].shop.stickers.aaa[0], ST_SIZE / 2 + sh, 6, PAL.yellow);
     },

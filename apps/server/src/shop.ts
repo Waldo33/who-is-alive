@@ -811,6 +811,9 @@ export class Shop {
     const blob = async (e: Entry) => new Blob([new Uint8Array(e.my ? await this.drawMy(e.my) : await readFile(join(this.d.stickersDir, u.lang, `${e.key}.webm`)))], { type: 'video/webm' });
     const input = (e: Entry, i: number) => ({ sticker: `attach://f${i}`, format: 'video', emoji_list: e.emoji });
     let changed = false;
+    // свой стикер, который сейчас положили или заменили: пришлём его в чат — так игрок сразу видит результат,
+    // а Telegram, получив стикер, обычно тут же обновляет у себя копию пака (иначе — только после перезапуска)
+    let fresh: Entry | null = null;
 
     // убрать и заменить — нужен список стикеров пака (file_id по первому эмодзи)
     const first = syncPlan(u);
@@ -836,6 +839,7 @@ export class Shop {
           form.set('f0', await blob(r.e), `${r.e.key}.webm`);
           await this.call('replaceStickerInSet', form);
           u.issued.push(r.e.key);
+          fresh = r.e;
         }
         // не нашли в паке (убрали руками в Telegram) — добавится ниже как новый
         await this.saveIssued(u);
@@ -858,6 +862,7 @@ export class Shop {
         try {
           await this.call('createNewStickerSet', form);
           u.issued.push(...list.map((e) => e.key));
+          fresh = list.filter((e) => !!e.my).pop() ?? fresh;
         } catch (e) {
           // пак уже есть (упали между созданием и записью) — дальше добавляем по одному
           if (!/already occupied/i.test(String(e))) throw e;
@@ -874,17 +879,30 @@ export class Shop {
       form.set('f0', await blob(e), `${e.key}.webm`);
       await this.call('addStickerToSet', form);
       u.issued.push(e.key);
+      if (e.my) fresh = e;
       await this.saveIssued(u);
       changed = true;
     }
     // приманка «Собери свой пак» — снова в конец пака
     if (changed && u.pack) await this.lureLast(u.pack);
+    if (fresh && u.pack) await this.sendMine(id, u.pack, fresh);
     this.failed.delete(id);
   }
 
   private async drawMy(m: MySticker): Promise<Buffer> {
     if (!this.d.drawMy) throw new Error('no_sticker_renderer');
     return this.d.drawMy({ fig: m.fig, pose: m.pose, color: m.color, text: m.text });
+  }
+
+  /** Свой стикер — сообщением в чат с ботом (по метке места — первому эмодзи). Не вышло (бот не начат) — не страшно. */
+  private async sendMine(chat: number, pack: string, e: Entry): Promise<void> {
+    try {
+      const set = await this.d.api<{ stickers?: { file_id: string; emoji?: string }[] }>('getStickerSet', { name: pack });
+      const fid = (set?.stickers ?? []).find((x) => em(x.emoji) === em(e.emoji[0]))?.file_id;
+      if (fid) await this.d.api('sendSticker', { chat_id: chat, sticker: fid });
+    } catch (err) {
+      this.d.log('warn', 'shop_send_mine', { err: String(err).slice(0, 200) });
+    }
   }
 
   /** Приманка (первое эмодзи 🎬 есть только у неё) — последним стикером пака. Не вышло — не страшно. */
