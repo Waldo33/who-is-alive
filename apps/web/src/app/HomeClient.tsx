@@ -13,7 +13,8 @@ import type { TopBar as Bar } from '@/ui/topbar';
 import { playerName } from '@/lib/name';
 import { track } from '@/lib/analytics';
 import { featureOn } from '@/lib/features';
-import { inTelegram, telegramStartTarget, tgLink } from '@/lib/telegram';
+import { inTelegram, openTelegram, shopClaim, telegramStartTarget, tgLink } from '@/lib/telegram';
+import { TG_APP } from '@/lib/env';
 import { Garland, Snow, useNewYear } from '@/ui/Festive';
 import { shareContent, withLang } from '@/lib/share';
 import { AuthError } from '@/lib/game-server';
@@ -37,6 +38,8 @@ export default function HomeClient() {
   const [daily, setDaily] = useState({ on: false, n: 0, done: false });
   // «Гардероб» — за флагом shop (lib/features.ts)
   const [shop, setShop] = useState(false);
+  // бесплатный стикерпак с актёром — плашкой после первого матча, пока не забран (за тем же флагом)
+  const [stickers, setStickers] = useState<'off' | 'offer' | 'busy'>('off');
   useEffect(() => {
     const n = dailyNumber(localDateKey(new Date()));
     let done = false;
@@ -47,6 +50,11 @@ export default function HomeClient() {
     }
     setDaily({ on: featureOn('casting'), n, done });
     setShop(featureOn('shop'));
+    try {
+      if (featureOn('shop') && localStorage.getItem('kto:played') === '1' && !localStorage.getItem('kto:stickers')) setStickers('offer');
+    } catch {
+      /* приватный режим */
+    }
   }, []);
   const bar = useRef<Bar | null>(null);
   const ny = useNewYear();
@@ -166,6 +174,37 @@ export default function HomeClient() {
               {t.shop.isNew}: {t.shop.items.kotBanan.name}
             </span>
           </Link>
+        )}
+        {stickers !== 'off' && (
+          <a
+            className="daily-tile"
+            href={`https://t.me/${(TG_APP || 'be_nobody_bot/play').split('/')[0]}?start=stickers`}
+            onClick={(e) => {
+              track('stickers_tap', { from: 'home' });
+              const done = () => {
+                try {
+                  localStorage.setItem('kto:stickers', '1');
+                } catch {
+                  /* приватный режим */
+                }
+              };
+              // вне Telegram — ссылка на бота (/start stickers), он пришлёт пак; внутри — пак сразу
+              if (!inTelegram()) return done();
+              e.preventDefault();
+              if (stickers === 'busy') return;
+              setStickers('busy');
+              void shopClaim().then((s) => {
+                if (s?.pack) {
+                  done();
+                  setStickers('off');
+                  openTelegram(s.pack);
+                } else setStickers('offer');
+              });
+            }}
+          >
+            <span className="daily-tile-title">{t.shop.freeTitle}</span>
+            <span className="daily-tile-sub">{stickers === 'busy' ? t.shop.sending : t.shop.freeText}</span>
+          </a>
         )}
         {web && (
           <a className="btn tg" href={tgLink('play') ?? 'https://t.me/be_nobody_bot'} onClick={() => track('tg_tap', { what: 'play' })}>

@@ -310,8 +310,5 @@ button.summary { color: var(--sand); cursor: pointer; }
 .wardrobe-was { color: var(--rust); font-size: 10px; }
 .wardrobe-owned { color: var(--yellow); font-size: 12px !important; }
 .wardrobe-note { color: var(--sand); }
-.wardrobe-free { display: flex; flex-direction: column; align-items: center; gap: 8px; width: min(300px, 90vw); padding: 8px 12px;
-  background: var(--night); box-shadow: 0 0 0 2px var(--ink), 0 0 0 4px #68386c; }
-.wardrobe-free-title { color: var(--yellow); }
 .wardrobe .btn[aria-disabled='true'] { background: var(--night); color: var(--steel); box-shadow: 0 0 0 2px var(--ink); pointer-events: none; }
 .wardrobe-star { width: 26px; height: 26px; image-rendering: pixelated; }

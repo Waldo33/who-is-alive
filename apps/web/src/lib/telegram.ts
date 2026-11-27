@@ -425,8 +425,10 @@ export function telegramClipSave(clip: SharedClip): boolean {
 export interface ShopState {
   /** Что есть: `starter` (бесплатный пак), наборы. */
   items: string[];
-  /** Ссылка на личный пак (t.me/addstickers/…) или null. */
+  /** Ссылка на свой пак от бота (t.me/addstickers/…) или null. */
   pack: string | null;
+  /** Отдельные паки наборов: набор → ссылка. */
+  packs: Record<string, string>;
   issued: number;
   wanted: number;
   /** need_bot — игрок не открывал бота, стикеры выдать нельзя. */
@@ -444,6 +446,11 @@ export async function shopClaim(): Promise<ShopState | null> {
   // боту нужно разрешение писать игроку (сообщение «пак готов»); отказ — пак всё равно будет
   if (w?.requestWriteAccess && at('6.9')) await new Promise<void>((r) => w.requestWriteAccess!(() => r()));
   return botPost<ShopState>('/shop/claim', {}, 25_000);
+}
+
+/** Стикеры купленного набора: в свой пак (in) или новым паком (own). */
+export function shopPack(item: string, mode: 'in' | 'own'): Promise<ShopState | null> {
+  return botPost<ShopState>('/shop/pack', { item, mode }, 25_000);
 }
 
 /** Купить набор: счёт в звёздах поверх игры. Итог — как у Telegram; 'owned' — уже куплено. */

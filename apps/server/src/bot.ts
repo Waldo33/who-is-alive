@@ -162,6 +162,7 @@ interface Update {
     from?: { id: number; first_name?: string; username?: string; language_code?: string };
     successful_payment?: { currency: string; total_amount: number; invoice_payload: string; telegram_payment_charge_id: string };
   };
+  callback_query?: { id: string; from: { id: number; first_name?: string; username?: string; language_code?: string }; data?: string };
   pre_checkout_query?: { id: string; from: { id: number }; currency: string; total_amount: number; invoice_payload: string };
   inline_query?: { id: string; query: string; from: { language_code?: string } };
   /** Карточку выбрали и отправили в чат (нужна «обратная связь» инлайн-режима в BotFather: /setinlinefeedback). */
@@ -332,6 +333,9 @@ export class Bot {
         }
         try {
           if (u?.pre_checkout_query) await this.shop.preCheckout(u.pre_checkout_query);
+          else if (u?.callback_query) await this.shop.onCallback(u.callback_query);
+          // бесплатный стикерпак по внешней ссылке t.me/<бот>?start=stickers (только в личке: пак — этого игрока)
+          else if (u?.message?.text === '/start stickers' && u.message.chat.type === 'private' && u.message.from) await this.shop.claim(u.message.from);
           else if (u?.message?.text?.startsWith('/paysupport')) await this.shop.support(u.message.chat.id, u.message.from?.language_code);
           else if (u?.message?.text?.startsWith('/start')) await this.onStart(u.message);
           else if (u?.inline_query) await this.onInline(u.inline_query);
@@ -358,7 +362,7 @@ export class Bot {
 
   /** Вебхук на этот сервер и профиль бота на двух языках. */
   async setup(): Promise<void> {
-    await this.api('setWebhook', { url: this.hookUrl, secret_token: this.hookSecret, allowed_updates: ['message', 'inline_query', 'chosen_inline_result', 'pre_checkout_query'], drop_pending_updates: false });
+    await this.api('setWebhook', { url: this.hookUrl, secret_token: this.hookSecret, allowed_updates: ['message', 'inline_query', 'chosen_inline_result', 'pre_checkout_query', 'callback_query'], drop_pending_updates: false });
     const P = {
       ru: {
         description:
