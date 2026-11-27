@@ -54,7 +54,6 @@ function poseAt(ms: number): { p: Pose; k: number } {
 
 /** Иконка стикера в ряду подарков: маленький кот в позе стикера, белая обводка. */
 const ICON: Record<string, () => HTMLCanvasElement> = {
-  notCrying: () => wailFace(kotBananFrame(F.D, 'D')),
   justBanana: () => kotBananFrame(F.U, 'U'),
   splat: () => kotBananFrame(F.STUN, 'D'),
   allGood: () => kotBananFrame(F.D, 'D'),

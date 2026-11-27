@@ -27,7 +27,7 @@ describe('стикеры за матч', () => {
     expect([...earnedEvents('a', rounds, { winners: ['a'] })].sort()).toEqual(['played', 'survive', 'unsuspected', 'win']);
     expect([...earnedEvents('b', rounds, { winners: ['a'] })].sort()).toEqual(['accuse', 'clairvoyant', 'cut', 'lose', 'paranoid', 'played']);
     expect(earnedStickers('a', rounds, { winners: ['a'] }).sort()).toEqual(['action', 'extra', 'freeze', 'happyTears', 'still']);
-    expect(earnedStickers('b', rounds, { winners: ['a'] }).sort()).toEqual(['aaa', 'action', 'allGood', 'cut', 'meow', 'offscreen', 'retake', 'splat']);
+    expect(earnedStickers('b', rounds, { winners: ['a'] }).sort()).toEqual(['action', 'allGood', 'cut', 'meow', 'offscreen', 'retake', 'splat']);
   });
 
   it('«за игру»: три звезды, «777» в казино, герой площадки за сыгранный на ней дубль', () => {
