@@ -179,14 +179,18 @@ export function wailFace(h: HTMLCanvasElement): HTMLCanvasElement {
   return h;
 }
 
-const ARC: [number, number][] = [[4, 17], [3, 16], [2, 15], [1, 15], [0, 15], [-1, 16], [-2, 17], [-3, 18], [-3, 19], [-4, 20], [-4, 21], [-4, 22], [-4, 23], [-4, 24], [-4, 25], [-4, 26], [-4, 27], [-4, 28]];
+// начало — внешний уголок глаза «>» (5, 18): струя бьёт из глаза вверх-вбок, через щёку и кожуру, и падает до пола
+const ARC: [number, number][] = [[4, 18], [3, 17], [2, 16], [1, 15], [0, 15], [-1, 15], [-2, 16], [-3, 17], [-3, 18], [-4, 19], [-4, 20], [-4, 21], [-4, 22], [-4, 23], [-4, 24], [-4, 25], [-4, 26], [-4, 27], [-4, 28]];
+// рёв: струя выше и шире, без разрывов
+const ARC_BIG: [number, number][] = [[4, 18], [3, 17], [3, 16], [2, 15], [1, 14], [0, 13], [-1, 13], [-2, 13], [-3, 13], [-4, 14], [-5, 14], [-6, 15], [-7, 16], [-7, 17], [-8, 18], ...[19, 20, 21, 22, 23, 24, 25, 26, 27, 28].map((y) => [-8, y] as [number, number])];
 
 /**
- * Дуги слёз из глаз в стороны и до пола (как в меме): кот в (x0, y0) в масштабе k, `t` — номер кадра
+ * Дуги слёз из глаз в стороны и до пола (как в меме) — рисовать поверх кота, иначе начало струи прячется за ним:
+ * кот в (x0, y0) в масштабе k, `t` — номер кадра
  * (блики бегут по дуге), `len` — сколько точек дуги уже вылетело, `big` — дуги шире (рёв).
  */
 export function tearArcs(g: Ctx, x0: number, y0: number, k: number, t = 0, len = ARC.length, big = false): void {
-  const pts = big ? ARC.map(([x, y], i) => [Math.round(x - Math.min(i, 9) * 0.5), y - (i < 6 ? Math.min(i, 3) : 3)] as [number, number]) : ARC;
+  const pts = big ? ARC_BIG : ARC;
   const n = Math.min(len, pts.length);
   const B = (sx: number, sy: number, c: string) => {
     g.fillStyle = c;
@@ -196,7 +200,8 @@ export function tearArcs(g: Ctx, x0: number, y0: number, k: number, t = 0, len =
     const X = (x: number) => (side ? KB_W - 1 - x : x);
     for (let i = 0; i < n; i++) {
       const [x, y] = pts[i];
-      const vert = i >= 8;
+      // тень снизу у летящей части, сбоку — у падающей (точка прямо под прошлой)
+      const vert = i > 0 && pts[i - 1][0] === x && i >= 8;
       B(X(vert ? x + 1 : x), vert ? y : y + 1, PAL.blue);
       B(X(x), y, (i + t) % 4 === 0 ? PAL.white : PAL.cyan);
     }
