@@ -51,13 +51,13 @@ describe('Telegram-бот', () => {
     expect(JSON.stringify(send.body)).toContain('https://site.example/r/ABCD?src=tg');
   });
 
-  it('/start без параметра: «Играть» — сразу матч с ИИ, «С друзьями» — новая комната', async () => {
+  it('/start без параметра: «Играть» — новая комната (лобби), «Сыграть с ботами» — матч с ИИ', async () => {
     const { bot, calls } = makeBot();
     const upd = { message: { chat: { id: 1, type: 'private' }, text: '/start', from: { language_code: 'ru' } } };
     await bot.handle('POST', '/hook', { 'x-telegram-bot-api-secret-token': bot.hookSecret }, upd);
     const kb = (calls.find((c) => c.method === 'sendMessage')!.body as { reply_markup: { inline_keyboard: { text: string; web_app: { url: string } }[][] } }).reply_markup.inline_keyboard;
-    expect(kb[0][0].web_app.url).toBe('https://site.example/sandbox?go&src=tg');
-    expect(kb[1][0].web_app.url).toBe('https://site.example/?create=1&src=tg');
+    expect(kb[0][0].web_app.url).toBe('https://site.example/?create=1&src=tg');
+    expect(kb[1][0].web_app.url).toBe('https://site.example/sandbox?go&src=tg');
     expect(JSON.stringify(kb.at(-1))).toContain('https://t.me/benobody_app');
   });
 

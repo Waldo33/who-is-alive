@@ -71,6 +71,7 @@ const T = {
     startCasting: ' А каждый день — «Кастинг дня»: найди актёра в массовке.',
     play: '▶ Играть',
     friends: '👥 С друзьями',
+    bots: '🤖 Сыграть с ботами',
     channel: '📣 Канал игры',
     daily: '🎬 Кастинг дня',
     inviteTitle: 'Позвать в «Массовку»',
@@ -113,6 +114,7 @@ const T = {
     startCasting: ' Plus a daily casting: spot the actor among the extras.',
     play: '▶ Play',
     friends: '👥 With friends',
+    bots: '🤖 Play with bots',
     channel: '📣 Game channel',
     daily: '🎬 Daily casting',
     inviteTitle: 'Invite to Be Nobody',
@@ -495,18 +497,18 @@ export class Bot {
     const t = T[langOf(msg.from?.language_code)];
     const param = (msg.text ?? '').split(' ')[1] ?? '';
     const room = /^r_[A-Z]{4}$/.test(param);
-    // «Играть» — сразу матч с ИИ (одно касание), «С друзьями» — новая комната, чтобы звать
-    const path = room ? `/r/${param.slice(2)}` : param === 'daily' && this.casting ? '/daily' : '/sandbox?go';
+    // «Играть» — новая комната (лобби), чтобы звать друзей; матч с ботами — второй кнопкой
+    const path = room ? `/r/${param.slice(2)}` : param === 'daily' && this.casting ? '/daily' : '/?create=1';
     // кнопка web_app — только в личке; в группах — прямая ссылка Mini App
     const priv = msg.chat.type === 'private';
     const web = (text: string, p: string) => ({ text, web_app: { url: `${this.o.site}${p}${p.includes('?') ? '&' : '?'}src=tg` } });
     // канал игры — новости и ролики; кнопка ведёт в канал, игру не загораживает
     const channel = [{ text: t.channel, url: CHANNEL }];
     const rows = priv
-      ? [[web(t.play, path)], ...(room ? [] : [[web(t.friends, '/?create=1')]]), ...(this.casting ? [[web(t.daily, '/daily')]] : []), channel]
+      ? [[web(t.play, path)], ...(room ? [] : [[web(t.bots, '/sandbox?go')]]), ...(this.casting ? [[web(t.daily, '/daily')]] : []), channel]
       : [
-          [{ text: t.play, url: await this.link(room ? param : 'play') }],
-          ...(room ? [] : [[{ text: t.friends, url: await this.link('friends') }]]),
+          [{ text: t.play, url: await this.link(room ? param : 'friends') }],
+          ...(room ? [] : [[{ text: t.bots, url: await this.link('play') }]]),
           ...(this.casting ? [[{ text: t.daily, url: await this.link('daily') }]] : []),
           channel,
         ];
