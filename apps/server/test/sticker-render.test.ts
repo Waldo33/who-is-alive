@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { EFFECTS } from '@kto/game-core';
 import { silentLogger } from '../src/log';
 import { StickerRender } from '../src/sticker-render';
 
@@ -19,4 +20,16 @@ describe('свой стикер на сервере', () => {
     // картинок и чужого текста не рисуем: только проверенный выбор
     await expect(r.render({ fig: 'actor', pose: 'wave', color: 0, text: ['@spam'] })).rejects.toThrow('bad_sticker');
   }, 60_000);
+
+  it.skipIf(!hasFfmpeg)('эффекты: стандартный стикер пака и свой — с эффектом, у каждого эффекта влезает в 256 КБ', async () => {
+    const r = new StickerRender({ fonts: FONTS, log: silentLogger });
+    for (const fx of EFFECTS) {
+      const webm = await r.render({ std: 'aaa', fx, lang: 'ru' });
+      expect(webm.subarray(0, 4).toString('hex'), fx).toBe('1a45dfa3');
+      expect(webm.length, fx).toBeLessThanOrEqual(256 * 1024);
+    }
+    expect((await r.render({ fig: 'kotBanan', pose: 'ask', color: 2, text: ['Эй'], fx: 'fire' })).subarray(0, 4).toString('hex')).toBe('1a45dfa3');
+    await expect(r.render({ std: 'aaa', fx: 'glitter', lang: 'ru' })).rejects.toThrow('bad_sticker');
+    await expect(r.render({ std: 'nope', fx: 'holo', lang: 'ru' })).rejects.toThrow('bad_sticker');
+  }, 240_000);
 });
