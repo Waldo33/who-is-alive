@@ -1,10 +1,10 @@
 /**
- * Вход через Telegram на сайте (браузер, не Mini App): Telegram Login Widget
- * (https://core.telegram.org/widgets/login). Окно входа открывает oauth.telegram.org, игрок подтверждает вход
- * в приложении Telegram, сайт получает подписанные данные { id, first_name, username, auth_date, hash, … }.
- * Подпись проверяет сервер бота (bot.ts › verifyLogin) — так же, как initData из Mini App. Данные хранятся в
- * браузере 30 дней и уходят вместо initData в /tg/shop/*: гардероб, стикерпак и связь игрока с Telegram
- * (скин в комнате) работают и в браузере. Нужен домен сайта у бота: BotFather › /setdomain.
+ * Вход через Telegram на сайте (браузер, не Mini App) — через бота, как в других приложениях: сайт заранее
+ * берёт одноразовый код (`/tg/login/start`), кнопка открывает бота `t.me/<бот>?start=login_<код>`, игрок жмёт
+ * «Войти» в чате, сайт опрашивает `/tg/login/poll` и получает подписанные данные { id, first_name, username,
+ * auth_date, hash } (формат Telegram Login Widget, сервер — web-login.ts). Подпись проверяет бот
+ * (bot.ts › verifyLogin). Данные хранятся в браузере 30 дней и уходят вместо initData в /tg/shop/*: гардероб,
+ * стикерпак и связь игрока с Telegram (скин в комнате) работают и в браузере. Номер телефона не нужен.
  */
 import { GAME_API } from './env';
 
@@ -19,11 +19,19 @@ export interface TgLogin {
 }
 
 const KEY = 'kto:tglogin';
+/** Начатый вход: код и секрет переживают уход страницы в Telegram (Safari может её выгрузить). */
+const PENDING = 'kto:tglogin-wait';
 /** Столько же принимает сервер (bot.ts › LOGIN_TTL_SEC); на день раньше — чтобы не упереться в границу. */
 const TTL_MS = 29 * 86_400_000;
-const WIDGET = 'https://telegram.org/js/telegram-widget.js?22';
+/** Код живёт на сервере 10 минут; заранее взятый обновляем раньше. */
+const CODE_MS = 8 * 60_000;
 
-type LoginApi = { auth: (o: { bot_id: number; request_access?: string; lang?: string }, cb: (data: TgLogin | false) => void) => void };
+interface Code {
+  code: string;
+  secret: string;
+  link: string;
+  at: number;
+}
 
 /** Сохранённый вход (null — не входил, вышел или вход устарел). */
 export function webLogin(): TgLogin | null {
@@ -38,6 +46,7 @@ export function webLogin(): TgLogin | null {
 }
 
 export function webLogout(): void {
+  mem = null;
   try {
     localStorage.removeItem(KEY);
     localStorage.removeItem('kto:tglink');
@@ -47,69 +56,106 @@ export function webLogout(): void {
   }
 }
 
-let botId: number | null = null;
+let ready: Code | null = null;
 let preparing: Promise<boolean> | null = null;
 
 /**
- * Подготовить вход заранее (при открытии страницы): скрипт Telegram и id бота. Окно входа надо открыть прямо в
- * нажатии (иначе браузер заблокирует его), поэтому к нажатию всё должно быть загружено. false — вход недоступен.
+ * Взять код заранее (при открытии страницы): Telegram надо открыть прямо в нажатии, без ожидания сети —
+ * иначе Safari не отдаст ссылку приложению. false — бот недоступен.
  */
 export function prepareWebLogin(): Promise<boolean> {
+  if (ready && Date.now() - ready.at < CODE_MS) return Promise.resolve(true);
   if (preparing) return preparing;
   preparing = (async () => {
     try {
-      const [info] = await Promise.all([
-        fetch(`${GAME_API}/tg/info`, { signal: AbortSignal.timeout(8000) }).then((r) => (r.ok ? (r.json() as Promise<{ id?: unknown }>) : null)),
-        loadWidget(),
-      ]);
-      botId = typeof info?.id === 'number' ? info.id : null;
-      return !!botId && !!loginApi();
+      const r = await fetch(`${GAME_API}/tg/login/start`, { method: 'POST', signal: AbortSignal.timeout(8000) });
+      const j = r.ok ? ((await r.json()) as Partial<Code>) : null;
+      if (!j?.code || !j.secret || !j.link?.startsWith('https://t.me/')) return false;
+      ready = { code: j.code, secret: j.secret, link: j.link, at: Date.now() };
+      return true;
     } catch {
-      preparing = null;
       return false;
+    } finally {
+      preparing = null;
     }
   })();
   return preparing;
 }
 
-function loginApi(): LoginApi | null {
-  return (window as unknown as { Telegram?: { Login?: LoginApi } }).Telegram?.Login ?? null;
-}
-
-function loadWidget(): Promise<void> {
-  if (loginApi()) return Promise.resolve();
-  return new Promise((resolve, reject) => {
-    const s = document.createElement('script');
-    s.src = WIDGET;
-    s.async = true;
-    s.onload = () => resolve();
-    s.onerror = () => reject(new Error('widget'));
-    document.head.appendChild(s);
-  });
-}
-
 /**
- * Войти: открывает окно Telegram (звать прямо из нажатия, после prepareWebLogin). Итог — данные входа или
- * null (закрыл окно, отказал, вход не готов). request_access: 'write' — бот сможет прислать стикерпак в личку.
+ * Войти: открывает бота в Telegram (звать прямо из нажатия, после prepareWebLogin) и ждёт, пока игрок
+ * нажмёт «Войти» в чате. Итог — данные входа или null (не подтвердил за 10 минут, код устарел).
  */
-export function startWebLogin(lang: 'ru' | 'en'): Promise<TgLogin | null> {
-  const api = loginApi();
-  if (!api || !botId) return Promise.resolve(null);
+export function startWebLogin(): Promise<TgLogin | null> {
+  const c = ready && Date.now() - ready.at < CODE_MS ? ready : null;
+  if (!c) return Promise.resolve(null);
+  ready = null;
+  try {
+    sessionStorage.setItem(PENDING, JSON.stringify(c));
+  } catch {
+    /* приватный режим: ждём, пока страница жива */
+  }
+  location.href = c.link;
+  return waitLogin(c);
+}
+
+/** Вход начат и страница перезагрузилась (вернулись из Telegram): дождаться его. null — входа не начинали. */
+export function resumeWebLogin(): Promise<TgLogin | null> | null {
+  try {
+    const c = JSON.parse(sessionStorage.getItem(PENDING) ?? 'null') as Code | null;
+    if (!c?.code || !c.secret || Date.now() - c.at > 10 * 60_000) return null;
+    return waitLogin(c);
+  } catch {
+    return null;
+  }
+}
+
+/** Опрос сервера раз в 2 с, пока вкладка на виду (вернулся из Telegram — сразу). */
+function waitLogin(c: Code): Promise<TgLogin | null> {
   return new Promise((resolve) => {
-    try {
-      api.auth({ bot_id: botId!, request_access: 'write', lang }, (data) => {
-        if (!data || typeof data.id !== 'number' || typeof data.hash !== 'string') return resolve(null);
-        try {
-          localStorage.setItem(KEY, JSON.stringify(data));
-        } catch {
-          /* приватный режим: вход только на эту страницу */
+    let timer = 0;
+    let busy = false;
+    const end = (l: TgLogin | null) => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', tick);
+      try {
+        sessionStorage.removeItem(PENDING);
+      } catch {
+        /* приватный режим */
+      }
+      resolve(l);
+    };
+    async function tick() {
+      if (busy || document.visibilityState !== 'visible') return;
+      if (Date.now() - c.at > 10 * 60_000) return end(null);
+      busy = true;
+      try {
+        const r = await fetch(`${GAME_API}/tg/login/poll`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code: c.code, secret: c.secret }),
+          signal: AbortSignal.timeout(6000),
+        });
+        const j = r.ok ? ((await r.json()) as { state?: string; login?: TgLogin }) : null;
+        if (j?.state === 'gone') return end(null);
+        if (j?.state === 'ok' && j.login && typeof j.login.id === 'number') {
+          try {
+            localStorage.setItem(KEY, JSON.stringify(j.login));
+          } catch {
+            /* приватный режим: вход только на эту страницу */
+          }
+          mem = j.login;
+          return end(j.login);
         }
-        mem = data;
-        resolve(data);
-      });
-    } catch {
-      resolve(null);
+      } catch {
+        /* нет сети — следующий раз */
+      } finally {
+        busy = false;
+      }
     }
+    timer = window.setInterval(() => void tick(), 2000);
+    document.addEventListener('visibilitychange', tick);
+    void tick();
   });
 }
 
