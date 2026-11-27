@@ -131,6 +131,18 @@ describe('гардероб', () => {
     expect(await pre({})).toBe(false);
   });
 
+  it('оплата с настоящим номером платежа (длинный, base64) записывается и выдаёт набор', async () => {
+    const { bot, store } = makeBot();
+    const charge = `stxmDht2QrZc${'aZ09+/_-='.repeat(14)}`;
+    expect(charge.length).toBeGreaterThan(128);
+    expect((await hook(bot, payment({ telegram_payment_charge_id: charge }))).status).toBe(200);
+    expect((await store.shopUser(77))?.items).toContain('kotBanan');
+    // кавычки и пробелы — нет (номер уходит в команду возврата)
+    const { bot: b2, store: s2 } = makeBot();
+    await hook(b2, payment({ telegram_payment_charge_id: "x'; rm -rf /" }));
+    expect((await s2.shopUser(77))?.items ?? []).not.toContain('kotBanan');
+  });
+
   it('уведомление об оплате потерялось — гардероб сверяется с Telegram и выдаёт набор; возвращённое не выдаёт', async () => {
     let txs: unknown[] = [];
     const { bot, calls, store } = makeBot({ result: (m) => (m === 'getStarTransactions' ? { transactions: txs } : undefined) });
@@ -141,7 +153,9 @@ describe('гардероб', () => {
     expect((st0.body as { items: string[] }).items).not.toContain('kotBanan');
 
     // новая оплата появилась, но сверка — не чаще раза в 30 с
-    txs.push(pay('ch_lost'));
+    // настоящий номер платежа звёздами — длинный, с символами base64 (раньше не проходил проверку)
+    const LOST = `stx${'Ab9+/='.repeat(25)}x`;
+    txs.push(pay(LOST));
     calls.length = 0;
     await bot.handle('POST', '/shop', {}, { initData: initData(ANYA) });
     expect(calls.some((c) => c.method === 'getStarTransactions')).toBe(false);
@@ -153,7 +167,7 @@ describe('гардероб', () => {
     expect((st.body as { items: string[] }).items).toContain('kotBanan');
     expect(second.calls.some((c) => c.method === 'sendMessage' && String(c.body.text).includes('Кот-банан'))).toBe(true);
     // теперь платёж в учёте — возврат по нему пройдёт
-    expect(await store.saveShopPayment({ charge: 'ch_lost', userId: 77, item: 'kotBanan', stars: 49, refunded: false })).toBe(false);
+    expect(await store.saveShopPayment({ charge: LOST, userId: 77, item: 'kotBanan', stars: 49, refunded: false })).toBe(false);
   });
 
   it('бесплатный пак есть — купленный набор сразу добавляется в него; пак по внешней ссылке /start stickers', async () => {

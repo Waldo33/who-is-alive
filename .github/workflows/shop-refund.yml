@@ -43,7 +43,7 @@ jobs:
         run: |
           echo "$ITEM" | grep -Eq '^[A-Za-z0-9]{0,32}$' || { echo "::error::покупка — имя набора, например kotBanan"; exit 1; }
           # только цифры (Telegram id) или символы charge id — ничего лишнего в команду на сервере
-          echo "$WHO" | grep -Eq '^([0-9]{1,16}|[A-Za-z0-9_:.-]{1,128})$' || { echo "::error::нужен Telegram id или charge id"; exit 1; }
+          echo "$WHO" | grep -Eq '^([0-9]{1,16}|[][!#%&()*+,./0-9:;<=>?@A-Z^_a-z{|}~-]{1,256})$' || { echo "::error::нужен Telegram id или charge id"; exit 1; }
       - run: python3 -m venv /tmp/py && /tmp/py/bin/pip install -q cryptography
       - id: infra
         env: { SERVER_NAME: massovka-infra }
