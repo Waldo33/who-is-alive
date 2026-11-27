@@ -221,7 +221,7 @@ export function telegramLang(): 'ru' | 'en' | null {
 
 /**
  * Параметр запуска (?startapp=…): `r_КОД` — комната, `play` — сразу матч с ИИ, `friends` — новая
- * комната, `g_МЕТКА` — общее лобби по карточке бота «Собрать комнату», `c_КОД` — загадка из фильма, `daily` — загадка дня, `dev[_tN][_sN]` — песочница с дев-панелью (тема N, ускорение N), `shop` — «Гардероб», `stickers` — «Собери свой стикерпак» (`ff_shop`/`ff_stickers` — старые варианты). Telegram передаёт его
+ * комната, `g_МЕТКА` — общее лобби по карточке бота «Собрать комнату», `c_КОД` — загадка из фильма, `daily` — загадка дня, `dev[_tN][_sN]` — песочница с дев-панелью (тема N, ускорение N), `shop` — «Гардероб», `shoptest` — он же с проверочной покупкой, `stickers` — «Собери свой стикерпак» (`ff_shop`/`ff_stickers` — старые варианты). Telegram передаёт его
  * и в адресе (`tgWebAppStartParam`) — так он известен сразу, ещё до загрузки SDK.
  */
 export function telegramStart(): string | null {
@@ -253,6 +253,8 @@ export function telegramStartTarget(): string | null {
   if (start === 'friends') return '/?create=1&src=tg';
   // «Гардероб» и «Собери свой стикерпак» (ff_* — старые ссылки времён флага shop, ещё живут в чатах)
   if (start === 'shop' || start === 'ff_shop') return '/wardrobe?src=tg';
+  // проверочная покупка за 1 звезду (владельцу): гардероб с флагом shoptest
+  if (start === 'shoptest') return '/wardrobe?ff=shoptest&src=tg';
   if (start === 'stickers' || start === 'ff_stickers') return '/stickers?src=tg';
   // загадка из фильма матча: кнопка «Найди актёра» под видео в чате
   const puzzle = /^c_([A-Z2-9]{5})$/.exec(start);
@@ -527,6 +529,11 @@ export async function shopClaim(): Promise<ShopState | null> {
   // боту нужно разрешение писать игроку (сообщение «пак готов»); отказ — пак всё равно будет
   if (w?.requestWriteAccess && at('6.9')) await new Promise<void>((r) => w.requestWriteAccess!(() => r()));
   return botPost<ShopState>('/shop/claim', {}, 25_000);
+}
+
+/** «Вернуть звёзды» в карточке покупки (пока только проверочная покупка): новое состояние или null. */
+export function shopRefund(item: string): Promise<ShopState | null> {
+  return botPost<ShopState>('/shop/refund', { item }, 20_000);
 }
 
 /** Купить набор: счёт в звёздах поверх игры. Итог — как у Telegram; 'owned' — уже куплено. */

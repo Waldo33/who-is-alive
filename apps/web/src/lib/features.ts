@@ -10,8 +10,10 @@
  *   Бот прячет кастинг своим флагом — переменная `FEATURES=casting` сервера бота (apps/server/src/bot.ts).
  * - `orchestra` — «Оркестр из телефонов» в лобби (план звука, вариант Б): у режиссёра в шестерёнке
  *   лобби строка «Оркестр»; гостям флаг не нужен — играют, раз режиссёр включил. Ждёт плейтеста.
+ * - `shoptest` — проверочная покупка за 1 звезду в «Гардеробе» с кнопкой «Вернуть звёзды» (владельцу: проверить
+ *   оплату и возврат на живом боте). В Telegram — ссылка `startapp=shoptest`.
  */
-export type Feature = 'casting' | 'orchestra';
+export type Feature = 'casting' | 'orchestra' | 'shoptest';
 
 const KEY = 'kto:ff';
 const BUILD = new Set((process.env.NEXT_PUBLIC_FEATURES ?? '').split(',').map((s) => s.trim()).filter(Boolean));
