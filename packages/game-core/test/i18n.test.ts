@@ -57,6 +57,16 @@ describe('i18n', () => {
         const s = fmt(v, { name: 'Ш'.repeat(6), n: 15, m: 15 });
         expect(s.length, `${lang}: «${s}»`).toBeLessThanOrEqual(21);
       }
+      // «Гардероб» (skins/wardrobe.ts): карточка набора 180 пикс.; имя набора — вдвое крупнее; ярлык «НОВОЕ» — в углу
+      const sh = t.shop;
+      for (const s of [sh.gift, sh.giftHow, ...Object.values(sh.items).map((x) => x.tagline)]) expect(s.length, `${lang}: «${s}»`).toBeLessThanOrEqual(21);
+      for (const x of Object.values(sh.items)) expect(x.name.length * 16, x.name).toBeLessThanOrEqual(160);
+      expect(sh.isNew.length).toBeLessThanOrEqual(7);
+      // подписи стикеров (skins/stickers.ts): холст 96 пикс. — строки до 12 знаков, не больше двух
+      for (const lines of Object.values(sh.stickers)) {
+        expect(lines.length).toBeLessThanOrEqual(2);
+        for (const s of lines) expect(s.length, `${lang}: «${s}»`).toBeLessThanOrEqual(12);
+      }
       // у каждой темы есть название
       expect(t.themes.length).toBe(THEME_COUNT);
       for (const s of flat) expect(s.length, `${lang}: «${s}»`).toBeLessThanOrEqual(21);
