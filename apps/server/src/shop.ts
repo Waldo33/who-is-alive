@@ -485,7 +485,11 @@ export class Shop {
     await this.notify(u.userId, u.lang, DICTS[u.lang].shop.botBought, st.pack);
   }
 
-  /** Возврат звёзд (изнутри машины: /internal/tg/refund). Набор забираем, стикеры остаются в паке. */
+  /**
+   * Возврат звёзд (изнутри машины: /internal/tg/refund, кнопка shop-refund.yml). Набор забираем: скин пропадает
+   * (и с «Надеть»), стикеры набора удаляются из пака игрока. Открытые в матчах (`st:<id>`) помним — при новой
+   * покупке они вернутся в пак.
+   */
   async refund(charge: unknown): Promise<ShopReply> {
     if (typeof charge !== 'string' || !CHARGE.test(charge)) return { status: 400, body: { error: 'bad_charge' } };
     const p = await this.d.ledger.refundShopPayment(charge);
@@ -497,12 +501,38 @@ export class Shop {
       return { status: 502, body: { error: 'telegram' } };
     }
     const u = await this.d.ledger.shopUser(p.userId);
+    let removed = 0;
     if (u) {
-      u.items = u.items.filter((i) => i !== p.item);
+      u.items = u.items.filter((i) => i !== p.item && i !== `wear:${p.item}`);
       await this.d.ledger.saveShopUser(u);
+      removed = await this.dropStickers(u, p.item);
     }
-    this.d.log('info', 'shop_refunded', { item: p.item, stars: p.stars });
-    return { status: 200, body: { ok: true, item: p.item, stars: p.stars } };
+    this.d.log('info', 'shop_refunded', { item: p.item, stars: p.stars, removed });
+    return { status: 200, body: { ok: true, item: p.item, stars: p.stars, removed } };
+  }
+
+  /**
+   * Убрать из пака стикеры набора: стикер пака узнаём по первому эмодзи (у каждого стикера своё). Пак не может
+   * опустеть — приманка остаётся. Не вышло (сбой Telegram) — стикер остаётся выданным, ошибка — в журнал.
+   */
+  private async dropStickers(u: ShopUser, item: string): Promise<number> {
+    const mine = STICKER_LIST.filter((s) => s.set === item && u.issued.includes(s.id));
+    if (!mine.length || !u.pack) return 0;
+    const bare = (e: string | undefined) => (e ?? '').replace(/\uFE0F/g, '');
+    let n = 0;
+    try {
+      const set = await this.d.api<{ stickers?: { file_id: string; emoji?: string }[] }>('getStickerSet', { name: u.pack });
+      for (const s of mine) {
+        const st = set?.stickers?.find((x) => bare(x.emoji) === bare(s.emoji[0]));
+        if (st) await this.d.api('deleteStickerFromSet', { sticker: st.file_id });
+        u.issued = u.issued.filter((id) => id !== s.id);
+        n++;
+      }
+    } catch (e) {
+      this.d.log('error', 'shop_refund_stickers', errFields(e));
+    }
+    await this.d.ledger.saveShopUser(u);
+    return n;
   }
 
   async support(chat: number, code?: string): Promise<void> {

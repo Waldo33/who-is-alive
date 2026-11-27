@@ -212,8 +212,14 @@ describe('гардероб', () => {
     expect((await hook(bot, payment())).status).toBe(500);
   });
 
-  it('возврат: звёзды назад, набор забран — только изнутри машины', async () => {
-    const { bot, calls, store } = makeBot();
+  it('возврат: звёзды назад, набор и скин забраны, его стикеры удалены из пака — только изнутри машины', async () => {
+    // пак игрока в Telegram: стикеры набора узнаются по первому эмодзи (🌧 — с вариантом U+FE0F, как отдаёт Telegram)
+    const inPack = [
+      { file_id: 'F_cry', emoji: '😭' },
+      { file_id: 'F_banana', emoji: '🍌' },
+      { file_id: 'F_lure', emoji: '🎁' },
+    ];
+    const { bot, calls, store } = makeBot({ result: (m) => (m === 'getStickerSet' ? { stickers: inPack } : undefined) });
     await hook(bot, payment());
     const srv = new GameServer({ authSecret: 'x'.repeat(32), log: silentLogger, trustProxy: true, store, bot });
     const port = await srv.listen(0, '127.0.0.1');
@@ -223,8 +229,13 @@ describe('гардероб', () => {
       const r = await fetch(url, { method: 'POST', body: JSON.stringify({ charge: 'ch_1' }) });
       expect(r.status).toBe(200);
       expect(calls.find((c) => c.method === 'refundStarPayment')?.body).toEqual({ user_id: 77, telegram_payment_charge_id: 'ch_1' });
-      // набор забран, пак (и выданные стикеры) остаётся
-      expect((await store.shopUser(77))?.items).toEqual(['pack']);
+      // набор забран (скина больше нет), пак остаётся, стикеры набора удалены из него, приманка — на месте
+      const u = (await store.shopUser(77))!;
+      expect(u.items).toEqual(['pack']);
+      expect(skinOf(u.items)).toBeUndefined();
+      expect(calls.filter((c) => c.method === 'deleteStickerFromSet').map((c) => c.body.sticker)).toEqual(['F_cry', 'F_banana']);
+      expect(u.issued.some((id) => id === 'notCrying' || id === 'justBanana')).toBe(false);
+      expect(await r.json()).toMatchObject({ ok: true, item: 'kotBanan', removed: 2 });
       // второй возврат того же платежа — нет
       expect((await fetch(url, { method: 'POST', body: JSON.stringify({ charge: 'ch_1' }) })).status).toBe(404);
     } finally {
