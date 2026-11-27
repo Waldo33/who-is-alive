@@ -33,7 +33,8 @@ import type { ShopPayment, ShopUser, Store, TgLink } from './store';
  * Учёт: у игрового сервера — его Postgres; у сервера бота базы нет — RemoteLedger, по туннелю к игровому.
  */
 
-export type ShopLedger = Pick<Store, 'shopUser' | 'saveShopUser' | 'saveShopPayment' | 'refundShopPayment'> & {
+export type ShopLedger = Pick<Store, 'shopUser' | 'saveShopUser' | 'saveShopPayment' | 'refundShopPayment'> &
+  Partial<Pick<Store, 'shopUsersWith'>> & {
   /** Связать игрока игрового сервера (по его токену — проверяет игровой сервер) с пользователем Telegram. false — токен чужой. */
   linkGame(token: string, link: Omit<TgLink, 'gameUser'>): Promise<boolean>;
 };
@@ -47,6 +48,7 @@ export function localLedger(store: Store, verify?: VerifyToken, onLink?: (gameUs
   return {
     shopUser: (id) => store.shopUser(id),
     saveShopUser: (u) => store.saveShopUser(u),
+    shopUsersWith: (item) => store.shopUsersWith(item),
     saveShopPayment: (p) => store.saveShopPayment(p),
     refundShopPayment: (c) => store.refundShopPayment(c),
     async linkGame(token, link) {
@@ -72,7 +74,10 @@ const nextDay = (ms: number): number => (Math.floor((ms + MSK) / DAY) + 1) * DAY
 const earnedToday = (items: readonly string[], now: number): number => Number(items.find((i) => i.startsWith(`day:${dayKey(now)}:`))?.split(':')[2]) || 0;
 /** Стикеры, которые игрок ещё может открыть за матчи (набор есть, стикера нет). */
 const earnable = (items: readonly string[]) => STICKER_LIST.filter((s) => !s.now && !!s.earn && (s.set === 'starter' || s.set === 'play' || items.includes(s.set)) && !items.includes(`st:${s.id}`));
-const ITEM = /^(?:starter|(?:st|in|own|made|off|wear):[A-Za-z]{1,24}|[A-Za-z]{1,24}|day:\d{8}:\d{1,2})$/;
+/** Напоминание о стикерах — с 10 до 22 по Москве (не ночью). */
+const REMIND_FROM = 10;
+const REMIND_TO = 22;
+const ITEM = /^(?:starter|(?:st|in|own|made|off|wear):[A-Za-z]{1,24}|[A-Za-z]{1,24}|day:\d{8}:\d{1,2}|remind:\d{8})$/;
 const PACK = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
 /**
  * Номер платежа Telegram (telegram_payment_charge_id): у звёзд — длинный «stx…» с символами base64 и прочими.
@@ -105,6 +110,9 @@ export class RemoteLedger implements ShopLedger {
   saveShopUser(user: ShopUser) {
     return this.op<void>({ op: 'save', user });
   }
+  shopUsersWith(item: string) {
+    return this.op<number[]>({ op: 'with', item });
+  }
   saveShopPayment(payment: ShopPayment) {
     return this.op<boolean>({ op: 'pay', payment });
   }
@@ -132,7 +140,7 @@ function parseUser(x: unknown): ShopUser | null {
 
 /** /internal/shop на игровом сервере: операция учёта от сервера бота. Маршрут внутренний, но вход всё равно проверяем. */
 export async function shopLedgerOp(store: ShopLedger, raw: unknown): Promise<{ status: number; body: unknown }> {
-  const b = raw as { op?: unknown; userId?: unknown; user?: unknown; payment?: unknown; charge?: unknown; token?: unknown; link?: unknown } | null;
+  const b = raw as { op?: unknown; item?: unknown; userId?: unknown; user?: unknown; payment?: unknown; charge?: unknown; token?: unknown; link?: unknown } | null;
   const bad = { status: 400, body: { error: 'bad_request' } };
   if (b?.op === 'get') return userId(b.userId) ? { status: 200, body: { result: await store.shopUser(b.userId) } } : bad;
   if (b?.op === 'save') {
@@ -151,6 +159,7 @@ export async function shopLedgerOp(store: ShopLedger, raw: unknown): Promise<{ s
     if (typeof b.token !== 'string' || !TOKEN.test(b.token) || !l || !userId(l.tgUser) || typeof l.name !== 'string' || l.name.length > 32 || (l.lang !== 'ru' && l.lang !== 'en')) return bad;
     return { status: 200, body: { result: await store.linkGame(b.token, { tgUser: l.tgUser, name: packName(l.name), lang: l.lang }) } };
   }
+  if (b?.op === 'with') return typeof b.item === 'string' && ITEM.test(b.item) && store.shopUsersWith ? { status: 200, body: { result: await store.shopUsersWith(b.item) } } : bad;
   if (b?.op === 'refund') return typeof b.charge === 'string' && CHARGE.test(b.charge) ? { status: 200, body: { result: await store.refundShopPayment(b.charge) } } : bad;
   return bad;
 }
@@ -316,6 +325,7 @@ export class Shop {
     if (path === '/shop/pick') return this.pick(id, body.id, body.on);
     if (path === '/shop/my') return this.saveMy(id, body.slot, body.sticker, now);
     if (path === '/shop/my/del') return this.delMy(id, body.slot);
+    if (path === '/shop/remind') return this.remindMe(id, now);
     return { status: 404, body: { error: 'not_found' } };
   }
 
@@ -348,6 +358,8 @@ export class Shop {
       earned: (u?.items ?? []).filter((i) => i.startsWith('st:')).map((i) => i.slice(3)),
       /** Дневной лимит стикеров за матчи исчерпан — когда снова (мс); null — можно открывать. */
       earnNext: u && earnedToday(u.items, now) >= EARN_PER_DAY && earnable(u.items).length ? nextDay(now) : null,
+      /** Игрок нажал «Напомнить» — бот напишет, когда стикеры снова откроются. */
+      remind: !!u?.items.some((i) => i.startsWith('remind:') && i.slice(7) > dayKey(now)),
       pending,
       free,
     };
@@ -392,6 +404,16 @@ export class Shop {
     if (err) return { status: 409, body: { error: err } };
     this.d.log('info', 'shop_my_saved', { fig: v.fig, pose: v.pose });
     return { status: 200, body: await this.state(id, true) };
+  }
+
+  /** «Напомнить»: дневной лимит стикеров за матчи исчерпан — бот напишет, когда начнутся следующие сутки (днём). */
+  private async remindMe(id: number, now: number): Promise<ShopReply> {
+    const err = await this.edit(id, (u) => {
+      if (earnedToday(u.items, now) < EARN_PER_DAY || !earnable(u.items).length) return 'no_limit';
+      u.items = [...u.items.filter((i) => !i.startsWith('remind:')), `remind:${dayKey(nextDay(now))}`];
+      return null;
+    });
+    return err ? { status: 409, body: { error: err } } : { status: 200, body: await this.state(id, false) };
   }
 
   private async delMy(id: number, slot: unknown): Promise<ShopReply> {
@@ -511,9 +533,7 @@ export class Shop {
         const t = DICTS[after.lang].shop;
         const set = got[0].set;
         const inSet = STICKER_LIST.filter((s) => s.set === set);
-        // лимит на сегодня исчерпан, а открывать ещё есть что — сказать, что завтра будут новые
-        const last = usedToday + fresh.length >= EARN_PER_DAY && earnable(after.items).length > 0;
-        const text = fmt(last ? t.botEarnedLast : t.botEarned, { sticker: got.map((s) => `«${t.stickers[s.id].join(' ')}»`).join(', '), n: inSet.filter((s) => after.issued.includes(s.id)).length, of: inSet.length });
+        const text = fmt(t.botEarned, { sticker: got.map((s) => `«${t.stickers[s.id].join(' ')}»`).join(', '), n: inSet.filter((s) => after.issued.includes(s.id)).length, of: inSet.length });
         await this.notify(id, after.lang, text, st.pack, true);
       })
       .catch((e: unknown) => this.d.log('warn', 'shop_earn', errFields(e)));
@@ -674,6 +694,33 @@ export class Shop {
     return this.settle(await this.starTransactions(now));
   }
 
+  /**
+   * Напоминания (по расписанию): кто нажал «Напомнить» в стикерпаке, тому в новые сутки по Москве (днём, не ночью)
+   * бот один раз пишет, что стикеры за дубли снова открываются. Ответ — сколько написал.
+   */
+  async remindAll(): Promise<number> {
+    const now = (this.d.now ?? Date.now)();
+    const hour = new Date(now + MSK).getUTCHours();
+    if (hour < REMIND_FROM || hour >= REMIND_TO) return 0;
+    const mark = `remind:${dayKey(now)}`;
+    let sent = 0;
+    for (const id of (await this.d.ledger.shopUsersWith?.(mark)) ?? []) {
+      let lang: Lang | null = null;
+      let pack: string | null = null;
+      const err = await this.edit(id, (u) => {
+        if (!u.items.includes(mark)) return 'gone';
+        u.items = u.items.filter((i) => i !== mark);
+        lang = u.lang;
+        pack = u.pack;
+        return null;
+      }).catch((e: unknown) => (this.d.log('warn', 'shop_remind', errFields(e)), 'fail'));
+      if (err || !lang) continue;
+      await this.notify(id, lang, fmt(DICTS[lang as Lang].shop.botRemind, { n: EARN_PER_DAY }), pack ? `https://t.me/addstickers/${pack}` : null, true);
+      sent++;
+    }
+    return sent;
+  }
+
   /** Сверять раз в `ms` (первый раз — через минуту после старта). Ответ — остановить. */
   sweepEvery(ms: number): () => void {
     let running = false;
@@ -685,6 +732,8 @@ export class Shop {
         if (this.d.lease && !(await this.d.lease('shop_reconcile', ms * 2))) return;
         const n = await this.reconcileAll();
         this.d.log(n ? 'warn' : 'info', 'shop_sweep', { settled: n });
+        const r = await this.remindAll();
+        if (r) this.d.log('info', 'shop_remind', { sent: r });
       } catch (e) {
         this.d.log('warn', 'shop_sweep', errFields(e));
       } finally {

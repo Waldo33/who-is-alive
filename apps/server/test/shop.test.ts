@@ -520,7 +520,7 @@ describe('гардероб', () => {
     expect(got(await store.shopUser(77))).toEqual(['st:jackpot', 'st:chef', 'st:cut']);
   });
 
-  it('за сутки (по Москве) — не больше трёх стикеров за матчи; бот и экран говорят, когда снова', async () => {
+  it('за сутки (по Москве) — не больше трёх стикеров за матчи; экран говорит, когда снова', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     try {
       vi.setSystemTime(new Date('2026-11-28T10:00:00Z'));
@@ -537,7 +537,7 @@ describe('гардероб', () => {
       expect((await state()).earnNext).toBeNull();
       await play();
       expect(await n()).toBe(3);
-      expect(said().at(-1)).toContain('На сегодня всё');
+      expect(said().at(-1)).toContain('следующие откроются');
       // следующие сутки по Москве — с 21:00 UTC
       expect((await state()).earnNext).toBe(Date.parse('2026-11-28T21:00:00Z'));
       await play();
@@ -552,6 +552,38 @@ describe('гардероб', () => {
       expect(await n()).toBe(5);
       expect((await state()).earnNext).toBeNull();
       expect((await store.shopUser(77))!.items.filter((i) => i.startsWith('day:'))).toEqual(['day:20261129:2']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('«Напомнить»: только при исчерпанном лимите; бот пишет один раз в новые сутки, днём', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(new Date('2026-11-28T10:00:00Z'));
+      const { bot, calls } = makeBot();
+      await hook(bot, payment());
+      const remind = async () => bot.handle('POST', '/shop/remind', {}, { initData: initData(ANYA) });
+      const play = () => bot.shop.earn({ users: [{ tgUser: 77, name: 'Аня', lang: 'ru', stickers: ['splat', 'allGood', 'happyTears', 'freeze', 'meow'] }] });
+      // лимит не исчерпан — напоминать не о чем
+      expect((await remind()).body).toEqual({ error: 'no_limit' });
+      await play();
+      await play();
+      const r = await remind();
+      expect(r.status).toBe(200);
+      expect((r.body as { remind: boolean }).remind).toBe(true);
+      const reminds = () => calls.filter((c) => c.method === 'sendMessage' && String(c.body.text).includes('снова открываются'));
+      // те же сутки и ночь — молчит
+      expect(await bot.shop.remindAll()).toBe(0);
+      vi.setSystemTime(new Date('2026-11-29T03:00:00Z'));
+      expect(await bot.shop.remindAll()).toBe(0);
+      // 10:30 по Москве — пишет, второй раз — нет
+      vi.setSystemTime(new Date('2026-11-29T07:30:00Z'));
+      expect(await bot.shop.remindAll()).toBe(1);
+      expect(reminds()).toHaveLength(1);
+      expect(reminds()[0].body.text).toContain('ещё 3');
+      expect(await bot.shop.remindAll()).toBe(0);
+      expect(((await bot.handle('POST', '/shop', {}, { initData: initData(ANYA) })).body as { remind: boolean }).remind).toBe(false);
     } finally {
       vi.useRealTimers();
     }
