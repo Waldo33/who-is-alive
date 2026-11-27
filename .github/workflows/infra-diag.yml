@@ -1,4 +1,4 @@
-# Диагностика серверов (Европа и Нидерланды): службы, наблюдение, сторож и журналы (без секретов). Запуск — правкой этого файла (25.11 22:30).
+# Диагностика серверов (Европа и Нидерланды): службы, наблюдение, сторож и журналы (без секретов). Запуск — правкой этого файла (27.11 22:30).
 name: infra-diag
 
 on:
@@ -136,6 +136,14 @@ jobs:
           ssh $SSH_OPTS root@72.56.22.216 "journalctl -u 'massovka-game@*' --since -3h --no-pager -o cat | grep -E 'stickers_to_bot|match_end|earned' | tail -20 | cut -c1-300" || true
           ssh $SSH_OPTS root@$IP "journalctl -u 'massovka-game*' --since -3h --no-pager -o cat | grep -E 'shop_earn|tg/stickers|new_sticker|stickers' | grep -v metrics | tail -20 | cut -c1-300" || true
           ssh $SSH_OPTS root@72.56.22.216 "sudo -u postgres psql massovka -P pager=off -Atc \"select user_id, items, issued, updated_at from shop_users\"" || true
+      - name: Фильм матча в чат — журналы бота и игры за 3 часа (27.11, ночь)
+        env:
+          IP: ${{ steps.infra.outputs.ip }}
+        run: |
+          echo "── бот (Нидерланды)"
+          ssh $SSH_OPTS root@$IP "journalctl -u 'massovka-game*' --since -3h --no-pager -o cat | grep -E 'tg_film|clip_public|/prepare|savePrepared|editMessageMedia' | tail -40 | cut -c1-400" || true
+          echo "── игра (Европа)"
+          ssh $SSH_OPTS root@72.56.22.216 "journalctl -u 'massovka-game@*' --since -3h --no-pager -o cat | grep -E 'film|s3_|clips' | grep -v '\"/metrics' | tail -40 | cut -c1-400; ls -la /var/lib/massovka-clips | tail -8" || true
       # шлёт картинку и файлы в группу тревог и сразу удаляет — владельцу приходят уведомления о
       # «пропавших тревогах» (23.11.2026). Включать вручную: TG_REACH: '1' на время проверки.
       - name: Достаёт ли Telegram до наших серверов

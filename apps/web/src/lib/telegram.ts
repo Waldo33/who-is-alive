@@ -379,7 +379,7 @@ async function botPost<T>(path: string, body: Record<string, unknown>, timeoutMs
   }
 }
 
-export type ShareCard = { kind: 'room'; code: string } | { kind: 'daily'; squares: string } | { kind: 'invite' } | { kind: 'clip'; clip: string; text: string; thumb: boolean; code?: string; invite?: string };
+export type ShareCard = { kind: 'room'; code: string } | { kind: 'daily'; squares: string } | { kind: 'invite' } | { kind: 'clip'; clip: string; text: string; thumb: boolean; code?: string; invite?: string; puzzle?: string };
 
 /**
  * Поделиться карточкой с кнопкой «Играть» (Bot API 8.0): Telegram показывает выбор чата поверх игры
@@ -478,6 +478,10 @@ export interface ShopState {
   my?: MySticker[];
   figs?: MyFig[];
   earned?: string[];
+  /** Дневной лимит стикеров за матчи исчерпан — когда снова (мс); null — можно открывать. */
+  earnNext?: number | null;
+  /** Игрок нажал «Напомнить» — бот напишет, когда стикеры снова откроются. */
+  remind?: boolean;
   /** Сколько ещё боту добавить, убрать или заменить в паке. */
   pending?: number;
   /** Бесплатный пак ещё не забран: сыгран ли матч, есть ли подписка на канал (экран-замок; старый сервер не шлёт). */
@@ -510,6 +514,11 @@ export function shopPick(id: StickerId, on: boolean) {
 /** Свой стикер: новый (slot нет) или правка места slot. Рисует и кладёт в пак бот. */
 export function shopMy(sticker: { fig: MyFig; pose: string; color: number; caption: string }, slot?: number) {
   return botCall<ShopState>('/shop/my', { sticker, slot });
+}
+
+/** «Напомнить»: бот напишет, когда стикеры за дубли снова откроются (дневной лимит). */
+export function shopRemind() {
+  return botCall<ShopState>('/shop/remind', {});
 }
 
 export function shopMyDel(slot: number) {

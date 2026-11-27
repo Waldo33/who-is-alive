@@ -32,6 +32,8 @@ export interface Store {
   /** Гардероб (shop.ts): покупки и личный стикерпак игрока Telegram. */
   shopUser(userId: number): Promise<ShopUser | null>;
   saveShopUser(u: ShopUser): Promise<void>;
+  /** Игроки гардероба с этой отметкой в учёте (до 500) — для напоминаний бота. */
+  shopUsersWith(item: string): Promise<number[]>;
   /** Записать оплату. false — этот платёж уже записан (Telegram повторил обновление). */
   saveShopPayment(p: ShopPayment): Promise<boolean>;
   /** Отметить возврат. null — платежа нет или он уже возвращён. */
@@ -325,6 +327,11 @@ export class PgStore implements Store {
     return x ? { userId: Number(x.user_id), lang: x.lang === 'en' ? 'en' : 'ru', name: x.name, items: x.items, pack: x.pack, issued: x.issued, my: Array.isArray(x.my) ? x.my : [] } : null;
   }
 
+  async shopUsersWith(item: string): Promise<number[]> {
+    const res = await this.pool.query(`select user_id from shop_users where $1 = any(items) limit 500`, [item]);
+    return res.rows.map((r: { user_id: string | number }) => Number(r.user_id));
+  }
+
   async saveShopUser(u: ShopUser): Promise<void> {
     await this.pool.query(
       // my: undefined — запись от старого бота (своих стикеров не знает): не трогаем
@@ -462,6 +469,10 @@ export class MemoryStore implements Store {
   async shopUser(userId: number): Promise<ShopUser | null> {
     const u = this.shop.get(userId);
     return u ? structuredClone(u) : null;
+  }
+
+  async shopUsersWith(item: string): Promise<number[]> {
+    return [...this.shop.values()].filter((u) => u.items.includes(item)).map((u) => u.userId).slice(0, 500);
   }
 
   async saveShopUser(u: ShopUser): Promise<void> {

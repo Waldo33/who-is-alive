@@ -525,6 +525,7 @@ export const en: Dict = {
     login: 'Log in with Telegram',
     loginHint: 'Bought in the bot? Get it all here too',
     loginFail: 'Login failed. Try again',
+    loginWait: 'Tap “Log in” in the bot',
     loggedAs: 'Logged in: {name}',
     logout: 'Log out',
     items: {
@@ -597,6 +598,11 @@ export const en: Dict = {
       save: 'Save',
       del: 'Remove from pack',
       tapHint: 'Tap a sticker to remove it from the pack or bring it back',
+      nextIn: 'New stickers for takes in {time}',
+      hm: '{h}h {m}m',
+      m: '{m}m',
+      remind: 'Remind me',
+      reminded: 'The bot will remind you',
       back: 'Back to stickers',
       errors: {
         long: 'Too long: 2 lines of 10',
@@ -608,7 +614,7 @@ export const en: Dict = {
         full: 'You already have 5 of your own',
         bad: 'Something went wrong, try again',
       },
-      poses: { wave: 'Hi', dance: 'Dance', stun: 'Stunned', startle: 'Startled', jump: 'Jump', freeze: 'Freeze' },
+      poses: { wave: 'Hi', dance: 'Dance', stun: 'Stunned', startle: 'Startled', jump: 'Jump', freeze: 'Freeze', ask: 'Question' },
       figs: { actor: 'Actor', kotBanan: 'Catnana' },
       /** What unlocks stickers and figures. */
       earn: {
@@ -648,6 +654,7 @@ export const en: Dict = {
     botFree: '🎬 Your sticker pack is ready: 4 stickers with your actor.',
     botPack: '📦 Open the sticker pack',
     botEarned: '🎬 New sticker in your pack: {sticker}. {n} of {of} collected — more unlock in the next takes.',
+    botRemind: '🎬 Stickers for takes are unlocking again: {n} more up for grabs today. Shall we play?',
     botFreeOffer: '🎬 First take is in the can! A free sticker pack with your actor is yours — want it?',
     botFreeClaim: '🎁 Get the sticker pack',
     botNeedSub: '🎬 First take is in the can! Join the Be Nobody channel and the free sticker pack with your actor is yours.',

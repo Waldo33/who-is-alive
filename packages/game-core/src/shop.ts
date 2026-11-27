@@ -154,6 +154,18 @@ export function earnedEvents(pid: string, rounds: EarnRound[], match: Pick<Match
   return out;
 }
 
+/** Сколько новых стикеров открывает один матч: условий за матч набирается много, весь пак не должен падать за пару игр. */
+export const EARN_PER_MATCH = 2;
+/** И не больше стольких за сутки (по Москве): весь пак за игру — не быстрее недели, а не за вечер. */
+export const EARN_PER_DAY = 3;
+/** Если условий набралось больше, чем `EARN_PER_MATCH`, — сначала редкие. */
+const EARN_RANK: readonly EarnId[] = ['jackpot', 'clairvoyant', 'stars', 'unsuspected', 'paranoid', 'win', 'theme', 'cut', 'accuse', 'survive', 'lose', 'played'];
+/** Какие из новых для игрока стикеров открыть за этот матч (порядок STICKER_LIST при равной редкости). */
+export function pickEarned<T extends Pick<StickerMeta, 'earn'>>(fresh: readonly T[], n = EARN_PER_MATCH): T[] {
+  const rank = (s: T) => (s.earn ? EARN_RANK.indexOf(s.earn) : EARN_RANK.length);
+  return [...fresh].sort((a, b) => rank(a) - rank(b)).slice(0, n);
+}
+
 /** Стикеры, которые открывает матч игроку `pid` (все наборы; что из них положено — решает бот по покупкам). */
 export function earnedStickers(pid: string, rounds: EarnRound[], match: Pick<MatchSummary, 'winners'>): StickerId[] {
   const ev = earnedEvents(pid, rounds, match);
@@ -209,9 +221,9 @@ export const MY_FIGS = [
 export type MyFig = (typeof MY_FIGS)[number]['id'];
 
 /** Позы (те же движения, что в игре) и эмодзи стикера для поиска в Telegram. */
-export const MY_POSES = ['wave', 'dance', 'stun', 'startle', 'jump', 'freeze'] as const;
+export const MY_POSES = ['wave', 'dance', 'stun', 'startle', 'jump', 'freeze', 'ask'] as const;
 export type MyPose = (typeof MY_POSES)[number];
-export const MY_POSE_EMOJI: Record<MyPose, string> = { wave: '👋', dance: '💃', stun: '😵', startle: '😱', jump: '🤩', freeze: '🥶' };
+export const MY_POSE_EMOJI: Record<MyPose, string> = { wave: '👋', dance: '💃', stun: '😵', startle: '😱', jump: '🤩', freeze: '🥶', ask: '🤔' };
 /** Цвет подписи и искр — имена из палитры PAL (рисует клиент). */
 export const MY_COLORS = ['white', 'yellow', 'orange', 'cyan', 'green', 'orchid'] as const;
 /**

@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { DICTS, MY_FIGS, MY_ISSUED, MY_MARKS, MY_MAX, MY_POSE_EMOJI, RETIRED_STICKERS, SHOP_ITEMS, STICKER_LIST, TEST_ITEM, buyItem, canDrop, fmt, isMySticker, isSkin, isStickerId, myFigOpen, myIssued, offSticker, parseMySticker, skinOf, wearItems } from '@kto/game-core';
+import { DICTS, EARN_PER_DAY, EARN_PER_MATCH, MY_FIGS, MY_ISSUED, MY_MARKS, MY_MAX, MY_POSE_EMOJI, RETIRED_STICKERS, SHOP_ITEMS, STICKER_LIST, TEST_ITEM, buyItem, canDrop, fmt, isMySticker, isSkin, isStickerId, myFigOpen, myIssued, offSticker, parseMySticker, pickEarned, skinOf, wearItems } from '@kto/game-core';
 import type { MySticker, StickerId, StickerMeta } from '@kto/game-core';
 import { RateWindow } from './limits';
 import { errFields } from './log';
@@ -33,7 +33,8 @@ import type { ShopPayment, ShopUser, Store, TgLink } from './store';
  * Учёт: у игрового сервера — его Postgres; у сервера бота базы нет — RemoteLedger, по туннелю к игровому.
  */
 
-export type ShopLedger = Pick<Store, 'shopUser' | 'saveShopUser' | 'saveShopPayment' | 'refundShopPayment'> & {
+export type ShopLedger = Pick<Store, 'shopUser' | 'saveShopUser' | 'saveShopPayment' | 'refundShopPayment'> &
+  Partial<Pick<Store, 'shopUsersWith'>> & {
   /** Связать игрока игрового сервера (по его токену — проверяет игровой сервер) с пользователем Telegram. false — токен чужой. */
   linkGame(token: string, link: Omit<TgLink, 'gameUser'>): Promise<boolean>;
 };
@@ -47,6 +48,7 @@ export function localLedger(store: Store, verify?: VerifyToken, onLink?: (gameUs
   return {
     shopUser: (id) => store.shopUser(id),
     saveShopUser: (u) => store.saveShopUser(u),
+    shopUsersWith: (item) => store.shopUsersWith(item),
     saveShopPayment: (p) => store.saveShopPayment(p),
     refundShopPayment: (c) => store.refundShopPayment(c),
     async linkGame(token, link) {
@@ -62,7 +64,20 @@ export function localLedger(store: Store, verify?: VerifyToken, onLink?: (gameUs
 /** Токен игрока: JWT (три части base64url), не длиннее 1 КБ. */
 const TOKEN = /^[A-Za-z0-9_-]{1,512}\.[A-Za-z0-9_-]{1,512}\.[A-Za-z0-9_-]{1,512}$/;
 
-const ITEM = /^(?:starter|(?:st|in|own|made|off|wear):[A-Za-z]{1,24}|[A-Za-z]{1,24})$/;
+/** Сутки по Москве (UTC+3) для лимита стикеров за матчи: «20261128». */
+const MSK = 3 * 3600_000;
+const DAY = 24 * 3600_000;
+const dayKey = (ms: number): string => new Date(ms + MSK).toISOString().slice(0, 10).replace(/-/g, '');
+/** Когда начнутся следующие сутки по Москве. */
+const nextDay = (ms: number): number => (Math.floor((ms + MSK) / DAY) + 1) * DAY - MSK;
+/** Сколько стикеров за матчи игрок уже получил сегодня (отметка `day:<сутки>:<n>`). */
+const earnedToday = (items: readonly string[], now: number): number => Number(items.find((i) => i.startsWith(`day:${dayKey(now)}:`))?.split(':')[2]) || 0;
+/** Стикеры, которые игрок ещё может открыть за матчи (набор есть, стикера нет). */
+const earnable = (items: readonly string[]) => STICKER_LIST.filter((s) => !s.now && !!s.earn && (s.set === 'starter' || s.set === 'play' || items.includes(s.set)) && !items.includes(`st:${s.id}`));
+/** Напоминание о стикерах — с 10 до 22 по Москве (не ночью). */
+const REMIND_FROM = 10;
+const REMIND_TO = 22;
+const ITEM = /^(?:starter|(?:st|in|own|made|off|wear):[A-Za-z]{1,24}|[A-Za-z]{1,24}|day:\d{8}:\d{1,2}|remind:\d{8})$/;
 const PACK = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
 /**
  * Номер платежа Telegram (telegram_payment_charge_id): у звёзд — длинный «stx…» с символами base64 и прочими.
@@ -95,6 +110,9 @@ export class RemoteLedger implements ShopLedger {
   saveShopUser(user: ShopUser) {
     return this.op<void>({ op: 'save', user });
   }
+  shopUsersWith(item: string) {
+    return this.op<number[]>({ op: 'with', item });
+  }
   saveShopPayment(payment: ShopPayment) {
     return this.op<boolean>({ op: 'pay', payment });
   }
@@ -122,7 +140,7 @@ function parseUser(x: unknown): ShopUser | null {
 
 /** /internal/shop на игровом сервере: операция учёта от сервера бота. Маршрут внутренний, но вход всё равно проверяем. */
 export async function shopLedgerOp(store: ShopLedger, raw: unknown): Promise<{ status: number; body: unknown }> {
-  const b = raw as { op?: unknown; userId?: unknown; user?: unknown; payment?: unknown; charge?: unknown; token?: unknown; link?: unknown } | null;
+  const b = raw as { op?: unknown; item?: unknown; userId?: unknown; user?: unknown; payment?: unknown; charge?: unknown; token?: unknown; link?: unknown } | null;
   const bad = { status: 400, body: { error: 'bad_request' } };
   if (b?.op === 'get') return userId(b.userId) ? { status: 200, body: { result: await store.shopUser(b.userId) } } : bad;
   if (b?.op === 'save') {
@@ -141,6 +159,7 @@ export async function shopLedgerOp(store: ShopLedger, raw: unknown): Promise<{ s
     if (typeof b.token !== 'string' || !TOKEN.test(b.token) || !l || !userId(l.tgUser) || typeof l.name !== 'string' || l.name.length > 32 || (l.lang !== 'ru' && l.lang !== 'en')) return bad;
     return { status: 200, body: { result: await store.linkGame(b.token, { tgUser: l.tgUser, name: packName(l.name), lang: l.lang }) } };
   }
+  if (b?.op === 'with') return typeof b.item === 'string' && ITEM.test(b.item) && store.shopUsersWith ? { status: 200, body: { result: await store.shopUsersWith(b.item) } } : bad;
   if (b?.op === 'refund') return typeof b.charge === 'string' && CHARGE.test(b.charge) ? { status: 200, body: { result: await store.refundShopPayment(b.charge) } } : bad;
   return bad;
 }
@@ -306,6 +325,7 @@ export class Shop {
     if (path === '/shop/pick') return this.pick(id, body.id, body.on);
     if (path === '/shop/my') return this.saveMy(id, body.slot, body.sticker, now);
     if (path === '/shop/my/del') return this.delMy(id, body.slot);
+    if (path === '/shop/remind') return this.remindMe(id, now);
     return { status: 404, body: { error: 'not_found' } };
   }
 
@@ -316,6 +336,7 @@ export class Shop {
     // недовыданное и неубранное (сбой Telegram, перезапуск) — дослать в фоне
     if (kick && pending && !this.queue.has(id)) void this.issue(id);
     const open = u ? openStickers(u.items) : [];
+    const now = (this.d.now ?? Date.now)();
     // бесплатный пак ещё не забран — шаги для экрана-замка: сыгран ли матч, есть ли подписка на канал
     const free = u?.items.includes('starter') ? undefined : { played: !!u?.items.includes('played'), sub: await this.subscribed(id), channel: this.d.channel };
     return {
@@ -335,6 +356,10 @@ export class Shop {
       my: u?.my ?? [],
       figs: MY_FIGS.filter((f) => myFigOpen(f.id, u?.items ?? [])).map((f) => f.id),
       earned: (u?.items ?? []).filter((i) => i.startsWith('st:')).map((i) => i.slice(3)),
+      /** Дневной лимит стикеров за матчи исчерпан — когда снова (мс); null — можно открывать. */
+      earnNext: u && earnedToday(u.items, now) >= EARN_PER_DAY && earnable(u.items).length ? nextDay(now) : null,
+      /** Игрок нажал «Напомнить» — бот напишет, когда стикеры снова откроются. */
+      remind: !!u?.items.some((i) => i.startsWith('remind:') && i.slice(7) > dayKey(now)),
       pending,
       free,
     };
@@ -379,6 +404,16 @@ export class Shop {
     if (err) return { status: 409, body: { error: err } };
     this.d.log('info', 'shop_my_saved', { fig: v.fig, pose: v.pose });
     return { status: 200, body: await this.state(id, true) };
+  }
+
+  /** «Напомнить»: дневной лимит стикеров за матчи исчерпан — бот напишет, когда начнутся следующие сутки (днём). */
+  private async remindMe(id: number, now: number): Promise<ShopReply> {
+    const err = await this.edit(id, (u) => {
+      if (earnedToday(u.items, now) < EARN_PER_DAY || !earnable(u.items).length) return 'no_limit';
+      u.items = [...u.items.filter((i) => !i.startsWith('remind:')), `remind:${dayKey(nextDay(now))}`];
+      return null;
+    });
+    return err ? { status: 409, body: { error: err } } : { status: 200, body: await this.state(id, false) };
   }
 
   private async delMy(id: number, slot: unknown): Promise<ShopReply> {
@@ -471,14 +506,20 @@ export class Shop {
     const run = prev
       .then(async () => {
         const u = (await this.d.ledger.shopUser(id)) ?? { userId: id, lang: x.lang, name: packName(x.name) || 'Актёр', items: [], pack: null, issued: [] };
-        const fresh = STICKER_LIST.filter(
-          (s) => x.stickers.includes(s.id) && !s.now && (s.set === 'starter' || s.set === 'play' || u.items.includes(s.set)) && !u.items.includes(`st:${s.id}`),
+        // не больше EARN_PER_MATCH новых за матч и EARN_PER_DAY за сутки, сначала редкие — остальное откроется потом
+        const now = (this.d.now ?? Date.now)();
+        const today = dayKey(now);
+        const usedToday = earnedToday(u.items, now);
+        const fresh = pickEarned(
+          earnable(u.items).filter((s) => x.stickers.includes(s.id)),
+          Math.max(0, Math.min(EARN_PER_MATCH, EARN_PER_DAY - usedToday)),
         );
         // первый сыгранный матч открывает бесплатный пак: бот предлагает его забрать
         const first = !u.items.includes('played');
         if (first) u.items.push('played');
         if (!fresh.length && !first) return;
         u.items.push(...fresh.map((s) => `st:${s.id}`));
+        if (fresh.length) u.items = [...u.items.filter((i) => !i.startsWith('day:')), `day:${today}:${usedToday + fresh.length}`];
         await this.d.ledger.saveShopUser(u);
         if (first && !u.items.includes('starter')) await this.offerFree(u);
         if (!fresh.length) return;
@@ -653,6 +694,33 @@ export class Shop {
     return this.settle(await this.starTransactions(now));
   }
 
+  /**
+   * Напоминания (по расписанию): кто нажал «Напомнить» в стикерпаке, тому в новые сутки по Москве (днём, не ночью)
+   * бот один раз пишет, что стикеры за дубли снова открываются. Ответ — сколько написал.
+   */
+  async remindAll(): Promise<number> {
+    const now = (this.d.now ?? Date.now)();
+    const hour = new Date(now + MSK).getUTCHours();
+    if (hour < REMIND_FROM || hour >= REMIND_TO) return 0;
+    const mark = `remind:${dayKey(now)}`;
+    let sent = 0;
+    for (const id of (await this.d.ledger.shopUsersWith?.(mark)) ?? []) {
+      let lang: Lang | null = null;
+      let pack: string | null = null;
+      const err = await this.edit(id, (u) => {
+        if (!u.items.includes(mark)) return 'gone';
+        u.items = u.items.filter((i) => i !== mark);
+        lang = u.lang;
+        pack = u.pack;
+        return null;
+      }).catch((e: unknown) => (this.d.log('warn', 'shop_remind', errFields(e)), 'fail'));
+      if (err || !lang) continue;
+      await this.notify(id, lang, fmt(DICTS[lang as Lang].shop.botRemind, { n: EARN_PER_DAY }), pack ? `https://t.me/addstickers/${pack}` : null, true);
+      sent++;
+    }
+    return sent;
+  }
+
   /** Сверять раз в `ms` (первый раз — через минуту после старта). Ответ — остановить. */
   sweepEvery(ms: number): () => void {
     let running = false;
@@ -664,6 +732,8 @@ export class Shop {
         if (this.d.lease && !(await this.d.lease('shop_reconcile', ms * 2))) return;
         const n = await this.reconcileAll();
         this.d.log(n ? 'warn' : 'info', 'shop_sweep', { settled: n });
+        const r = await this.remindAll();
+        if (r) this.d.log('info', 'shop_remind', { sent: r });
       } catch (e) {
         this.d.log('warn', 'shop_sweep', errFields(e));
       } finally {

@@ -7,7 +7,7 @@ import type { Lang, MyFig, MyPose, MySticker, ShopItemId, StickerMeta } from '@k
 import { PAL } from '@kto/assets';
 import { track } from '@/lib/analytics';
 import { detectLang } from '@/lib/lang';
-import { bootTelegram, haptic, linkTelegramOnce, openTelegram, shopClaim, shopMy, shopMyDel, shopPick, shopCached, shopSignedIn, shopState, tgLink } from '@/lib/telegram';
+import { bootTelegram, haptic, linkTelegramOnce, openTelegram, shopClaim, shopMy, shopMyDel, shopPick, shopRemind, shopCached, shopSignedIn, shopState, tgLink } from '@/lib/telegram';
 import type { ShopState } from '@/lib/telegram';
 import { TopBar } from '@/ui/TopBarView';
 import { ST_SIZE, STICKERS, stickerFrame } from '@/game/skins/stickers';
@@ -58,6 +58,15 @@ export default function StickersClient() {
   // низ экрана — когда ясно, Telegram ли это и что в паке (иначе мелькает «Открыть в Telegram»)
   const [known, setKnown] = useState(false);
   const [st, setSt] = useState<ShopState | null>(null);
+  // дневной лимит стикеров за дубли: часы до новых, раз в полминуты
+  const [clock, setClock] = useState(() => Date.now());
+  const earnNext = st?.earnNext ?? null;
+  useEffect(() => {
+    if (!earnNext) return;
+    setClock(Date.now());
+    const h = setInterval(() => setClock(Date.now()), 30_000);
+    return () => clearInterval(h);
+  }, [earnNext]);
   const [tab, setTab] = useState<Tab>('pack');
   const [pics, setPics] = useState<Record<string, string>>({});
   const [figPics, setFigPics] = useState<Record<string, string>>({});
@@ -238,10 +247,25 @@ export default function StickersClient() {
     return true;
   };
 
+  const waitMs = earnNext ? earnNext - clock : 0;
+  const nextNote =
+    waitMs > 0
+      ? fmt(b.nextIn, {
+          time: waitMs >= 3600_000 ? fmt(b.hm, { h: Math.floor(waitMs / 3600_000), m: Math.floor((waitMs % 3600_000) / 60_000) }) : fmt(b.m, { m: Math.max(1, Math.ceil(waitMs / 60_000)) }),
+        })
+      : null;
+
+  const remindMe = async () => {
+    if (busy) return;
+    setBusy(true);
+    apply(await shopRemind());
+    setBusy(false);
+  };
+
   const tapSticker = async (m: StickerMeta) => {
     setSel(m.id);
     if (!open.has(m.id)) {
-      setNote(fmt(b.locked, { how: howTo(m) }));
+      setNote(fmt(b.locked, { how: howTo(m) }) + (nextNote && m.earn ? `. ${nextNote}` : ''));
       return;
     }
     if (!canDrop(m.id)) {
@@ -417,7 +441,24 @@ export default function StickersClient() {
             <p className="stickers-note">
               {selMeta ? <b>{t.stickers[selMeta.id].join(' ')}</b> : null}
               {selMeta ? ' · ' : ''}
-              {status || (hasPack ? b.tapHint : fmt(b.myFull, { n: MY_MAX }))}
+              {status ||
+                (hasPack && nextNote ? (
+                  <>
+                    {nextNote}
+                    {' · '}
+                    {st?.remind ? (
+                      b.reminded
+                    ) : (
+                      <button className="stickers-link" onClick={() => void remindMe()} aria-disabled={busy}>
+                        {b.remind}
+                      </button>
+                    )}
+                  </>
+                ) : hasPack ? (
+                  b.tapHint
+                ) : (
+                  fmt(b.myFull, { n: MY_MAX })
+                ))}
             </p>
             {buyItem ? (
               // закрытый стикер набора из гардероба — сразу покупка этого набора
