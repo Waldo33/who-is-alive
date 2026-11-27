@@ -245,7 +245,7 @@ export function telegramStartTarget(): string | null {
   }
   const room = /^r_([A-Z]{4})$/.exec(start);
   if (room) return `/r/${room[1]}?src=tg`;
-  if (start === 'play') return '/sandbox?go&src=tg';
+  if (start === 'play') return '/?create=1&src=tg';
   // дев-режим песочницы для владельца (в Telegram адрес не поправить руками): dev, dev_t7, dev_t7_s8 —
   // тема и ускорение, как ?dev&theme=7&speed=8
   const dev = /^dev(?:_t(\d{1,2}))?(?:_s(\d{1,2}))?$/.exec(start);

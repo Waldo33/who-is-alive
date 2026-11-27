@@ -152,13 +152,18 @@ export default function HomeClient() {
       <h1>{t.meta.title}</h1>
       <p className="tag">{t.meta.tagline}</p>
       {ny && <p className="ny-line">{t.start.newYear}</p>}
-      {/* главное — сразу играть (с ИИ, без друзей и входа); комната для друзей — второй; кастинг дня — карточкой */}
+      {/* один вход: «Играть» — лобби на сервере (друзья по ссылке, пустые места — ИИ-актёры; матч засчитывается
+          для стикерпака). Матч с ботами без сети — только в дев-режиме (/sandbox?dev) */}
       <div className="home-actions">
-        <Link className="btn" href="/sandbox?go" onClick={() => track('quick_play_tap')}>
-          {t.start.quickPlay}
-        </Link>
-        <button className="btn alt" onClick={() => void create()} disabled={busy}>
-          {busy ? t.lobby.connecting : t.start.withFriends}
+        <button
+          className="btn"
+          onClick={() => {
+            track('quick_play_tap');
+            void create();
+          }}
+          disabled={busy}
+        >
+          {busy ? t.lobby.connecting : t.start.quickPlay}
         </button>
         {/* кнопки игры — вместе; карточки (гардероб, стикеры, кастинг) — ниже, отдельной группой */}
         {web && (
