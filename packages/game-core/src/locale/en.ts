@@ -500,7 +500,6 @@ export const en: Dict = {
     owned: 'Already yours',
     gift: '8 stickers as a gift',
     giftHow: '2 now, 6 for awards',
-    onlyTg: 'Buy it in Telegram',
     paying: 'Paying…',
     paid: 'Done! Stickers are on their way to your pack',
     failed: 'Something went wrong. Try again',

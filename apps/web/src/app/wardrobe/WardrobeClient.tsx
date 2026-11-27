@@ -8,7 +8,7 @@ import { track } from '@/lib/analytics';
 import { TG_APP } from '@/lib/env';
 import { featureOn } from '@/lib/features';
 import { detectLang } from '@/lib/lang';
-import { bootTelegram, haptic, inTelegram, linkTelegramOnce, openTelegram, shopBuy, shopState } from '@/lib/telegram';
+import { bootTelegram, haptic, inTelegram, linkTelegramOnce, openTelegram, shopBuy, shopState, tgLink } from '@/lib/telegram';
 import type { ShopState } from '@/lib/telegram';
 import { TopBar } from '@/ui/TopBarView';
 import { CARD_H, CARD_W, buyLabel, drawCard, itemIcon, starsIcon } from '@/game/skins/wardrobe';
@@ -106,7 +106,14 @@ export default function WardrobeClient() {
   }, [ready, scale]);
 
   const buy = async () => {
-    if (busy || !tgOn || owned) return;
+    // вне Telegram покупка невозможна — ведём в гардероб внутри бота
+    if (!tgOn) {
+      track('shop_to_tg', { item: ITEM });
+      const link = tgLink('ff_shop');
+      if (link) location.href = link;
+      return;
+    }
+    if (busy || owned) return;
     setBusy('buy');
     setNote(t.paying);
     track('shop_buy_tap', { item: ITEM });
@@ -181,12 +188,11 @@ export default function WardrobeClient() {
           </>
         ) : (
           <>
-            <button className="btn" onClick={() => void buy()} aria-disabled={!tgOn || !!busy}>
+            <button className="btn" onClick={() => void buy()} aria-disabled={!!busy}>
               {was && <s className="wardrobe-was">{was}</s>}
               {buyLabel(lang, ITEM)}
               {star && <img className="wardrobe-star" src={star} alt="" width={26} height={26} />}
             </button>
-            {!tgOn && <p className="muted">{t.onlyTg}</p>}
           </>
         )}
         {note && <p className="wardrobe-note">{note}</p>}
