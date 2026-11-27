@@ -106,9 +106,9 @@ const ART: Art[] = [
     id: 'who',
     draw(g, t, lang) {
       const fr = Math.floor(t / 4) % 2 ? F.STARTLE + 1 : F.STARTLE;
-      put(g, actorFrame(fr), ST_SIZE / 2 - 21, 10, 3);
+      put(g, actorFrame(fr), ST_SIZE / 2 - 21, 14, 3);
       if (Math.floor(t / 5) % 2 === 0) say(g, '?', 80, 6, PAL.white, 2);
-      cap(g, 'who', lang, 74);
+      cap(g, 'who', lang, 84);
     },
   },
   // ── набор «Кот-банан» ──
