@@ -312,3 +312,9 @@ button.summary { color: var(--sand); cursor: pointer; }
 .wardrobe-note { color: var(--sand); }
 .wardrobe .btn[aria-disabled='true'] { background: var(--night); color: var(--steel); box-shadow: 0 0 0 2px var(--ink); pointer-events: none; }
 .wardrobe-star { width: 26px; height: 26px; image-rendering: pixelated; }
+.wardrobe-sets { display: flex; gap: 8px; flex-shrink: 0; }
+.wardrobe-set { width: 52px; height: 52px; display: flex; align-items: center; justify-content: center; overflow: hidden; padding: 0; font: inherit; font-size: 16px;
+  color: var(--steel); background: var(--night); border: 0; box-shadow: 0 0 0 2px var(--ink), 0 0 0 4px var(--dusk); }
+.wardrobe-set img { image-rendering: pixelated; margin-top: 18px; }
+.wardrobe-set.on { box-shadow: 0 0 0 2px var(--ink), 0 0 0 4px var(--yellow); }
+.wardrobe-set:focus-visible { outline: 2px solid var(--yellow); outline-offset: 4px; }

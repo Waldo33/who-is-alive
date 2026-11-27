@@ -494,6 +494,7 @@ export const en: Dict = {
   },
   shop: {
     title: 'Wardrobe',
+    soon: 'New sets coming soon',
     isNew: 'NEW',
     buy: 'Buy {n}',
     owned: 'Already yours',

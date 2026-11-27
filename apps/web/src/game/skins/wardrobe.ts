@@ -219,3 +219,9 @@ export function starsIcon(): HTMLCanvasElement {
   o.g.drawImage(c, 1, 1);
   return o.c;
 }
+
+/** Значок набора в списке гардероба: маленький персонаж набора (×1, с контуром). */
+export function itemIcon(item: ShopItemId): HTMLCanvasElement {
+  const ICONS: Record<ShopItemId, () => HTMLCanvasElement> = { kotBanan: () => kotBananFrame(F.D, 'D') };
+  return ICONS[item]();
+}
