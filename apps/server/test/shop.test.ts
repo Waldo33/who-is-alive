@@ -1,6 +1,6 @@
 import { createHash, createHmac } from 'node:crypto';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { Bot } from '../src/bot';
 import { silentLogger } from '../src/log';
 import { GameServer } from '../src/server';
@@ -507,6 +507,54 @@ describe('гардероб', () => {
     expect((await store.shopUser(78))?.items).toEqual(['played']);
     expect((await store.shopUser(79))?.items).toBeUndefined();
     expect(calls.filter((c) => /StickerSet|StickerToSet/.test(c.method))).toHaveLength(0);
+  });
+
+  it('за матч открывается не больше двух новых стикеров, сначала редкие; остальные — в следующих матчах (и в пределах суток)', async () => {
+    const { bot, store } = makeBot();
+    const all = ['action', 'retake', 'cut', 'offscreen', 'still', 'chef', 'jackpot'];
+    await bot.shop.earn({ users: [{ tgUser: 77, name: 'Аня', lang: 'ru', stickers: all }] });
+    const got = (u: Awaited<ReturnType<typeof store.shopUser>>) => (u?.items ?? []).filter((i) => i.startsWith('st:'));
+    expect(got(await store.shopUser(77))).toEqual(['st:jackpot', 'st:chef']);
+    await bot.shop.earn({ users: [{ tgUser: 77, name: 'Аня', lang: 'ru', stickers: all }] });
+    // третий за сутки — последний (EARN_PER_DAY)
+    expect(got(await store.shopUser(77))).toEqual(['st:jackpot', 'st:chef', 'st:cut']);
+  });
+
+  it('за сутки (по Москве) — не больше трёх стикеров за матчи; бот и экран говорят, когда снова', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(new Date('2026-11-28T10:00:00Z'));
+      const { bot, calls, store } = makeBot();
+      await hook(bot, payment());
+      // набор Кот-банана куплен — его стикеры за матчи идут в пак
+      const all = ['splat', 'allGood', 'happyTears', 'freeze', 'meow'];
+      const play = () => bot.shop.earn({ users: [{ tgUser: 77, name: 'Аня', lang: 'ru', stickers: all }] });
+      const n = async () => (await store.shopUser(77))!.items.filter((i) => i.startsWith('st:')).length;
+      const said = () => calls.filter((c) => c.method === 'sendMessage' && String(c.body.text).includes('Новый стикер')).map((c) => String(c.body.text));
+      const state = async () => (await bot.handle('POST', '/shop', {}, { initData: initData(ANYA) })).body as { earnNext: number | null };
+      await play();
+      expect(said().at(-1)).toContain('следующие откроются');
+      expect((await state()).earnNext).toBeNull();
+      await play();
+      expect(await n()).toBe(3);
+      expect(said().at(-1)).toContain('На сегодня всё');
+      // следующие сутки по Москве — с 21:00 UTC
+      expect((await state()).earnNext).toBe(Date.parse('2026-11-28T21:00:00Z'));
+      await play();
+      expect(await n()).toBe(3);
+      // 23:30 по Москве — те же сутки
+      vi.setSystemTime(new Date('2026-11-28T20:30:00Z'));
+      await play();
+      expect(await n()).toBe(3);
+      // 00:30 по Москве — новые сутки
+      vi.setSystemTime(new Date('2026-11-28T21:30:00Z'));
+      await play();
+      expect(await n()).toBe(5);
+      expect((await state()).earnNext).toBeNull();
+      expect((await store.shopUser(77))!.items.filter((i) => i.startsWith('day:'))).toEqual(['day:20261129:2']);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('бесплатный пак: нужен и сыгранный матч, и подписка на канал', async () => {
