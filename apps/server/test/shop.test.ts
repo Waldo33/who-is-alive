@@ -479,6 +479,33 @@ describe('гардероб', () => {
     }
   });
 
+  it('вход на сайт через бота: код → «Войти» в чате → сайт получает вход один раз; без секрета и чужим кодом — нет', async () => {
+    const { bot, calls } = makeBot();
+    const st = (await bot.handle('POST', '/login/start', {}, null)).body as { code: string; secret: string; link: string };
+    expect(st.link).toBe(`https://t.me/be_nobody_bot?start=login_${st.code}`);
+    const poll = async (b: unknown) => (await bot.handle('POST', '/login/poll', {}, b)).body as { state: string; login?: Record<string, unknown> };
+    expect((await poll({ code: st.code, secret: st.secret })).state).toBe('wait');
+    // /start по ссылке — только вопрос с кнопкой, вход ещё не выдан
+    await hook(bot, { message: { chat: { id: 77, type: 'private' }, from: ANYA, text: `/start login_${st.code}` } });
+    const ask = calls.find((c) => c.method === 'sendMessage')!;
+    expect(JSON.stringify(ask.body)).toContain(`login:${st.code}`);
+    expect((await poll({ code: st.code, secret: st.secret })).state).toBe('wait');
+    await hook(bot, { callback_query: { id: 'q1', from: ANYA, data: `login:${st.code}`, message: { message_id: 5, chat: { id: 77 } } } });
+    expect(calls.some((c) => c.method === 'editMessageText')).toBe(true);
+    // чужой секрет — нет
+    expect((await poll({ code: st.code, secret: 'x'.repeat(22) })).state).toBe('gone');
+    const ok = await poll({ code: st.code, secret: st.secret });
+    expect(ok.state).toBe('ok');
+    // подпись — как у виджета: бот её принимает, игрок — тот, кто нажал «Войти»
+    expect(bot.verifyLogin(ok.login, 'ru')?.user.id).toBe(77);
+    expect((await bot.handle('POST', '/shop', {}, { login: ok.login })).status).toBe(200);
+    // второй раз — уже нет; повторное «Войти» — отказ
+    expect((await poll({ code: st.code, secret: st.secret })).state).toBe('gone');
+    await hook(bot, { callback_query: { id: 'q2', from: { id: 99 }, data: `login:${st.code}` } });
+    expect(JSON.stringify(calls.at(-1)!.body)).toContain('show_alert');
+    expect((await poll({ code: 'bad', secret: st.secret })).state).toBe('gone');
+  });
+
   it('стикеры за матч: только в купленный набор, каждый один раз, сообщение «Новый стикер» с кнопкой «Играть»', async () => {
     const { bot, calls, store } = makeBot();
     await hook(bot, payment());
