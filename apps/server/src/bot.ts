@@ -67,7 +67,8 @@ const SUPPORT_OPEN_MS = 30 * 60_000;
 
 const T = {
   ru: {
-    start: 'Массовка — пиксельная игра для компании: спрячься в толпе ботов и вычисли друзей раньше, чем они тебя.',
+    start: 'Массовка — пиксельная игра для компании: спрячься в толпе ботов и вычисли друзей раньше, чем они тебя.\n\n🎁 Сыграй первый матч — и получишь бесплатный стикерпак со своим актёром.',
+    stickersText: '🎨 Твой стикерпак: какие стикеры в паке и свои стикеры с подписью.',
     startCasting: ' А каждый день — «Кастинг дня»: найди актёра в массовке.',
     play: '▶ Играть',
     friends: '👥 С друзьями',
@@ -110,7 +111,8 @@ const T = {
     cardClosed: '🎬 Съёмку отменили. Жми кнопку — соберёмся заново.',
   },
   en: {
-    start: 'Be Nobody is a pixel party game: hide in a crowd of bots and spot your friends before they spot you.',
+    start: 'Be Nobody is a pixel party game: hide in a crowd of bots and spot your friends before they spot you.\n\n🎁 Play your first match and get a free sticker pack with your actor.',
+    stickersText: '🎨 Your sticker pack: pick what goes in it and make your own with a caption.',
     startCasting: ' Plus a daily casting: spot the actor among the extras.',
     play: '▶ Play',
     friends: '👥 With friends',
@@ -417,6 +419,7 @@ export class Bot {
           else if (u?.message?.text === '/start stickers' && u.message.chat.type === 'private' && u.message.from) await this.shop.claimInChat(u.message.from);
           else if (u?.message?.text?.startsWith('/paysupport') && u.message.chat.type === 'private' && u.message.from) await this.onSupport(u.message.from, u.message.text.slice('/paysupport'.length), true);
           else if (u?.message && String(u.message.chat.id) === this.supportChat) await this.onSupportReply(u.message);
+          else if (u?.message?.text?.startsWith('/stickers') && u.message.chat.type === 'private') await this.onStickers(u.message);
           else if (u?.message?.text?.startsWith('/start')) await this.onStart(u.message);
           else if (u?.message?.text && u.message.chat.type === 'private' && u.message.from && this.supportOpen(u.message.from.id)) await this.onSupport(u.message.from, u.message.text, false);
           else if (u?.inline_query) await this.onInline(u.inline_query);
@@ -447,18 +450,22 @@ export class Bot {
     const P = {
       ru: {
         description:
-          'Массовка — пиксельная игра для компании на 2–4 телефона. На площади 32 одинаковых человечка: почти все — боты, среди них — вы. Прячься в толпе, вычисляй актёров по поведению и бей первым. Матч — 5 минут.',
+          'Массовка — пиксельная игра для компании на 2–4 телефона. На площадке 32 одинаковых человечка: почти все — массовка, среди них — вы. Прячься в толпе, вычисляй актёров и бей первым. Матч — 5 минут. Друзей нет рядом — места займут ИИ-актёры.\n\n🎬 После первого матча — бесплатный стикерпак с твоим актёром. Собирай стикеры за дубли и площадки, делай свои с подписью и отправляй в любой чат.',
         casting: ' А каждый день — «Кастинг дня»: найди актёра в массовке.',
-        short: 'Спрячься в толпе ботов и вычисли друзей первым. 2–4 игрока, 5 минут.',
+        short: 'Пати-игра на 2–4 телефона и свой стикерпак: собери стикеры из дублей и шли друзьям.',
+        stickersCmd: 'Мой стикерпак',
+        supportCmd: 'Помощь с покупкой',
         name: 'Массовка',
         start: 'Играть в Массовку',
         menu: 'Играть',
       },
       en: {
         description:
-          'Be Nobody is a pixel party game for 2–4 phones. 32 identical people on the square: almost all are bots, and you are among them. Hide in the crowd, spot the actors by how they move, and strike first. 5-minute matches.',
+          'Be Nobody is a pixel party game for 2–4 phones. 32 identical people on set: almost all are extras, and you are among them. Hide in the crowd, spot the actors and strike first. 5-minute matches. No friends around? AI actors take the empty seats.\n\n🎬 After your first match you get a free sticker pack with your actor. Collect stickers for takes and sets, make your own with a caption, and send them to any chat.',
         casting: ' Plus a daily casting: spot the actor among the extras.',
-        short: 'Hide in a crowd of bots and spot your friends first. 2–4 players, 5 minutes.',
+        short: 'A party game for 2–4 phones and your own sticker pack: collect stickers from your takes.',
+        stickersCmd: 'My sticker pack',
+        supportCmd: 'Purchase help',
         name: 'Be Nobody',
         start: 'Play Be Nobody',
         menu: 'Play',
@@ -488,9 +495,19 @@ export class Bot {
         const cur = await this.api<{ short_description: string }>('getMyShortDescription', { language_code });
         if (cur.short_description !== p.short) await this.api('setMyShortDescription', { short_description: p.short, language_code });
       });
-      await soft('commands', () => this.api('setMyCommands', { commands: [{ command: 'start', description: p.start }], language_code }));
+      await soft('commands', () => this.api('setMyCommands', { commands: [{ command: 'start', description: p.start }, { command: 'stickers', description: p.stickersCmd }, { command: 'paysupport', description: p.supportCmd }], language_code }));
     }
     await soft('menu', () => this.api('setChatMenuButton', { menu_button: { type: 'web_app', text: P.ru.menu, web_app: { url: `${this.o.site}/?create=1&src=tg` } } }));
+  }
+
+  /** /stickers: кнопка на страницу «Мой стикерпак» в Mini App (там замок, свои стикеры, покупка набора). */
+  private async onStickers(msg: NonNullable<Update['message']>): Promise<void> {
+    const t = T[langOf(msg.from?.language_code)];
+    await this.api('sendMessage', {
+      chat_id: msg.chat.id,
+      text: t.stickersText,
+      reply_markup: { inline_keyboard: [[{ text: t.stickers, web_app: { url: `${this.o.site}/stickers?ff=shop&src=tg` } }]] },
+    });
   }
 
   private async onStart(msg: NonNullable<Update['message']>): Promise<void> {
