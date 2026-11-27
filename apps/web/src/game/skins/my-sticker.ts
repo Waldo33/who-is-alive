@@ -2,8 +2,10 @@ import { PAL } from '@kto/assets';
 import { MY_COLORS, MY_FIGS, THEME_RULES } from '@kto/game-core';
 import type { ActKind, MyFig, MyPose, MySticker } from '@kto/game-core';
 import { F } from '../sprites';
+import { canvas } from '../pixels';
 import type { Ctx } from '../pixels';
 import { kotBananFrame } from './kot-banan';
+import { iceFrost, iceOver } from './shine';
 import { ST_SIZE, actorFrame, orbit, put, say, star } from './stickers';
 import type { StickerDef } from './stickers';
 import { sheetsOf, themeActor } from './stickers-play';
@@ -58,22 +60,27 @@ export function drawMy(g: Ctx, s: MyLook, t: number): void {
   const w = fr.width * k;
   const x = Math.round(MID - w / 2 + dx);
   const y = top + dy;
+  // «Замри» — фигурка обледеневает: лёд и блик только по её силуэту, поэтому сначала на свой холст
+  const ice = s.pose === 'freeze';
+  const o = ice ? canvas(ST_SIZE, ST_SIZE) : null;
+  const fg = o ? o.g : g;
   if (flip) {
-    g.save();
-    g.translate(MID * 2, 0);
-    g.scale(-1, 1);
-    put(g, fr, x, y, k);
-    g.restore();
-  } else put(g, fr, x, y, k);
+    fg.save();
+    fg.translate(MID * 2, 0);
+    fg.scale(-1, 1);
+    put(fg, fr, x, y, k);
+    fg.restore();
+  } else put(fg, fr, x, y, k);
+  const box = { x, y, w, h: fr.height * k, k };
+  if (o) {
+    iceOver(o.g, t, box);
+    g.drawImage(o.c, 0, 0);
+    iceFrost(g, t, box);
+  }
   // украшение позы цветом подписи
   if (s.pose === 'stun') orbit(g, MID, top + 2, t);
   if (s.pose === 'startle' && Math.floor(t / 5) % 2 === 0) say(g, '!', 82, top - 4, col, 2);
   if (s.pose === 'dance' || s.pose === 'jump') for (const [sx, sy, ph] of [[12, top + 8, 0], [84, top + 4, 1], [10, top + 44, 1], [86, top + 40, 0]]) if ((Math.floor(t / 3) + ph) % 2) star(g, sx, sy, col);
-  if (s.pose === 'freeze') {
-    const bx = ((t * 5) % 70) - 10;
-    g.fillStyle = PAL.white;
-    for (let i = 0; i < 6; i++) if (bx + i > 14 && bx + i < 82) g.fillRect(bx + i, top + 50 - i * 6, 1, 3);
-  }
   if (s.pose === 'wave' && t % 10 < 5) {
     // «привет» — штрихи у поднятой руки
     g.fillStyle = col;
