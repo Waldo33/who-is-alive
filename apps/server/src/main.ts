@@ -107,13 +107,16 @@ const bot = env.TELEGRAM_BOT_TOKEN
       // клипы в S3 открыты по прямой ссылке (clips.ts) — Telegram берёт их оттуда; CLIP_PUBLIC_BASE=off — только сервер
       clipPublic: env.CLIP_PUBLIC_BASE === 'off' ? undefined : env.CLIP_PUBLIC_BASE || 'https://s3.twcstorage.ru/massovka-media/clips',
       // гардероб: покупки — в базе игрового сервера (у сервера бота её нет — по туннелю, как аналитика)
-      shopLedger: store instanceof MemoryStore && env.EVENTS_UPSTREAM ? new RemoteLedger(env.EVENTS_UPSTREAM) : undefined,
+      // своя база у сервера бота тоже есть (рейтинг, копии) — но покупки только в базе игры: по ней сервер игры
+      // знает скин в лобби и шлёт стикеры за матчи (27.11.2026 бот писал их к себе — скин не доходил до лобби)
+      shopLedger: env.EVENTS_UPSTREAM ? new RemoteLedger(env.EVENTS_UPSTREAM) : undefined,
       // своя база: связь игрока с Telegram проверяет здешний ключ токенов
       verifyGameToken: (t) => gameAuth.verify(t),
       // видеостикеры: рядом с server.mjs (выкладка) или apps/server/stickers (разработка)
       stickersDir: env.STICKERS_DIR || [join(here, 'stickers'), join(here, '..', 'stickers')].find((d) => existsSync(d)),
       drawMy:
-        store instanceof MemoryStore && env.EVENTS_UPSTREAM
+        // ffmpeg и шрифты — только у игрового сервера: сервер бота (есть EVENTS_UPSTREAM) всегда просит его
+        env.EVENTS_UPSTREAM
           ? drawMyRemote(env.EVENTS_UPSTREAM)
           : (look) => (stickers ? stickers.render(look) : Promise.reject(new Error('no_sticker_renderer'))),
     })

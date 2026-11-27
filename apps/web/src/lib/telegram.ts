@@ -341,7 +341,10 @@ async function botPost<T>(path: string, body: Record<string, unknown>, timeoutMs
       body: JSON.stringify({ initData: w.initData, ...body }),
       signal: ctl.signal,
     });
-    return r.ok ? ((await r.json()) as T) : null;
+    if (!r.ok) return null;
+    const out = (await r.json()) as T;
+    if (path.startsWith('/shop')) rememberShop(w.initDataUnsafe?.user?.id, out);
+    return out;
   } catch {
     return null;
   } finally {
@@ -487,6 +490,28 @@ export function shopMyDel(slot: number) {
 }
 
 /** Что есть у игрока (и дослать недовыданные стикеры). null — не в Telegram или сервер недоступен. */
+const SHOP_KEY = 'kto:shop';
+/** Последний ответ магазина на этом телефоне: гардероб и стикерпак рисуются сразу им, а не «ничего не куплено», пока бот отвечает. */
+function rememberShop(tg: number | undefined, st: unknown): void {
+  if (!tg || !st || !Array.isArray((st as ShopState).items)) return;
+  try {
+    localStorage.setItem(SHOP_KEY, JSON.stringify({ tg, st }));
+  } catch {
+    /* приватный режим */
+  }
+}
+/** Сохранённое состояние магазина (того же игрока Telegram), без сети. null — не было или другой игрок. */
+export function shopCached(): ShopState | null {
+  try {
+    const c = JSON.parse(localStorage.getItem(SHOP_KEY) ?? 'null') as { tg?: number; st?: ShopState } | null;
+    const me = (window as unknown as { Telegram?: { WebApp?: TgWebApp } }).Telegram?.WebApp?.initDataUnsafe?.user?.id;
+    if (!c?.st || !Array.isArray(c.st.items) || (me && c.tg !== me)) return null;
+    return c.st;
+  } catch {
+    return null;
+  }
+}
+
 export function shopState(): Promise<ShopState | null> {
   return botPost<ShopState>('/shop', {});
 }

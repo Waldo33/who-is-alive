@@ -129,22 +129,20 @@ jobs:
               s, rc = t.get('source') or {}, t.get('receiver') or {}
               print(t.get('date'), t.get('amount'), 'id', str(t.get('id'))[:12] + '…', 'src', s.get('type'), s.get('transaction_type'), s.get('invoice_payload'), (s.get('user') or {}).get('id'), 'rcv', rc.get('type'))
           PY
-      - name: Какая база у бота — своя в Нидерландах или игры в Европе (27.11, вечер)
+      # бот в Нидерландах писал покупки в свою базу, а не в базу игры (27.11): переносим их в Европу.
+      # Повторный запуск безопасен: запись игрока обновляется, оплата — только если её ещё нет
+      - name: Перенос покупок из базы бота в базу игры (27.11, вечер)
         env:
           IP: ${{ steps.infra.outputs.ip }}
         run: |
-          ssh $SSH_OPTS root@$IP 'bash -s' <<'SH' || true
-          echo "DATABASE_URL у бота: $(grep -c '^DATABASE_URL=' /etc/massovka/secrets.env)"; grep -h '^EVENTS_UPSTREAM' /etc/massovka/*.env 2>/dev/null
-          journalctl -u 'massovka-game*' --since -3d --no-pager -o cat | grep -E '"db_ready"|db_unavailable' | tail -3 | cut -c1-200
-          L() { sudo -u postgres psql massovka -P pager=off -Atc "$1" 2>&1 | head -30; }
-          echo "── здешняя база (Нидерланды)"
-          L "select 'shop_users', count(*) from shop_users union all select 'payments', count(*) from shop_payments union all select 'tg_links', count(*) from tg_links"
-          L "select user_id, items, cardinality(issued), (pack is not null), jsonb_array_length(my), updated_at from shop_users order by updated_at desc limit 15"
-          L "select user_id, item, stars, refunded, created_at from shop_payments order by created_at desc limit 15"
-          echo "── база игры (Европа, по туннелю)"
-          G() { PGPASSWORD=$(. /etc/massovka-grafana/pgro.env; echo $PGRO_PASSWORD) psql -h 127.0.0.1 -p 25432 -U grafana_ro -d massovka -P pager=off -Atc "$1" 2>&1 | head -20; }
-          G "select 'shop_users', count(*) from shop_users union all select 'payments', count(*) from shop_payments union all select 'tg_links', count(*) from tg_links"
-          SH
+          ssh $SSH_OPTS root@$IP "sudo -u postgres psql massovka -Atc \"
+            select format('insert into shop_users (user_id, lang, name, items, pack, issued, my, updated_at) values (%s, %L, %L, %L::text[], %L, %L::text[], %L::jsonb, %L) on conflict (user_id) do update set lang = excluded.lang, name = excluded.name, items = excluded.items, pack = excluded.pack, issued = excluded.issued, my = excluded.my, updated_at = excluded.updated_at;', user_id, lang, name, items, pack, issued, my, updated_at) from shop_users
+            union all
+            select format('insert into shop_payments (charge, user_id, item, stars, refunded, created_at) values (%L, %s, %L, %s, %L, %L) on conflict (charge) do nothing;', charge, user_id, item, stars, refunded, created_at) from shop_payments\"" > moved.sql
+          echo "строк к переносу: $(wc -l < moved.sql)"
+          ssh $SSH_OPTS root@72.56.22.216 "sudo -u postgres psql massovka -v ON_ERROR_STOP=1 -q" < moved.sql
+          rm -f moved.sql
+          ssh $SSH_OPTS root@72.56.22.216 "sudo -u postgres psql massovka -Atc \"select user_id, items, cardinality(issued), (pack is not null), jsonb_array_length(my) from shop_users; select user_id, item, stars, refunded from shop_payments\""
       # шлёт картинку и файлы в группу тревог и сразу удаляет — владельцу приходят уведомления о
       # «пропавших тревогах» (23.11.2026). Включать вручную: TG_REACH: '1' на время проверки.
       - name: Достаёт ли Telegram до наших серверов
