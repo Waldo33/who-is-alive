@@ -272,7 +272,7 @@ export function openFilmOverlay(
     };
     root.querySelector('.clip-send')!.addEventListener('click', () => {
       if (caps?.chat) {
-        void tg('chat', () => telegramShareCard({ kind: 'clip', clip: f.id, text, thumb: f.thumb, ...feed.rematch })).then(async (ok) => {
+        void tg('chat', () => telegramShareCard({ kind: 'clip', clip: f.id, text, thumb: f.thumb, ...feed.rematch, ...filmPuzzle(feed) })).then(async (ok) => {
           if (!ok) await withFile(share);
         });
         return;
@@ -420,4 +420,13 @@ export async function recordClipInBackground(input: ClipInput, onProgress?: (p: 
   } finally {
     holder.remove();
   }
+}
+
+/**
+ * Загадка из фильма — кнопкой «Найди актёра» под карточкой (бот ведёт её в игру внутри Telegram, а ссылку
+ * на сайт из подписи убирает: в Telegram она открывалась в браузере).
+ */
+function filmPuzzle(feed: { puzzle?(): string | null }): { puzzle?: string } {
+  const p = feed.puzzle?.() ?? null;
+  return p && /^[A-Z2-9]{5}$/.test(p) ? { puzzle: p } : {};
 }

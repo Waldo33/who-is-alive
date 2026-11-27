@@ -379,7 +379,7 @@ async function botPost<T>(path: string, body: Record<string, unknown>, timeoutMs
   }
 }
 
-export type ShareCard = { kind: 'room'; code: string } | { kind: 'daily'; squares: string } | { kind: 'invite' } | { kind: 'clip'; clip: string; text: string; thumb: boolean; code?: string; invite?: string };
+export type ShareCard = { kind: 'room'; code: string } | { kind: 'daily'; squares: string } | { kind: 'invite' } | { kind: 'clip'; clip: string; text: string; thumb: boolean; code?: string; invite?: string; puzzle?: string };
 
 /**
  * Поделиться карточкой с кнопкой «Играть» (Bot API 8.0): Telegram показывает выбор чата поверх игры

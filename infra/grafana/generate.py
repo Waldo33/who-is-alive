@@ -102,7 +102,7 @@ tech=[
  ts_vm("Диск /",[('(1 - node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) * 100','{{server}}')],grid(16,12,8,8),unit="percent"),
  ts_vm("Сеть",[('sum by (server) (rate(node_network_receive_bytes_total{device!~"lo"}[5m]))','{{server}} приём'),('sum by (server) (rate(node_network_transmit_bytes_total{device!~"lo"}[5m]))','{{server}} отдача')],grid(0,20,12,8),unit="Bps"),
  ts_vm("Связь с источниками метрик (1 — есть)",[('up','{{server}} {{job}}')],grid(12,20,12,8),desc="eu через туннель: пропадает, если туннель Нидерланды → Европа упал"),
- ts_vm("Место под клипы Telegram (Европа; лимит 1 ГБ, тревога на 80%)",[('game_clips_bytes{server="eu"}','занято'),('game_clips_limit_bytes{server="eu"}','лимит')],grid(0,28,12,8),unit="bytes",
+ ts_vm("Место под клипы Telegram (Европа; лимит 5 ГБ, тревога на 80%)",[('game_clips_bytes{server="eu"}','занято'),('game_clips_limit_bytes{server="eu"}','лимит')],grid(0,28,12,8),unit="bytes",
        desc="Клипы хранятся 2 суток, при лимите старые вытесняются. Упирается в лимит раньше двух суток — пора переносить на S3"),
  ts_vm("Клипов в хранилище",[('game_clips_count{server="eu"}','клипов')],grid(12,28,12,8)),
  ts_vm("Ошибки JS на телефонах (за 10 минут; тревога — больше 30)",[('sum(increase(game_client_errors_total{server="eu"}[10m]))','ошибки')],grid(0,36,10,10),
