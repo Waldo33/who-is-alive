@@ -31,6 +31,8 @@ export interface StickerMeta {
   now: boolean;
   /** За что открывается в матче (если не `now`). */
   earn?: EarnId;
+  /** Приманка: силуэт «Собери свой пак» — всегда последним в паке (бот переставляет), зовёт в игру. Первое эмодзи — только у неё. */
+  lure?: boolean;
 }
 
 /**
@@ -57,6 +59,7 @@ export const STICKER_LIST: StickerMeta[] = [
   { id: 'dance', set: 'starter', emoji: ['💃', '🕺'], now: true },
   { id: 'oops', set: 'starter', emoji: ['😵', '💫'], now: true },
   { id: 'who', set: 'starter', emoji: ['🤨', '👀'], now: true },
+  { id: 'lure', set: 'starter', emoji: ['🎬', '🎁'], now: true, lure: true },
   { id: 'notCrying', set: 'kotBanan', emoji: ['😭'], now: true },
   { id: 'justBanana', set: 'kotBanan', emoji: ['🍌', '😅'], now: true },
   { id: 'splat', set: 'kotBanan', emoji: ['🫠', '💫'], now: false, earn: 'cut' },

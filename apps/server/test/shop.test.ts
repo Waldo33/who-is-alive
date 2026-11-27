@@ -62,19 +62,19 @@ const payment = (over: Record<string, unknown> = {}) => ({
 });
 
 describe('гардероб', () => {
-  it('бесплатный пак: один пак на игрока с 4 стикерами актёра, повтор ничего не создаёт', async () => {
+  it('бесплатный пак: один пак на игрока — 4 стикера актёра и приманка, повтор ничего не создаёт', async () => {
     const { bot, calls } = makeBot();
     await played(bot);
     calls.length = 0;
     const r = await bot.handle('POST', '/shop/claim', {}, { initData: initData(ANYA) });
     expect(r.status).toBe(200);
-    expect(r.body).toMatchObject({ items: ['starter', 'pack'], pack: 'https://t.me/addstickers/m77_by_be_nobody_bot', issued: 4, wanted: 4 });
+    expect(r.body).toMatchObject({ items: ['starter', 'pack'], pack: 'https://t.me/addstickers/m77_by_be_nobody_bot', issued: 5, wanted: 5 });
     const create = calls.filter((c) => c.method === 'createNewStickerSet');
     expect(create).toHaveLength(1);
     // имя без @: подпись пака уходит в Telegram
     expect(create[0].body.title).toBe('Массовка · Аня spam · @be_nobody_bot');
-    expect((create[0].body.stickers as { format: string }[]).map((s) => s.format)).toEqual(['video', 'video', 'video', 'video']);
-    expect(create[0].files.map((f) => f.split(':')[1])).toEqual(['hi.webm', 'dance.webm', 'oops.webm', 'who.webm']);
+    expect((create[0].body.stickers as { format: string }[]).map((s) => s.format)).toEqual(['video', 'video', 'video', 'video', 'video']);
+    expect(create[0].files.map((f) => f.split(':')[1])).toEqual(['hi.webm', 'dance.webm', 'oops.webm', 'who.webm', 'lure.webm']);
     expect(calls.some((c) => c.method === 'sendMessage' && String(c.body.text).includes('стикерпак'))).toBe(true);
 
     calls.length = 0;
@@ -135,23 +135,26 @@ describe('гардероб', () => {
   });
 
   it('бесплатный пак есть — купленный набор сразу добавляется в него; пак по внешней ссылке /start stickers', async () => {
-    const { bot, calls, store } = makeBot();
+    // пак в Telegram: приманка (🎬) уже не последняя — бот переставит её в конец
+    const set = { stickers: [...['👋', '💃', '😵', '🤨'].map((e, i) => ({ file_id: `f${i}`, emoji: e })), { file_id: 'lure_id', emoji: '🎬' }, { file_id: 'f5', emoji: '😭' }, { file_id: 'f6', emoji: '🍌' }] };
+    const { bot, calls, store } = makeBot({ result: (m) => (m === 'getStickerSet' ? set : undefined) });
     await played(bot);
     calls.length = 0;
     await hook(bot, { message: { chat: { id: 77, type: 'private' }, from: ANYA, text: '/start stickers' } });
-    expect((await store.shopUser(77))?.issued).toHaveLength(4);
+    expect((await store.shopUser(77))?.issued).toHaveLength(5);
     calls.length = 0;
     await hook(bot, payment());
     // свой пак уже есть — бот спрашивает: в него или новый; без выбора стикеры не выдаёт
     const kb = JSON.stringify(calls.find((c) => c.method === 'sendMessage')!.body.reply_markup);
     expect(kb).toContain('pk:in:kotBanan');
     expect(kb).toContain('pk:own:kotBanan');
-    expect((await store.shopUser(77))?.issued).toHaveLength(4);
+    expect((await store.shopUser(77))?.issued).toHaveLength(5);
     calls.length = 0;
     await hook(bot, { callback_query: { id: 'cb', from: ANYA, data: 'pk:in:kotBanan' } });
     expect(calls.filter((c) => c.method === 'createNewStickerSet')).toHaveLength(0);
     expect(calls.filter((c) => c.method === 'addStickerToSet').map((c) => c.body.name)).toEqual(['m77_by_be_nobody_bot', 'm77_by_be_nobody_bot']);
-    expect((await store.shopUser(77))?.issued).toHaveLength(6);
+    expect((await store.shopUser(77))?.issued).toHaveLength(7);
+    expect(calls.find((c) => c.method === 'setStickerPositionInSet')?.body).toEqual({ sticker: 'lure_id', position: 6 });
     // выбор — один раз: вторая кнопка ничего не создаёт
     calls.length = 0;
     await hook(bot, { callback_query: { id: 'cb2', from: ANYA, data: 'pk:own:kotBanan' } });
@@ -170,7 +173,7 @@ describe('гардероб', () => {
     await hook(bot, { callback_query: { id: 'cb', from: ANYA, data: 'pk:in:kotBanan' } });
     await hook(bot, { callback_query: { id: 'cb', from: ANYA, data: 'pk:own:kotBanan' } });
     await bot.handle('POST', '/shop/claim', {}, { initData: initData(ANYA) });
-    expect((await store.shopUser(77))?.issued).toEqual(['hi', 'dance', 'oops', 'who']);
+    expect((await store.shopUser(77))?.issued).toEqual(['hi', 'dance', 'oops', 'who', 'lure']);
     expect(calls.flatMap((c) => c.files).some((f) => /notCrying|justBanana/.test(f))).toBe(false);
   });
 
@@ -179,14 +182,14 @@ describe('гардероб', () => {
     const { bot, calls } = makeBot({ fail: (m) => (m === 'createNewStickerSet' && down ? 'Bad Request: PEER_ID_INVALID' : null) });
     await played(bot);
     const r = await bot.handle('POST', '/shop/claim', {}, { initData: initData(ANYA) });
-    expect(r.body).toMatchObject({ pack: null, issued: 0, wanted: 4, error: 'need_bot' });
+    expect(r.body).toMatchObject({ pack: null, issued: 0, wanted: 5, error: 'need_bot' });
     down = false;
     calls.length = 0;
     await bot.handle('POST', '/shop', {}, { initData: initData(ANYA) });
     await new Promise((res) => setTimeout(res, 50));
     expect(calls.filter((c) => c.method === 'createNewStickerSet')).toHaveLength(1);
     const st = await bot.handle('POST', '/shop', {}, { initData: initData(ANYA) });
-    expect(st.body).toMatchObject({ issued: 4, error: null });
+    expect(st.body).toMatchObject({ issued: 5, error: null });
   });
 
   it('оплата не записалась (учёт недоступен) — вебхук не 200, Telegram повторит', async () => {
@@ -258,7 +261,7 @@ describe('гардероб', () => {
     expect(wantedStickers(['kotBanan', 'st:aaa'])).toEqual([]);
     expect(wantedStickers(['kotBanan', 'own:kotBanan', 'st:aaa']).map((s) => s.id)).toEqual(['notCrying', 'justBanana', 'aaa']);
     // выбор пака без покупки ничего не даёт
-    expect(wantedStickers(['in:kotBanan', 'pack', 'starter']).map((s) => s.id)).toEqual(['hi', 'dance', 'oops', 'who']);
+    expect(wantedStickers(['in:kotBanan', 'pack', 'starter']).map((s) => s.id)).toEqual(['hi', 'dance', 'oops', 'who', 'lure']);
     expect(packName('  Вася‮ https://x.y @boss ')).toBe('Вася x.y boss');
   });
 
@@ -356,7 +359,7 @@ describe('гардероб', () => {
     // подписался — пак; второй матч ничего не предлагает
     status = 'member';
     await hook(bot, { callback_query: { id: 'cb', from: ANYA, data: 'free:claim' } });
-    expect((await store.shopUser(77))?.issued).toHaveLength(4);
+    expect((await store.shopUser(77))?.issued).toHaveLength(5);
     calls.length = 0;
     await played(bot);
     expect(calls.filter((c) => c.method === 'sendMessage')).toHaveLength(0);
@@ -373,6 +376,6 @@ describe('гардероб', () => {
     const { bot, store } = makeBot({ fail: (m) => (m === 'getChatMember' ? 'Bad Request: member list is inaccessible' : null) });
     await played(bot);
     await bot.handle('POST', '/shop/claim', {}, { initData: initData(ANYA) });
-    expect((await store.shopUser(77))?.issued).toHaveLength(4);
+    expect((await store.shopUser(77))?.issued).toHaveLength(5);
   });
 });

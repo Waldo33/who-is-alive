@@ -111,6 +111,30 @@ const ART: Art[] = [
       cap(g, 'who', lang, 84);
     },
   },
+  {
+    // приманка в конце пака: силуэт из толпы и «Собери свой пак!» — пак открыт всем, это зовёт в игру
+    id: 'lure',
+    draw(g, t, lang) {
+      // хлопушка с «?»: щёлкает раз в две секунды — «твой дубль впереди»
+      const x0 = 12;
+      const w = 72;
+      R(g, x0 - 1, 33, w + 2, 36, PAL.ink);
+      R(g, x0 + 1, 35, w - 2, 32, PAL.night);
+      R(g, x0 + 1, 50, w - 2, 1, PAL.slate);
+      say(g, '?', ST_SIZE / 2, 38, PAL.yellow, 2);
+      say(g, 'BENOBODY', ST_SIZE / 2, 55, PAL.mist);
+      // палка: закрыта — ровно, открыта (первые кадры) — правый край поднят
+      const lift = t < 3 ? [10, 14, 8][t] : 0;
+      for (let x = 0; x < w + 2; x++) {
+        const dy = Math.round((x / (w + 2)) * lift);
+        const stripe = Math.floor((x + 40) / 6) % 2 === 0;
+        R(g, x0 - 1 + x, 24 - dy, 1, 9, PAL.ink);
+        R(g, x0 - 1 + x, 25 - dy, 1, 7, x === 0 || x === w + 1 ? PAL.ink : stripe ? PAL.white : PAL.ink);
+      }
+      if (t < 3) for (const [x, y] of [[6, 18], [88, 6], [90, 22]]) star(g, x, y);
+      cap(g, 'lure', lang, 76);
+    },
+  },
   // ── набор «Кот-банан» ──
   {
     id: 'notCrying',

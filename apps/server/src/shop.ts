@@ -556,6 +556,7 @@ export class Shop {
       s.set !== 'starter' && u.items.includes(`own:${s.set}`)
         ? { name: ownPack(s.set, id, bot), made: u.items.includes(`made:${s.set}`), title: fmt(t.packTitleItem, { item: t.items[s.set].name, name: u.name }), mark: () => u.items.push(`made:${s.set}`) }
         : { name: `m${id}_by_${bot}`.slice(0, 64), made: !!u.pack, title: fmt(t.packTitle, { name: u.name }), mark: () => (u.pack = `m${id}_by_${bot}`.slice(0, 64)) };
+    const added = new Set<string>();
     for (;;) {
       const left = missing();
       if (!left.length) break;
@@ -589,8 +590,25 @@ export class Shop {
       await this.call('addStickerToSet', form);
       u.issued.push(s.id);
       await this.d.ledger.saveShopUser(u);
+      added.add(to.name);
     }
+    // приманка «Собери свой пак» — снова в конец паков, куда что-то добавилось
+    for (const name of added) await this.lureLast(name);
     this.failed.delete(id);
+  }
+
+  /** Приманка (первое эмодзи 🎬 есть только у неё) — последним стикером пака. Не вышло — не страшно. */
+  private async lureLast(name: string): Promise<void> {
+    const lure = STICKER_LIST.find((s) => s.lure);
+    if (!lure) return;
+    try {
+      const set = await this.d.api<{ stickers?: { file_id: string; emoji?: string }[] }>('getStickerSet', { name });
+      const list = set?.stickers ?? [];
+      const at = list.findIndex((s) => s.emoji === lure.emoji[0]);
+      if (at >= 0 && at !== list.length - 1) await this.d.api('setStickerPositionInSet', { sticker: list[at].file_id, position: list.length - 1 });
+    } catch (e) {
+      this.d.log('warn', 'shop_lure', { err: String(e).slice(0, 200) });
+    }
   }
 
   /** Вызов Telegram с ожиданием при «Too Many Requests: retry after N» (до трёх раз, не дольше 30 с). */

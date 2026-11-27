@@ -523,6 +523,7 @@ export const en: Dict = {
       dance: ['Party'],
       oops: ['Oops'],
       who: ['Actor?'],
+      lure: ['Get your', 'own pack!'],
       notCrying: ['Not crying'],
       justBanana: ['Just a', 'banana'],
       splat: ['Splat!'],
