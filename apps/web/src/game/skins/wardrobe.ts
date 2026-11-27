@@ -7,10 +7,11 @@ import type { Ctx } from '../pixels';
 import { F } from '../sprites';
 import type { View } from '../themes/types';
 import { KB_W, kotBananFrame, tearArcs, wailFace } from './kot-banan';
+import { holoOver, holoSparks } from './shine';
 
 /**
  * Карточка набора в «Гардеробе» (за флагом shop): сцена под дождём с прожектором, маленький Кот-банан ×4
- * (тот же, что в дубле) ревёт, танцует и машет; имя, подпись, ряд из 8 стикеров в подарок
+ * (тот же, что в дубле) ревёт, танцует и машет; имя, подпись, ряд из 7 стикеров в подарок
  * (выданные — ярко, остальные — под замком) и старая цена. Кнопки — разметкой страницы.
  * Холст 180×CARD_H логических пикселей; масштаб — целый в пикселях экрана (рисует зовущий через scale).
  */
@@ -135,8 +136,12 @@ export function drawCard(g: Ctx, ms: number, st: CardState): void {
   if (p.cry !== undefined) wailFace(h);
   const x0 = Math.round(CARD_W / 2 - (KB_W * hs) / 2);
   const y0 = FLOOR + 2 - h.height * hs + (p.hop ?? 0) * hs;
+  // премиальный скин — голограмма по силуэту и искры вокруг (кадр витрины — 100 мс)
+  // на витрине кот крупный (×4) — радуга тише, чтобы не спорить с самим костюмом
+  holoOver(h.getContext('2d') as Ctx, k, { x: 0, y: 0, w: h.width, h: h.height, k: 1 }, 0.16);
   g.drawImage(h, x0, y0, h.width * hs, h.height * hs);
   if (p.cry !== undefined) tearArcs(g, x0, y0, hs, pk, 6 + p.cry * 4);
+  holoSparks(g, k, { x: x0, y: y0, w: h.width * hs, h: h.height * hs, k: hs }, 2);
   R(0, SY + SH, CARD_W, 1, PAL.yellow);
   // имя, подпись, подарок
   text(g, t.items[st.item].name, 90, 152, PAL.yellow, FONT, { size: 2 });
