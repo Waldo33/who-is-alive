@@ -542,6 +542,7 @@ export const en: Dict = {
     botPackReady: '📦 Done! Catnana stickers are in your pack.',
     botFree: '🎬 Your sticker pack is ready: 4 stickers with your actor.',
     botPack: '📦 Open the sticker pack',
+    botEarned: '🎬 New sticker in your pack: {sticker}. {n} of {of} collected — more unlock in the next takes.',
     botPlay: '▶ Play',
     botSupport: 'Questions about a purchase or need a refund? Write to the game channel {channel}: we will reply and refund the Stars if something went wrong.',
   },

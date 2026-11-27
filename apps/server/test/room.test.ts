@@ -274,8 +274,10 @@ describe('фильм матча в комнате', () => {
       film: film as unknown as import('../src/film').FilmService,
       onFilm: (r, f) => toChat.push({ code: r.code, ...f }),
       onCard: (_r, c) => cards.push(c),
+      onStickers: (_r, e) => earned.push(...e),
     });
     const cards: import('../src/room').RoomCard[] = [];
+    const earned: { pid: string; stickers: string[] }[] = [];
     // комнату собрала карточка из Telegram — готовый фильм уйдёт и в тот чат
     const toChat: { code: string; id: string; winners: string[]; draw: boolean; awards: { id: string; names: string[] }[] }[] = [];
     room.invite = 'AbCd1234xyz9';
@@ -298,6 +300,9 @@ describe('фильм матча в комнате', () => {
     expect(jobs).toHaveLength(1);
     expect(jobs[0].takes.length).toBe(room.runner!.host.roundsPlayed);
     expect(jobs[0].match.winners).toEqual(room.runner!.host.match!.winners);
+    // стикеры за матч — один раз на матч, обоим: победителю «Плачу от счастья», остальным «Всё хорошо»
+    expect(earned.map((e) => e.pid).sort()).toEqual(['a', 'b']);
+    for (const e of earned) expect(e.stickers).toContain(room.runner!.host.match!.winners.includes(e.pid) ? 'happyTears' : 'allGood');
     await new Promise((r) => setTimeout(r, 0));
     for (const p of [pa, pb]) {
       const f = p.got.filter((m) => m.t === 'film');

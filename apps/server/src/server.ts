@@ -23,7 +23,8 @@ import { errFields, jsonLogger } from './log';
 import type { Logger } from './log';
 import type { Bot, CardNotice, FilmNotice } from './bot';
 import { Room } from './room';
-import { shopLedgerOp } from './shop';
+import { localLedger, shopLedgerOp } from './shop';
+import type { ShopLedger } from './shop';
 import { MemoryStore, parseEvents } from './store';
 import type { Store } from './store';
 import type { Peer, RoomCard, RoomFilm, RoomSnapshot } from './room';
@@ -158,6 +159,8 @@ export class GameServer {
   /** Соседний экземпляр (из опций или setPeer). */
   private peer: GameServerOptions['peer'];
   private readonly auth: Auth;
+  /** Учёт гардероба для бота с другого сервера (/internal/shop): связь с Telegram проверяет здешний токен. */
+  private readonly ledger: ShopLedger;
   private readonly clips: ClipStore;
   private readonly wss: WebSocketServer;
   private readonly log: Logger;
@@ -202,6 +205,7 @@ export class GameServer {
     this.maxRooms = o.maxRooms ?? 2000;
     this.peer = o.peer;
     this.store = o.store ?? new MemoryStore();
+    this.ledger = localLedger(this.store, (t) => this.auth.verify(t));
     this.http = createServer((req, res) => void this.onHttp(req, res));
     this.wss = new WebSocketServer({ noServer: true, maxPayload: WIRE_MAX_BYTES });
     this.http.on('upgrade', (req, socket, head) => {
@@ -408,7 +412,8 @@ export class GameServer {
       puzzles: load ? undefined : this.puzzles,
       videoOn: () => this.video.on,
       onFilm: (r, f) => this.filmToChat(r, f),
-        onCard: (r, c) => this.cardToChat(r, c),
+      onCard: (r, c) => this.cardToChat(r, c),
+      onStickers: load ? undefined : (r, e) => this.stickersToBot(r, e),
     });
     this.rooms.set(code, room);
     if (load) this.loadRooms.add(code);
@@ -492,6 +497,7 @@ export class GameServer {
         videoOn: () => this.video.on,
         onFilm: (r, f) => this.filmToChat(r, f),
         onCard: (r, c) => this.cardToChat(r, c),
+        onStickers: snap.load === true ? undefined : (r, e) => this.stickersToBot(r, e),
         restore: snap,
       });
       this.rooms.set(snap.code, room);
@@ -516,8 +522,13 @@ export class GameServer {
     }
     // гардероб: учёт покупок и стикеров для сервера бота (без своей базы) — по туннелю, в базу игрового
     if (p === '/internal/shop' && req.method === 'POST') {
-      const r = await shopLedgerOp(this.store, await readJson(req, 16_384));
+      const r = await shopLedgerOp(this.ledger, await readJson(req, 16_384));
       return this.reply(res, r.status, r.body);
+    }
+    // стикеры, открытые в матче (от игрового сервера, по туннелю) — бот кладёт их в пак игрока
+    if (p === '/internal/tg/stickers' && req.method === 'POST') {
+      if (!this.o.bot) return this.reply(res, 503, { error: 'no_bot' });
+      return this.reply(res, 200, await this.o.bot.shop.earn(await readJson(req, 16_384)));
     }
     // возврат звёзд за покупку (руками, по SSH на сервере бота): набор забирается
     if (p === '/internal/tg/refund' && req.method === 'POST') {
@@ -698,6 +709,34 @@ export class GameServer {
         this.log(r.ok ? 'info' : 'warn', 'film_to_chat', { room: room.code, status: r.status, sent: !!j?.sent });
       })
       .catch((e) => this.log('warn', 'film_to_chat', { room: room.code, err: String(e) }));
+  }
+
+  /**
+   * Стикеры за матч: кому из игроков что открылось (room.ts › earnedStickers) — тем, кто связан с Telegram
+   * (/tg/shop/link), бот положит их в пак. Бот на другом сервере (туннель) или в этом же процессе.
+   */
+  private stickersToBot(room: Room, earned: { pid: string; stickers: string[] }[]): void {
+    const base = this.o.botInternal;
+    const bot = this.o.bot;
+    if (!base && !bot) return;
+    void this.store
+      .telegramOf(earned.map((e) => e.pid))
+      .then(async (links) => {
+        const users = links.flatMap((l) => {
+          const e = earned.find((x) => x.pid === l.gameUser);
+          return e?.stickers.length ? [{ tgUser: l.tgUser, name: l.name, lang: l.lang, stickers: e.stickers }] : [];
+        });
+        if (!users.length) return;
+        if (!base) return void (await bot!.shop.earn({ users }));
+        const r = await fetch(`${base}/internal/tg/stickers`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ users }),
+          signal: AbortSignal.timeout(10_000),
+        });
+        this.log(r.ok ? 'info' : 'warn', 'stickers_to_bot', { room: room.code, status: r.status, users: users.length });
+      })
+      .catch((e) => this.log('warn', 'stickers_to_bot', { room: room.code, err: String(e) }));
   }
 
   /** Живая карточка в чате: состав лобби или счёт съёмки — боту, он перерисует карточку (bot.ts › card). */
