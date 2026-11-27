@@ -129,17 +129,22 @@ jobs:
               s, rc = t.get('source') or {}, t.get('receiver') or {}
               print(t.get('date'), t.get('amount'), 'id', str(t.get('id'))[:12] + '…', 'src', s.get('type'), s.get('transaction_type'), s.get('invoice_payload'), (s.get('user') or {}).get('id'), 'rcv', rc.get('type'))
           PY
-      - name: Скин в лобби — связь с Telegram и покупки (27.11, вечер)
+      - name: Какая база у бота — своя в Нидерландах или игры в Европе (27.11, вечер)
         env:
           IP: ${{ steps.infra.outputs.ip }}
         run: |
           ssh $SSH_OPTS root@$IP 'bash -s' <<'SH' || true
-          q() { PGPASSWORD=$(. /etc/massovka-grafana/pgro.env; echo $PGRO_PASSWORD) psql -h 127.0.0.1 -p 25432 -U grafana_ro -d massovka -P pager=off -c "$1" 2>&1 | head -20; }
-          q "select left(game_user,8) g, tg_user, updated_at from tg_links where tg_user = 1383823377 order by updated_at desc limit 5"
-          q "select user_id, items, issued, left(pack,40) pack from shop_users where user_id = 1383823377"
+          echo "DATABASE_URL у бота: $(grep -c '^DATABASE_URL=' /etc/massovka/secrets.env)"; grep -h '^EVENTS_UPSTREAM' /etc/massovka/*.env 2>/dev/null
+          journalctl -u 'massovka-game*' --since -3d --no-pager -o cat | grep -E '"db_ready"|db_unavailable' | tail -3 | cut -c1-200
+          L() { sudo -u postgres psql massovka -P pager=off -Atc "$1" 2>&1 | head -30; }
+          echo "── здешняя база (Нидерланды)"
+          L "select 'shop_users', count(*) from shop_users union all select 'payments', count(*) from shop_payments union all select 'tg_links', count(*) from tg_links"
+          L "select user_id, items, cardinality(issued), (pack is not null), jsonb_array_length(my), updated_at from shop_users order by updated_at desc limit 15"
+          L "select user_id, item, stars, refunded, created_at from shop_payments order by created_at desc limit 15"
+          echo "── база игры (Европа, по туннелю)"
+          G() { PGPASSWORD=$(. /etc/massovka-grafana/pgro.env; echo $PGRO_PASSWORD) psql -h 127.0.0.1 -p 25432 -U grafana_ro -d massovka -P pager=off -Atc "$1" 2>&1 | head -20; }
+          G "select 'shop_users', count(*) from shop_users union all select 'payments', count(*) from shop_payments union all select 'tg_links', count(*) from tg_links"
           SH
-          ssh $SSH_OPTS root@$IP "journalctl -u 'massovka-bot*' -u 'massovka-game*' --since -1h --no-pager -o cat | grep -iE 'sticker|issue|pack|sync' | tail -40 | cut -c1-400" || true
-          ssh $SSH_OPTS root@72.56.22.216 "journalctl -u 'massovka-game@*' --since -2h --no-pager -o cat | grep -E 'skin|shop_link|tg_link' | tail -20 | cut -c1-300" || true
       # шлёт картинку и файлы в группу тревог и сразу удаляет — владельцу приходят уведомления о
       # «пропавших тревогах» (23.11.2026). Включать вручную: TG_REACH: '1' на время проверки.
       - name: Достаёт ли Telegram до наших серверов
