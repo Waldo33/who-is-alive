@@ -18,9 +18,11 @@ export interface ShopItem {
   stars: number;
   /** Зачёркнутая «старая» цена на витрине. */
   was?: number;
+  /** Ярлык «НОВОЕ» на витрине и точка на ячейке в списке. */
+  isNew?: boolean;
 }
 
-export const SHOP_ITEMS: ShopItem[] = [{ id: 'kotBanan', stars: 199, was: 275 }];
+export const SHOP_ITEMS: ShopItem[] = [{ id: 'kotBanan', stars: 199, was: 275, isNew: true }];
 
 export interface StickerMeta {
   id: StickerId;

@@ -2,7 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
-import { DICTS, STICKER_LIST, shopItem } from '@kto/game-core';
+import { DICTS, SHOP_ITEMS, STICKER_LIST, shopItem } from '@kto/game-core';
 import type { Lang, ShopItemId } from '@kto/game-core';
 import { track } from '@/lib/analytics';
 import { TG_APP } from '@/lib/env';
@@ -11,13 +11,16 @@ import { detectLang } from '@/lib/lang';
 import { bootTelegram, haptic, inTelegram, openTelegram, shopBuy, shopPack, shopState } from '@/lib/telegram';
 import type { ShopState } from '@/lib/telegram';
 import { TopBar } from '@/ui/TopBarView';
-import { CARD_H, CARD_W, buyLabel, drawCard, starsIcon } from '@/game/skins/wardrobe';
+import { CARD_H, CARD_W, buyLabel, drawCard, itemIcon, starsIcon } from '@/game/skins/wardrobe';
 
-const ITEM: ShopItemId = 'kotBanan';
+/** Ячеек в списке наборов: пока набор один — остальные под знаком вопроса. */
+const SLOTS = 4;
 
 /** «Гардероб» (/wardrobe, за флагом shop): витрина Кот-банана, покупка за звёзды, стикеры набора — в свой пак или новый. */
 export default function WardrobeClient() {
   const router = useRouter();
+  const [ITEM, setItem] = useState<ShopItemId>(SHOP_ITEMS[0].id);
+  const [icons, setIcons] = useState<Record<string, string>>({});
   const [lang, setLang] = useState<Lang>('ru');
   const t = DICTS[lang].shop;
   const [ready, setReady] = useState(false);
@@ -31,8 +34,8 @@ export default function WardrobeClient() {
   const slotRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const owned = !!st?.items.includes(ITEM);
-  const stRef = useRef({ lang, owned });
-  stRef.current = { lang, owned };
+  const stRef = useRef({ lang, owned, item: ITEM });
+  stRef.current = { lang, owned, item: ITEM };
 
   useEffect(() => {
     if (!featureOn('shop')) {
@@ -44,6 +47,7 @@ export default function WardrobeClient() {
     document.documentElement.lang = l;
     document.title = `${DICTS[l].shop.title} · ${DICTS[l].meta.title}`;
     setStar(starsIcon().toDataURL());
+    setIcons(Object.fromEntries(SHOP_ITEMS.map((x) => [x.id, itemIcon(x.id).toDataURL()])));
     track('shop_view', {});
     const tgNow = inTelegram();
     setTgOn(tgNow);
@@ -91,9 +95,9 @@ export default function WardrobeClient() {
       const f = Math.floor((now - t0) / 100);
       if (f === last) return;
       last = f;
-      const { lang: l, owned: o } = stRef.current;
+      const { lang: l, owned: o, item } = stRef.current;
       g.setTransform(scale, 0, 0, scale, 0, 0);
-      drawCard(g, now - t0, { lang: l, item: ITEM, issued: new Set(o ? STICKER_LIST.filter((s) => s.set === ITEM && s.now).map((s) => s.id) : []) });
+      drawCard(g, now - t0, { lang: l, item, issued: new Set(o ? STICKER_LIST.filter((s) => s.set === item && s.now).map((s) => s.id) : []) });
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
@@ -142,10 +146,30 @@ export default function WardrobeClient() {
 
   const bot = TG_APP ? `https://t.me/${TG_APP.split('/')[0]}` : 'https://t.me/be_nobody_bot';
   const was = shopItem(ITEM)?.was;
+  const list = [...SHOP_ITEMS].sort((a, b) => Number(!!st?.items.includes(b.id)) - Number(!!st?.items.includes(a.id)) || Number(!!b.isNew) - Number(!!a.isNew));
   return (
     <main className="daily wardrobe">
       <TopBar lang={lang} onBack={() => router.push('/')} />
       <h1 className="daily-title">{t.title}</h1>
+      {/* наборы лентой (листается вбок): купленные первыми, потом новые; пустые ячейки — под вопросом */}
+      <div className="wardrobe-sets" role="tablist">
+        {Array.from({ length: Math.max(SLOTS, SHOP_ITEMS.length) }, (_, i) => {
+          const x = list[i];
+          if (!x)
+            return (
+              <button key={i} className="wardrobe-set locked" onClick={() => setNote(t.soon)} aria-label={t.soon}>
+                ?
+              </button>
+            );
+          const mine = !!st?.items.includes(x.id);
+          return (
+            <button key={x.id} role="tab" aria-selected={x.id === ITEM} className={x.id === ITEM ? 'wardrobe-set on' : 'wardrobe-set'} onClick={() => setItem(x.id)} aria-label={t.items[x.id].name}>
+              {icons[x.id] && <img src={icons[x.id]} alt="" width={18 * 2} height={30 * 2} />}
+              {mine ? <i className="wardrobe-mark mine">✓</i> : x.isNew ? <i className="wardrobe-mark new" /> : null}
+            </button>
+          );
+        })}
+      </div>
       <div className="daily-slot" ref={slotRef}>
         {ready && (
           <div className="daily-stage" style={{ width: (CARD_W * scale) / (globalThis.devicePixelRatio || 1), height: (CARD_H * scale) / (globalThis.devicePixelRatio || 1), visibility: scale ? 'visible' : 'hidden' }}>

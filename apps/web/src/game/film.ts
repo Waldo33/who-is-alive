@@ -156,7 +156,7 @@ export class FilmScene {
     this.g = g;
     this.bg = scaledCanvas(LW, LH, scale);
     // водяной знак: с загадкой — её адрес (его набирают руками с экрана TikTok)
-    const base = { t: inp.t, font: inp.font, site: this.address(), noGore: inp.noGore, scale, link: inp.link };
+    const base = { t: inp.t, font: inp.font, site: this.address(), noGore: inp.noGore, scale, link: inp.link, slotOnce: { done: false } };
     const h = inp.hook;
     this.pieces.push(scenePiece(new ClipPlayerScene({ ...base, ...h, mode: 'hook', keepMusic: true })));
     this.pieces.push({ kind: 'rewind', dur: REWIND_MS });
