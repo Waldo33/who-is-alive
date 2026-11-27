@@ -7,7 +7,7 @@ import type { Lang, MyFig, MyPose, MySticker, ShopItemId, StickerMeta } from '@k
 import { PAL } from '@kto/assets';
 import { track } from '@/lib/analytics';
 import { detectLang } from '@/lib/lang';
-import { bootTelegram, haptic, linkTelegramOnce, openTelegram, shopClaim, shopMy, shopMyDel, shopPick, shopCached, shopSignedIn, shopState, tgLink } from '@/lib/telegram';
+import { bootTelegram, haptic, linkTelegramOnce, openTelegram, shopClaim, shopMy, shopMyDel, shopPick, shopRemind, shopCached, shopSignedIn, shopState, tgLink } from '@/lib/telegram';
 import type { ShopState } from '@/lib/telegram';
 import { TopBar } from '@/ui/TopBarView';
 import { ST_SIZE, STICKERS, stickerFrame } from '@/game/skins/stickers';
@@ -255,6 +255,13 @@ export default function StickersClient() {
         })
       : null;
 
+  const remindMe = async () => {
+    if (busy) return;
+    setBusy(true);
+    apply(await shopRemind());
+    setBusy(false);
+  };
+
   const tapSticker = async (m: StickerMeta) => {
     setSel(m.id);
     if (!open.has(m.id)) {
@@ -434,7 +441,24 @@ export default function StickersClient() {
             <p className="stickers-note">
               {selMeta ? <b>{t.stickers[selMeta.id].join(' ')}</b> : null}
               {selMeta ? ' · ' : ''}
-              {status || (hasPack ? (nextNote ?? b.tapHint) : fmt(b.myFull, { n: MY_MAX }))}
+              {status ||
+                (hasPack && nextNote ? (
+                  <>
+                    {nextNote}
+                    {' · '}
+                    {st?.remind ? (
+                      b.reminded
+                    ) : (
+                      <button className="stickers-link" onClick={() => void remindMe()} aria-disabled={busy}>
+                        {b.remind}
+                      </button>
+                    )}
+                  </>
+                ) : hasPack ? (
+                  b.tapHint
+                ) : (
+                  fmt(b.myFull, { n: MY_MAX })
+                ))}
             </p>
             {buyItem ? (
               // закрытый стикер набора из гардероба — сразу покупка этого набора

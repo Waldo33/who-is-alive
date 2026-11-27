@@ -395,3 +395,5 @@ button.summary { color: var(--sand); cursor: pointer; }
 .stickers-colors button.on { box-shadow: 0 0 0 2px var(--ink), 0 0 0 4px var(--yellow); }
 .stickers-input { font: inherit; font-size: 16px; width: min(100%, 320px); text-align: center; background: var(--ink); color: #fff; border: 2px solid var(--amber); padding: 8px; border-radius: 0; }
 .stickers .btn[aria-disabled='true'] { background: var(--night); color: var(--steel); box-shadow: 0 0 0 2px var(--ink); pointer-events: none; }
+/* «Напомнить» в подсказке стикерпака: ссылка, а не кнопка — строка не растёт */
+.stickers-link { font: inherit; font-size: inherit; color: var(--yellow); background: none; border: 0; padding: 8px 2px; margin: -8px 0; text-decoration: underline; cursor: pointer; }
