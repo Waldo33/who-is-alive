@@ -3,6 +3,7 @@ import { jsonLogger } from './log';
 import { ErrorTracker } from './errors';
 import type { LogLevel } from './log';
 import { Bot } from './bot';
+import { Auth } from './auth';
 import { RemoteLedger } from './shop';
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -82,6 +83,7 @@ process.on('unhandledRejection', (e) => {
 });
 
 const here = dirname(fileURLToPath(import.meta.url));
+const gameAuth = new Auth(secret);
 // Telegram-бот: ключ — в секретах сервера (/etc/massovka/secrets.env), без ключа бота нет
 const bot = env.TELEGRAM_BOT_TOKEN
   ? new Bot({
@@ -98,6 +100,8 @@ const bot = env.TELEGRAM_BOT_TOKEN
       clipPublic: env.CLIP_PUBLIC_BASE === 'off' ? undefined : env.CLIP_PUBLIC_BASE || 'https://s3.twcstorage.ru/massovka-media/clips',
       // гардероб: покупки — в базе игрового сервера (у сервера бота её нет — по туннелю, как аналитика)
       shopLedger: store instanceof MemoryStore && env.EVENTS_UPSTREAM ? new RemoteLedger(env.EVENTS_UPSTREAM) : undefined,
+      // своя база: связь игрока с Telegram проверяет здешний ключ токенов
+      verifyGameToken: (t) => gameAuth.verify(t),
       // видеостикеры: рядом с server.mjs (выкладка) или apps/server/stickers (разработка)
       stickersDir: env.STICKERS_DIR || [join(here, 'stickers'), join(here, '..', 'stickers')].find((d) => existsSync(d)),
     })

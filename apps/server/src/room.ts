@@ -1,4 +1,4 @@
-import { DICTS, TICK_MS, fmt, recordRound, renamePid, seasonLeadTheme } from '@kto/game-core';
+import { DICTS, TICK_MS, fmt, earnedStickers, recordRound, renamePid, seasonLeadTheme } from '@kto/game-core';
 import type { GameConfig, PlayerInfo } from '@kto/game-core';
 import { DEFAULT_WIRE_SETTINGS, HostSession } from '@kto/net';
 import type { Channel, PresenceMember, RoomMsg, ServerMsg, Transport, WireError, WireRoom, WireRoomSettings } from '@kto/net';
@@ -66,6 +66,8 @@ export interface RoomOptions {
   onFilm?: (room: Room, film: RoomFilm) => void;
   /** Комната по приглашению из Telegram: что показать на карточке в чате (сбор, съёмка) — server.ts › cardToChat. */
   onCard?: (room: Room, card: RoomCard) => void;
+  /** Матч сыгран: всем людям — что им открылось (game-core › earnedStickers, может быть пусто) — server.ts отдаст боту. */
+  onStickers?: (room: Room, earned: { pid: string; stickers: string[] }[]) => void;
   /** Комната переехала с соседнего экземпляра сервера (выкладка без обрыва): состав и настройки — оттуда. */
   restore?: RoomSnapshot;
 }
@@ -609,7 +611,10 @@ export class Room {
     const runner = this.runner;
     this.film = null;
     this.broadcastText(JSON.stringify({ t: 'film', state: 'none' } satisfies ServerMsg));
-    runner.onLastTake = (takes) => this.startFilm(runner, takes);
+    runner.onLastTake = (takes) => {
+      this.matchStickers(runner, takes);
+      this.startFilm(runner, takes);
+    };
     runner.onKnockout = (pid, eid, round) => this.preclip(pid, eid, round);
     runner.onTake = () => this.cardNote();
     this.played = true;
@@ -745,6 +750,16 @@ export class Room {
       this.broadcastRoom();
       this.broadcastText(JSON.stringify({ t: 'film', state: 'none' } satisfies ServerMsg));
     }
+  }
+
+  /** Последний дубль разоблачён — итоги матча известны: кому из людей какие стикеры открылись. */
+  private matchStickers(r: MatchRunner, takes: FilmTake[]): void {
+    if (!this.o.onStickers || !takes.length) return;
+    const match = r.host.sim.outcome();
+    const rounds = takes.map((t) => ({ ...t.summary, theme: t.rec.theme }));
+    const earned = r.players.filter((p) => !p.ai).map((p) => ({ pid: p.pid, stickers: earnedStickers(p.pid, rounds, match) as string[] }));
+    // всех людей: сыгранный матч сам по себе открывает бесплатный пак (shop.ts › earn)
+    if (earned.length) this.o.onStickers(this, earned);
   }
 
   /**

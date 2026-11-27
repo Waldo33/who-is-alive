@@ -2,8 +2,8 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypt
 import { DICTS } from '@kto/game-core';
 import { errFields } from './log';
 import type { Logger } from './log';
-import { Shop } from './shop';
-import type { ShopLedger } from './shop';
+import { Shop, localLedger } from './shop';
+import type { ShopLedger, VerifyToken } from './shop';
 import type { Store } from './store';
 
 /**
@@ -46,6 +46,8 @@ export interface BotOptions {
   fetchImpl?: typeof fetch;
   /** Учёт гардероба (shop.ts): нет — своё хранилище (store). */
   shopLedger?: ShopLedger;
+  /** Проверка токена игрока игрового сервера (учёт в своей базе): связь игрока с Telegram для стикеров за матчи. */
+  verifyGameToken?: VerifyToken;
   /** Видеостикеры (<язык>/<id>.webm); нет — гардероб без выдачи стикеров. */
   stickersDir?: string;
 }
@@ -250,10 +252,12 @@ export class Bot {
     this.shop = new Shop({
       api: (m, b) => this.api(m, b),
       username: async () => (await this.getMe()).username,
-      ledger: o.shopLedger ?? o.store,
+      ledger: o.shopLedger ?? localLedger(o.store, o.verifyGameToken),
       log: o.log,
       stickersDir: o.stickersDir ?? '',
       channel: CHANNEL,
+      site: o.site,
+      channelId: '@' + CHANNEL.split('/').pop(),
     });
   }
 
@@ -335,7 +339,7 @@ export class Bot {
           if (u?.pre_checkout_query) await this.shop.preCheckout(u.pre_checkout_query);
           else if (u?.callback_query) await this.shop.onCallback(u.callback_query);
           // бесплатный стикерпак по внешней ссылке t.me/<бот>?start=stickers (только в личке: пак — этого игрока)
-          else if (u?.message?.text === '/start stickers' && u.message.chat.type === 'private' && u.message.from) await this.shop.claim(u.message.from);
+          else if (u?.message?.text === '/start stickers' && u.message.chat.type === 'private' && u.message.from) await this.shop.claimInChat(u.message.from);
           else if (u?.message?.text?.startsWith('/paysupport')) await this.shop.support(u.message.chat.id, u.message.from?.language_code);
           else if (u?.message?.text?.startsWith('/start')) await this.onStart(u.message);
           else if (u?.inline_query) await this.onInline(u.inline_query);
@@ -346,7 +350,7 @@ export class Bot {
         return { status: 200, body: { ok: true } };
       }
       if (method === 'POST' && (path === '/shop' || path.startsWith('/shop/'))) {
-        const b = (body ?? {}) as { initData?: string; item?: unknown };
+        const b = (body ?? {}) as { initData?: string; item?: unknown; mode?: unknown; token?: unknown };
         const init = this.verify(b.initData ?? '');
         if (!init) return { status: 401, body: { error: 'bad_init' } };
         return await this.shop.route(path, init, b);

@@ -8,7 +8,7 @@ import { track } from '@/lib/analytics';
 import { TG_APP } from '@/lib/env';
 import { featureOn } from '@/lib/features';
 import { detectLang } from '@/lib/lang';
-import { bootTelegram, haptic, inTelegram, openTelegram, shopBuy, shopPack, shopState } from '@/lib/telegram';
+import { bootTelegram, haptic, inTelegram, linkTelegramOnce, openTelegram, shopBuy, shopPack, shopState } from '@/lib/telegram';
 import type { ShopState } from '@/lib/telegram';
 import { TopBar } from '@/ui/TopBarView';
 import { CARD_H, CARD_W, buyLabel, drawCard, itemIcon, starsIcon } from '@/game/skins/wardrobe';
@@ -60,6 +60,8 @@ export default function WardrobeClient() {
       setReady(true);
       if (tgNow) {
         await bootTelegram();
+        // купил набор — стикеры за матчи пойдут в пак: сервер узнаёт, какой это аккаунт Telegram
+        void linkTelegramOnce();
         setSt(await shopState());
       }
     })();

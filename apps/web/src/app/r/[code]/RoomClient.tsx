@@ -21,7 +21,7 @@ import { loadChunk } from '@/lib/chunk';
 import { setTrackContext, shareKind, track } from '@/lib/analytics';
 import { Snow, useNewYear } from '@/ui/Festive';
 import { Actor } from '@/ui/Actor';
-import { inTelegram, inviteLink, telegramInvite, telegramReady, telegramShare, telegramShareCard, tgLink } from '@/lib/telegram';
+import { inTelegram, inviteLink, linkTelegramOnce, telegramInvite, telegramReady, telegramShare, telegramShareCard, tgLink } from '@/lib/telegram';
 import { download, shareContent, withLang } from '@/lib/share';
 import { Room, SPECTATE_DELAY_MS } from '@/net/room';
 import { GAME_API } from '@/lib/env';
@@ -43,6 +43,8 @@ export default function RoomClient({ code, bot = false }: { code: string; bot?: 
     const l = detectLang();
     setLang(l);
     document.documentElement.lang = l;
+    // стикеры за матч: сервер должен знать, какой это аккаунт Telegram (один раз на телефон)
+    void linkTelegramOnce();
   }, []);
 
   useEffect(() => {
