@@ -535,8 +535,9 @@ export class Shop {
     return n;
   }
 
-  async support(chat: number, code?: string): Promise<void> {
-    await this.d.api('sendMessage', { chat_id: chat, text: fmt(DICTS[langOf(code)].shop.botSupport, { channel: this.d.channel }) });
+  /** /paysupport: куда писать и номер покупателя (Telegram id) — по нему делается возврат (shop-refund.yml). */
+  async support(chat: number, code?: string, user?: number): Promise<void> {
+    await this.d.api('sendMessage', { chat_id: chat, text: fmt(DICTS[langOf(code)].shop.botSupport, { channel: this.d.channel, id: user ?? chat }) });
   }
 
   private async notify(chat: number, lang: Lang, text: string, pack: string | null, play = false): Promise<void> {

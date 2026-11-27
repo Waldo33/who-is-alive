@@ -165,6 +165,12 @@ describe('гардероб', () => {
     expect(calls.flatMap((c) => c.files).some((f) => /notCrying|justBanana/.test(f))).toBe(false);
   });
 
+  it('/paysupport: куда писать и номер покупателя для возврата', async () => {
+    const { bot, calls } = makeBot();
+    await hook(bot, { message: { chat: { id: 77, type: 'private' }, from: ANYA, text: '/paysupport' } });
+    expect(String(calls.find((c) => c.method === 'sendMessage')?.body.text)).toContain('77');
+  });
+
   it('«Надеть» / «Снять»: только купленный скин; новая покупка надевается сама', async () => {
     const { bot, store } = makeBot();
     const wear = (item: unknown) => bot.handle('POST', '/shop/wear', {}, { initData: initData(ANYA), item });
