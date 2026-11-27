@@ -14,7 +14,9 @@
  * удаляет через 2 суток), а GET отдаёт его с этого же адреса — сервер тянет файл из бакета потоком
  * (не 302: 26.11 Telegram не смог отправить карточку с фильмом по перенаправлению на подписанную ссылку):
  *   - фильм и клип выбывшего (монтаж на сервере, `adopt`) кладутся в S3 сразу, ссылка выдаётся после
- *     загрузки, на диске копии не остаётся;
+ *     загрузки, а копия остаётся на диске на `LOCAL_KEEP_MS` (6 ч): Telegram забирает видео для карточки
+ *     отсюда, из Нидерландов. Из бакета в Петербурге он брал его не всегда — карточка с фильмом не уходила
+ *     (27.11; 26.11 — то же с перенаправлением на S3);
  *   - клип с телефона: POST /v1/clips/direct { ext, size } → { id, ext, put } — телефон кладёт файл в бакет
  *     сам, по подписанной ссылке PUT (тип и размер — в подписи); обложка — POST /v1/clips/<id>/thumb-url;
  *   - S3 не ответил — файл остаётся на диске и отдаётся отсюда, как без S3 (запасной путь, и POST /v1/clips
@@ -34,6 +36,8 @@ export const CLIP_MAX = 12 * 1024 * 1024;
 export const THUMB_MAX = 400 * 1024;
 const CLIP_TTL_MS = 48 * 3600_000;
 export const CLIPS_DIR_MAX = 1024 * 1024 * 1024;
+/** Сколько смонтированный здесь фильм живёт и на диске (кроме S3): за это время его делят в чаты. */
+export const LOCAL_KEEP_MS = 6 * 3600_000;
 const DIR_MAX = CLIPS_DIR_MAX;
 /** Загрузок клипов на игрока: не больше 12 за 10 минут. */
 const PER_USER = 12;
@@ -240,7 +244,8 @@ export class ClipStore {
   /**
    * Готовый файл с этого же сервера (фильм матча, film.ts): переложить в хранилище под случайным именем.
    * Файл уже лежит в этой папке (монтаж пишет сюда же — переименование без копирования).
-   * Есть S3 — сначала в бакет, и только потом ответ (ссылка сразу ведёт в S3), копия с диска убирается.
+   * Есть S3 — сначала в бакет, и только потом ответ; копия на диске остаётся на `LOCAL_KEEP_MS` — её
+   * отдаёт GET (и Telegram), потом `drainLocal`/`sweep` уберут.
    */
   async adopt(path: string, ext: 'mp4', thumb?: Buffer | null): Promise<{ id: string; thumb: boolean }> {
     await mkdir(this.dir, { recursive: true });
@@ -252,7 +257,7 @@ export class ClipStore {
       await writeFile(join(this.dir, `${id}.jpg`), thumb);
       hasThumb = true;
     }
-    await Promise.all([this.moveToRemote(id, ext), hasThumb ? this.moveToRemote(id, 'jpg') : null]);
+    await Promise.all([this.put(id, ext), hasThumb ? this.put(id, 'jpg') : null]);
     return { id, thumb: hasThumb };
   }
 
@@ -274,7 +279,8 @@ export class ClipStore {
 
   /**
    * Перевезти в S3 всё, что лежит в папке с дисковых времён (до S3 или когда бакет не отвечал), и убрать
-   * с диска. По одному файлу, в фоне при старте; свежие (моложе минуты) — не трогаем, их везёт загрузка.
+   * с диска. По одному файлу, в фоне при старте; свежие (моложе `LOCAL_KEEP_MS`) — не трогаем: это фильмы,
+   * которые Telegram берёт с диска, или клипы, которые ещё везёт загрузка. Уже лежащее в бакете не грузим заново.
    */
   async drainLocal(): Promise<{ moved: number; left: number }> {
     let moved = 0;
@@ -284,8 +290,9 @@ export class ClipStore {
       const m = /^([0-9a-f]{20})\.(mp4|webm|jpg)$/.exec(name);
       if (!m) continue;
       const st = await stat(join(this.dir, name)).catch(() => null);
-      if (!st?.isFile() || this.now() - st.mtimeMs < 60_000) continue;
-      if (await this.put(m[1], m[2])) {
+      if (!st?.isFile() || this.now() - st.mtimeMs < LOCAL_KEEP_MS) continue;
+      const there = await this.remote.s3.has(`clips/${name}`).catch(() => false);
+      if (there || (await this.put(m[1], m[2]))) {
         await rm(join(this.dir, name), { force: true });
         moved++;
       } else {

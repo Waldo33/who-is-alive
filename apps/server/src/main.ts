@@ -104,8 +104,9 @@ const bot = env.TELEGRAM_BOT_TOKEN
       log,
       // клипы лежат на игровом сервере в Москве (clips.ts), бот только оформляет карточку
       clipBase: env.CLIP_BASE || env.PUBLIC_API_BASE || undefined,
-      // клипы в S3 открыты по прямой ссылке (clips.ts) — Telegram берёт их оттуда; CLIP_PUBLIC_BASE=off — только сервер
-      clipPublic: env.CLIP_PUBLIC_BASE === 'off' ? undefined : env.CLIP_PUBLIC_BASE || 'https://s3.twcstorage.ru/massovka-media/clips',
+      // Telegram берёт видео только с игрового сервера (Нидерланды): из бакета в Петербурге он забирал его
+      // не всегда, и карточка с фильмом не отправлялась (27.11). Прямые ссылки S3 — только если задан CLIP_PUBLIC_BASE
+      clipPublic: env.CLIP_PUBLIC_BASE && env.CLIP_PUBLIC_BASE !== 'off' ? env.CLIP_PUBLIC_BASE : undefined,
       // гардероб: покупки — в базе игрового сервера (у сервера бота её нет — по туннелю, как аналитика)
       // своя база у сервера бота тоже есть (рейтинг, копии) — но покупки только в базе игры: по ней сервер игры
       // знает скин в лобби и шлёт стикеры за матчи (27.11.2026 бот писал их к себе — скин не доходил до лобби)

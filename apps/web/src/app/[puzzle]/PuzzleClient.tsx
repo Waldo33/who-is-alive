@@ -286,10 +286,10 @@ export default function PuzzleClient({ code }: { code: string }) {
   };
 
   const play = () => {
-    const p = pubRef.current;
     track('puzzle_play', { code, won: !!result?.won });
-    // матч с ИИ на той же площадке, что в загадке (первый дубль), дальше — как обычно
-    router.push(`/sandbox?go&src=puzzle${p ? `&theme=${p.theme}` : ''}`);
+    // «Играть» везде ведёт в лобби на сервере (друзья по ссылке, пустые места — ИИ-актёры), как на главной;
+    // матч с ботами без сети — только в дев-режиме (/sandbox?dev)
+    router.push('/?create');
   };
 
   const crowdName = crowd ? (crowd.vote ? t.game.crowdVote : t.game.crowd[crowd.kind]) : '';

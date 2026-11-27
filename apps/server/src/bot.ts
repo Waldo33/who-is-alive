@@ -251,6 +251,8 @@ interface PrepareBody {
   thumb?: boolean;
   /** kind 'clip' (фильм матча): кнопка «Реванш» — в ту же комнату (метка карточки или код). */
   invite?: string;
+  /** kind 'clip' (фильм матча): загадка из него — кнопкой «Найди актёра» в игру внутри Telegram. */
+  puzzle?: string;
 }
 
 export class Bot {
@@ -775,7 +777,11 @@ export class Bot {
       if (!this.o.clipBase) return { status: 503, body: { error: 'no_clips' } };
       // фильм матча из комнаты — кнопка «Реванш» туда же (по метке карточки или по коду комнаты)
       const again = INVITE_TAG.test(body.invite ?? '') ? `g_${body.invite}` : /^[A-Z]{4}$/.test(body.code ?? '') ? `r_${body.code}` : '';
-      result = await this.clipCard(t, body.clip!, typeof body.text === 'string' ? safeCaption(body.text.slice(0, 300), this.o.site) : '', body.thumb === true, again);
+      const puzzle = /^[A-Z2-9]{5}$/.test(body.puzzle ?? '') ? body.puzzle! : '';
+      let text = typeof body.text === 'string' ? safeCaption(body.text.slice(0, 300), this.o.site) : '';
+      // ссылка на загадку в подписи открывалась бы в браузере — вместо неё кнопка, которая ведёт в игру в Telegram
+      if (puzzle) text = text.replace(new RegExp(`https?://\\S*/${puzzle}\\S*`, 'g'), '').replace(/\n+$/, '').trim();
+      result = await this.clipCard(t, body.clip!, text, body.thumb === true, again, puzzle);
     } else result = await this.inviteCard(t);
     const msg = await this.api<{ id: string }>('savePreparedInlineMessage', {
       user_id: init.user.id,
@@ -808,7 +814,7 @@ export class Bot {
   }
 
   /** Видео-карточка: клип (его забирает сервер Telegram — из S3 или с игрового сервера), подпись и кнопка «Играть». */
-  private async clipCard(t: Texts, id: string, text: string, thumb: boolean, again = '') {
+  private async clipCard(t: Texts, id: string, text: string, thumb: boolean, again = '', puzzle = '') {
     const [video, cover] = await Promise.all([this.clipUrl(id, 'mp4'), thumb ? this.clipUrl(id, 'jpg') : null]);
     return {
       type: 'video',
@@ -818,7 +824,12 @@ export class Bot {
       thumbnail_url: cover ?? `${this.o.site}/icons/icon-192.png`,
       title: t.clipTitle,
       caption: text || t.inviteText,
-      reply_markup: { inline_keyboard: [[again ? { text: t.filmAgain, url: await this.link(again) } : { text: t.play, url: await this.link('play') }]] },
+      reply_markup: {
+        inline_keyboard: [
+          [again ? { text: t.filmAgain, url: await this.link(again) } : { text: t.play, url: await this.link('play') }],
+          ...(puzzle ? [[{ text: t.filmPuzzle, url: await this.link(`c_${puzzle}`) }]] : []),
+        ],
+      },
     };
   }
 

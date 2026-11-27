@@ -126,6 +126,22 @@ describe('Telegram-бот', () => {
     expect(res.thumbnail_url).toBe(`https://msk.example/v1/clips/${id}.jpg`);
     expect(res.caption).toBe('Вырезал!');
   });
+
+  it('фильм с загадкой: ссылка на сайт из подписи уходит, вместо неё кнопка «Найди актёра» в Telegram', async () => {
+    const { bot, calls } = makeBot();
+    const init = initData({ id: 9, language_code: 'ru' });
+    const text = '🎬 Снято! Звезда фильма — Аня\nНаш фильм в «Массовке» 🎬 Сыграем?\nhttps://benobody.app/DE7S4';
+    await bot.handle('POST', '/prepare', {}, { initData: init, kind: 'clip', clip: 'ab'.repeat(10), text, thumb: false, code: 'WXYZ', puzzle: 'DE7S4' });
+    const res = calls.find((c) => c.method === 'savePreparedInlineMessage')!.body.result as { caption: string; reply_markup: { inline_keyboard: { text: string; url: string }[][] } };
+    expect(res.caption).toBe('🎬 Снято! Звезда фильма — Аня\nНаш фильм в «Массовке» 🎬 Сыграем?');
+    expect(res.reply_markup.inline_keyboard[0][0].url).toBe('https://t.me/be_nobody_bot/play?startapp=r_WXYZ');
+    expect(res.reply_markup.inline_keyboard[1][0]).toEqual({ text: '🔎 Найди актёра', url: 'https://t.me/be_nobody_bot/play?startapp=c_DE7S4' });
+    // мусор вместо кода загадки — без кнопки
+    calls.length = 0;
+    await bot.handle('POST', '/prepare', {}, { initData: init, kind: 'clip', clip: 'ab'.repeat(10), text, thumb: false, puzzle: '.*' });
+    const res2 = calls.find((c) => c.method === 'savePreparedInlineMessage')!.body.result as { reply_markup: { inline_keyboard: unknown[][] } };
+    expect(res2.reply_markup.inline_keyboard).toHaveLength(1);
+  });
 });
 
 describe('фильм матча в чат приглашения', () => {
