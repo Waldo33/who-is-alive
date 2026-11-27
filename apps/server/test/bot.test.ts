@@ -148,7 +148,7 @@ describe('фильм матча в чат приглашения', () => {
   const hdr = (bot: Bot) => ({ 'x-telegram-bot-api-secret-token': bot.hookSecret });
   const film = { invite: 'AbCd1234xyz9', id: 'cd'.repeat(10), code: 'WXYZ', winners: ['Аня'], draw: false };
 
-  it('карточку «Собрать комнату» отправили — в конце матча она становится видео «Снято!» и «Реванш»', async () => {
+  it('карточку «Собрать комнату» отправили — в конце матча она становится видео «Снято!» и «Сыграть с нами»', async () => {
     const { bot, calls, store } = makeBot();
     // без отправленной карточки — молчим
     expect((await bot.film(film)).body).toEqual({ sent: false });
@@ -202,7 +202,7 @@ describe('фильм матча в чат приглашения', () => {
     // фильм занял карточку — дальше правится подпись под видео
     await bot.film({ invite: 'AbCd1234xyz9', id: 'cd'.repeat(10), code: 'WXYZ', winners: ['Енот'], draw: false, awards: [{ id: 'clairvoyant', names: ['B'] }, { id: 'nope', names: ['C'] }], score: 'Енот 5 : 3 B' });
     const media = calls.find((c) => c.method === 'editMessageMedia')!.body as { media: { caption: string } };
-    expect(media.media.caption).toBe('🎬 Снято! Звезда фильма — Енот\n🏅 Голос за кадром — B\nЕнот 5 : 3 B\nКомната WXYZ. Реванш? Жми кнопку — та же комната.');
+    expect(media.media.caption).toBe('🎬 Снято! Звезда фильма — Енот\n🏅 Голос за кадром — B\nЕнот 5 : 3 B\nКомната WXYZ. Сыграем? Жми кнопку — та же комната.');
     calls.length = 0;
     await new Promise((r) => setTimeout(r, 3100));
     await bot.card({ ...card, state: 'lobby', seats: [{ name: 'Енот', color: 0 }, { name: 'B', color: 1 }, { name: 'C', color: 2 }], max: 4 });
