@@ -506,7 +506,7 @@ export class Bot {
     await this.api('sendMessage', {
       chat_id: msg.chat.id,
       text: t.stickersText,
-      reply_markup: { inline_keyboard: [[{ text: t.stickers, web_app: { url: `${this.o.site}/stickers?ff=shop&src=tg` } }]] },
+      reply_markup: { inline_keyboard: [[{ text: t.stickers, web_app: { url: `${this.o.site}/stickers?src=tg` } }]] },
     });
   }
 
@@ -523,10 +523,10 @@ export class Bot {
     // канал игры — новости и ролики; кнопка ведёт в канал, игру не загораживает
     const channel = [{ text: t.channel, url: CHANNEL }];
     const rows = priv
-      ? [[web(t.play, path)], ...(room ? [] : [[web(t.stickers, '/stickers?ff=shop')]]), ...(this.casting ? [[web(t.daily, '/daily')]] : []), channel]
+      ? [[web(t.play, path)], ...(room ? [] : [[web(t.stickers, '/stickers')]]), ...(this.casting ? [[web(t.daily, '/daily')]] : []), channel]
       : [
           [{ text: t.play, url: await this.link(room ? param : 'friends') }],
-          ...(room ? [] : [[{ text: t.stickers, url: await this.link('ff_stickers') }]]),
+          ...(room ? [] : [[{ text: t.stickers, url: await this.link('stickers') }]]),
           ...(this.casting ? [[{ text: t.daily, url: await this.link('daily') }]] : []),
           channel,
         ];

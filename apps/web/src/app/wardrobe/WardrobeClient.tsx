@@ -6,7 +6,6 @@ import { DICTS, SHOP_ITEMS, STICKER_LIST, shopItem } from '@kto/game-core';
 import type { Lang, ShopItemId } from '@kto/game-core';
 import { track } from '@/lib/analytics';
 import { TG_APP } from '@/lib/env';
-import { featureOn } from '@/lib/features';
 import { detectLang } from '@/lib/lang';
 import { bootTelegram, haptic, inTelegram, linkTelegramOnce, openTelegram, shopBuy, shopState, shopWear, tgLink } from '@/lib/telegram';
 import type { ShopState } from '@/lib/telegram';
@@ -45,10 +44,6 @@ export default function WardrobeClient() {
   stRef.current = { lang, owned, item: ITEM };
 
   useEffect(() => {
-    if (!featureOn('shop')) {
-      router.replace('/');
-      return;
-    }
     const l = detectLang();
     setLang(l);
     document.documentElement.lang = l;
@@ -120,7 +115,7 @@ export default function WardrobeClient() {
     // вне Telegram покупка невозможна — ведём в гардероб внутри бота
     if (!tgOn) {
       track('shop_to_tg', { item: ITEM });
-      const link = tgLink('ff_shop');
+      const link = tgLink('shop');
       if (link) location.href = link;
       return;
     }

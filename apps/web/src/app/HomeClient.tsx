@@ -36,8 +36,6 @@ export default function HomeClient() {
   const [web, setWeb] = useState(false);
   // кастинг дня: номер и пройден ли сегодня (localStorage — как на /daily)
   const [daily, setDaily] = useState({ on: false, n: 0, done: false });
-  // «Гардероб» — за флагом shop (lib/features.ts)
-  const [shop, setShop] = useState(false);
   // бесплатный стикерпак с актёром — плашкой после первого матча, пока не забран (за тем же флагом)
   const [stickers, setStickers] = useState<'off' | 'offer' | 'busy' | 'sub' | 'match'>('off');
   useEffect(() => {
@@ -49,9 +47,8 @@ export default function HomeClient() {
       /* нет записей */
     }
     setDaily({ on: featureOn('casting'), n, done });
-    setShop(featureOn('shop'));
     try {
-      if (featureOn('shop') && localStorage.getItem('kto:played') === '1' && !localStorage.getItem('kto:stickers')) setStickers('offer');
+      if (localStorage.getItem('kto:played') === '1' && !localStorage.getItem('kto:stickers')) setStickers('offer');
     } catch {
       /* приватный режим */
     }
@@ -173,7 +170,8 @@ export default function HomeClient() {
             <span className="daily-tile-sub">{daily.done ? t.start.dailyDone : t.daily.task}</span>
           </Link>
         )}
-        {shop && (
+        {/* одна плитка-предложение за раз: пока не забран бесплатный стикерпак — он, потом «Гардероб» (иначе не влезает в iPhone SE) */}
+        {stickers === 'off' && (
           <Link className="daily-tile" href="/wardrobe" onClick={() => track('shop_tap', { from: 'home' })}>
             <span className="daily-tile-title">{t.shop.title}</span>
             <span className="daily-tile-sub">

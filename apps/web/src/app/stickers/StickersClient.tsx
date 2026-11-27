@@ -6,7 +6,6 @@ import { DICTS, MY_COLORS, MY_FIGS, MY_MAX, MY_POSES, STICKER_LIST, THEME_RULES,
 import type { Lang, MyFig, MyPose, MySticker, ShopItemId, StickerMeta } from '@kto/game-core';
 import { PAL } from '@kto/assets';
 import { track } from '@/lib/analytics';
-import { featureOn } from '@/lib/features';
 import { detectLang } from '@/lib/lang';
 import { bootTelegram, haptic, inTelegram, linkTelegramOnce, openTelegram, shopClaim, shopMy, shopMyDel, shopPick, shopState, tgLink } from '@/lib/telegram';
 import type { ShopState } from '@/lib/telegram';
@@ -83,10 +82,6 @@ export default function StickersClient() {
   lookRef.current = { fig: draft.fig, pose: draft.pose, color: draft.color, text: 'error' in cap ? lookRef.current.text : cap.lines };
 
   useEffect(() => {
-    if (!featureOn('shop')) {
-      router.replace('/');
-      return;
-    }
     const l = detectLang();
     setLang(l);
     document.documentElement.lang = l;
@@ -265,7 +260,7 @@ export default function StickersClient() {
   // вне Telegram пак не собрать — сразу в бота, на эту же страницу
   const toTg = (from: string) => {
     track('stickers_to_tg', { from });
-    const link = tgLink('ff_stickers');
+    const link = tgLink('stickers');
     if (link) location.href = link;
   };
 

@@ -221,7 +221,7 @@ export function telegramLang(): 'ru' | 'en' | null {
 
 /**
  * Параметр запуска (?startapp=…): `r_КОД` — комната, `play` — сразу матч с ИИ, `friends` — новая
- * комната, `g_МЕТКА` — общее лобби по карточке бота «Собрать комнату», `c_КОД` — загадка из фильма, `daily` — загадка дня, `dev[_tN][_sN]` — песочница с дев-панелью (тема N, ускорение N), `ff_shop` — включить и открыть «Гардероб», `ff_stickers` — «Собери свой стикерпак». Telegram передаёт его
+ * комната, `g_МЕТКА` — общее лобби по карточке бота «Собрать комнату», `c_КОД` — загадка из фильма, `daily` — загадка дня, `dev[_tN][_sN]` — песочница с дев-панелью (тема N, ускорение N), `shop` — «Гардероб», `stickers` — «Собери свой стикерпак» (`ff_shop`/`ff_stickers` — старые варианты). Telegram передаёт его
  * и в адресе (`tgWebAppStartParam`) — так он известен сразу, ещё до загрузки SDK.
  */
 export function telegramStart(): string | null {
@@ -251,10 +251,9 @@ export function telegramStartTarget(): string | null {
   const dev = /^dev(?:_t(\d{1,2}))?(?:_s(\d{1,2}))?$/.exec(start);
   if (dev) return `/sandbox?dev${dev[1] ? `&theme=${dev[1]}` : ''}${dev[2] ? `&speed=${dev[2]}` : ''}&src=tg`;
   if (start === 'friends') return '/?create=1&src=tg';
-  // флаг фичи для владельца (в Telegram адрес не поправить руками): ff_shop — включить «Гардероб» и открыть его
-  if (start === 'ff_shop') return '/wardrobe?ff=shop&src=tg';
-  // «Собери свой стикерпак» с сайта: кнопка «Открыть в Telegram» ведёт на ту же страницу в боте
-  if (start === 'ff_stickers') return '/stickers?ff=shop&src=tg';
+  // «Гардероб» и «Собери свой стикерпак» (ff_* — старые ссылки времён флага shop, ещё живут в чатах)
+  if (start === 'shop' || start === 'ff_shop') return '/wardrobe?src=tg';
+  if (start === 'stickers' || start === 'ff_stickers') return '/stickers?src=tg';
   // загадка из фильма матча: кнопка «Найди актёра» под видео в чате
   const puzzle = /^c_([A-Z2-9]{5})$/.exec(start);
   if (puzzle) return `/${puzzle[1]}?src=tg_film`;

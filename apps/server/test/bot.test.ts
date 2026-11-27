@@ -57,7 +57,7 @@ describe('Telegram-бот', () => {
     await bot.handle('POST', '/hook', { 'x-telegram-bot-api-secret-token': bot.hookSecret }, upd);
     const kb = (calls.find((c) => c.method === 'sendMessage')!.body as { reply_markup: { inline_keyboard: { text: string; web_app: { url: string } }[][] } }).reply_markup.inline_keyboard;
     expect(kb[0][0].web_app.url).toBe('https://site.example/?create=1&src=tg');
-    expect(kb[1][0].web_app.url).toBe('https://site.example/stickers?ff=shop&src=tg');
+    expect(kb[1][0].web_app.url).toBe('https://site.example/stickers?src=tg');
     expect(JSON.stringify(kb.at(-1))).toContain('https://t.me/benobody_app');
   });
 
@@ -66,7 +66,7 @@ describe('Telegram-бот', () => {
     const upd = { message: { chat: { id: 1, type: 'private' }, text: '/stickers', from: { language_code: 'ru' } } };
     await bot.handle('POST', '/hook', { 'x-telegram-bot-api-secret-token': bot.hookSecret }, upd);
     const kb = (calls.find((c) => c.method === 'sendMessage')!.body as { reply_markup: { inline_keyboard: { web_app: { url: string } }[][] } }).reply_markup.inline_keyboard;
-    expect(kb[0][0].web_app.url).toBe('https://site.example/stickers?ff=shop&src=tg');
+    expect(kb[0][0].web_app.url).toBe('https://site.example/stickers?src=tg');
   });
 
   it('кастинг: первый результат за день окончательный, рейтинг чата по победам и попыткам', async () => {
