@@ -1,4 +1,4 @@
-import { createHmac } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { Bot } from '../src/bot';
@@ -19,6 +19,14 @@ function initData(user: object, auth = Math.floor(Date.now() / 1000)): string {
   const secret = createHmac('sha256', 'WebAppData').update(TOKEN).digest();
   p.set('hash', createHmac('sha256', secret).update(check).digest('hex'));
   return p.toString();
+}
+
+/** Данные входа через Telegram на сайте (Login Widget), подписанные как в Telegram. */
+function webLogin(user: { id: number; first_name?: string; username?: string }, auth = Math.floor(Date.now() / 1000)): Record<string, string | number> {
+  const d: Record<string, string | number> = { ...user, auth_date: auth };
+  const check = Object.entries(d).map(([k, v]) => `${k}=${v}`).sort().join('\n');
+  d.hash = createHmac('sha256', createHash('sha256').update(TOKEN).digest()).update(check).digest('hex');
+  return d;
 }
 
 interface Call {
@@ -436,6 +444,36 @@ describe('гардероб', () => {
       const ext = await fetch(`http://127.0.0.1:${port}/internal/shop`, { method: 'POST', headers: { 'x-forwarded-for': '1.2.3.4' }, body: JSON.stringify({ op: 'link', token: me.token, link: { tgUser: 99, name: 'x', lang: 'ru' } }) });
       expect(ext.status).toBe(404);
       expect((await store.telegramOf([me.userId]))[0].tgUser).toBe(77);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('вход через Telegram на сайте: подпись виджета, 30 дней; связь с игроком — как из Mini App; покупка — только в Telegram', async () => {
+    const store = new MemoryStore();
+    const srv = new GameServer({ authSecret: 'x'.repeat(32), log: silentLogger, trustProxy: true, store });
+    const port = await srv.listen(0, '127.0.0.1');
+    try {
+      const me = (await (await fetch(`http://127.0.0.1:${port}/v1/auth/anon`, { method: 'POST' })).json()) as { userId: string; token: string };
+      const { bot } = makeBot({ ledger: new RemoteLedger(`http://127.0.0.1:${port}`) });
+      const login = webLogin({ id: 77, first_name: 'Аня', username: 'anya' });
+      expect(bot.verifyLogin(login, 'ru')?.user).toEqual({ id: 77, first_name: 'Аня', username: 'anya', language_code: 'ru' });
+      // подмена id, лишнее поле, старый вход, мусор — отказ
+      expect(bot.verifyLogin({ ...login, id: 78 })).toBeNull();
+      expect(bot.verifyLogin({ ...login, admin: 1 })).toBeNull();
+      expect(bot.verifyLogin(webLogin({ id: 77 }, Math.floor(Date.now() / 1000) - 31 * 86_400))).toBeNull();
+      expect(bot.verifyLogin(webLogin({ id: 77 }, Math.floor(Date.now() / 1000) - 29 * 86_400))?.user.id).toBe(77);
+      expect(bot.verifyLogin('id=77&hash=00')).toBeNull();
+      expect(bot.verifyLogin({ ...login, hash: { $ne: 1 } })).toBeNull();
+      // подпись Mini App (initData) для виджета не годится и наоборот
+      expect(bot.verify(new URLSearchParams(Object.entries(login).map(([k, v]) => [k, String(v)])).toString())).toBeNull();
+
+      expect((await bot.handle('POST', '/shop/link', {}, { login, lang: 'ru', token: me.token })).status).toBe(200);
+      expect(await store.telegramOf([me.userId])).toEqual([{ gameUser: me.userId, tgUser: 77, name: 'Аня', lang: 'ru' }]);
+      expect((await bot.handle('POST', '/shop', {}, { login })).status).toBe(200);
+      expect((await bot.handle('POST', '/shop/link', {}, { login: { ...login, id: 99 }, token: me.token })).status).toBe(401);
+      expect((await bot.handle('POST', '/shop/buy', {}, { login, item: 'kotBanan' })).status).toBe(401);
+      expect((await bot.handle('GET', '/info', {}, null)).body).toMatchObject({ id: 123456 });
     } finally {
       await srv.close();
     }

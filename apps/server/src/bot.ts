@@ -239,6 +239,9 @@ export interface BotReply {
   body: unknown;
 }
 
+/** Сколько живёт вход через Telegram на сайте (данные виджета хранит браузер). */
+const LOGIN_TTL_SEC = 30 * 86_400;
+
 const CLIP_ID = /^[0-9a-f]{20}$/;
 const INVITE_TAG = /^[A-Za-z0-9]{12}$/;
 
@@ -380,7 +383,8 @@ export class Bot {
     try {
       if (method === 'GET' && path === '/info') {
         const b = await this.getMe();
-        return { status: 200, body: { username: b.username, app: this.app, inline: !!b.supports_inline_queries } };
+        // id бота — для входа через Telegram на сайте (виджет: Telegram.Login.auth({ bot_id })); он публичный
+        return { status: 200, body: { username: b.username, app: this.app, inline: !!b.supports_inline_queries, id: this.botId } };
       }
       if (method === 'GET' && path === '/status') {
         const w = await this.api<{ url?: string; pending_update_count?: number; last_error_date?: number; last_error_message?: string }>('getWebhookInfo');
@@ -435,9 +439,12 @@ export class Bot {
         return { status: 200, body: { ok: true } };
       }
       if (method === 'POST' && (path === '/shop' || path.startsWith('/shop/'))) {
-        const b = (body ?? {}) as { initData?: string; item?: unknown; mode?: unknown; token?: unknown; id?: unknown; on?: unknown; slot?: unknown; sticker?: unknown };
-        const init = this.verify(b.initData ?? '');
+        const b = (body ?? {}) as { initData?: string; login?: unknown; lang?: unknown; item?: unknown; mode?: unknown; token?: unknown; id?: unknown; on?: unknown; slot?: unknown; sticker?: unknown };
+        // Mini App — initData; браузер (сайт без Telegram) — данные входа через Telegram (виджет на benobody.app)
+        const init = this.verify(b.initData ?? '') ?? this.verifyLogin(b.login, b.lang);
         if (!init) return { status: 401, body: { error: 'bad_init' } };
+        // покупка — только в Telegram: счёт открывается поверх Mini App
+        if (path === '/shop/buy' && !b.initData) return { status: 401, body: { error: 'bad_init' } };
         return await this.shop.route(path, init, b);
       }
       if (method === 'POST' && path === '/prepare') return await this.onPrepare(body as PrepareBody);
@@ -845,6 +852,48 @@ export class Bot {
     } catch {
       return null;
     }
+  }
+
+  /** Числовой id бота (часть ключа до двоеточия; сам по себе не секрет). */
+  get botId(): number | null {
+    const id = Number(this.o.token.split(':')[0]);
+    return Number.isSafeInteger(id) && id > 0 ? id : null;
+  }
+
+  /**
+   * Вход через Telegram на сайте (Telegram Login Widget, https://core.telegram.org/widgets/login): поля
+   * id, first_name, last_name, username, photo_url, auth_date и hash = HMAC-SHA256(строка проверки, SHA256(токен)).
+   * Строка проверки — все поля, кроме hash, «ключ=значение» по алфавиту через \n. Вход живёт 30 дней (браузер
+   * хранит его, как Mini App — initData). Языка в данных нет — берём подсказку клиента (только для текстов бота).
+   */
+  verifyLogin(login: unknown, lang?: unknown, nowSec = Date.now() / 1000): InitData | null {
+    if (!login || typeof login !== 'object' || Array.isArray(login)) return null;
+    const entries = Object.entries(login as Record<string, unknown>);
+    if (entries.length > 12) return null;
+    let hash = '';
+    const parts: string[] = [];
+    for (const [k, v] of entries) {
+      if (!/^[a-z_]{1,32}$/.test(k) || (typeof v !== 'string' && typeof v !== 'number') || String(v).length > 512) return null;
+      if (k === 'hash') hash = String(v);
+      else parts.push(`${k}=${v}`);
+    }
+    if (!/^[0-9a-f]{64}$/.test(hash)) return null;
+    const secret = createHash('sha256').update(this.o.token).digest();
+    const want = createHmac('sha256', secret).update(parts.sort().join('\n')).digest('hex');
+    if (!safeEqual(want, hash)) return null;
+    const l = login as { id?: unknown; first_name?: unknown; username?: unknown; auth_date?: unknown };
+    const age = nowSec - Number(l.auth_date ?? 0);
+    if (!(age >= -60 && age < LOGIN_TTL_SEC)) return null;
+    const id = Number(l.id);
+    if (!Number.isSafeInteger(id) || id <= 0) return null;
+    return {
+      user: {
+        id,
+        ...(typeof l.first_name === 'string' ? { first_name: l.first_name } : {}),
+        ...(typeof l.username === 'string' ? { username: l.username } : {}),
+        ...(lang === 'ru' || lang === 'en' ? { language_code: lang } : {}),
+      },
+    };
   }
 
   private async onDaily(body: { initData?: string; n?: number; tries?: number; won?: boolean }, save: boolean): Promise<BotReply> {

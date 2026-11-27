@@ -20,6 +20,7 @@ import type { SharedClip } from './clips';
 import { featureOn } from './features';
 import { LANG_KEY } from './lang';
 import { savedName, saveName } from './name';
+import { currentWebLogin } from './tg-login';
 
 /** tick — щелчок барабана автомата («Казино»): в Telegram — как select, вне его — самый короткий толчок мотора. */
 export type Haptic = 'light' | 'medium' | 'heavy' | 'success' | 'error' | 'warning' | 'select' | 'tick';
@@ -331,21 +332,45 @@ export async function telegramReady(): Promise<TgWebApp | null> {
  */
 const BOT_FN = `${GAME_API}/tg`;
 
-async function botPost<T>(path: string, body: Record<string, unknown>, timeoutMs = 6000): Promise<T | null> {
+/**
+ * Кто зовёт бота: в Telegram — подписанный initData Mini App, в браузере — вход через Telegram на сайте
+ * (tg-login.ts). null — ни того, ни другого.
+ */
+async function botAuth(): Promise<{ auth: Record<string, unknown>; tg: number } | null> {
   const w = await bootTelegram();
-  if (!w?.initData) return null;
+  if (w?.initData) return { auth: { initData: w.initData }, tg: w.initDataUnsafe?.user?.id ?? 0 };
+  if (inTelegram()) return null;
+  const l = currentWebLogin();
+  if (!l) return null;
+  let lang: string | null = null;
+  try {
+    lang = localStorage.getItem(LANG_KEY);
+  } catch {
+    /* приватный режим */
+  }
+  return { auth: { login: l, ...(lang === 'ru' || lang === 'en' ? { lang } : {}) }, tg: l.id };
+}
+
+/** Можно ли звать магазин: игра в Telegram или в браузере выполнен вход через Telegram. */
+export function shopSignedIn(): boolean {
+  return inTelegram() || !!currentWebLogin();
+}
+
+async function botPost<T>(path: string, body: Record<string, unknown>, timeoutMs = 6000): Promise<T | null> {
+  const a = await botAuth();
+  if (!a) return null;
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), timeoutMs);
   try {
     const r = await fetch(`${BOT_FN}${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ initData: w.initData, ...body }),
+      body: JSON.stringify({ ...a.auth, ...body }),
       signal: ctl.signal,
     });
     if (!r.ok) return null;
     const out = (await r.json()) as T;
-    if (path.startsWith('/shop')) rememberShop(w.initDataUnsafe?.user?.id, out);
+    if (path.startsWith('/shop')) rememberShop(a.tg, out);
     return out;
   } catch {
     return null;
@@ -461,13 +486,13 @@ export interface ShopState {
 
 /** Ответ бота с кодом ошибки (400/409/429 — `{ error }`); null — нет сети или не в Telegram. */
 async function botCall<T>(path: string, body: Record<string, unknown>, timeoutMs = 8000): Promise<{ body?: T; error?: string } | null> {
-  const w = await bootTelegram();
-  if (!w?.initData) return null;
+  const a = await botAuth();
+  if (!a) return null;
   try {
     const r = await fetch(`${BOT_FN}${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ initData: w.initData, ...body }),
+      body: JSON.stringify({ ...a.auth, ...body }),
       signal: AbortSignal.timeout(timeoutMs),
     });
     const j = (await r.json().catch(() => ({}))) as T & { error?: string };
@@ -506,7 +531,7 @@ function rememberShop(tg: number | undefined, st: unknown): void {
 export function shopCached(): ShopState | null {
   try {
     const c = JSON.parse(localStorage.getItem(SHOP_KEY) ?? 'null') as { tg?: number; st?: ShopState } | null;
-    const me = (window as unknown as { Telegram?: { WebApp?: TgWebApp } }).Telegram?.WebApp?.initDataUnsafe?.user?.id;
+    const me = (window as unknown as { Telegram?: { WebApp?: TgWebApp } }).Telegram?.WebApp?.initDataUnsafe?.user?.id ?? (inTelegram() ? undefined : currentWebLogin()?.id);
     if (!c?.st || !Array.isArray(c.st.items) || (me && c.tg !== me)) return null;
     return c.st;
   } catch {
@@ -560,13 +585,13 @@ export function openTelegram(url: string): void {
 
 /**
  * Связать игрока игрового сервера с аккаунтом Telegram (один раз на пару «телефон — аккаунт»): по связи
- * сервер после матча кладёт открытые стикеры в пак игрока. Вне Telegram — ничего.
+ * сервер после матча кладёт открытые стикеры в пак игрока и надевает купленный скин. В браузере — если игрок
+ * вошёл через Telegram на сайте; иначе ничего.
  */
 export async function linkTelegramOnce(): Promise<void> {
-  if (!inTelegram()) return;
   try {
-    const w = await bootTelegram();
-    const tg = w?.initDataUnsafe?.user?.id;
+    // в браузере — по входу через Telegram на сайте (tg-login.ts)
+    const tg = inTelegram() ? (await bootTelegram())?.initDataUnsafe?.user?.id : currentWebLogin()?.id;
     if (!tg) return;
     const me = await ensureGameUser();
     const key = `${tg}:${me.userId}`;
