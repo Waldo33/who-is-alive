@@ -72,7 +72,7 @@ const T = {
     lobbyJoin: '👥 В комнату',
     roomTitle: 'Позвать в комнату {code}',
     roomDesc: 'Друзья попадут сразу в твою комнату',
-    roomText: 'Заходи в «Массовку» — комната {code}. Спрячься в толпе и вычисли живых!',
+    roomText: 'Заходи в «Массовку» — комната {code}. Спрячься в массовке и вычисли актёров!',
     join: '▶ Войти в комнату',
     dailyTitle: 'Кастинг дня №{n}',
     dailyDesc: 'Найди актёра в массовке за три попытки',
@@ -114,7 +114,7 @@ const T = {
     lobbyJoin: '👥 Join the room',
     roomTitle: 'Invite to room {code}',
     roomDesc: 'Friends join your room directly',
-    roomText: 'Join me in Be Nobody — room {code}. Hide in the crowd and spot the humans!',
+    roomText: 'Join me in Be Nobody — room {code}. Hide in the crowd and spot the actors!',
     join: '▶ Join the room',
     dailyTitle: 'Daily casting #{n}',
     dailyDesc: 'Spot the actor among the extras in three tries',
@@ -370,7 +370,7 @@ export class Bot {
     const P = {
       ru: {
         description:
-          'Массовка — пиксельная игра для компании на 2–4 телефона. На площади 32 одинаковых человечка: почти все — боты, среди них — вы. Прячься в толпе, вычисляй живых по поведению и бей первым. Матч — 5 минут.',
+          'Массовка — пиксельная игра для компании на 2–4 телефона. На площади 32 одинаковых человечка: почти все — боты, среди них — вы. Прячься в толпе, вычисляй актёров по поведению и бей первым. Матч — 5 минут.',
         casting: ' А каждый день — «Кастинг дня»: найди актёра в массовке.',
         short: 'Спрячься в толпе ботов и вычисли друзей первым. 2–4 игрока, 5 минут.',
         name: 'Массовка',
@@ -379,7 +379,7 @@ export class Bot {
       },
       en: {
         description:
-          'Be Nobody is a pixel party game for 2–4 phones. 32 identical people on the square: almost all are bots, and you are among them. Hide in the crowd, spot the humans by how they move, and strike first. 5-minute matches.',
+          'Be Nobody is a pixel party game for 2–4 phones. 32 identical people on the square: almost all are bots, and you are among them. Hide in the crowd, spot the actors by how they move, and strike first. 5-minute matches.',
         casting: ' Plus a daily casting: spot the actor among the extras.',
         short: 'Hide in a crowd of bots and spot your friends first. 2–4 players, 5 minutes.',
         name: 'Be Nobody',

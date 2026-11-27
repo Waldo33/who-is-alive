@@ -12,20 +12,20 @@ import type { ShopPayment, ShopUser, Store, TgLink } from './store';
  *
  * Маршруты бота (https://api.<домен>/tg/...), тело — { initData } от Mini App (подпись проверяет бот):
  *   POST /shop        — что есть у игрока, ссылка на его пак; недовыданные стикеры досылаются;
- *   POST /shop/claim  — бесплатный пак с обычным актёром (плашка на главной после первого матча);
- *   POST /shop/pack   — { item, mode: in | own } стикеры купленного набора: в свой пак (in) или новым паком (own);
+ *   POST /shop/claim  — бесплатный пак с обычным актёром (после первого матча и подписки на канал);
+ *   POST /shop/pack   — устарело (старые вкладки): просто состояние;
  *   POST /shop/buy    — { item } → ссылка на счёт в звёздах (WebApp.openInvoice);
  *   POST /shop/link   — { token } связать игрока игрового сервера (его токен) с этим пользователем Telegram:
  *                       по связи сервер после матча открывает стикеры за события матча (earn в game-core/shop.ts).
  * Стикеры за матч: игровой сервер считает, кому что открылось, и шлёт боту /internal/tg/stickers → `earn`
  * (только наборы, которые у игрока есть; новый стикер — сообщение «Новый стикер в паке»).
- * Вебхук: pre_checkout_query (проверка перед оплатой), message.successful_payment (выдать набор и
- * предложить кнопками «В мой пак» / «Новый пак»), callback_query «pk:in|own:<набор>» (эти кнопки), /start stickers (бесплатный пак по внешней
- * ссылке t.me/<бот>?start=stickers), /paysupport (обязателен для оплаты звёздами).
+ * Вебхук: pre_checkout_query (проверка перед оплатой), message.successful_payment (набор — и его стикеры сразу
+ * в пак), callback_query «free:claim» («Забрать стикерпак» / «Я подписался»), /start stickers (бесплатный пак по
+ * внешней ссылке t.me/<бот>?start=stickers), /paysupport (обязателен для оплаты звёздами).
  * Возврат — только изнутри: POST /internal/tg/refund { charge }.
  *
- * Паки — только по желанию игрока: свой пак (`pack`, «Массовка · Имя · @бот»; набор в него — `in:<набор>`) или
- * отдельный пак набора (`own:<набор>`, создан — `made:<набор>`). Бот правит лишь паки, которые создал сам.
+ * Пак — один на игрока (`pack`, «Массовка · Имя · @бот»): бесплатные, «за игру» и купленные наборы; последней —
+ * приманка «Собери свой пак!». Бот правит лишь паки, которые создал сам.
  * Стикеры набора попадают в пак только после записанной оплаты. Стикеры — видео WEBM из apps/server/stickers
  * (`pnpm --filter web stickers`). Выдача — очередью по игроку: что выдано, записано в учёте; упало — дошлётся
  * при следующем заходе в гардероб.
@@ -141,15 +141,18 @@ export async function shopLedgerOp(store: ShopLedger, raw: unknown): Promise<{ s
  */
 export function wantedStickers(items: string[]): StickerMeta[] {
   const has = new Set(items);
+  if (!has.has('pack')) return [];
   return STICKER_LIST.filter((s) =>
-    s.set === 'starter'
-      ? has.has('starter') && has.has('pack')
-      : has.has(s.set) && (has.has(`in:${s.set}`) || has.has(`own:${s.set}`)) && (s.now || has.has(`st:${s.id}`)),
+    // приманка — в любом паке; стартовый — когда забран бесплатный пак; «за игру» — с ним же, когда открыт в матче
+    s.lure
+      ? true
+      : s.set === 'starter'
+        ? has.has('starter')
+        : s.set === 'play'
+          ? has.has('starter') && has.has(`st:${s.id}`)
+          : has.has(s.set) && (s.now || has.has(`st:${s.id}`)),
   );
 }
-
-/** Имя отдельного пака набора: <набор><игрок>_by_<бот>. */
-const ownPack = (set: string, id: number, bot: string) => `${set.toLowerCase()}${id}_by_${bot}`.slice(0, 64);
 
 /** Имя игрока в названии пака: без @, ссылок и невидимых символов. */
 export function packName(raw: unknown): string {
@@ -191,11 +194,6 @@ export interface ShopReply {
 }
 
 type Lang = 'ru' | 'en';
-/** Какой пак показать после выдачи: отдельный пак набора (own:) или свой. */
-const link0 = (st: { pack: string | null; packs: Record<string, string> }, add: string[]) => {
-  const own = add.find((i) => i.startsWith('own:'));
-  return (own && st.packs[own.slice(4)]) || st.pack;
-};
 const langOf = (code?: string): Lang => (code && /^(ru|uk|be|kk)/.test(code) ? 'ru' : 'en');
 
 export class Shop {
@@ -217,7 +215,8 @@ export class Shop {
     this.rate.sweep(now);
     if (path === '/shop') return { status: 200, body: await this.state(id, true) };
     if (path === '/shop/claim') return { status: 200, body: await this.claim(init.user) };
-    if (path === '/shop/pack') return this.makePack(init.user, body.item, body.mode);
+    // старые вкладки гардероба («В мой пак» / «Новый пак»): пак теперь один и наполняется сам — просто состояние
+    if (path === '/shop/pack') return { status: 200, body: await this.state(id, true) };
     if (path === '/shop/buy') return this.buy(init, body.item);
     if (path === '/shop/link') return this.link(init.user, body.token);
     return { status: 404, body: { error: 'not_found' } };
@@ -229,12 +228,11 @@ export class Shop {
     const missing = u ? want.filter((s) => !u.issued.includes(s.id)).length : 0;
     // недовыданное (сбой Telegram, перезапуск) — дослать в фоне
     if (kick && missing && !this.queue.has(id)) void this.issue(id);
-    const bot = u && SHOP_ITEMS.some((x) => u.items.includes(`made:${x.id}`)) ? await this.d.username() : '';
     return {
-      items: (u?.items ?? []).filter((i) => i === 'starter' || i === 'pack' || shopItem(i) || /^(?:in|own):/.test(i)),
+      items: (u?.items ?? []).filter((i) => i === 'starter' || i === 'pack' || shopItem(i)),
       pack: u?.pack ? `https://t.me/addstickers/${u.pack}` : null,
-      /** Отдельные паки наборов: набор → ссылка. */
-      packs: Object.fromEntries(SHOP_ITEMS.filter((x) => u?.items.includes(`made:${x.id}`)).map((x) => [x.id, `https://t.me/addstickers/${ownPack(x.id, u!.userId, bot)}`])),
+      /** Отдельных паков больше нет (один пак на игрока); поле — для старых вкладок гардероба. */
+      packs: {} as Record<string, string>,
       issued: u?.issued.length ?? 0,
       wanted: want.length,
       error: this.failed.get(id) ?? null,
@@ -267,8 +265,7 @@ export class Shop {
     const before = u.issued.length;
     await this.issue(u.userId);
     const st = await this.state(u.userId, false);
-    const link = link0(st, add);
-    if (st.issued > before && link) await this.notify(u.userId, u.lang, text(u.lang), link);
+    if (st.issued > before && st.pack) await this.notify(u.userId, u.lang, text(u.lang), st.pack);
     return st;
   }
 
@@ -301,7 +298,7 @@ export class Shop {
       .then(async () => {
         const u = (await this.d.ledger.shopUser(id)) ?? { userId: id, lang: x.lang, name: packName(x.name) || 'Актёр', items: [], pack: null, issued: [] };
         const fresh = STICKER_LIST.filter(
-          (s) => x.stickers.includes(s.id) && !s.now && (s.set === 'starter' || u.items.includes(s.set)) && !u.items.includes(`st:${s.id}`),
+          (s) => x.stickers.includes(s.id) && !s.now && (s.set === 'starter' || s.set === 'play' || u.items.includes(s.set)) && !u.items.includes(`st:${s.id}`),
         );
         // первый сыгранный матч открывает бесплатный пак: бот предлагает его забрать
         const first = !u.items.includes('played');
@@ -322,7 +319,7 @@ export class Shop {
         const set = got[0].set;
         const inSet = STICKER_LIST.filter((s) => s.set === set);
         const text = fmt(t.botEarned, { sticker: got.map((s) => `«${t.stickers[s.id].join(' ')}»`).join(', '), n: inSet.filter((s) => after.issued.includes(s.id)).length, of: inSet.length });
-        await this.notify(id, after.lang, text, (set !== 'starter' && st.packs[set]) || st.pack, true);
+        await this.notify(id, after.lang, text, st.pack, true);
       })
       .catch((e: unknown) => this.d.log('warn', 'shop_earn', errFields(e)));
     this.queue.set(id, run);
@@ -394,20 +391,7 @@ export class Shop {
     }
   }
 
-  /**
-   * Стикеры купленного набора: в свой пак (`in`, его нет — создастся) или отдельным паком (`own`).
-   * Только если набор куплен (оплата записана); выбор делается один раз.
-   */
-  async makePack(from: ShopInit['user'], rawItem: unknown, mode: unknown): Promise<ShopReply> {
-    const item = shopItem(rawItem);
-    if (!item || (mode !== 'in' && mode !== 'own')) return { status: 400, body: { error: 'bad_request' } };
-    const u = await this.d.ledger.shopUser(from.id);
-    if (!u?.items.includes(item.id)) return { status: 403, body: { error: 'not_owned' } };
-    if (u.items.includes(`in:${item.id}`) || u.items.includes(`own:${item.id}`)) return { status: 200, body: await this.state(u.userId, true) };
-    return { status: 200, body: await this.grant(from, [`${mode}:${item.id}`], (l) => DICTS[l].shop.botPackReady) };
-  }
-
-  /** Кнопки под сообщением о покупке: «pk:in:<набор>» — в мой пак, «pk:own:<набор>» — новый пак. */
+  /** Кнопки бота: «Забрать стикерпак» / «Я подписался» (free:claim); старые «pk:…» — просто ответить. */
   async onCallback(q: { id: string; from: ShopInit['user']; data?: string }): Promise<void> {
     // «Забрать стикерпак» (после первого матча) и «Я подписался» (по ссылке)
     if (q.data === 'free:claim') {
@@ -419,12 +403,7 @@ export class Shop {
       await r;
       return;
     }
-    const m = /^pk:(in|own):([A-Za-z]{1,24})$/.exec(q.data ?? '');
-    if (!m) return;
-    // ответить сразу (кнопка перестаёт крутиться), пак собирается несколько секунд
-    const r = this.makePack(q.from, m[2], m[1]);
-    await this.d.api('answerCallbackQuery', { callback_query_id: q.id });
-    await r;
+    if (q.data?.startsWith('pk:')) await this.d.api('answerCallbackQuery', { callback_query_id: q.id });
   }
 
   private async buy(init: ShopInit, raw: unknown): Promise<ShopReply> {
@@ -475,18 +454,18 @@ export class Shop {
     }
     const fresh = await this.d.ledger.saveShopPayment({ charge: sp.telegram_payment_charge_id, userId: from.id, item: p.item.id, stars: sp.total_amount, refunded: false });
     const u = await this.user(from);
-    if (!u.items.includes(p.item.id)) {
-      u.items.push(p.item.id);
+    // набор и пак (один на игрока: «Массовка · Имя»; нет — создастся) — записать до выдачи
+    const add = [p.item.id, 'pack'].filter((i) => !u.items.includes(i));
+    if (add.length) {
+      u.items.push(...add);
       await this.d.ledger.saveShopUser(u);
     }
     if (!fresh) return;
     this.d.log('info', 'shop_paid', { item: p.item.id, stars: sp.total_amount });
-    // пак — по желанию: свой пак от бота уже есть — «Добавить в мой пак» или «Создать новый», нет — «Создать»
-    const t = DICTS[u.lang].shop;
-    const rows = u.pack
-      ? [[{ text: t.botAddPack, callback_data: `pk:in:${p.item.id}` }], [{ text: t.botNewPack, callback_data: `pk:own:${p.item.id}` }]]
-      : [[{ text: t.botMakePack, callback_data: `pk:own:${p.item.id}` }]];
-    await this.d.api('sendMessage', { chat_id: u.userId, text: t.botBought, reply_markup: { inline_keyboard: rows } });
+    // стикеры набора — сразу в пак; сбой Telegram — дошлётся при заходе в гардероб; сообщение — со ссылкой на пак
+    await this.issue(u.userId);
+    const st = await this.state(u.userId, false);
+    await this.notify(u.userId, u.lang, DICTS[u.lang].shop.botBought, st.pack);
   }
 
   /** Возврат звёзд (изнутри машины: /internal/tg/refund). Набор забираем, стикеры остаются в паке. */
@@ -551,19 +530,16 @@ export class Shop {
     const file = async (s: StickerMeta) => new Blob([await readFile(join(this.d.stickersDir, u.lang, `${s.id}.webm`))], { type: 'video/webm' });
     const input = (s: StickerMeta, i: number) => ({ sticker: `attach://f${i}`, format: 'video', emoji_list: s.emoji });
     const t = DICTS[u.lang].shop;
-    // куда стикер: отдельный пак набора (own:) или свой пак
-    const target = (s: StickerMeta) =>
-      s.set !== 'starter' && u.items.includes(`own:${s.set}`)
-        ? { name: ownPack(s.set, id, bot), made: u.items.includes(`made:${s.set}`), title: fmt(t.packTitleItem, { item: t.items[s.set].name, name: u.name }), mark: () => u.items.push(`made:${s.set}`) }
-        : { name: `m${id}_by_${bot}`.slice(0, 64), made: !!u.pack, title: fmt(t.packTitle, { name: u.name }), mark: () => (u.pack = `m${id}_by_${bot}`.slice(0, 64)) };
-    const added = new Set<string>();
+    // один пак на игрока: «Массовка · Имя · @бот» — бесплатные, «за игру» и купленные наборы
+    const name = `m${id}_by_${bot}`.slice(0, 64);
+    const to = { name, title: fmt(t.packTitle, { name: u.name }) };
+    let added = false;
     for (;;) {
       const left = missing();
       if (!left.length) break;
-      const to = target(left[0]);
-      const batch = left.filter((s) => target(s).name === to.name);
-      if (!to.made) {
-        const list = batch.slice(0, 50);
+      if (!u.pack) {
+        // приманка — последней и при создании
+        const list = [...left.filter((s) => !s.lure), ...left.filter((s) => s.lure)].slice(-50);
         const form = new FormData();
         form.set('user_id', String(id));
         form.set('name', to.name);
@@ -577,11 +553,11 @@ export class Shop {
           // пак уже есть (упали между созданием и записью) — дальше добавляем по одному
           if (!/already occupied/i.test(String(e))) throw e;
         }
-        to.mark();
+        u.pack = name;
         await this.d.ledger.saveShopUser(u);
         continue;
       }
-      const s = batch[0];
+      const s = left[0];
       const form = new FormData();
       form.set('user_id', String(id));
       form.set('name', to.name);
@@ -590,10 +566,10 @@ export class Shop {
       await this.call('addStickerToSet', form);
       u.issued.push(s.id);
       await this.d.ledger.saveShopUser(u);
-      added.add(to.name);
+      added = true;
     }
-    // приманка «Собери свой пак» — снова в конец паков, куда что-то добавилось
-    for (const name of added) await this.lureLast(name);
+    // приманка «Собери свой пак» — снова в конец пака
+    if (added) await this.lureLast(name);
     this.failed.delete(id);
   }
 

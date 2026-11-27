@@ -5,7 +5,7 @@ import qrcode from 'qrcode-generator';
 import type { ClipSoundCore } from './clip-audio';
 import { frame, getArt, scaledCanvas, text } from './art';
 import { canvas } from './pixels';
-import { drawClipSlot } from './clip-slot';
+import { drawClipSlot, drawSlotHeads, slotSpinAt } from './clip-slot';
 import { LESHY_H, LESHY_W, giantEnd, giantPose, makeEmberVeil, makeLeshy, makeNightVeil } from './night-art';
 import type { Art } from './art';
 import { frameFor } from './frames';
@@ -19,7 +19,7 @@ import { isThemeLoaded, themeLook, themePack } from './themes';
  * Рисуется на обычном canvas теми же спрайтами, что игра, целым масштабом без сглаживания.
  * В браузере пишется в видео через MediaRecorder в реальном времени, на сервере —
  * кадрами в ffmpeg (apps/server/src/film.ts). Режимы:
- *   clip    — момент как его видели игроки («Найдёшь живых?») → разбор с подсветкой → концовка с адресом и QR;
+ *   clip    — момент как его видели игроки («Вычислишь актёров?») → разбор с подсветкой → концовка с адресом и QR;
  *   segment — кусок фильма: хлопушка «Дубль N» → разбор (быстрее и короче);
  *   hook    — крючок фильма: почти стоп-кадр за миг до развязки, крупно, без подсказок.
  *
@@ -142,6 +142,11 @@ export interface ClipInput {
    * после паузы «Море волнуется» и переключает изнанку.
    */
   keepMusic?: boolean;
+  /**
+   * «Казино»: автомат крутки показан один раз на весь ролик (общий объект у всех кусков фильма);
+   * дальше «Крутки» — табло над головами.
+   */
+  slotOnce?: { done: boolean };
 }
 
 export interface ClipResult {
@@ -311,6 +316,12 @@ export class ClipPlayerScene {
   /** «Купальская ночь»: вуали, кадры Лешего, его удары из журнала и начало ночи (мировое время). */
   /** Звуки автомата уже прозвучали (часть ролика : «Крутка» : барабан). */
   private slotSounded = new Set<string>();
+  /** «Казино»: где в ролике показан автомат (часть:крутка); остальные «Крутки» — табло над головами. */
+  private machineKey: string | null = null;
+  /** Последняя «Крутка» мира — табло держатся ещё чуть после неё. */
+  private lastSlot: { warnAt: number; showAt: number; resumeAt: number } | null = null;
+  /** Над кем в кадре рисовать табло: подписанные актёры разбора (x — середина, y — верх плашки имени). */
+  private heads: { eid: number; x: number; y: number; color: string }[] = [];
   private night: { veil: HTMLCanvasElement; ember: HTMLCanvasElement; leshy: HTMLCanvasElement; strikes: Map<number, { x: number; y: number; at: number }>; playStart: number } | null = null;
 
   constructor(private inp: ClipInput) {
@@ -500,7 +511,7 @@ export class ClipPlayerScene {
     // Леший выше кадра наезда — его удар показываем общим планом
     const zp = this.inp.moment.by === 'leshy' ? 0 : this.mode === 'hook' ? 1 : reveal ? Math.max(0, Math.min(1, (local - this.cutAt) / ZOOM_MS)) : 0;
     this.drawWorld(w, alpha, reveal, ms, zp, local);
-    if (this.mode !== 'blooper') this.drawSlot(w, w.time - TICK_MS + alpha * TICK_MS);
+    if (this.mode !== 'blooper') this.drawSlot(w, w.time - TICK_MS + alpha * TICK_MS, ms);
     this.drawBands(kind, local, target);
     const g = this.g;
     if (reveal && local < FLASH_MS && this.mode !== 'blooper') {
@@ -644,6 +655,7 @@ export class ClipPlayerScene {
   }
 
   private drawWorld(w: World, alpha: number, reveal: boolean, now: number, zp: number, local: number): void {
+    this.heads = [];
     const zoomed = zp > 0;
     const g = this.wg;
     const a = this.art;
@@ -906,7 +918,7 @@ export class ClipPlayerScene {
 
     // имена на плашках над головами (герой — залитая плашка и стрелка); кто вне кадра — стрелка у края
     if (reveal) {
-      const labels: { x: number; y: number; name: string; color: string; hero: boolean }[] = [];
+      const labels: { eid: number; x: number; y: number; name: string; color: string; hero: boolean }[] = [];
       const edge: { x: number; y: number; dir: 'l' | 'r' | 'u' | 'd'; color: string }[] = [];
       for (const p of this.inp.players) {
         const e = w.get(p.eid);
@@ -930,7 +942,7 @@ export class ClipPlayerScene {
         // неудачный дубль в окошке титров: подписан только «виновник»
         if (this.mode === 'blooper' && !isHero) continue;
         const head = sp.y - (CH_H + 1) * zoom;
-        labels.push({ x: sp.x, y: Math.max(AY + 1, head - (isHero ? 18 : 12)), name: p.name, color, hero: isHero });
+        labels.push({ eid: p.eid, x: sp.x, y: Math.max(AY + 1, head - (isHero ? 18 : 12)), name: p.name, color, hero: isHero });
         if (isHero) {
           // стрелка над героем
           const bob = Math.floor(now / 200) % 2;
@@ -953,6 +965,7 @@ export class ClipPlayerScene {
         }
       }
       for (const l of labels) namePlate(out, l.name, l.x, l.y, l.color, this.inp.font, l.hero);
+      this.heads = labels.map((l) => ({ eid: l.eid, x: l.x, y: l.y - 1, color: l.color }));
       for (const e of edge) {
         // треугольник у края, смотрит туда, где игрок
         for (let k = 0; k < 4; k++) {
@@ -982,9 +995,41 @@ export class ClipPlayerScene {
     return [];
   }
 
-  /** «Казино»: «Крутка» в кадре — тот же автомат, что у игрока (clip-slot.ts). */
-  private drawSlot(w: World, t: number): void {
+  /**
+   * «Казино»: «Крутка» в кадре. Один раз на ролик — тот же автомат, что у игрока (clip-slot.ts), с вращениями
+   * героя; остальные — только «КРУТКА!» до стоп-кадра, а в разборе над подписанными актёрами — табло их вращений.
+   */
+  private drawSlot(w: World, t: number, wall: number): void {
     const c = w.crowd;
+    if (c?.slot) this.lastSlot = { warnAt: c.warnAt, showAt: c.showAt, resumeAt: c.resumeAt };
+    const L = this.lastSlot;
+    if (!L || t < L.warnAt || t >= L.resumeAt + 1500) return;
+    const key = `${this.part}:${L.warnAt}`;
+    const spins = this.spinsAt(L.warnAt);
+    const once = this.inp.slotOnce;
+    if (this.machineKey === null && spins.length && !once?.done && c?.slot) {
+      this.machineKey = key;
+      if (once) once.done = true;
+    }
+    const machine = this.machineKey === key;
+    if (!machine) {
+      if (c?.slot) drawClipSlot({ g: this.g, font: this.inp.font, t: this.inp.t, ay: AY, py: PANEL_Y, warnAt: L.warnAt, showAt: L.showAt, resumeAt: L.resumeAt, now: t, spins: [], warnOnly: true });
+      const all = this.inp.rec.slots?.filter((r) => r.at === L.warnAt) ?? [];
+      const heads = this.heads.map((h) => ({ ...h, spins: all.filter((r) => r.eid === h.eid).sort((a, b) => (a.n ?? 0) - (b.n ?? 0)) })).filter((h) => h.spins.length);
+      drawSlotHeads(this.g, t, wall, L.showAt, heads, AY + 1);
+      // три черепа над кем-то — звук автомата (один раз в части)
+      for (const h of heads) {
+        const st = slotSpinAt(L.showAt, h.spins, t);
+        if (st.done && st.spin.outcome === 'skull') {
+          const k = `${key}:skull:${h.eid}`;
+          if (!this.slotSounded.has(k)) {
+            this.slotSounded.add(k);
+            this.sound?.play('slotSkull');
+          }
+        }
+      }
+      return;
+    }
     if (!c?.slot) return;
     const snd = this.sound;
     drawClipSlot({
@@ -997,7 +1042,7 @@ export class ClipPlayerScene {
       showAt: c.showAt,
       resumeAt: c.resumeAt,
       now: t,
-      spins: this.spinsAt(c.warnAt),
+      spins,
       sound: snd
         ? (key, sfx, step) => {
             // часть ролика в ключе: загадка и разбор проигрывают одну «Крутку» дважды — звук в каждой

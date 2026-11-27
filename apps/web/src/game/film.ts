@@ -9,7 +9,7 @@ import { CH_H, CH_W, F, OL_H, OL_W } from './sprites';
 
 /**
  * «Фильм матча» — один ролик на матч (~20–24 с) для всех игроков комнаты. Сценарий — история матча:
- *   крючок (1,3 с: почти стоп-кадр самого яркого момента крупно, «Один из них — живой. Найдёшь?»)
+ *   крючок (1,3 с: почти стоп-кадр самого яркого момента крупно, «Среди них — актёр. Вычислишь?»)
  *   → перемотка (0,5 с: плёнка дёргается, музыку «зажёвывает» — «смотрим, как это было»)
  *   → загадка этого момента: общий план без подсказок, отсчёт «3, 2, 1», дробь
  *   → раскрытие: вспышка, живые загораются по одному, камера плавно наезжает на участников, замедление,
@@ -156,7 +156,7 @@ export class FilmScene {
     this.g = g;
     this.bg = scaledCanvas(LW, LH, scale);
     // водяной знак: с загадкой — её адрес (его набирают руками с экрана TikTok)
-    const base = { t: inp.t, font: inp.font, site: this.address(), noGore: inp.noGore, scale, link: inp.link };
+    const base = { t: inp.t, font: inp.font, site: this.address(), noGore: inp.noGore, scale, link: inp.link, slotOnce: { done: false } };
     const h = inp.hook;
     this.pieces.push(scenePiece(new ClipPlayerScene({ ...base, ...h, mode: 'hook', keepMusic: true })));
     this.pieces.push({ kind: 'rewind', dur: REWIND_MS });

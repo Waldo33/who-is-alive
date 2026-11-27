@@ -756,7 +756,7 @@ export class Room {
   private matchStickers(r: MatchRunner, takes: FilmTake[]): void {
     if (!this.o.onStickers || !takes.length) return;
     const match = r.host.sim.outcome();
-    const rounds = takes.map((t) => t.summary);
+    const rounds = takes.map((t) => ({ ...t.summary, theme: t.rec.theme }));
     const earned = r.players.filter((p) => !p.ai).map((p) => ({ pid: p.pid, stickers: earnedStickers(p.pid, rounds, match) as string[] }));
     // всех людей: сыгранный матч сам по себе открывает бесплатный пак (shop.ts › earn)
     if (earned.length) this.o.onStickers(this, earned);

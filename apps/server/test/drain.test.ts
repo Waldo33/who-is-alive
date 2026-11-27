@@ -128,6 +128,8 @@ describe('выкладка без обрыва: drain и переезд комн
     await until(() => g.srv.rooms.has(code) && la.moves === 1, 60_000, 'переезд после матча');
     expect(ended).toBe(false);
     await until(() => !!g.srv.rooms.get(code)?.members.get(a.userId)?.peer, 5000, 'режиссёр на зелёном');
+    // и второй игрок: без него на новом экземпляре «Ещё дубль» — not_enough_players (гонка в CI)
+    await until(() => !!g.srv.rooms.get(code)?.members.get(c.userId)?.peer, 5000, 'второй игрок на зелёном');
     // «Ещё дубль» на новом экземпляре — новый матч (раннера прошлого матча здесь нет)
     la.send('host', { t: 'i', i: { k: 'rematch' } });
     await until(() => starts.length === 2, 5000, 'новый матч на зелёном');

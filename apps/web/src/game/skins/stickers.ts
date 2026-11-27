@@ -7,6 +7,7 @@ import { canvas, outlineOf } from '../pixels';
 import type { Ctx } from '../pixels';
 import { text } from '../art';
 import { KB_W, kotBananFrame, tearArcs, wailFace } from './kot-banan';
+import { PLAY_ART } from './stickers-play';
 
 /**
  * Стикеры для Telegram (гардероб, за флагом shop): рисуются кодом из тех же спрайтов, что игра.
@@ -24,12 +25,12 @@ export const ST_FRAME_MS = 100;
 export interface StickerDef extends StickerMeta {
   draw(g: Ctx, t: number, lang: Lang): void;
 }
-interface Art {
+export interface Art {
   id: StickerId;
   draw(g: Ctx, t: number, lang: Lang): void;
 }
 
-const FONT = '"Press Start 2P"';
+export const FONT = '"Press Start 2P"';
 const K = 2;
 const CX = ST_SIZE / 2 - KB_W;
 
@@ -37,22 +38,22 @@ let actor: CharSheets | null = null;
 const actorSheets = () => (actor ??= makeCharacterSheets(PARK_CHARS));
 
 /** Кадр обычного актёра с чёрным контуром (14×18). */
-function actorFrame(frame: number): HTMLCanvasElement {
+export function actorFrame(frame: number, sheets: CharSheets = actorSheets()): HTMLCanvasElement {
   const one = canvas(CH_W, CH_H);
-  one.g.drawImage(actorSheets().body, frame * CH_W, 0, CH_W, CH_H, 0, 0, CH_W, CH_H);
+  one.g.drawImage(sheets.body, frame * CH_W, 0, CH_W, CH_H, 0, 0, CH_W, CH_H);
   const o = canvas(CH_W + 2, CH_H + 2);
   outlineOf(one.g, CH_W, CH_H, o.g, 0, 0, PAL.ink);
   o.g.drawImage(one.c, 1, 1);
   return o.c;
 }
 
-const R = (g: Ctx, x: number, y: number, w: number, h: number, c: string) => {
+export const R = (g: Ctx, x: number, y: number, w: number, h: number, c: string) => {
   g.fillStyle = c;
   g.fillRect(x, y, w, h);
 };
-const put = (g: Ctx, h: HTMLCanvasElement, x: number, y: number, k = K) => g.drawImage(h, x, y, h.width * k, h.height * k);
+export const put = (g: Ctx, h: HTMLCanvasElement, x: number, y: number, k = K) => g.drawImage(h, x, y, h.width * k, h.height * k);
 /** Надпись игровым шрифтом без сглаживания: рисуем отдельно и оставляем только чёткие пиксели. */
-function say(g: Ctx, s: string, x: number, y: number, col: string, size = 1): void {
+export function say(g: Ctx, s: string, x: number, y: number, col: string, size = 1): void {
   const tmp = canvas(ST_SIZE, ST_SIZE);
   text(tmp.g, s, x, y, col, FONT, { size });
   const img = tmp.g.getImageData(0, 0, ST_SIZE, ST_SIZE);
@@ -60,14 +61,14 @@ function say(g: Ctx, s: string, x: number, y: number, col: string, size = 1): vo
   tmp.g.putImageData(img, 0, 0);
   g.drawImage(tmp.c, 0, 0);
 }
-const cap = (g: Ctx, id: StickerId, lang: Lang, y: number, col: string = PAL.white) =>
+export const cap = (g: Ctx, id: StickerId, lang: Lang, y: number, col: string = PAL.white) =>
   DICTS[lang].shop.stickers[id].forEach((s, i) => say(g, s, ST_SIZE / 2, y + i * 10, col));
-const star = (g: Ctx, x: number, y: number, c: string = PAL.yellow) => {
+export const star = (g: Ctx, x: number, y: number, c: string = PAL.yellow) => {
   R(g, x, y - 2, 2, 6, c);
   R(g, x - 2, y, 6, 2, c);
 };
 /** Звёздочки по кругу над головой (оглушён). */
-const orbit = (g: Ctx, cx: number, cy: number, t: number) => {
+export const orbit = (g: Ctx, cx: number, cy: number, t: number) => {
   for (let i = 0; i < 3; i++) {
     const a = (t / ST_FRAMES) * Math.PI * 2 + (i * Math.PI * 2) / 3;
     star(g, Math.round(cx + Math.cos(a) * 14), Math.round(cy + Math.sin(a) * 4));
@@ -258,7 +259,7 @@ const ART: Art[] = [
 ];
 
 /** Стикеры в порядке пака: данные — game-core › shop.ts, рисунок — здесь. */
-export const STICKERS: StickerDef[] = STICKER_LIST.map((m) => ({ ...m, draw: ART.find((a) => a.id === m.id)!.draw }));
+export const STICKERS: StickerDef[] = STICKER_LIST.map((m) => ({ ...m, draw: [...ART, ...PLAY_ART].find((a) => a.id === m.id)!.draw }));
 
 /** Белая стикерная обводка 2 пикс. по альфе — поверх прозрачного фона. */
 function stickerize(c: HTMLCanvasElement): HTMLCanvasElement {
