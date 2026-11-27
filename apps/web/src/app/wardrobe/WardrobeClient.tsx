@@ -14,6 +14,25 @@ import { CARD_H, CARD_W, buyLabel, drawCard, itemIcon, starsIcon } from '@/game/
 
 /** Ячеек в списке наборов: пока набор один — остальные под знаком вопроса. */
 const SLOTS = 4;
+// оплата прошла, набор ещё не записан: помним на телефоне, ждём до PAID_KEEP_MS, после PAID_LATE_MS — подсказка про поддержку
+const PAID_KEY = 'kto:paid';
+const PAID_LATE_MS = 5 * 60_000;
+const PAID_KEEP_MS = 24 * 3600_000;
+function markPaid(item: string): void {
+  try {
+    localStorage.setItem(PAID_KEY, JSON.stringify({ item, at: Date.now() }));
+  } catch {
+    /* приватный режим — ждём только на этой странице */
+  }
+}
+function paidSince(item: string): number {
+  try {
+    const p = JSON.parse(localStorage.getItem(PAID_KEY) ?? 'null') as { item?: string; at?: number } | null;
+    return p?.item === item && typeof p.at === 'number' && Date.now() - p.at < PAID_KEEP_MS ? p.at : 0;
+  } catch {
+    return 0;
+  }
+}
 
 /** «Гардероб» (/wardrobe, за флагом shop): витрина Кот-банана, покупка за звёзды, стикеры набора — в личный пак игрока. */
 export default function WardrobeClient() {
@@ -40,6 +59,10 @@ export default function WardrobeClient() {
   const slotRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const owned = !!st?.items.includes(ITEM);
+  // оплата прошла, а бот ещё не записал набор (сбой связи, перезапуск бота — Telegram повторит уведомление):
+  // не показываем снова кнопку «Купить», ждём и опрашиваем — и после перезагрузки страницы тоже
+  const [paidAt, setPaidAt] = useState(0);
+  const waiting = !owned && paidAt > 0;
   const stRef = useRef({ lang, owned, item: ITEM });
   stRef.current = { lang, owned, item: ITEM };
 
@@ -68,10 +91,32 @@ export default function WardrobeClient() {
         await bootTelegram();
         // купил набор — стикеры за матчи пойдут в пак: сервер узнаёт, какой это аккаунт Telegram
         void linkTelegramOnce();
-        setSt(await shopState());
+        setPaidAt(paidSince(ITEM));
+        const s = await shopState();
+        if (s) setSt(s);
       }
     })();
   }, []);
+
+  // ждём набор после оплаты: опрашиваем бота, пока не появится (Telegram повторяет уведомление об оплате сам)
+  useEffect(() => {
+    if (!waiting) return;
+    const id = window.setInterval(() => {
+      void shopState().then((s) => {
+        if (s) setSt(s);
+      });
+    }, 4000);
+    return () => clearInterval(id);
+  }, [waiting]);
+  useEffect(() => {
+    if (!owned) return;
+    setPaidAt(0);
+    try {
+      localStorage.removeItem(PAID_KEY);
+    } catch {
+      /* приватный режим */
+    }
+  }, [owned]);
 
   // поле — всё место между заголовком и кнопками, масштаб целый в пикселях экрана
   useEffect(() => {
@@ -129,6 +174,8 @@ export default function WardrobeClient() {
     if (r === 'paid') {
       haptic('success');
       setNote(t.paid);
+      markPaid(ITEM);
+      setPaidAt(Date.now());
       // набор выдаёт бот по уведомлению Telegram — ждём, пока он запишется
       for (let i = 0; i < 10; i++) {
         const s = await shopState();
@@ -203,7 +250,11 @@ export default function WardrobeClient() {
         )}
       </div>
       <div className="daily-actions">
-        {owned ? (
+        {waiting ? (
+          <p className="muted" role="status">
+            {Date.now() - paidAt > PAID_LATE_MS ? t.paidLate : t.paidWait}
+          </p>
+        ) : owned ? (
           <>
             <p className="wardrobe-owned">{t.owned}</p>
             {tgOn && (
