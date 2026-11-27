@@ -509,6 +509,16 @@ describe('гардероб', () => {
     expect(calls.filter((c) => /StickerSet|StickerToSet/.test(c.method))).toHaveLength(0);
   });
 
+  it('за матч открывается не больше двух новых стикеров, сначала редкие; остальные — в следующих матчах', async () => {
+    const { bot, store } = makeBot();
+    const all = ['action', 'retake', 'cut', 'offscreen', 'still', 'chef', 'jackpot'];
+    await bot.shop.earn({ users: [{ tgUser: 77, name: 'Аня', lang: 'ru', stickers: all }] });
+    const got = (u: Awaited<ReturnType<typeof store.shopUser>>) => (u?.items ?? []).filter((i) => i.startsWith('st:'));
+    expect(got(await store.shopUser(77))).toEqual(['st:jackpot', 'st:chef']);
+    await bot.shop.earn({ users: [{ tgUser: 77, name: 'Аня', lang: 'ru', stickers: all }] });
+    expect(got(await store.shopUser(77))).toEqual(['st:jackpot', 'st:chef', 'st:cut', 'st:offscreen']);
+  });
+
   it('бесплатный пак: нужен и сыгранный матч, и подписка на канал', async () => {
     let status = 'left';
     const { bot, calls, store } = makeBot({ result: (m) => (m === 'getChatMember' ? { status } : undefined) });
