@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { DICTS, SHOP_ITEMS, STICKER_LIST, fmt, isStickerId, shopItem } from '@kto/game-core';
+import { DICTS, SHOP_ITEMS, STICKER_LIST, fmt, isSkin, isStickerId, shopItem, skinOf, wearItems } from '@kto/game-core';
 import type { StickerMeta } from '@kto/game-core';
 import { RateWindow } from './limits';
 import { errFields } from './log';
@@ -62,7 +62,7 @@ export function localLedger(store: Store, verify?: VerifyToken, onLink?: (gameUs
 /** Токен игрока: JWT (три части base64url), не длиннее 1 КБ. */
 const TOKEN = /^[A-Za-z0-9_-]{1,512}\.[A-Za-z0-9_-]{1,512}\.[A-Za-z0-9_-]{1,512}$/;
 
-const ITEM = /^(?:starter|(?:st|in|own|made):[A-Za-z]{1,24}|[A-Za-z]{1,24})$/;
+const ITEM = /^(?:starter|(?:st|in|own|made|wear):[A-Za-z]{1,24}|[A-Za-z]{1,24})$/;
 const PACK = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
 const CHARGE = /^[A-Za-z0-9_:.-]{1,128}$/;
 
@@ -221,6 +221,7 @@ export class Shop {
     if (path === '/shop/pack') return { status: 200, body: await this.state(id, true) };
     if (path === '/shop/buy') return this.buy(init, body.item);
     if (path === '/shop/link') return this.link(init.user, body.token);
+    if (path === '/shop/wear') return this.wear(id, body.item);
     return { status: 404, body: { error: 'not_found' } };
   }
 
@@ -239,6 +240,8 @@ export class Shop {
       wanted: want.length,
       error: this.failed.get(id) ?? null,
       catalog: SHOP_ITEMS,
+      /** Надетый скин (null — снят или не куплен). */
+      worn: (u && skinOf(u.items)) ?? null,
     };
   }
 
@@ -408,6 +411,16 @@ export class Shop {
     if (q.data?.startsWith('pk:')) await this.d.api('answerCallbackQuery', { callback_query_id: q.id });
   }
 
+  /** «Надеть» (купленный скин) или «Снять» (item: null). В комнате — со следующего входа. */
+  private async wear(id: number, raw: unknown): Promise<ShopReply> {
+    if (raw !== null && !isSkin(raw)) return { status: 400, body: { error: 'bad_item' } };
+    const u = await this.d.ledger.shopUser(id);
+    if (!u || (raw !== null && !u.items.includes(raw))) return { status: 403, body: { error: 'not_owned' } };
+    u.items = wearItems(u.items, raw);
+    await this.d.ledger.saveShopUser(u);
+    return { status: 200, body: await this.state(id, false) };
+  }
+
   private async buy(init: ShopInit, raw: unknown): Promise<ShopReply> {
     const item = shopItem(raw);
     if (!item) return { status: 400, body: { error: 'bad_item' } };
@@ -460,6 +473,8 @@ export class Shop {
     const add = [p.item.id, 'pack'].filter((i) => !u.items.includes(i));
     if (add.length) {
       u.items.push(...add);
+      // купленный скин сразу надет (даже если раньше был «Снять»): без отметки надет последний купленный
+      if (isSkin(p.item.id) && add.includes(p.item.id)) u.items = u.items.filter((x) => !x.startsWith('wear:'));
       await this.d.ledger.saveShopUser(u);
     }
     if (!fresh) return;

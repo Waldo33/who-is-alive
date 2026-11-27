@@ -150,8 +150,19 @@ export function earnedStickers(pid: string, rounds: EarnRound[], match: Pick<Mat
 export type SkinId = 'kotBanan';
 export const SKINS: readonly SkinId[] = ['kotBanan'];
 export const isSkin = (x: unknown): x is SkinId => SKINS.includes(x as SkinId);
-/** Какой скин надет у игрока с этими покупками (`ShopUser.items`): последний купленный. */
+/**
+ * Какой скин надет у игрока с этими покупками (`ShopUser.items`). Выбор в гардеробе — отметка `wear:<скин>`
+ * или `wear:none` («Снять»); без отметки — последний купленный (после покупки скин сразу надет).
+ */
 export function skinOf(items: readonly string[]): SkinId | undefined {
+  const mark = items.find((x) => x.startsWith('wear:'))?.slice(5);
+  if (mark === 'none') return undefined;
+  if (isSkin(mark) && items.includes(mark)) return mark;
   for (let i = items.length - 1; i >= 0; i--) if (isSkin(items[i])) return items[i] as SkinId;
   return undefined;
+}
+
+/** Покупки после «Надеть» (скин) или «Снять» (null): отметка `wear:` одна. */
+export function wearItems(items: readonly string[], skin: SkinId | null): string[] {
+  return [...items.filter((x) => !x.startsWith('wear:')), `wear:${skin ?? 'none'}`];
 }

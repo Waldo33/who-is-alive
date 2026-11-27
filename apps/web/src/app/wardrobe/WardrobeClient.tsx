@@ -8,7 +8,7 @@ import { track } from '@/lib/analytics';
 import { TG_APP } from '@/lib/env';
 import { featureOn } from '@/lib/features';
 import { detectLang } from '@/lib/lang';
-import { bootTelegram, haptic, inTelegram, linkTelegramOnce, openTelegram, shopBuy, shopState, tgLink } from '@/lib/telegram';
+import { bootTelegram, haptic, inTelegram, linkTelegramOnce, openTelegram, shopBuy, shopState, shopWear, tgLink } from '@/lib/telegram';
 import type { ShopState } from '@/lib/telegram';
 import { TopBar } from '@/ui/TopBarView';
 import { CARD_H, CARD_W, buyLabel, drawCard, itemIcon, starsIcon } from '@/game/skins/wardrobe';
@@ -26,7 +26,7 @@ export default function WardrobeClient() {
   const [ready, setReady] = useState(false);
   const [tgOn, setTgOn] = useState(false);
   const [st, setSt] = useState<ShopState | null>(null);
-  const [busy, setBusy] = useState<'buy' | null>(null);
+  const [busy, setBusy] = useState<'buy' | 'wear' | null>(null);
   const [note, setNote] = useState('');
   const [scale, setScale] = useState(0);
   // звезда Telegram (Stars) — пиксельная, из палитры игры
@@ -137,6 +137,22 @@ export default function WardrobeClient() {
     setBusy(null);
   };
 
+  // «Надеть» / «Снять»: переключать скины (сейчас один); в комнате — со следующего входа
+  const worn = st?.worn === undefined ? owned : st.worn === ITEM;
+  const wear = async () => {
+    if (busy || !tgOn) return;
+    setBusy('wear');
+    const on = !worn;
+    track('shop_wear', { item: ITEM, on });
+    const s = await shopWear(on ? ITEM : null);
+    if (s) {
+      setSt(s);
+      haptic('light');
+      setNote(on ? t.worn : t.unworn);
+    } else setNote(t.failed);
+    setBusy(null);
+  };
+
   // один пак на игрока: стикеры набора бот кладёт туда сам после оплаты
   const packLink = st?.pack ?? null;
 
@@ -177,6 +193,11 @@ export default function WardrobeClient() {
         {owned ? (
           <>
             <p className="wardrobe-owned">{t.owned}</p>
+            {tgOn && (
+              <button className={worn ? 'btn small alt' : 'btn small'} onClick={() => void wear()} aria-disabled={!!busy} aria-pressed={worn}>
+                {worn ? t.unwear : t.wear}
+              </button>
+            )}
             {packLink ? (
               <button className="btn small" onClick={() => openTelegram(packLink)}>
                 {t.openPack}

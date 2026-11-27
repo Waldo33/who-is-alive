@@ -6,6 +6,7 @@ import { silentLogger } from '../src/log';
 import { GameServer } from '../src/server';
 import { RemoteLedger, localLedger, packName, shopLedgerOp, wantedStickers } from '../src/shop';
 import { MemoryStore } from '../src/store';
+import { skinOf } from '@kto/game-core';
 
 /** Гардероб: бесплатный пак, покупка за звёзды, выдача стикеров в личный пак (shop.ts). */
 
@@ -162,6 +163,23 @@ describe('гардероб', () => {
     await bot.handle('POST', '/shop/claim', {}, { initData: initData(ANYA) });
     expect((await store.shopUser(77))?.issued).toEqual(['hi', 'dance', 'oops', 'who', 'lure']);
     expect(calls.flatMap((c) => c.files).some((f) => /notCrying|justBanana/.test(f))).toBe(false);
+  });
+
+  it('«Надеть» / «Снять»: только купленный скин; новая покупка надевается сама', async () => {
+    const { bot, store } = makeBot();
+    const wear = (item: unknown) => bot.handle('POST', '/shop/wear', {}, { initData: initData(ANYA), item });
+    // не куплен — не надеть, чужое имя — отказ
+    expect((await wear('kotBanan')).status).toBe(403);
+    expect((await wear('<b>')).status).toBe(400);
+    await hook(bot, payment());
+    expect(skinOf((await store.shopUser(77))!.items)).toBe('kotBanan');
+    const off = await wear(null);
+    expect(off.status).toBe(200);
+    expect((off.body as { worn: string | null }).worn).toBeNull();
+    expect(skinOf((await store.shopUser(77))!.items)).toBeUndefined();
+    const on = await wear('kotBanan');
+    expect((on.body as { worn: string | null }).worn).toBe('kotBanan');
+    expect((await store.shopUser(77))!.items.filter((x) => x.startsWith('wear:'))).toEqual(['wear:kotBanan']);
   });
 
   it('сбой Telegram: выдано записано, остальное дошлётся при заходе в гардероб; без «Старт» у бота — need_bot', async () => {
