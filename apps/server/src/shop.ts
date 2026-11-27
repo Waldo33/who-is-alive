@@ -691,7 +691,7 @@ export class Shop {
     const rows: { text: string; url?: string; web_app?: { url: string } }[][] = [];
     if (pack) rows.push([{ text: t.botPack, url: pack }]);
     // «Собери свой стикерпак» — страница в Mini App (пока за флагом shop: ссылка включает его у игрока)
-    if (pack && this.d.site) rows.push([{ text: t.botBuild, web_app: { url: `${this.d.site}/stickers?ff=shop&src=tg_sticker` } }]);
+    if (pack && this.d.site) rows.push([{ text: t.botBuild, web_app: { url: `${this.d.site}/stickers?src=tg_sticker` } }]);
     // «Играть» — Mini App игры: новый стикер зовёт обратно
     if (play && this.d.site) rows.push([{ text: t.botPlay, web_app: { url: `${this.d.site}/?src=tg_sticker` } }]);
     try {
