@@ -61,6 +61,8 @@ export interface BotOptions {
   lease?: ShopDeps['lease'];
 }
 
+/** Возврат звёзд вручную — кнопка запуска в GitHub Actions (.github/workflows/shop-refund.yml). */
+const REFUND_URL = 'https://github.com/Waldo33/who-is-alive/actions/workflows/shop-refund.yml';
 /** Канал игры в Telegram (новости, ролики). */
 const CHANNEL = 'https://t.me/benobody_app';
 /** Группа «benobody alerts» (как ALERTS_CHAT в game-deploy.yml): id чата не секрет без ключа бота. */
@@ -335,11 +337,13 @@ export class Bot {
       '',
       text,
       '',
-      `Ответь на это сообщение — ответ уйдёт игроку. Возврат: Actions → shop-refund, номер ${from.id}.`,
+      `Ответь на это сообщение — ответ уйдёт игроку. Возврат: кнопка ниже → Run workflow, номер ${from.id}.`,
       `#u${from.id}`,
     ].join('\n');
     try {
-      await this.api('sendMessage', { chat_id: this.supportChat, text: card, disable_web_page_preview: true });
+      // кнопка — сразу на страницу возврата в GitHub (shop-refund.yml): номер покупателя вставить в поле who
+      const refund = { inline_keyboard: [[{ text: '↩️ Возврат: shop-refund', url: REFUND_URL }]] };
+      await this.api('sendMessage', { chat_id: this.supportChat, text: card, disable_web_page_preview: true, reply_markup: refund });
     } catch (e) {
       // бот не в чате поддержки — игроку всё равно ответим; тревога — по журналу
       this.o.log('error', 'tg_support', errFields(e));
