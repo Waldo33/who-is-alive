@@ -5,6 +5,7 @@ import type { LogLevel } from './log';
 import { Bot } from './bot';
 import { Auth } from './auth';
 import { RemoteLedger } from './shop';
+import { StickerRender } from './sticker-render';
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -84,6 +85,13 @@ process.on('unhandledRejection', (e) => {
 
 const here = dirname(fileURLToPath(import.meta.url));
 const gameAuth = new Auth(secret);
+// свои стикеры игроков рисует игровой сервер (ffmpeg и шрифты — ниже); сервер бота без них просит по туннелю
+let stickers: StickerRender | undefined;
+const drawMyRemote = (base: string) => async (look: unknown) => {
+  const r = await fetch(`${base}/internal/sticker`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(look), signal: AbortSignal.timeout(60_000) });
+  if (!r.ok) throw new Error(`sticker upstream ${r.status}`);
+  return Buffer.from(await r.arrayBuffer());
+};
 // Telegram-бот: ключ — в секретах сервера (/etc/massovka/secrets.env), без ключа бота нет
 const bot = env.TELEGRAM_BOT_TOKEN
   ? new Bot({
@@ -104,6 +112,10 @@ const bot = env.TELEGRAM_BOT_TOKEN
       verifyGameToken: (t) => gameAuth.verify(t),
       // видеостикеры: рядом с server.mjs (выкладка) или apps/server/stickers (разработка)
       stickersDir: env.STICKERS_DIR || [join(here, 'stickers'), join(here, '..', 'stickers')].find((d) => existsSync(d)),
+      drawMy:
+        store instanceof MemoryStore && env.EVENTS_UPSTREAM
+          ? drawMyRemote(env.EVENTS_UPSTREAM)
+          : (look) => (stickers ? stickers.render(look) : Promise.reject(new Error('no_sticker_renderer'))),
     })
   : undefined;
 if (!bot) log('warn', 'TELEGRAM_BOT_TOKEN не задан — бота нет');
@@ -156,6 +168,8 @@ let film: FilmService | undefined;
 // зелёного; кнопка video-switch.yml) — не монтировать ничего и спрятать кнопки у телефонов
 const video = new VideoSwitch(env.VIDEO_OFF_FILE || join(clips.dir, 'video-off'));
 if (!video.on) log('warn', 'video_off');
+// свои стикеры («Собери свой стикерпак»): нужны ffmpeg и шрифты, выключатель фильма их не касается
+if (spawnSync(ffmpeg, ['-version'], { stdio: 'ignore' }).status === 0 && existsSync(join(fonts, 'press-start-2p-cyrillic-400-normal.woff'))) stickers = new StickerRender({ fonts, ffmpeg, log });
 if (env.FILM === 'off') log('info', 'film_off');
 else if (spawnSync(ffmpeg, ['-version'], { stdio: 'ignore' }).status !== 0) log('warn', 'film_no_ffmpeg');
 else if (!existsSync(join(fonts, 'press-start-2p-cyrillic-400-normal.woff'))) log('warn', 'film_no_fonts', { fonts });
@@ -191,6 +205,7 @@ const server = new GameServer({
   // фильм матча — в чат Telegram, откуда позвали (бот на другом сервере, туннель: http://127.0.0.1:9090)
   botInternal: env.BOT_INTERNAL || undefined,
   errors,
+  stickers,
 });
 
 const port = await server.listen(Number(env.PORT) || 8080);

@@ -46,7 +46,7 @@ export interface FilmServiceOptions {
 }
 
 /** Где лежит процесс монтажа: рядом со сборкой (dist/film-worker.mjs) или исходник под tsx (dev, тесты). */
-function workerPath(): { path: string; execArgv: string[] } {
+export function workerPath(): { path: string; execArgv: string[] } {
   const here = fileURLToPath(import.meta.url);
   const dir = dirname(here);
   if (here.endsWith('.ts')) return { path: join(dir, 'film-worker.ts'), execArgv: ['--import', 'tsx'] };

@@ -28,6 +28,13 @@ export default function WardrobeClient() {
   const [st, setSt] = useState<ShopState | null>(null);
   const [busy, setBusy] = useState<'buy' | 'wear' | null>(null);
   const [note, setNote] = useState('');
+  const noteTimer = useRef(0);
+  // подсказка «Скоро новые наборы» — на пару секунд, потом гаснет сама
+  const flash = (text: string) => {
+    setNote(text);
+    clearTimeout(noteTimer.current);
+    noteTimer.current = window.setTimeout(() => setNote((n) => (n === text ? '' : n)), 2000);
+  };
   const [scale, setScale] = useState(0);
   // звезда Telegram (Stars) — пиксельная, из палитры игры
   const [star, setStar] = useState('');
@@ -115,6 +122,7 @@ export default function WardrobeClient() {
     }
     if (busy || owned) return;
     setBusy('buy');
+    clearTimeout(noteTimer.current);
     setNote(t.paying);
     track('shop_buy_tap', { item: ITEM });
     const r = await shopBuy(ITEM);
@@ -169,7 +177,7 @@ export default function WardrobeClient() {
           const x = list[i];
           if (!x)
             return (
-              <button key={i} className="wardrobe-set locked" onClick={() => setNote(t.soon)} aria-label={t.soon}>
+              <button key={i} className="wardrobe-set locked" onClick={() => flash(t.soon)} aria-label={t.soon}>
                 ?
               </button>
             );
@@ -186,6 +194,12 @@ export default function WardrobeClient() {
         {ready && (
           <div className="daily-stage" style={{ width: (CARD_W * scale) / (globalThis.devicePixelRatio || 1), height: (CARD_H * scale) / (globalThis.devicePixelRatio || 1), visibility: scale ? 'visible' : 'hidden' }}>
             <canvas ref={canvasRef} className="daily-canvas" style={{ width: '100%', height: '100%' }} />
+            {/* подсказка — поверх витрины, а не строкой под кнопкой: иначе поле сжимается и карточка прыгает */}
+            {note && (
+              <p className="wardrobe-note" role="status">
+                {note}
+              </p>
+            )}
           </div>
         )}
       </div>
@@ -223,7 +237,10 @@ export default function WardrobeClient() {
             )}
           </>
         )}
-        {note && <p className="wardrobe-note">{note}</p>}
+        {/* какие стикеры в паке и свои стикеры — отдельная страница */}
+        <button className="link" onClick={() => router.push('/stickers')}>
+          {t.build.open}
+        </button>
         {st?.error === 'need_bot' && (
           <button className="link" onClick={() => openTelegram(bot)}>
             {bot.replace('https://', '')}

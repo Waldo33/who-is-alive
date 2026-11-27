@@ -13,6 +13,7 @@
  *
  * Вне Telegram всё здесь — пустые вызовы. Скрипт Telegram грузится только внутри Telegram.
  */
+import type { MyFig, MySticker, StickerId } from '@kto/game-core';
 import { GAME_API, TG_APP } from './env';
 import { ensureGameUser } from './game-server';
 import type { SharedClip } from './clips';
@@ -440,6 +441,46 @@ export interface ShopState {
   channel?: string;
   /** Надетый скин (null — снят или не куплен); старый сервер бота не шлёт. */
   worn?: string | null;
+  /** «Собери свой стикерпак»: открытые стикеры, убранные игроком, свои, открытые фигурки, открытые наградами (`st:`). */
+  open?: StickerId[];
+  off?: StickerId[];
+  my?: MySticker[];
+  figs?: MyFig[];
+  earned?: string[];
+  /** Сколько ещё боту добавить, убрать или заменить в паке. */
+  pending?: number;
+}
+
+/** Ответ бота с кодом ошибки (400/409/429 — `{ error }`); null — нет сети или не в Telegram. */
+async function botCall<T>(path: string, body: Record<string, unknown>, timeoutMs = 8000): Promise<{ body?: T; error?: string } | null> {
+  const w = await bootTelegram();
+  if (!w?.initData) return null;
+  try {
+    const r = await fetch(`${BOT_FN}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ initData: w.initData, ...body }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    const j = (await r.json().catch(() => ({}))) as T & { error?: string };
+    return r.ok ? { body: j } : { error: typeof j.error === 'string' ? j.error : 'bad' };
+  } catch {
+    return null;
+  }
+}
+
+/** Убрать стикер из пака (on=false) или вернуть. */
+export function shopPick(id: StickerId, on: boolean) {
+  return botCall<ShopState>('/shop/pick', { id, on });
+}
+
+/** Свой стикер: новый (slot нет) или правка места slot. Рисует и кладёт в пак бот. */
+export function shopMy(sticker: { fig: MyFig; pose: string; color: number; caption: string }, slot?: number) {
+  return botCall<ShopState>('/shop/my', { sticker, slot });
+}
+
+export function shopMyDel(slot: number) {
+  return botCall<ShopState>('/shop/my/del', { slot });
 }
 
 /** Что есть у игрока (и дослать недовыданные стикеры). null — не в Telegram или сервер недоступен. */

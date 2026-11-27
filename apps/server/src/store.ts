@@ -1,6 +1,7 @@
 import pg from 'pg';
 import type { ErrorRow } from './errors';
 import type { Logger } from './log';
+import type { MySticker } from '@kto/game-core';
 
 /**
  * Хранилище игрового сервера. Игре база не нужна (комнаты в памяти) — здесь аналитика воронки
@@ -52,8 +53,10 @@ export interface ShopUser {
   items: string[];
   /** Имя стикерпака в Telegram (…_by_<бот>), пока не создан — null. */
   pack: string | null;
-  /** Стикеры, уже добавленные в пак. */
+  /** Стикеры, уже добавленные в пак (стандартные — id, свои — `my<место>.<правка>`). */
   issued: string[];
+  /** Свои стикеры игрока («Собери свой стикерпак»); нет — нет. */
+  my?: MySticker[];
 }
 
 export interface TgLink {
@@ -183,6 +186,8 @@ const MIGRATIONS: string[] = [
      refunded boolean not null default false,
      created_at timestamptz not null default now()
    )`,
+  // «Собери свой стикерпак»: свои стикеры игрока (фигурка, поза, цвет, подпись)
+  `alter table shop_users add column if not exists my jsonb not null default '[]'::jsonb`,
   // стикеры за матчи: какой игрок сервера — какой пользователь Telegram (вход из Mini App; новый вход — перезапись)
   `create table if not exists tg_links (
      game_user text primary key,
@@ -304,16 +309,18 @@ export class PgStore implements Store {
   }
 
   async shopUser(userId: number): Promise<ShopUser | null> {
-    const res = await this.pool.query(`select user_id, lang, name, items, pack, issued from shop_users where user_id = $1`, [userId]);
+    const res = await this.pool.query(`select user_id, lang, name, items, pack, issued, my from shop_users where user_id = $1`, [userId]);
     const x = res.rows[0];
-    return x ? { userId: Number(x.user_id), lang: x.lang === 'en' ? 'en' : 'ru', name: x.name, items: x.items, pack: x.pack, issued: x.issued } : null;
+    return x ? { userId: Number(x.user_id), lang: x.lang === 'en' ? 'en' : 'ru', name: x.name, items: x.items, pack: x.pack, issued: x.issued, my: Array.isArray(x.my) ? x.my : [] } : null;
   }
 
   async saveShopUser(u: ShopUser): Promise<void> {
     await this.pool.query(
-      `insert into shop_users (user_id, lang, name, items, pack, issued) values ($1, $2, $3, $4, $5, $6)
-       on conflict (user_id) do update set lang = excluded.lang, name = excluded.name, items = excluded.items, pack = excluded.pack, issued = excluded.issued, updated_at = now()`,
-      [u.userId, u.lang, u.name, u.items, u.pack, u.issued],
+      // my: undefined — запись от старого бота (своих стикеров не знает): не трогаем
+      `insert into shop_users (user_id, lang, name, items, pack, issued, my) values ($1, $2, $3, $4, $5, $6, coalesce($7::jsonb, '[]'::jsonb))
+       on conflict (user_id) do update set lang = excluded.lang, name = excluded.name, items = excluded.items, pack = excluded.pack, issued = excluded.issued,
+         my = coalesce($7::jsonb, shop_users.my), updated_at = now()`,
+      [u.userId, u.lang, u.name, u.items, u.pack, u.issued, u.my ? JSON.stringify(u.my) : null],
     );
   }
 
@@ -435,7 +442,9 @@ export class MemoryStore implements Store {
   }
 
   async saveShopUser(u: ShopUser): Promise<void> {
-    this.shop.set(u.userId, structuredClone(u));
+    // как в Postgres: запись без my (старый бот) своих стикеров не стирает
+    const my = u.my ?? this.shop.get(u.userId)?.my;
+    this.shop.set(u.userId, structuredClone({ ...u, ...(my ? { my } : {}) }));
   }
 
   async saveShopPayment(p: ShopPayment): Promise<boolean> {

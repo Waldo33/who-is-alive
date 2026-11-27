@@ -27,7 +27,7 @@ interface Call {
   files: string[];
 }
 
-function makeBot(opts: { result?: (method: string) => unknown; fail?: (method: string) => string | null; store?: MemoryStore; ledger?: ConstructorParameters<typeof Bot>[0]['shopLedger'] } = {}) {
+function makeBot(opts: { result?: (method: string) => unknown; fail?: (method: string) => string | null; store?: MemoryStore; ledger?: ConstructorParameters<typeof Bot>[0]['shopLedger']; drawMy?: ConstructorParameters<typeof Bot>[0]['drawMy'] } = {}) {
   const calls: Call[] = [];
   const fetchImpl = (async (url: string, init: { body: string | FormData }) => {
     const method = url.split('/').pop()!;
@@ -46,7 +46,7 @@ function makeBot(opts: { result?: (method: string) => unknown; fail?: (method: s
     return new Response(JSON.stringify({ ok: true, result }));
   }) as unknown as typeof fetch;
   const store = opts.store ?? new MemoryStore();
-  const bot = new Bot({ token: TOKEN, apiBase: 'https://api.example', site: 'https://site.example', store, log: silentLogger, fetchImpl, stickersDir: STICKERS, shopLedger: opts.ledger });
+  const bot = new Bot({ token: TOKEN, apiBase: 'https://api.example', site: 'https://site.example', store, log: silentLogger, fetchImpl, stickersDir: STICKERS, shopLedger: opts.ledger, drawMy: opts.drawMy });
   return { bot, calls, store };
 }
 
@@ -417,4 +417,137 @@ describe('гардероб', () => {
     // пак ещё не забран — «за игру» копятся, но не выдаются
     expect(wantedStickers(['st:cut', 'played'])).toEqual([]);
   });
+
+  it('«Собери свой стикерпак»: убрать и вернуть стикер, приманку убрать нельзя, закрытый — нельзя', async () => {
+    const set = { stickers: [...['👋', '💃', '😵', '🤨', '🎁'].map((e, i) => ({ file_id: `f${i}`, emoji: e }))] };
+    const { bot, calls, store } = makeBot({ result: (m) => (m === 'getStickerSet' ? set : undefined) });
+    await played(bot);
+    await bot.handle('POST', '/shop/claim', {}, { initData: initData(ANYA) });
+    const pick = (id: string, on: unknown) => bot.handle('POST', '/shop/pick', {}, { initData: initData(ANYA), id, on });
+    calls.length = 0;
+    const r = await pick('dance', false);
+    expect(r.status).toBe(200);
+    await bot.shop.issue(77);
+    expect(calls.find((c) => c.method === 'deleteStickerFromSet')?.body).toEqual({ sticker: 'f1' });
+    expect((await store.shopUser(77))?.issued).not.toContain('dance');
+    expect((await bot.handle('POST', '/shop', {}, { initData: initData(ANYA) })).body).toMatchObject({ off: ['dance'], pending: 0, wanted: 4, issued: 4 });
+    // вернуть — снова в пак, приманка опять последней
+    calls.length = 0;
+    await pick('dance', true);
+    await bot.shop.issue(77);
+    expect(calls.filter((c) => c.method === 'addStickerToSet').map((c) => c.files[0].split(':')[1])).toEqual(['dance.webm']);
+    expect((await store.shopUser(77))?.items).not.toContain('off:dance');
+    expect((await pick('lure', false)).status).toBe(400);
+    expect((await pick('notCrying', false)).status).toBe(409);
+    expect((await pick('nope', false)).status).toBe(400);
+  });
+
+  it('свой стикер: рисует сервер, правка меняет его в паке на месте, удаление убирает; мат и чужая фигурка — отказ', async () => {
+    const drawn: string[] = [];
+    let set = { stickers: [...['👋', '💃', '😵', '🤨', '🎁'].map((e, i) => ({ file_id: `f${i}`, emoji: e }))] };
+    const { bot, calls, store } = makeBot({
+      result: (m) => (m === 'getStickerSet' ? set : undefined),
+      drawMy: async (look) => {
+        drawn.push(JSON.stringify(look));
+        return Buffer.from('webm');
+      },
+    });
+    const my = (sticker: unknown, slot?: number) => bot.handle('POST', '/shop/my', {}, { initData: initData(ANYA), sticker, slot });
+    // без пака — сначала забрать бесплатный
+    expect((await my({ fig: 'actor', pose: 'wave', color: 0, caption: 'Йо' })).status).toBe(409);
+    await played(bot);
+    await bot.handle('POST', '/shop/claim', {}, { initData: initData(ANYA) });
+    calls.length = 0;
+    const r = await my({ fig: 'actor', pose: 'dance', color: 1, caption: 'Это мой дубль' });
+    expect(r.status).toBe(200);
+    await bot.shop.issue(77);
+    expect(drawn).toEqual([JSON.stringify({ fig: 'actor', pose: 'dance', color: 1, text: ['Это мой', 'дубль'] })]);
+    const add = calls.find((c) => c.method === 'addStickerToSet')!;
+    // метка места первой: по ней бот найдёт стикер для замены; вторая — эмодзи позы
+    expect((add.body.sticker as { emoji_list: string[] }).emoji_list).toEqual(['✏️', '💃']);
+    expect((await store.shopUser(77))?.issued).toContain('my0.1');
+    expect((await bot.handle('POST', '/shop', {}, { initData: initData(ANYA) })).body).toMatchObject({ my: [{ slot: 0, rev: 1, fig: 'actor' }], pending: 0 });
+
+    // правка — replaceStickerInSet того же места, номер правки растёт
+    set = { stickers: [...set.stickers, { file_id: 'my0', emoji: '✏' }] };
+    calls.length = 0;
+    expect((await my({ fig: 'actor', pose: 'stun', color: 2, caption: 'Ой' }, 0)).status).toBe(200);
+    await bot.shop.issue(77);
+    const rep = calls.find((c) => c.method === 'replaceStickerInSet')!;
+    expect(rep.body.old_sticker).toBe('my0');
+    expect((await store.shopUser(77))?.issued).toContain('my0.2');
+    expect((await store.shopUser(77))?.issued).not.toContain('my0.1');
+    expect(calls.some((c) => c.method === 'addStickerToSet')).toBe(false);
+
+    // удалить
+    calls.length = 0;
+    await bot.handle('POST', '/shop/my/del', {}, { initData: initData(ANYA), slot: 0 });
+    await bot.shop.issue(77);
+    expect(calls.find((c) => c.method === 'deleteStickerFromSet')?.body).toEqual({ sticker: 'my0' });
+    expect((await store.shopUser(77))?.issued.some((x) => x.startsWith('my'))).toBe(false);
+
+    // отказы: мат, ссылка, закрытая фигурка, чужая поза
+    expect((await my({ fig: 'actor', pose: 'wave', color: 0, caption: 'сука' })).body).toEqual({ error: 'rude' });
+    expect((await my({ fig: 'actor', pose: 'wave', color: 0, caption: '@spam' })).body).toEqual({ error: 'chars' });
+    expect((await my({ fig: 'kotBanan', pose: 'wave', color: 0 })).body).toEqual({ error: 'locked' });
+    expect((await my({ fig: 'actor', pose: 'fly', color: 0 })).status).toBe(400);
+    expect((await my({ fig: 'actor', pose: 'wave', color: 0 }, 9)).status).toBe(400);
+  });
+
+  it('свои стикеры: не больше пяти, правки — не чаще 12 в час', async () => {
+    const { bot } = makeBot({ drawMy: async () => Buffer.from('webm') });
+    await played(bot);
+    await bot.handle('POST', '/shop/claim', {}, { initData: initData(ANYA) });
+    const my = (caption: string) => bot.handle('POST', '/shop/my', {}, { initData: initData(ANYA), sticker: { fig: 'actor', pose: 'wave', color: 0, caption } });
+    for (let i = 0; i < 5; i++) expect((await my(`Раз ${i}`)).status).toBe(200);
+    expect((await my('Шестой')).body).toEqual({ error: 'full' });
+    for (let i = 0; i < 6; i++) await my(`Ещё ${i}`);
+    expect((await my('Хватит')).body).toEqual({ error: 'rate' });
+  });
+
+  it('учёт по туннелю: свои стикеры проверяются, чужие записи в issued — отказ', async () => {
+    const store = new MemoryStore();
+    const ledger = localLedger(store);
+    const user = { userId: 5, lang: 'ru', name: 'Аня', items: ['pack', 'starter', 'off:dance'], pack: null, issued: ['hi', 'my0.1'], my: [{ slot: 0, rev: 1, fig: 'actor', pose: 'wave', color: 0, text: ['Йо'] }] };
+    expect((await shopLedgerOp(ledger, { op: 'save', user })).status).toBe(200);
+    expect((await store.shopUser(5))?.my).toHaveLength(1);
+    expect((await shopLedgerOp(ledger, { op: 'save', user: { ...user, my: [{ ...user.my[0], text: ['@spam'] }] } })).status).toBe(400);
+    expect((await shopLedgerOp(ledger, { op: 'save', user: { ...user, my: [user.my[0], user.my[0]] } })).status).toBe(400);
+    expect((await shopLedgerOp(ledger, { op: 'save', user: { ...user, issued: ['my9.1'] } })).status).toBe(400);
+    // старый бот (без my) — свои стикеры не стираются
+    const { my: _drop, ...old } = user;
+    void _drop;
+    expect((await shopLedgerOp(ledger, { op: 'save', user: old })).status).toBe(200);
+    expect((await store.shopUser(5))?.my).toHaveLength(1);
+  });
+
+  it('рисование своего стикера (/internal/sticker): снаружи 404, изнутри — WEBM; кривой выбор — 400', async () => {
+    const looks: unknown[] = [];
+    const srv = new GameServer({
+      authSecret: 'x'.repeat(32),
+      log: silentLogger,
+      trustProxy: true,
+      store: new MemoryStore(),
+      stickers: {
+        render: async (look) => {
+          if ((look as { fig?: string }).fig !== 'actor') throw new Error('bad_sticker');
+          looks.push(look);
+          return Buffer.from('WEBM');
+        },
+      },
+    });
+    const port = await srv.listen(0, '127.0.0.1');
+    try {
+      const body = JSON.stringify({ fig: 'actor', pose: 'wave', color: 0, text: ['Йо'] });
+      expect((await fetch(`http://127.0.0.1:${port}/internal/sticker`, { method: 'POST', headers: { 'x-forwarded-for': '1.2.3.4' }, body })).status).toBe(404);
+      expect(looks).toHaveLength(0);
+      const r = await fetch(`http://127.0.0.1:${port}/internal/sticker`, { method: 'POST', body });
+      expect(r.headers.get('content-type')).toBe('video/webm');
+      expect(Buffer.from(await r.arrayBuffer()).toString()).toBe('WEBM');
+      expect((await fetch(`http://127.0.0.1:${port}/internal/sticker`, { method: 'POST', body: '{"fig":"x"}' })).status).toBe(400);
+    } finally {
+      await srv.close();
+    }
+  });
 });
+

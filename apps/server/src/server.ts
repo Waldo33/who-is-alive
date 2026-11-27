@@ -70,6 +70,8 @@ export interface GameServerOptions {
    * из Telegram уходит туда — бот заменит им карточку в чате. Нет — не сообщаем.
    */
   botInternal?: string;
+  /** Рисование своих стикеров игроков (sticker-render.ts): нет ffmpeg или шрифтов — нет. */
+  stickers?: { render(look: unknown): Promise<Buffer> };
   /** Аварийный выключатель видео (video-switch.ts); нет — видео всегда включено. */
   video?: VideoSwitch;
   /** Страна по адресу для замера доступности (geo.ts); нет — неизвестна. */
@@ -532,6 +534,19 @@ export class GameServer {
     if (p === '/internal/shop' && req.method === 'POST') {
       const r = await shopLedgerOp(this.ledger, await readJson(req, 16_384));
       return this.reply(res, r.status, r.body);
+    }
+    // свой стикер игрока («Собери свой стикерпак»): сервер бота без ffmpeg просит нарисовать его здесь (по туннелю)
+    if (p === '/internal/sticker' && req.method === 'POST') {
+      if (!this.o.stickers) return this.reply(res, 503, { error: 'no_renderer' });
+      try {
+        const webm = await this.o.stickers.render(await readJson(req, 4096));
+        res.writeHead(200, { 'Content-Type': 'video/webm', 'Content-Length': webm.length, 'Cache-Control': 'no-store' });
+        res.end(webm);
+        return;
+      } catch (e) {
+        const code = String(e instanceof Error ? e.message : e);
+        return this.reply(res, code === 'bad_sticker' ? 400 : code === 'busy' ? 429 : 500, { error: code === 'bad_sticker' || code === 'busy' ? code : 'render' });
+      }
     }
     // стикеры, открытые в матче (от игрового сервера, по туннелю) — бот кладёт их в пак игрока
     if (p === '/internal/tg/stickers' && req.method === 'POST') {
