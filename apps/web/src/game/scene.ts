@@ -3811,7 +3811,12 @@ export class GameScene extends Phaser.Scene {
       this.huntTipAt = 0;
       this.tip('hunt');
     }
+    // «Крутка» на экране — подсказка ждёт и не налезает на автомат; после неё — ещё пара секунд
+    const sc = this.sim.world.crowd;
+    const slotOn = !this.tut && !!this.coachTip && !!sc?.slot && this.sim.world.time < sc.resumeAt;
+    if (slotOn) this.coachTip!.until = Math.max(this.coachTip!.until, performance.now() + 2500);
     if (this.tut) lines = this.tut.lines;
+    else if (slotOn) lines = ['', ''];
     else if (this.coachTip && performance.now() < this.coachTip.until && this.sim.phase === 'play') lines = this.coachTip.lines;
     else this.coachTip = null;
     // «Тапни — дальше» внизу поля, мигает
