@@ -1,5 +1,5 @@
 // Эмодзи для постов канала: node scripts/post-emoji.mjs [лист.png]
-// Рисует набор (src/game/skins/post-emoji.ts) в apps/server/stickers/emoji/<id>.png (100×100, прозрачный фон),
+// Рисует набор (src/game/skins/post-emoji.ts) и награды личного эмодзи-пака (reward-emoji.ts) в apps/server/stickers/emoji/<id>.png (100×100, прозрачный фон),
 // анимированные — ещё и <id>.webm: видео-эмодзи Telegram, VP9 с прозрачностью, ≤ 3 с, ≤ 64 КБ.
 // Бот собирает из них набор custom emoji (server/src/emoji-set.ts). Аргумент — куда положить лист-превью.
 import { build } from 'esbuild';
@@ -29,7 +29,7 @@ if (process.argv[2]) writeFileSync(process.argv[2], Buffer.from(sheet.split(',')
 if (process.argv[3]) writeFileSync(process.argv[3], Buffer.from(frames.split(',')[1], 'base64'));
 mkdirSync(OUT, { recursive: true });
 // список для бота: id и эмодзи, по которому он узнаёт картинку в наборе (порядок — порядок в наборе)
-writeFileSync(join(OUT, 'list.json'), JSON.stringify(list.map(({ id, emoji }) => ({ id, emoji })), null, 1) + '\n');
+writeFileSync(join(OUT, 'list.json'), JSON.stringify(list.filter((x) => x.base).map(({ id, emoji }) => ({ id, emoji })), null, 1) + '\n');
 const MAX = 64 * 1024;
 for (const { id, png, frames, fps } of list) {
   writeFileSync(join(OUT, `${id}.png`), Buffer.from(png.split(',')[1], 'base64'));

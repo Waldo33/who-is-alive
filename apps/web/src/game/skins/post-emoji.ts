@@ -31,13 +31,13 @@ export const POST_EMOJI_FPS = 20;
  * Буквы сеток: o ink, w white, m mist, s slate, d steel, n dusk, k night, y yellow, a amber, f orange,
  * r red, v wine, g green, G forest, b blue, c cyan, u umber, t tan, p peach, z sand, x magenta, h coral, q grape.
  */
-const K: Record<string, string> = {
+export const K: Record<string, string> = {
   o: PAL.ink, w: PAL.white, m: PAL.mist, s: PAL.slate, d: PAL.steel, n: PAL.dusk, k: PAL.night,
   y: PAL.yellow, a: PAL.amber, f: PAL.orange, r: PAL.red, v: PAL.wine, g: PAL.green, G: PAL.forest,
   b: PAL.blue, c: PAL.cyan, u: PAL.umber, t: PAL.tan, p: PAL.peach, z: PAL.sand, x: PAL.magenta, h: PAL.coral, q: PAL.grape,
 };
 
-function rows(r: string[], map: Record<string, string> = K): HTMLCanvasElement {
+export function rows(r: string[], map: Record<string, string> = K): HTMLCanvasElement {
   const w = Math.max(...r.map((s) => s.length));
   const { c, g } = canvas(w, r.length);
   r.forEach((s, y) => {
@@ -50,14 +50,14 @@ function rows(r: string[], map: Record<string, string> = K): HTMLCanvasElement {
 }
 
 /** Холст w×h с рисованием по точкам. */
-function draw(w: number, h: number, f: (P: (x: number, y: number, col: string) => void, g: Ctx) => void): HTMLCanvasElement {
+export function draw(w: number, h: number, f: (P: (x: number, y: number, col: string) => void, g: Ctx) => void): HTMLCanvasElement {
   const { c, g } = canvas(w, h);
   f((x, y, col) => px(g, x, y, col), g);
   return c;
 }
 
 /** Обвести залитое чернилами: всё, что нарисовано, получает контур ink снаружи (холст +2). */
-function inked(src: HTMLCanvasElement): HTMLCanvasElement {
+export function inked(src: HTMLCanvasElement): HTMLCanvasElement {
   const { c, g } = canvas(src.width + 2, src.height + 2);
   outlineOf(src.getContext('2d')!, src.width, src.height, g, 0, 0, PAL.ink);
   g.drawImage(src, 1, 1);

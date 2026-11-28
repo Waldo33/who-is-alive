@@ -1,4 +1,4 @@
-import { DICTS, DIRECTOR_HUMANS, slotHits, TICK_MS, fmt, earnedStickers, recordRound, renamePid, seasonLeadTheme } from '@kto/game-core';
+import { DICTS, DIRECTOR_HUMANS, slotHits, TICK_MS, fmt, earnedRewards, earnedStickers, recordRound, renamePid, seasonLeadTheme } from '@kto/game-core';
 import type { GameConfig, PlayerInfo, SkinId } from '@kto/game-core';
 import { DEFAULT_WIRE_SETTINGS, HostSession } from '@kto/net';
 import type { Channel, PresenceMember, RoomMsg, ServerMsg, Transport, WireError, WireRoom, WireRoomSettings } from '@kto/net';
@@ -69,7 +69,7 @@ export interface RoomOptions {
   /** Комната по приглашению из Telegram: что показать на карточке в чате (сбор, съёмка) — server.ts › cardToChat. */
   onCard?: (room: Room, card: RoomCard) => void;
   /** Матч сыгран: всем людям — что им открылось (game-core › earnedStickers, может быть пусто) — server.ts отдаст боту. */
-  onStickers?: (room: Room, earned: { pid: string; stickers: string[] }[]) => void;
+  onStickers?: (room: Room, earned: { pid: string; stickers: string[]; rewards?: string[] }[]) => void;
   /**
    * Матч сыгран: счётчики значков для статуса (game-core/badges.ts) — люди, победители и режиссёр, если комната
    * впервые сыграла матч с `DIRECTOR_HUMANS` живыми (одна комната — одна засчитанная); server.ts запишет по связке с Telegram.
@@ -798,7 +798,8 @@ export class Room {
     if (!this.o.onStickers || !takes.length) return;
     const match = r.host.sim.outcome();
     const rounds = takes.map((t) => ({ ...t.summary, theme: t.rec.theme }));
-    const earned = r.players.filter((p) => !p.ai).map((p) => ({ pid: p.pid, stickers: earnedStickers(p.pid, rounds, match) as string[] }));
+    // и награды личного эмодзи-пака (game-core/emoji-pack.ts) — за те же события и площадки
+    const earned = r.players.filter((p) => !p.ai).map((p) => ({ pid: p.pid, stickers: earnedStickers(p.pid, rounds, match) as string[], rewards: earnedRewards(p.pid, rounds, match) as string[] }));
     // всех людей: сыгранный матч сам по себе открывает бесплатный пак (shop.ts › earn)
     if (earned.length) this.o.onStickers(this, earned);
   }

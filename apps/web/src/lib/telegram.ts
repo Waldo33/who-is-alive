@@ -13,7 +13,7 @@
  *
  * Вне Telegram всё здесь — пустые вызовы. Скрипт Telegram грузится только внутри Telegram.
  */
-import type { BadgeState, EffectId, MyFig, MySticker, StickerId } from '@kto/game-core';
+import type { BadgeState, EffectId, MyFig, MySticker, RewardId, StickerId } from '@kto/game-core';
 import { GAME_API, TG_APP } from './env';
 import { ensureGameUser } from './game-server';
 import type { SharedClip } from './clips';
@@ -259,6 +259,7 @@ export function telegramStartTarget(): string | null {
   if (start === 'shoptest') return '/sandbox?dev&src=tg';
   if (start === 'stickers' || start === 'ff_stickers') return '/stickers?src=tg';
   if (start === 'badges') return '/badges?src=tg';
+  if (start === 'emoji') return '/emoji?src=tg';
   // загадка из фильма матча: кнопка «Найди актёра» под видео в чате
   const puzzle = /^c_([A-Z2-9]{5})$/.exec(start);
   if (puzzle) return `/${puzzle[1]}?src=tg_film`;
@@ -498,6 +499,8 @@ export interface ShopState {
   free?: { played: boolean; sub: boolean; channel?: string };
   /** Значки для статуса (game-core/badges.ts) и id их эмодзи в наборе бота (null — набор ещё готовится); старый сервер не шлёт. */
   badges?: (BadgeState & { emoji: string | null })[];
+  /** Личный эмодзи-пак (game-core/emoji-pack.ts): забран ли, ссылка на набор, открытые награды, сколько ещё положить; старый сервер не шлёт. */
+  emoji?: { claimed: boolean; pack: string | null; open: RewardId[]; pending: number };
 }
 
 /** Можно ли ставить эмодзи-статус: Telegram 8.0+ и Telegram Premium (без него статус не ставится). */
@@ -603,6 +606,14 @@ export async function shopClaim(): Promise<ShopState | null> {
   // боту нужно разрешение писать игроку (сообщение «пак готов»); отказ — пак всё равно будет
   if (w?.requestWriteAccess && at('6.9')) await new Promise<void>((r) => w.requestWriteAccess!(() => r()));
   return botPost<ShopState>('/shop/claim', {}, 25_000);
+}
+
+/** «Забрать эмодзи-пак»: бот соберёт личный набор эмодзи (в фоне) — состояние сразу. */
+export async function shopEmoji(): Promise<ShopState | null> {
+  const w = await bootTelegram();
+  // боту нужно разрешение писать игроку (сообщение о новых эмодзи); отказ — пак всё равно будет
+  if (w?.requestWriteAccess && at('6.9')) await new Promise<void>((r) => w.requestWriteAccess!(() => r()));
+  return botPost<ShopState>('/shop/emoji', {}, 20_000);
 }
 
 /** «Вернуть звёзды» в карточке покупки (пока только проверочная покупка): новое состояние или null. */

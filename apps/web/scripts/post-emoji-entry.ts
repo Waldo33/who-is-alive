@@ -1,13 +1,16 @@
 /** Картинки эмодзи для постов (`scripts/post-emoji.mjs`): 100×100 PNG, у анимированных — ещё кадры видео; плюс лист-превью. */
 import { PAL } from '@kto/assets';
 import { POST_EMOJI, POST_EMOJI_FPS, POST_EMOJI_MS, postEmojiFile, postEmojiIcon } from '../src/game/skins/post-emoji';
+import { REWARD_EMOJI } from '../src/game/skins/reward-emoji';
 import { canvas } from '../src/game/pixels';
 
-const G = globalThis as unknown as { __out: { id: string; emoji: string; png: string; frames: string[]; fps: number }[]; __sheet: string };
+const G = globalThis as unknown as { __out: { id: string; emoji: string; base: boolean; png: string; frames: string[]; fps: number }[]; __sheet: string };
 const n = Math.round((POST_EMOJI_MS / 1000) * POST_EMOJI_FPS);
-G.__out = POST_EMOJI.map((e) => ({
+// общие (в list.json — набор владельца для постов) и награды личного пака (только файлы)
+G.__out = [...POST_EMOJI, ...REWARD_EMOJI].map((e) => ({
   id: e.id,
   emoji: e.emoji,
+  base: POST_EMOJI.includes(e),
   png: postEmojiFile(e).toDataURL('image/png'),
   fps: POST_EMOJI_FPS,
   frames: e.anim ? Array.from({ length: n }, (_, i) => postEmojiFile(e, (i * 1000) / POST_EMOJI_FPS).toDataURL('image/png')) : [],
