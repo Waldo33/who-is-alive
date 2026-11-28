@@ -671,7 +671,7 @@ export const en: Dict = {
     },
     botBuild: '🎨 Build your pack',
     packTitle: 'Be Nobody · {name}',
-    /** Test purchase for 1 star (shoptest flag): buy and refund right away with the button on the same card. */
+    /** Test purchase for 1 star (sandbox dev panel in Telegram): buy and refund right away. */
     test: {
       title: 'Payment check',
       hint: 'Gives nothing: buy for 1 star and refund right away.',
@@ -680,6 +680,7 @@ export const en: Dict = {
       refund: 'Refund stars',
       refunded: 'Stars refunded',
       failed: 'Did not work, try again',
+      onlyTg: 'Telegram only',
       invoiceTitle: 'Payment check',
       invoiceText: 'A Be Nobody test purchase: gives nothing, refund the star right away in the wardrobe.',
     },
