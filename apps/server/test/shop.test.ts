@@ -85,7 +85,7 @@ describe('гардероб', () => {
     // имя без @: подпись пака уходит в Telegram
     expect(create[0].body.title).toBe('Массовка · Аня spam · @be_nobody_bot');
     expect((create[0].body.stickers as { format: string }[]).map((s) => s.format)).toEqual(['video', 'video', 'video', 'video', 'video']);
-    expect(create[0].files.map((f) => f.split(':')[1])).toEqual(['hi.webm', 'dance.webm', 'oops.webm', 'who.webm', 'lure.webm']);
+    expect(create[0].files.map((f) => f.split(':')[1])).toEqual(['hi.webm', 'dance.webm', 'oops.webm', 'who.webm', 'lure~vhs.webm']);
     expect(calls.some((c) => c.method === 'sendMessage' && String(c.body.text).includes('стикерпак'))).toBe(true);
 
     calls.length = 0;
@@ -117,11 +117,11 @@ describe('гардероб', () => {
     // набор записан; пака не было — бот создал один пак игрока: 2 стикера набора и приманка последней
     const u = await store.shopUser(77);
     expect(u?.items).toEqual(['kotBanan', 'pack']);
-    expect(u?.issued).toEqual(['justBanana', 'aaa', 'lure']);
+    expect(u?.issued).toEqual(['justBanana', 'aaa', 'lure~vhs']);
     const made = calls.find((c) => c.method === 'createNewStickerSet')!;
     expect(made.body.name).toBe('m77_by_be_nobody_bot');
     expect(made.body.title).toBe('Массовка · Аня spam · @be_nobody_bot');
-    expect(made.files.map((f) => f.split(':')[1])).toEqual(['justBanana.webm', 'aaa.webm', 'lure.webm']);
+    expect(made.files.map((f) => f.split(':')[1])).toEqual(['justBanana.webm', 'aaa.webm', 'lure~vhs.webm']);
     // сообщение — без вопросов, со ссылкой на пак
     const msg = calls.find((c) => c.method === 'sendMessage')!.body;
     expect(msg.text).toContain('Кот-банан');
@@ -278,7 +278,7 @@ describe('гардероб', () => {
     await hook(bot, { callback_query: { id: 'cb', from: ANYA, data: 'pk:in:kotBanan' } });
     await hook(bot, { callback_query: { id: 'cb', from: ANYA, data: 'pk:own:kotBanan' } });
     await bot.handle('POST', '/shop/claim', {}, { initData: initData(ANYA) });
-    expect((await store.shopUser(77))?.issued).toEqual(['hi', 'dance', 'oops', 'who', 'lure']);
+    expect((await store.shopUser(77))?.issued).toEqual(['hi', 'dance', 'oops', 'who', 'lure~vhs']);
     expect(calls.flatMap((c) => c.files).some((f) => /aaa|justBanana/.test(f))).toBe(false);
   });
 
@@ -561,7 +561,7 @@ describe('гардероб', () => {
     const adds = calls.filter((c) => c.method === 'addStickerToSet');
     expect(adds.map((c) => c.body.name)).toEqual(['m77_by_be_nobody_bot', 'm77_by_be_nobody_bot']);
     expect(adds.flatMap((c) => c.files.map((f) => f.split(':')[1]))).toEqual(['splat.webm', 'happyTears.webm']);
-    expect((await store.shopUser(77))?.issued).toEqual(['justBanana', 'aaa', 'lure', 'splat', 'happyTears']);
+    expect((await store.shopUser(77))?.issued).toEqual(['justBanana', 'aaa', 'lure~vhs', 'splat', 'happyTears']);
     // первый матч — ещё и предложение бесплатного пака; новое в паке — отдельным сообщением
     const msg = calls.find((c) => c.method === 'sendMessage' && String(c.body.text).includes('Новый стикер'))!.body;
     expect(msg.text).toContain('«Шмяк!»');
@@ -836,7 +836,7 @@ describe('гардероб', () => {
     expect((r.body as { fx: Record<string, string>; effects: string[] }).fx).toEqual({ hi: 'holo' });
     expect((r.body as { effects: string[] }).effects).toEqual(['holo']);
     await bot.shop.issue(77);
-    expect(jobs.at(-1)).toEqual({ std: 'hi', fx: 'holo', lang: 'ru' });
+    expect(jobs.at(-1)).toEqual({ std: 'hi', fx: 'holo', color: null, lang: 'ru' });
     expect(calls.find((c) => c.method === 'replaceStickerInSet')?.body.old_sticker).toBe('f0');
     expect((await store.shopUser(77))?.issued).toContain('hi~holo');
     // снял — снова файл без эффекта
@@ -860,6 +860,43 @@ describe('гардероб', () => {
     await bot.shop.issue(77);
     expect((await store.shopUser(77))?.issued).toContain('dance');
     expect((await store.shopUser(77))?.issued).not.toContain('dance~holo');
+  });
+
+  it('готовый стикер: цвет надписи без покупки, с эффектом — вместе; приманка всегда в VHS и не меняется', async () => {
+    const set = { stickers: [...['👋', '💃', '😵', '🤨', '🎁'].map((e, i) => ({ file_id: `f${i}`, emoji: e }))] };
+    const jobs: unknown[] = [];
+    const { bot, calls, store } = makeBot({ result: (m) => (m === 'getStickerSet' ? set : undefined), drawMy: async (look) => (jobs.push(look), Buffer.from('webm')) });
+    const look = (id: string, fx: string | null, color?: unknown) => bot.handle('POST', '/shop/fx', {}, { initData: initData(ANYA), id, fx, ...(color !== undefined ? { color } : {}) });
+    await played(bot);
+    await bot.handle('POST', '/shop/claim', {}, { initData: initData(ANYA) });
+    await bot.shop.issue(77);
+    // приманка — готовым файлом в VHS, без рисования на сервере
+    expect((await store.shopUser(77))?.issued).toContain('lure~vhs');
+    expect(jobs).toEqual([]);
+    expect((await look('lure', null, 2)).status).toBe(400);
+    expect((await look('hi', null, 9)).status).toBe(400);
+    expect((await look('hi', null, 1.5)).status).toBe(400);
+    // цвет — бесплатно
+    calls.length = 0;
+    const r = await look('hi', null, 3);
+    expect(r.status).toBe(200);
+    expect((r.body as { col: Record<string, number> }).col).toEqual({ hi: 3 });
+    await bot.shop.issue(77);
+    expect(jobs.at(-1)).toEqual({ std: 'hi', fx: null, color: 3, lang: 'ru' });
+    expect((await store.shopUser(77))?.issued).toContain('hi~c3');
+    expect(calls.find((c) => c.method === 'replaceStickerInSet')?.body.old_sticker).toBe('f0');
+    // эффект без поля цвета — цвет остаётся
+    await hook(bot, payment({ invoice_payload: 'fire:77', total_amount: 35, telegram_payment_charge_id: 'ch_fire' }));
+    await look('hi', 'fire');
+    await bot.shop.issue(77);
+    expect(jobs.at(-1)).toEqual({ std: 'hi', fx: 'fire', color: 3, lang: 'ru' });
+    expect((await store.shopUser(77))?.issued).toContain('hi~fire.c3');
+    // родной цвет и без эффекта — снова файл
+    calls.length = 0;
+    await look('hi', null, null);
+    await bot.shop.issue(77);
+    expect(calls.find((c) => c.method === 'replaceStickerInSet')?.files[0]).toContain('hi.webm');
+    expect((await store.shopUser(77))?.issued).toContain('hi');
   });
 
   it('стикер, убранный из набора («Я не плачу», 27.11), уходит и из выданного пака', async () => {

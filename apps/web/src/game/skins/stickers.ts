@@ -1,5 +1,5 @@
 import { PAL } from '@kto/assets';
-import { DICTS, STICKER_LIST } from '@kto/game-core';
+import { DICTS, MY_COLORS, STICKER_LIST } from '@kto/game-core';
 import type { Lang, StickerId, StickerMeta } from '@kto/game-core';
 import { CH_H, CH_W, F, PARK_CHARS, makeCharacterSheets } from '../sprites';
 import type { CharSheets } from '../sprites';
@@ -62,8 +62,27 @@ export function say(g: Ctx, s: string, x: number, y: number, col: string, size =
   tmp.g.putImageData(img, 0, 0);
   g.drawImage(tmp.c, 0, 0);
 }
+/** Цвет надписи, выбранный игроком (на время рисования — `withCapColor`); null — родной цвет стикера. */
+let capColor: string | null = null;
 export const cap = (g: Ctx, id: StickerId, lang: Lang, y: number, col: string = PAL.white) =>
-  DICTS[lang].shop.stickers[id].forEach((s, i) => say(g, s, ST_SIZE / 2, y + i * 10, col));
+  DICTS[lang].shop.stickers[id].forEach((s, i) => say(g, s, ST_SIZE / 2, y + i * 10, capColor ?? col));
+/** Стикер с надписью цвета `MY_COLORS[color]` (как у своих стикеров); null — как есть. */
+export function withCapColor<D extends { draw(g: Ctx, t: number, lang: Lang): void }>(def: D, color: number | null | undefined): D {
+  const c = color === null || color === undefined ? null : MY_COLORS[color];
+  if (!c) return def;
+  return {
+    ...def,
+    draw(g: Ctx, t: number, lang: Lang) {
+      const was = capColor;
+      capColor = PAL[c];
+      try {
+        def.draw(g, t, lang);
+      } finally {
+        capColor = was;
+      }
+    },
+  };
+}
 export const star = (g: Ctx, x: number, y: number, c: string = PAL.yellow) => {
   R(g, x, y - 2, 2, 6, c);
   R(g, x - 2, y, 6, 2, c);
@@ -199,7 +218,7 @@ const ART: Art[] = [
       put(g, wailFace(kotBananFrame(F.D, 'D')), CX + sh, y0);
       tearArcs(g, CX + sh, y0, K, t, 99, true);
       if (t % 2) for (const [x, y, w] of [[20, 40, 4], [18, 46, 5], [20, 52, 4], [72, 40, 4], [73, 46, 5], [72, 52, 4]]) R(g, x, y, w, 1, PAL.white);
-      say(g, DICTS[lang].shop.stickers.aaa[0], ST_SIZE / 2 + sh, 6, PAL.yellow);
+      say(g, DICTS[lang].shop.stickers.aaa[0], ST_SIZE / 2 + sh, 6, capColor ?? PAL.yellow);
     },
   },
   {

@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { DICTS, EFFECTS, FX_ISSUED, EARN_PER_DAY, NO_STATS, badgesOf, EARN_PER_MATCH, MY_FIGS, MY_ISSUED, MY_MARKS, MY_MAX, MY_POSE_EMOJI, RETIRED_STICKERS, SHOP_ITEMS, STICKER_LIST, TEST_ITEM, buyItem, canDrop, fmt, fxIssued, fxMark, isEffect, isMySticker, issuedBase, stickerFx, isSkin, isStickerId, myFigOpen, myIssued, offSticker, parseMySticker, pickEarned, skinOf, wearItems } from '@kto/game-core';
+import { DICTS, EFFECTS, EARN_PER_DAY, NO_STATS, badgesOf, EARN_PER_MATCH, MY_FIGS, MY_ISSUED, MY_MARKS, MY_MAX, MY_POSE_EMOJI, RETIRED_STICKERS, SHOP_ITEMS, STICKER_LIST, TEST_ITEM, buyItem, canDrop, colMark, fmt, fxMark, isEffect, isLookIssued, lookIssued, stdLook, MY_COLORS, isMySticker, issuedBase, stickerFx, isSkin, isStickerId, myFigOpen, myIssued, offSticker, parseMySticker, pickEarned, skinOf, wearItems } from '@kto/game-core';
 import type { BadgeId, BadgeStats, EffectId, MySticker, StickerId, StickerMeta } from '@kto/game-core';
 import type { StickerJob } from './sticker-render';
 import { RateWindow } from './limits';
@@ -79,7 +79,7 @@ const earnable = (items: readonly string[]) => STICKER_LIST.filter((s) => !s.now
 /** Напоминание о стикерах — с 10 до 22 по Москве (не ночью). */
 const REMIND_FROM = 10;
 const REMIND_TO = 22;
-const ITEM = /^(?:starter|(?:st|in|own|made|off|wear):[A-Za-z]{1,24}|[A-Za-z]{1,24}|day:\d{8}:\d{1,2}|remind:\d{8}|fx:[A-Za-z]{1,24}:[a-z]{2,8})$/;
+const ITEM = /^(?:starter|(?:st|in|own|made|off|wear):[A-Za-z]{1,24}|[A-Za-z]{1,24}|day:\d{8}:\d{1,2}|remind:\d{8}|fx:[A-Za-z]{1,24}:[a-z]{2,8}|col:[A-Za-z]{1,24}:\d)$/;
 const PACK = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
 /**
  * Номер платежа Telegram (telegram_payment_charge_id): у звёзд — длинный «stx…» с символами base64 и прочими.
@@ -135,7 +135,7 @@ const strs = (x: unknown, max: number, re: RegExp): x is string[] => Array.isArr
 function parseUser(x: unknown): ShopUser | null {
   const u = x as Partial<ShopUser> | null;
   if (!u || !userId(u.userId) || (u.lang !== 'ru' && u.lang !== 'en') || typeof u.name !== 'string' || u.name.length > 32) return null;
-  if (!strs(u.items, 120, ITEM) || !Array.isArray(u.issued) || u.issued.length > 120 || !u.issued.every((x) => isStickerId(x) || (typeof x === 'string' && (MY_ISSUED.test(x) || Object.hasOwn(RETIRED_STICKERS, x) || (FX_ISSUED.test(x) && isStickerId(issuedBase(x)) && isEffect(x.split('~')[1])))))) return null;
+  if (!strs(u.items, 120, ITEM) || !Array.isArray(u.issued) || u.issued.length > 120 || !u.issued.every((x) => isStickerId(x) || (typeof x === 'string' && (MY_ISSUED.test(x) || Object.hasOwn(RETIRED_STICKERS, x) || isLookIssued(x))))) return null;
   if (u.pack !== null && !(typeof u.pack === 'string' && PACK.test(u.pack))) return null;
   // свои стикеры: старый бот их не присылает — оставляем как есть (undefined), новый — проверяем каждый
   const my = u.my === undefined ? undefined : Array.isArray(u.my) && u.my.length <= MY_MAX && u.my.every(isMySticker) && new Set(u.my.map((m) => m.slot)).size === u.my.length ? u.my.map((m) => ({ ...m, text: [...m.text] })) : null;
@@ -215,8 +215,8 @@ interface Entry {
   emoji: string[];
   lure?: boolean;
   my?: MySticker;
-  /** Стандартный стикер с эффектом: рисует сервер (файлы лежат только без эффекта). */
-  fx?: { id: StickerId; fx: EffectId };
+  /** Стандартный стикер с эффектом или своим цветом надписи: рисует сервер (файлы лежат только родные). */
+  std?: { id: StickerId; fx: EffectId | null; color: number | null };
 }
 
 /** Что боту сделать с паком игрока, чтобы он совпал с выбором. */
@@ -225,10 +225,11 @@ export function syncPlan(u: ShopUser): { add: Entry[]; drop: { key: string; emoj
   const my = u.items.includes('pack') ? (u.my ?? []) : [];
   const mine = (m: MySticker): Entry => ({ key: myIssued(m), emoji: [MY_MARKS[m.slot], MY_POSE_EMOJI[m.pose]], my: m });
   const slotOf = (x: string) => Number(MY_ISSUED.exec(x)?.[1] ?? -1);
-  // стандартный: запись в issued — id или id~эффект (эффект сменили — заменить на месте)
+  // стандартный: запись в issued — id или id~облик (эффект, цвет надписи; сменили — заменить на месте)
   const std = (s: StickerMeta): Entry => {
-    const fx = s.lure ? null : stickerFx(s.id, u.items);
-    return { key: fxIssued(s.id, fx), emoji: s.emoji, lure: s.lure, ...(fx ? { fx: { id: s.id, fx } } : {}) };
+    const look = stdLook(s.id, u.items);
+    const key = lookIssued(s.id, look);
+    return { key, emoji: s.emoji, lure: s.lure, ...(key !== s.id ? { std: { id: s.id, ...look } } : {}) };
   };
   const stdOf = (id: string) => u.issued.find((x) => !MY_ISSUED.test(x) && issuedBase(x) === id);
   const add: Entry[] = [
@@ -329,7 +330,7 @@ export class Shop {
   }
 
   /** Маршрут /tg/shop… с проверенным initData. */
-  async route(path: string, init: ShopInit, body: { item?: unknown; mode?: unknown; token?: unknown; id?: unknown; on?: unknown; slot?: unknown; sticker?: unknown; fx?: unknown }): Promise<ShopReply> {
+  async route(path: string, init: ShopInit, body: { item?: unknown; mode?: unknown; token?: unknown; id?: unknown; on?: unknown; slot?: unknown; sticker?: unknown; fx?: unknown; color?: unknown }): Promise<ShopReply> {
     const id = init.user.id;
     const now = (this.d.now ?? Date.now)();
     if (!this.rate.take(String(id), now)) return { status: 429, body: { error: 'rate_limited' } };
@@ -349,7 +350,7 @@ export class Shop {
     if (path === '/shop/my') return this.saveMy(id, body.slot, body.sticker, now);
     if (path === '/shop/my/del') return this.delMy(id, body.slot);
     if (path === '/shop/remind') return this.remindMe(id, now);
-    if (path === '/shop/fx') return this.setFx(id, body.id, body.fx, now);
+    if (path === '/shop/fx') return this.setFx(id, body.id, body.fx, body.color, now);
     return { status: 404, body: { error: 'not_found' } };
   }
 
@@ -384,6 +385,8 @@ export class Shop {
       earnNext: u && earnedToday(u.items, now) >= EARN_PER_DAY && earnable(u.items).length ? nextDay(now) : null,
       /** Эффекты на стандартных стикерах пака: id → эффект (только купленные). */
       fx: Object.fromEntries(open.flatMap((s) => { const f = u ? stickerFx(s.id, u.items) : null; return f ? [[s.id, f]] : []; })) as Record<string, EffectId>,
+      // цвет надписи стандартных стикеров (индекс MY_COLORS), у кого не родной
+      col: Object.fromEntries(open.flatMap((s) => { const c = u ? stdLook(s.id, u.items).color : null; return c !== null ? [[s.id, c]] : []; })) as Record<string, number>,
       /** Купленные эффекты — выбор у стикера и в редакторе своего. */
       effects: EFFECTS.filter((f) => u?.items.includes(f)),
       /** Игрок нажал «Напомнить» — бот напишет, когда стикеры снова откроются. */
@@ -448,9 +451,13 @@ export class Shop {
     return { status: 200, body: await this.state(id, true) };
   }
 
-  /** Эффект на стандартный стикер пака (купленный в гардеробе) или снять (fx: null): бот заменит стикер на месте. */
-  private async setFx(id: number, sticker: unknown, fx: unknown, now: number): Promise<ShopReply> {
-    if (!isStickerId(sticker) || !canDrop(sticker) || !(fx === null || isEffect(fx))) return { status: 400, body: { error: 'bad' } };
+  /**
+   * Облик стандартного стикера пака: эффект (купленный) или снять (fx: null) и цвет надписи (`color`: индекс
+   * MY_COLORS, null — родной; нет поля — не трогать). Бот заменит стикер на месте. Приманку не меняют.
+   */
+  private async setFx(id: number, sticker: unknown, fx: unknown, color: unknown, now: number): Promise<ShopReply> {
+    const colorOk = color === undefined || color === null || (typeof color === 'number' && Number.isInteger(color) && color >= 0 && color < MY_COLORS.length);
+    if (!isStickerId(sticker) || !canDrop(sticker) || !(fx === null || isEffect(fx)) || !colorOk) return { status: 400, body: { error: 'bad' } };
     // каждая смена — новый рисунок на игровом сервере: тот же лимит, что у своих стикеров
     if (!this.myRate.take(String(id), now)) return { status: 429, body: { error: 'rate' } };
     this.myRate.sweep(now);
@@ -459,6 +466,10 @@ export class Shop {
       if (fx && !u.items.includes(fx)) return 'need_fx';
       u.items = u.items.filter((i) => !i.startsWith(`fx:${sticker}:`));
       if (fx) u.items.push(fxMark(sticker, fx));
+      if (color !== undefined) {
+        u.items = u.items.filter((i) => !i.startsWith(`col:${sticker}:`));
+        if (color !== null) u.items.push(colMark(sticker, color as number));
+      }
       return null;
     });
     if (err) return { status: 409, body: { error: err } };
@@ -1026,7 +1037,7 @@ export class Shop {
     const name = `m${id}_by_${bot}`.slice(0, 64);
     const title = fmt(t.packTitle, { name: u.name });
     const file = (e: Entry) =>
-      e.my ? this.draw({ fig: e.my.fig, pose: e.my.pose, color: e.my.color, text: e.my.text, ...(e.my.fx ? { fx: e.my.fx } : {}) }) : e.fx ? this.draw({ std: e.fx.id, fx: e.fx.fx, lang: u.lang }) : readFile(join(this.d.stickersDir, u.lang, `${e.key}.webm`));
+      e.my ? this.draw({ fig: e.my.fig, pose: e.my.pose, color: e.my.color, text: e.my.text, ...(e.my.fx ? { fx: e.my.fx } : {}) }) : e.std ? readFile(join(this.d.stickersDir, u.lang, `${e.key}.webm`)).catch(() => this.draw({ std: e.std!.id, fx: e.std!.fx, color: e.std!.color, lang: u.lang })) : readFile(join(this.d.stickersDir, u.lang, `${e.key}.webm`));
     const blob = async (e: Entry) => new Blob([new Uint8Array(await file(e))], { type: 'video/webm' });
     const input = (e: Entry, i: number) => ({ sticker: `attach://f${i}`, format: 'video', emoji_list: e.emoji });
     let changed = false;

@@ -49,9 +49,36 @@ export const fxMark = (id: StickerId, fx: EffectId) => `fx:${id}:${fx}`;
 export function stickerFx(id: StickerId, items: readonly string[]): EffectId | null {
   return EFFECTS.find((fx) => items.includes(fxMark(id, fx)) && items.includes(fx)) ?? null;
 }
-/** Запись в `issued` стандартного стикера: `aaa` или с эффектом — `aaa~holo`. */
-export const fxIssued = (id: StickerId, fx: EffectId | null) => (fx ? `${id}~${fx}` : id);
-export const FX_ISSUED = /^([A-Za-z]{1,24})~([a-z]{2,8})$/;
+/** Отметка в учёте: у стандартного стикера `id` надпись цвета `MY_COLORS[n]` (как у своих). */
+export const colMark = (id: StickerId, n: number) => `col:${id}:${n}`;
+/** Приманка «Собери свой пак!» — всегда в VHS, цвет не меняется (решение владельца 28.11.2026): витрина эффектов. */
+export const LURE_FX: EffectId = 'vhs';
+/** Облик стандартного стикера в паке: эффект (куплен и накинут) и цвет надписи (null — родной). */
+export interface StdLook {
+  fx: EffectId | null;
+  color: number | null;
+}
+export function stdLook(id: StickerId, items: readonly string[]): StdLook {
+  if (!canDrop(id)) return { fx: LURE_FX, color: null };
+  const c = items.find((i) => i.startsWith(`col:${id}:`));
+  const n = c ? Number(c.slice(c.lastIndexOf(':') + 1)) : NaN;
+  return { fx: stickerFx(id, items), color: Number.isInteger(n) && n >= 0 && n < MY_COLORS.length ? n : null };
+}
+/** Запись в `issued` стандартного стикера: `aaa`, с эффектом — `aaa~holo`, с цветом — `aaa~c2` или `aaa~holo.c2`. */
+export function lookIssued(id: StickerId, look: StdLook): string {
+  const parts = [look.fx, look.color !== null ? `c${look.color}` : null].filter(Boolean);
+  return parts.length ? `${id}~${parts.join('.')}` : id;
+}
+/** Совместимо со старыми записями `aaa~holo`. */
+export const fxIssued = (id: StickerId, fx: EffectId | null) => lookIssued(id, { fx, color: null });
+export const FX_ISSUED = /^([A-Za-z]{1,24})~(?:([a-z]{2,8})(?:\.c(\d))?|c(\d))$/;
+/** Запись `issued` стандартного стикера с обликом: стикер есть, эффект и цвет — из списков. */
+export function isLookIssued(x: string): boolean {
+  const m = FX_ISSUED.exec(x);
+  if (!m) return false;
+  const col = m[3] ?? m[4];
+  return isStickerId(m[1]) && (m[2] === undefined || isEffect(m[2])) && (col === undefined || Number(col) < MY_COLORS.length);
+}
 /** Какой стикер за записью `issued` (`aaa~holo` → `aaa`). */
 export const issuedBase = (x: string) => x.split('~')[0];
 
