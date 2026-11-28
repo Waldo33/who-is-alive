@@ -133,9 +133,12 @@ export default function PremiereClient() {
 
   const row = (x: PremiereTaskView) => (
     <li key={x.id} className={x.done ? 'done' : ''}>
-      <span className="pr-task">{tp(lang, t.tasks[x.id as keyof typeof t.tasks], x.goal)}</span>
-      <span className="pr-prog">{x.goal > 1 || x.done ? `${x.done ? x.goal : x.progress}/${x.goal}` : ''}</span>
-      <span className="pr-rew">+{x.reward}</span>
+      <span className="pr-task">{x.id === 'friend' ? t.friendRow : x.id === 'share' ? t.shareRow : tp(lang, t.tasks[x.id as keyof typeof t.tasks], x.goal)}</span>
+      <span className="pr-prog">{x.done ? t.done : x.goal > 1 ? `${x.progress}/${x.goal}` : ''}</span>
+      <span className="pr-rew" style={x.reward ? undefined : { visibility: 'hidden' }}>
+        +{x.reward}
+        <i className="pr-ticket mini" aria-hidden />
+      </span>
     </li>
   );
 
@@ -143,6 +146,7 @@ export default function PremiereClient() {
     <main className="daily premiere">
       <TopBar lang={lang} onBack={() => router.push('/')} />
       <h1 className="daily-title">{t.title}</h1>
+      <p className="pr-prize">{view.phase === 'before' ? t.before : t.prize}</p>
       <section className="pr-head" style={{ visibility: ready ? 'visible' : 'hidden' }}>
         <div className="pr-count">
           <i className="pr-ticket" aria-hidden />
@@ -158,20 +162,18 @@ export default function PremiereClient() {
         ) : need > 0 ? (
           <p className="pr-status">{tp(lang, t.needMore, need)}</p>
         ) : (
-          <p className="pr-status">
-            {t.needSub}{' '}
+          <div className="pr-status pr-need">
+            <span>{t.needSub}</span>
             {view.channel && (
-              <button className="link pr-sub" onClick={subscribe}>
+              <button className="btn small" onClick={subscribe}>
                 {t.subscribe}
               </button>
             )}
-          </p>
+          </div>
         )}
-        <p className="pr-prize">{view.phase === 'before' ? t.before : t.prize}</p>
         <div className="pr-road" aria-label={t.road}>
           <div className="pr-bar">
             <i style={{ width: `${Math.min(100, (view.tickets / top) * 100)}%` }} />
-            <em style={{ left: `${(view.entry / top) * 100}%` }} />
           </div>
           <ol>
             {view.milestones.map((m) => (
@@ -212,13 +214,11 @@ export default function PremiereClient() {
         )}
         {tab === 'friends' && (
           <>
-            <p className="pr-note">
-              <b>{fmt(t.friends, { n: view.friends, max: view.friendsMax })}</b>
-            </p>
+            <ul className="pr-list">
+              {row({ id: 'friend', goal: view.friendsMax, reward: FRIEND_REWARD, progress: view.friends, done: view.friends >= view.friendsMax })}
+              {row({ id: 'share', goal: view.sharedMax, reward: 0, progress: view.shared, done: view.shared >= view.sharedMax })}
+            </ul>
             <p className="pr-note">{fmt(t.friendHow, { m: view.friendMatches, r: FRIEND_REWARD })}</p>
-            <p className="pr-note">
-              <b>{fmt(t.shared, { n: view.shared, max: view.sharedMax })}</b>
-            </p>
             <p className="pr-note">{t.shareHow}</p>
             {signed && view.phase !== 'after' && (
               <button className="btn small" onClick={invite}>
