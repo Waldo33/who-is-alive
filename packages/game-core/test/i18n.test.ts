@@ -89,6 +89,9 @@ describe('i18n', () => {
       expect(btn(g.rematch), g.rematch).toBeLessThanOrEqual(162 - 32);
       expect(btn(g.share, true), g.share).toBeLessThanOrEqual(162);
       expect(btn(t.clip.film, true), t.clip.film).toBeLessThanOrEqual(174);
+      // нижняя панель конца матча: «В меню» домиком (30 пикс.) + зазор 2 + «Фильм матча»; без фильма — «В меню» с надписью
+      expect(30 + 2 + btn(t.clip.film, true), t.clip.film).toBeLessThanOrEqual(174);
+      expect(btn(g.toMenu, true), g.toMenu).toBeLessThanOrEqual(174);
       // клип и карточка рисуются тем же шрифтом 8 пикс. на ширине 180
       const c = t.clip;
       for (const s of [c.film, c.hook, c.hookSub, c.cast, c.lead, c.cameo, c.extrasRole, c.bloopers, tp(lang, c.bots, 28), fmt(c.filmMaking, { n: 100 }), fmt(c.making, { n: 100 }), c.ready, c.failed, c.find, c.reveal, fmt(c.round, { n: 7 }), ...Object.values(c.kinds), c.cta, ...Object.values(t.card), c.findMe, c.thatWasMe, c.gotMe, c.whoGotMe, c.deathBtnLong, fmt(c.watch, { name: 'Ш'.repeat(12) }), fmt(c.koOf, { name: 'Ш'.repeat(11) }), c.star3Of, c.botOf, c.preparingLong, c.leshyOut, c.leshyOf, c.mistOf, c.mistNear, c.slotOf]) {

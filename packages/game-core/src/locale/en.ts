@@ -189,6 +189,7 @@ export const en: Dict = {
     winner: 'Best Actor:',
     tooAlive: 'Overacting!',
     rematch: 'Play again',
+    toMenu: 'Menu',
     withFriends: 'Invite',
     and: ' & ',
   },
