@@ -309,7 +309,34 @@ export function mountSandbox(root: HTMLElement, opts: ShellOptions): () => void 
     form.innerHTML =
       keys.map(([k, v]) => `<label>${k}<input name="${k}" type="number" step="any" value="${overrides[k] ?? v}"></label>`).join('') +
       `<label>attackConfirm<select name="attackConfirm"><option>tap</option><option>hold</option></select></label>
-       <button class="kto-btn" style="font-size:10px;margin-top:8px">${t.start.devApply}</button>`;
+       <button class="kto-btn" style="font-size:10px;margin-top:8px">${t.start.devApply}</button>
+       <div style="margin-top:10px;padding-top:6px;border-top:1px dashed ${PAL.dusk}">${t.shop.test.title} · 1⭐<br>
+         <button type="button" data-pay="buy" style="font:inherit;margin-top:4px">${t.shop.test.buy}</button>
+         <button type="button" data-pay="refund" style="font:inherit;margin-top:4px">${t.shop.test.refund}</button></div>`;
+    // проверочная покупка за 1 звезду (владельцу: оплата и возврат на живом боте) — здесь, а не в гардеробе;
+    // модуль Telegram грузится только по нажатию: песочница работает и без сети
+    form.addEventListener('click', (e) => {
+      const b = e.target instanceof Element ? e.target.closest<HTMLButtonElement>('[data-pay]') : null;
+      if (!b || b.disabled) return;
+      b.disabled = true;
+      const tt = t.shop.test;
+      void (async () => {
+        const tg = await import('../lib/telegram');
+        if (!tg.inTelegram()) return toast(tt.onlyTg);
+        if (b.dataset.pay === 'refund') return toast((await tg.shopRefund('test')) ? tt.refunded : tt.failed);
+        const r = await tg.shopBuy('test');
+        if (r === 'cancelled') return;
+        if (r !== 'paid') return toast(tt.failed);
+        toast(tt.bought);
+        // отметку ставит сервер по уведомлению Telegram (или по сверке) — дождаться её, тогда можно возвращать
+        for (let i = 0; i < 10; i++) {
+          if ((await tg.shopState())?.items.includes('test')) break;
+          await new Promise((res) => setTimeout(res, 1500));
+        }
+      })()
+        .catch(() => toast(tt.failed))
+        .finally(() => (b.disabled = false));
+    });
     form.addEventListener('submit', (e) => {
       e.preventDefault();
       const fd = new FormData(form);

@@ -301,7 +301,11 @@ describe('гардероб', () => {
     const msg = calls.filter((c) => c.method === 'sendMessage' && String(c.body.chat_id) === SUPPORT).at(-1)!;
     // кнопки — профиль покупателя (у Ани нет ника — по id) и сразу запуск возврата в GitHub Actions
     expect(msg.body.reply_markup).toEqual({
-      inline_keyboard: [[{ text: '👤 Профиль покупателя', url: 'tg://user?id=77' }], [{ text: '↩️ Возврат: shop-refund', url: 'https://github.com/Waldo33/who-is-alive/actions/workflows/shop-refund.yml' }]],
+      inline_keyboard: [
+        [{ text: '👤 Профиль покупателя', url: 'tg://user?id=77' }],
+        [{ text: '↩️ Возврат: shop-refund', url: 'https://github.com/Waldo33/who-is-alive/actions/workflows/shop-refund.yml' }],
+        [{ text: '✅ Закрыть обращение', callback_data: 'sup:close' }],
+      ],
     });
     // ответ на пересылку в чате поддержки — игроку; чужая группа и не ответ — никому
     const before = sent(77).length;
@@ -310,6 +314,17 @@ describe('гардероб', () => {
     await hook(bot, { message: { chat: { id: -100, type: 'group' }, from: { id: 1 }, text: 'чужое', reply_to_message: { text: card, from: { id: 9, is_bot: true } } } });
     await hook(bot, { message: { chat: { id: Number(SUPPORT), type: 'group' }, from: { id: 1 }, text: 'просто так' } });
     expect(sent(77).length).toBe(before + 1);
+    // «Закрыть обращение»: кнопки убраны, кто закрыл — в сообщении, метка #u77 — по-прежнему последней
+    calls.length = 0;
+    await hook(bot, { callback_query: { id: 'cq', from: { id: 1, first_name: 'Owner' }, data: 'sup:close', message: { message_id: 42, chat: { id: Number(SUPPORT) }, text: card } } });
+    const edit = calls.find((c) => c.method === 'editMessageText')!;
+    expect(edit.body).toMatchObject({ chat_id: Number(SUPPORT), message_id: 42 });
+    expect(edit.body.reply_markup).toBeUndefined();
+    expect(String(edit.body.text)).toMatch(/✅ Закрыто · Owner\n#u77$/);
+    // в чужом чате кнопка ничего не правит
+    calls.length = 0;
+    await hook(bot, { callback_query: { id: 'cq2', from: { id: 5 }, data: 'sup:close', message: { message_id: 7, chat: { id: -100 }, text: card } } });
+    expect(calls.some((c) => c.method === 'editMessageText')).toBe(false);
   });
 
   it('«Надеть» / «Снять»: только купленный скин; новая покупка надевается сама', async () => {

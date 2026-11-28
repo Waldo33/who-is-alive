@@ -2,13 +2,12 @@
 
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
-import { DICTS, SHOP_ITEMS, STICKER_LIST, TEST_ITEM, fmt, isEffect, shopItem } from '@kto/game-core';
+import { DICTS, SHOP_ITEMS, STICKER_LIST, fmt, isEffect, shopItem } from '@kto/game-core';
 import type { Lang, ShopItemId } from '@kto/game-core';
 import { track } from '@/lib/analytics';
 import { TG_APP } from '@/lib/env';
-import { featureOn } from '@/lib/features';
 import { detectLang } from '@/lib/lang';
-import { bootTelegram, haptic, inTelegram, linkTelegramOnce, openTelegram, shopBuy, shopCached, shopRefund, shopSignedIn, shopState, shopWear, tgLink } from '@/lib/telegram';
+import { bootTelegram, haptic, inTelegram, linkTelegramOnce, openTelegram, shopBuy, shopCached, shopSignedIn, shopState, shopWear, tgLink } from '@/lib/telegram';
 import { currentWebLogin, prepareWebLogin, resumeWebLogin, startWebLogin, webLogout } from '@/lib/tg-login';
 import type { TgLogin } from '@/lib/tg-login';
 import type { ShopState } from '@/lib/telegram';
@@ -55,10 +54,7 @@ export default function WardrobeClient() {
   // «Купить в Telegram», потом «Купить 49», потом «Уже твой» — экран скачет
   const [known, setKnown] = useState(false);
   const [st, setSt] = useState<ShopState | null>(null);
-  const [busy, setBusy] = useState<'buy' | 'wear' | 'test' | null>(null);
-  // проверочная покупка за 1 звезду (флаг shoptest, ссылка startapp=shoptest): своя карточка с «Вернуть звёзды»
-  const [testOn, setTestOn] = useState(false);
-  const [testNote, setTestNote] = useState('');
+  const [busy, setBusy] = useState<'buy' | 'wear' | null>(null);
   const [note, setNote] = useState('');
   const noteTimer = useRef(0);
   // подсказка «Скоро новые наборы» — на пару секунд, потом гаснет сама
@@ -96,7 +92,6 @@ export default function WardrobeClient() {
     setInTg(inTgNow);
     const tgNow = shopSignedIn();
     setTgOn(tgNow);
-    setTestOn(featureOn('shoptest'));
     if (!inTgNow) {
       setLogin(currentWebLogin());
       // вернулись из Telegram на перезагруженную страницу — дождаться начатого входа
@@ -279,40 +274,6 @@ export default function WardrobeClient() {
     setBusy(null);
   };
 
-  // проверочная покупка: купить за 1 звезду и тут же вернуть — та же оплата и тот же возврат, что у наборов
-  const testOwned = !!st?.items.includes(TEST_ITEM.id);
-  const testBuy = async () => {
-    if (busy || !tgOn) return;
-    setBusy('test');
-    setTestNote('');
-    const r = await shopBuy(TEST_ITEM.id);
-    track('shop_test', { status: r });
-    if (r === 'paid') {
-      haptic('success');
-      setTestNote(t.test.bought);
-      // отметку ставит сервер по уведомлению Telegram (или по сверке) — ждём её
-      for (let i = 0; i < 10; i++) {
-        const s = await shopState();
-        if (s) setSt(s);
-        if (s?.items.includes(TEST_ITEM.id)) break;
-        await new Promise((res) => setTimeout(res, 1500));
-      }
-    } else if (r !== 'cancelled') setTestNote(t.test.failed);
-    setBusy(null);
-  };
-  const testRefund = async () => {
-    if (busy || !tgOn) return;
-    setBusy('test');
-    const s = await shopRefund(TEST_ITEM.id);
-    track('shop_test_refund', { ok: !!s });
-    if (s) {
-      setSt(s);
-      haptic('light');
-      setTestNote(t.test.refunded);
-    } else setTestNote(t.test.failed);
-    setBusy(null);
-  };
-
   // один пак на игрока: стикеры набора бот кладёт туда сам после оплаты
   const packLink = st?.pack ?? null;
 
@@ -355,23 +316,6 @@ export default function WardrobeClient() {
           </div>
         )}
       </div>
-      {testOn && inTg && known && (
-        <div className="wardrobe-test">
-          <p>
-            <b>{t.test.title}</b> · {testNote || t.test.hint}
-          </p>
-          {testOwned ? (
-            <button className="btn small alt" onClick={() => void testRefund()} aria-disabled={!!busy}>
-              {t.test.refund}
-            </button>
-          ) : (
-            <button className="btn small" onClick={() => void testBuy()} aria-disabled={!!busy}>
-              {t.test.buy}
-              {star && <img className="wardrobe-star" src={star} alt="" width={20} height={20} />}
-            </button>
-          )}
-        </div>
-      )}
       <div className="daily-actions" style={{ visibility: known ? 'visible' : 'hidden' }}>
         {waiting ? (
           <p className="muted" role="status">
