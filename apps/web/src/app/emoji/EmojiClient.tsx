@@ -9,11 +9,23 @@ import { detectLang } from '@/lib/lang';
 import { bootTelegram, haptic, inTelegram, linkTelegramOnce, openTelegram, shopCached, shopEmoji, shopSignedIn, shopState, tgLink } from '@/lib/telegram';
 import type { ShopState } from '@/lib/telegram';
 import { TopBar } from '@/ui/TopBarView';
-import { POST_EMOJI, postEmojiIcon } from '@/game/skins/post-emoji';
+import { POST_EMOJI, POST_EMOJI_FPS, POST_EMOJI_MS, postEmojiIcon } from '@/game/skins/post-emoji';
 import { REWARD_EMOJI } from '@/game/skins/reward-emoji';
 
 type Pack = NonNullable<ShopState['emoji']>;
 type Tab = 'rewards' | 'base';
+type Icon = { src: string; frames: string[]; w: number; h: number };
+
+/** Эмодзи на странице: открытые анимированные крутятся, как в наборе Telegram. */
+function EmojiImg({ ic, play }: { ic: Icon; play: boolean }) {
+  const [i, setI] = useState(0);
+  useEffect(() => {
+    if (!play || !ic.frames.length) return;
+    const id = window.setInterval(() => setI((n) => (n + 1) % ic.frames.length), 1000 / POST_EMOJI_FPS);
+    return () => clearInterval(id);
+  }, [play, ic]);
+  return <img src={play && ic.frames.length ? ic.frames[i] : ic.src} alt="" width={ic.w} height={ic.h} />;
+}
 
 /**
  * «Эмодзи-пак» (/emoji): личный набор custom emoji Telegram (game-core/emoji-pack.ts). 30 общих — сразу,
@@ -24,7 +36,7 @@ export default function EmojiClient() {
   const router = useRouter();
   const [lang, setLang] = useState<Lang>('ru');
   const t = DICTS[lang].shop.emojiPack;
-  const [icons, setIcons] = useState<Record<string, { src: string; w: number; h: number }>>({});
+  const [icons, setIcons] = useState<Record<string, Icon>>({});
   const [inTg, setInTg] = useState(false);
   const [pack, setPack] = useState<Pack | null>(null);
   const [known, setKnown] = useState(false);
@@ -45,7 +57,9 @@ export default function EmojiClient() {
     document.title = `${DICTS[l].shop.emojiPack.open} · ${DICTS[l].meta.title}`;
     setIcons(Object.fromEntries([...POST_EMOJI, ...REWARD_EMOJI].map((e) => {
       const c = postEmojiIcon(e);
-      return [e.id, { src: c.toDataURL(), w: c.width * 2, h: c.height * 2 }];
+      const n = e.anim ? Math.round((POST_EMOJI_MS / 1000) * POST_EMOJI_FPS) : 0;
+      const frames = Array.from({ length: n }, (_, k) => postEmojiIcon(e, (k * 1000) / POST_EMOJI_FPS).toDataURL());
+      return [e.id, { src: c.toDataURL(), frames, w: c.width * 2, h: c.height * 2 }];
     })));
     setInTg(inTelegram());
     track('emoji_view', {});
@@ -123,7 +137,7 @@ export default function EmojiClient() {
         {list.map((e) => (
           <li key={e.id} className={e.have ? 'have' : ''}>
             <button onClick={() => (tab === 'rewards' ? tapReward(e.id as RewardId) : undefined)} aria-label={tab === 'rewards' ? nameOf(e.id as RewardId) : e.id}>
-              {icons[e.id] && <img src={icons[e.id].src} alt="" width={icons[e.id].w} height={icons[e.id].h} />}
+              {icons[e.id] && <EmojiImg ic={icons[e.id]!} play={e.have} />}
             </button>
           </li>
         ))}

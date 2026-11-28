@@ -59,7 +59,7 @@ describe('личный эмодзи-пак', () => {
     const made = calls.find((c) => c.method === 'createNewStickerSet')!;
     expect(made.body).toMatchObject({ user_id: '77', name: 'e77_by_be_nobody_bot', sticker_type: 'custom_emoji' });
     expect(made.files).toHaveLength(EMOJI_BASE.length + 2);
-    expect(made.files).toEqual(expect.arrayContaining(['buy_kotBanan.png', 'th_penguins.png', 'fire.webm']));
+    expect(made.files).toEqual(expect.arrayContaining(['buy_kotBanan.webm', 'th_penguins.webm', 'fire.webm']));
     const st = (await bot.handle('POST', '/shop', {}, { initData: initData(ANYA) })).body as { emoji: { claimed: boolean; pack: string; pending: number; open: string[] } };
     expect(st.emoji).toMatchObject({ claimed: true, pack: 'https://t.me/addemoji/e77_by_be_nobody_bot', pending: 0 });
     expect(st.emoji.open).toEqual(expect.arrayContaining(['buy_kotBanan', 'th_penguins']));
@@ -73,7 +73,7 @@ describe('личный эмодзи-пак', () => {
     const users = [{ tgUser: 77, name: 'Аня', lang: 'ru', stickers: [], rewards: ['th_miami', 'ev_cut'] }];
     await bot.shop.earn({ users });
     const added = calls.filter((c) => c.method === 'addStickerToSet');
-    expect(added.map((c) => c.files[0])).toEqual(['th_miami.png', 'ev_cut.png']);
+    expect(added.map((c) => c.files[0])).toEqual(['th_miami.webm', 'ev_cut.webm']);
     expect(calls.some((c) => c.method === 'sendMessage' && String(c.body.text).includes('эмодзи'))).toBe(true);
     await bot.shop.earn({ users });
     expect(calls.filter((c) => c.method === 'addStickerToSet')).toHaveLength(2);

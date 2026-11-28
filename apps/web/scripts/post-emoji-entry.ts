@@ -44,7 +44,7 @@ POST_EMOJI.forEach((e, i) => {
 G.__sheet = c.toDataURL('image/png');
 // кадры анимаций рядом — проверить глазами
 {
-  const an = POST_EMOJI.filter((e) => e.anim);
+  const an = [...POST_EMOJI, ...REWARD_EMOJI].filter((e) => e.anim);
   const { c: s, g: h } = canvas(8 * 90, an.length * 90);
   h.fillStyle = '#17212b';
   h.fillRect(0, 0, s.width, s.height);
