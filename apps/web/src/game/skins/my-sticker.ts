@@ -8,7 +8,7 @@ import { themeLook } from '../themes';
 import type { Pose } from '../themes/types';
 import { kotBananFrame } from './kot-banan';
 import { iceFrost, withFx } from './shine';
-import { R, ST_SIZE, actorFrame, orbit, put, say, star } from './stickers';
+import { ST_SIZE, actorFrame, orbit, put, say, star } from './stickers';
 import type { StickerDef } from './stickers';
 import { sheetsOf, themeActor } from './stickers-play';
 
@@ -159,7 +159,6 @@ export function drawMy(g: Ctx, s: MyLook, t: number): void {
   const mark = head ? top + 2 : top - 4;
   if (s.pose === 'startle' && Math.floor(t / 5) % 2 === 0) say(g, '!', 82, mark, col, 2);
   if (s.pose === 'ask' && Math.floor(t / 5) % 2 === 0) say(g, '?', 82, mark, col, 2);
-  if (s.pose === 'jump') jumpMarks(g, jumpAt(t).ph, x, w, ground + h, y + h, col);
   if (s.pose === 'dance') for (const [sx, sy, ph] of [[12, top + 8, 0], [84, top + 4, 1], [10, top + 44, 1], [86, top + 40, 0]]) if ((Math.floor(t / 3) + ph) % 2) star(g, sx, sy, col);
   if (s.pose === 'wave' && t % 10 < 5) {
     // «привет» — штрихи у поднятой руки
@@ -168,24 +167,6 @@ export function drawMy(g: Ctx, s: MyLook, t: number): void {
   }
   lines.forEach((ln, i) => say(g, ln, MID, y0 + i * 10, col));
   if (head) say(g, head, MID, 2, col);
-}
-
-/** Следы прыжка цветом подписи: тень-черта на земле, штрихи под ногами в полёте, пыль при приседе. */
-function jumpMarks(g: Ctx, ph: JumpPhase, x: number, w: number, floor: number, feet: number, col: string): void {
-  const cx = x + Math.round(w / 2);
-  const air = floor - feet;
-  // тень на земле: тем короче, чем выше прыжок
-  const sw = Math.max(6, Math.round(w * 0.7 - air * 0.6) & ~1);
-  R(g, cx - sw / 2, floor, sw, 2, PAL.ink);
-  if (ph === 'up' || ph === 'air') {
-    // штрихи полёта под ногами
-    const len = Math.min(air - 4, 9);
-    if (len > 1) for (const ox of [-9, 0, 9]) R(g, cx + ox - 1, feet + 3, 2, len - (ox ? 3 : 0), col);
-  }
-  if (ph === 'crouch' || ph === 'land') {
-    // пыль по бокам
-    for (const [ox, oy] of [[-4, -3], [-7, -6], [3, -3], [6, -6]]) R(g, (ox < 0 ? x : x + w) + ox, floor + oy, 2, 2, col);
-  }
 }
 
 /** Как стикер пака (для stickerFrame / stickerFile в stickers.ts). */
