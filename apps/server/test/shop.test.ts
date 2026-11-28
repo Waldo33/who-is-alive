@@ -492,6 +492,25 @@ describe('гардероб', () => {
     }
   });
 
+  it('матч на сайте до входа через Telegram: при входе засчитан (бесплатный пак) и стикеры открываются', async () => {
+    const store = new MemoryStore();
+    const srv = new GameServer({ authSecret: 'x'.repeat(32), log: silentLogger, trustProxy: true, store });
+    const port = await srv.listen(0, '127.0.0.1');
+    try {
+      const me = (await (await fetch(`http://127.0.0.1:${port}/v1/auth/anon`, { method: 'POST' })).json()) as { userId: string; token: string };
+      // так пишет server.ts › stickersToBot, когда связи ещё нет
+      await store.savePendingEarn(me.userId, ['cut']);
+      await store.savePendingEarn(me.userId, ['cut', 'nope']);
+      const { bot } = makeBot({ ledger: new RemoteLedger(`http://127.0.0.1:${port}`) });
+      expect((await bot.handle('POST', '/shop/link', {}, { initData: initData(ANYA), token: me.token })).status).toBe(200);
+      expect((await store.shopUser(77))?.items).toContain('played');
+      // отложенное забрано: второй вход ничего не добавляет
+      expect(await store.takePendingEarn(me.userId)).toBeNull();
+    } finally {
+      await srv.close();
+    }
+  });
+
   it('вход через Telegram на сайте: подпись виджета, 30 дней; связь с игроком — как из Mini App; покупка — ссылкой на счёт', async () => {
     const store = new MemoryStore();
     const srv = new GameServer({ authSecret: 'x'.repeat(32), log: silentLogger, trustProxy: true, store });

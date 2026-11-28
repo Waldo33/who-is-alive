@@ -613,6 +613,7 @@ export const en: Dict = {
       needPack: 'Claim your free pack first',
       onlyTg: 'Build your pack in Telegram: tap below',
       toTg: 'Open in Telegram',
+      orLogin: 'Or sign in with Telegram here',
       buyFor: 'Get {item}',
       /** Lock screen: the free pack isn't claimed yet — two steps. */
       lockTitle: 'Free sticker pack',

@@ -36,8 +36,11 @@ import type { ShopPayment, ShopUser, Store, TgLink } from './store';
 
 export type ShopLedger = Pick<Store, 'shopUser' | 'saveShopUser' | 'saveShopPayment' | 'refundShopPayment'> &
   Partial<Pick<Store, 'shopUsersWith' | 'tgStats'>> & {
-  /** Связать игрока игрового сервера (по его токену — проверяет игровой сервер) с пользователем Telegram. false — токен чужой. */
-  linkGame(token: string, link: Omit<TgLink, 'gameUser'>): Promise<boolean>;
+  /**
+   * Связать игрока игрового сервера (по его токену — проверяет игровой сервер) с пользователем Telegram. false — токен
+   * чужой; `{ played }` — игрок сыграл матчи до входа (сайт): что открылось там (бот засчитает как матч).
+   */
+  linkGame(token: string, link: Omit<TgLink, 'gameUser'>): Promise<boolean | { played: string[] }>;
 };
 
 /** Проверка токена игрока (auth.ts › verify): id игрока или null. */
@@ -58,7 +61,8 @@ export function localLedger(store: Store, verify?: VerifyToken, onLink?: (gameUs
       if (!gameUser) return false;
       await store.linkTelegram({ gameUser, ...link });
       onLink?.(gameUser);
-      return true;
+      const played = await store.takePendingEarn(gameUser);
+      return played ? { played: played.filter(isStickerId) } : true;
     },
   };
 }
@@ -122,7 +126,7 @@ export class RemoteLedger implements ShopLedger {
     return this.op<ShopPayment | null>({ op: 'refund', charge });
   }
   linkGame(token: string, link: Omit<TgLink, 'gameUser'>) {
-    return this.op<boolean>({ op: 'link', token, link });
+    return this.op<boolean | { played: string[] }>({ op: 'link', token, link });
   }
   tgStats(userId: number) {
     return this.op<BadgeStats>({ op: 'stats', userId });
@@ -551,7 +555,10 @@ export class Shop {
   /** Связать игрока игрового сервера (его токен из Mini App) с этим пользователем Telegram. */
   private async link(from: ShopInit['user'], token: unknown): Promise<ShopReply> {
     if (typeof token !== 'string' || !TOKEN.test(token)) return { status: 400, body: { error: 'bad_token' } };
-    const ok = await this.d.ledger.linkGame(token, { tgUser: from.id, name: packName(from.first_name) || packName(from.username) || 'Актёр', lang: langOf(from.language_code) });
+    const name = packName(from.first_name) || packName(from.username) || 'Актёр';
+    const ok = await this.d.ledger.linkGame(token, { tgUser: from.id, name, lang: langOf(from.language_code) });
+    // матчи на сайте до входа: засчитать (бесплатный пак) и открыть стикеры — с теми же лимитами, что после матча
+    if (ok && typeof ok === 'object') await this.earnOne({ tgUser: from.id, name, lang: langOf(from.language_code), stickers: ok.played });
     return ok ? { status: 200, body: { ok: true } } : { status: 403, body: { error: 'bad_token' } };
   }
 

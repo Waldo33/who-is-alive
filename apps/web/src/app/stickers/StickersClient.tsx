@@ -9,6 +9,8 @@ import { track } from '@/lib/analytics';
 import { detectLang } from '@/lib/lang';
 import { bootTelegram, haptic, inTelegram, linkTelegramOnce, openTelegram, shopClaim, shopMy, shopMyDel, shopFx, shopPick, shopRemind, shopBuy, prefetchInvoice, shopCached, shopSignedIn, shopState, tgLink } from '@/lib/telegram';
 import type { ShopState } from '@/lib/telegram';
+import { prepareWebLogin, resumeWebLogin, startWebLogin } from '@/lib/tg-login';
+import type { TgLogin } from '@/lib/tg-login';
 import { TopBar } from '@/ui/TopBarView';
 import { ST_SIZE, STICKERS, stickerFrame, withCapColor } from '@/game/skins/stickers';
 import type { StickerDef } from '@/game/skins/stickers';
@@ -84,6 +86,8 @@ export default function StickersClient() {
   const [star, setStar] = useState('');
   const [inTg, setInTg] = useState(false);
   const [fxNote, setFxNote] = useState('');
+  // сайт без входа: «Войти через Telegram» (тот же вход через бота, что в гардеробе) — пак собирается и здесь
+  const [loginReady, setLoginReady] = useState(false);
   const [pics, setPics] = useState<Record<string, string>>({});
   // стикеры с эффектом (товар «Эффекты»): голограмма — лента кадров для CSS-анимации, нуар — картинка
   const [fxPics, setFxPics] = useState<Record<string, string>>({});
@@ -134,6 +138,12 @@ export default function StickersClient() {
     // в браузере — если вошёл через Telegram на сайте (гардероб › «Войти через Telegram»)
     const tgNow = shopSignedIn();
     setTgOn(tgNow);
+    if (!tgNow && !inTelegram()) {
+      // вернулись из Telegram на перезагруженную страницу — дождаться начатого входа
+      const back = resumeWebLogin();
+      if (back) void back.then((l) => (l ? void signedIn(l) : undefined));
+      else void prepareWebLogin().then(setLoginReady);
+    }
     void (async () => {
       try {
         await Promise.race([document.fonts.load('8px "Press Start 2P"', 'Стикер ABC 42'), new Promise((r) => setTimeout(r, 2500))]);
@@ -364,6 +374,29 @@ export default function StickersClient() {
     setDraft(m ? { slot: m.slot, fig: m.fig, pose: m.pose, color: m.color, caption: m.text.join(' '), fx: m.fx ?? null, std: null, stdColor: null } : NEW_DRAFT);
     setNote('');
     setTab('make');
+  };
+
+  // вход через Telegram на сайте: бот открывается прямо из нажатия, там — «Войти», страница ждёт подтверждения
+  const signIn = async () => {
+    if (busy) return;
+    track('tg_login_tap', { from: 'stickers' });
+    setNote(t.loginWait);
+    const l = await startWebLogin();
+    track('tg_login', { ok: !!l, from: 'stickers' });
+    if (!l) {
+      setNote(t.loginFail);
+      void prepareWebLogin().then(setLoginReady);
+      return;
+    }
+    await signedIn(l);
+  };
+  const signedIn = async (_l: TgLogin) => {
+    setNote('');
+    setTgOn(true);
+    // этот браузер — тот же игрок Telegram: матчи, сыгранные здесь до входа, засчитаются
+    await linkTelegramOnce();
+    const x = await shopState();
+    if (x) setSt(x);
   };
 
   // вне Telegram пак не собрать — сразу в бота, на эту же страницу
@@ -668,9 +701,16 @@ export default function StickersClient() {
               </button>
             ) : (
               !tgOn && (
-                <button className="btn small tg" onClick={() => toTg('pack')}>
-                  {b.toTg}
-                </button>
+                <>
+                  <button className="btn small tg" onClick={() => toTg('pack')}>
+                    {b.toTg}
+                  </button>
+                  {loginReady && (
+                    <button className="link" onClick={() => void signIn()}>
+                      {b.orLogin}
+                    </button>
+                  )}
+                </>
               )
             )}
           </div>
