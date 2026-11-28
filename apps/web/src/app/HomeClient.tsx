@@ -141,8 +141,8 @@ export default function HomeClient() {
         onTelegram={
           web
             ? () => {
-                track('tg_tap', { what: 'play', from: 'corner' });
-                location.href = tgLink('play') ?? 'https://t.me/be_nobody_bot';
+                track('tg_tap', { what: 'home', from: 'corner' });
+                location.href = tgLink('home') ?? 'https://t.me/be_nobody_bot';
               }
             : undefined
         }
