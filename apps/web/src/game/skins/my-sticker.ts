@@ -2,10 +2,9 @@ import { PAL } from '@kto/assets';
 import { MY_COLORS, MY_FIGS, THEME_RULES } from '@kto/game-core';
 import type { ActKind, MyFig, MyPose, MySticker } from '@kto/game-core';
 import { F } from '../sprites';
-import { canvas } from '../pixels';
 import type { Ctx } from '../pixels';
 import { kotBananFrame } from './kot-banan';
-import { iceFrost, iceOver, withFx } from './shine';
+import { iceFrost, withFx } from './shine';
 import { ST_SIZE, actorFrame, orbit, put, say, star } from './stickers';
 import type { StickerDef } from './stickers';
 import { sheetsOf, themeActor } from './stickers-play';
@@ -62,23 +61,15 @@ export function drawMy(g: Ctx, s: MyLook, t: number): void {
   const w = fr.width * k;
   const x = Math.round(MID - w / 2 + dx);
   const y = top + dy;
-  // «Замри» — фигурка обледеневает: лёд и блик только по её силуэту, поэтому сначала на свой холст
-  const ice = s.pose === 'freeze';
-  const o = ice ? canvas(ST_SIZE, ST_SIZE) : null;
-  const fg = o ? o.g : g;
   if (flip) {
-    fg.save();
-    fg.translate(MID * 2, 0);
-    fg.scale(-1, 1);
-    put(fg, fr, x, y, k);
-    fg.restore();
-  } else put(fg, fr, x, y, k);
-  const box = { x, y, w, h: fr.height * k, k };
-  if (o) {
-    iceOver(o.g, t, box);
-    g.drawImage(o.c, 0, 0);
-    iceFrost(g, t, box);
-  }
+    g.save();
+    g.translate(MID * 2, 0);
+    g.scale(-1, 1);
+    put(g, fr, x, y, k);
+    g.restore();
+  } else put(g, fr, x, y, k);
+  // «Замри» — только искорки вокруг; лёд по силуэту — платный эффект «Лёд», в позе его нет
+  if (s.pose === 'freeze') iceFrost(g, t, { x, y, w, h: fr.height * k, k }, col);
   // украшение позы цветом подписи
   if (s.pose === 'stun') orbit(g, MID, top + 2, t);
   // «!» и «?» над головой; под верхней строкой — чуть ниже, чтобы не налезали на неё
