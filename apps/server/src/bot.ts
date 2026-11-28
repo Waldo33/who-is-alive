@@ -358,8 +358,8 @@ export class Bot {
   }
 
   /**
-   * /paysupport (покупки, обязателен для звёзд), /support (любой вопрос по игре; ссылка
-   * t.me/<бот>?start=support) и сообщения после них: игроку — «запрос передан», в чат поддержки — кто,
+   * /paysupport (покупки, обязателен для звёзд), /support (любой вопрос — кнопка «Поддержка» в шестерёнке игры,
+   * ссылка t.me/<бот>?start=support) и сообщения после них: игроку — «запрос передан», в чат поддержки — кто,
    * что куплено и текст (без чужих ссылок и @упоминаний). Метка #u<id> в пересылке — по ней ответ из чата уходит игроку.
    * kind — только у команды; у сообщения после неё — тот, с которым обращение открыто.
    */
@@ -532,7 +532,7 @@ export class Bot {
           // бесплатный стикерпак по внешней ссылке t.me/<бот>?start=stickers (только в личке: пак — этого игрока)
           else if (u?.message?.text === '/start stickers' && u.message.chat.type === 'private' && u.message.from) await this.shop.claimInChat(u.message.from);
           else if (u?.message?.text?.startsWith('/paysupport') && u.message.chat.type === 'private' && u.message.from) await this.onSupport(u.message.from, u.message.text.slice('/paysupport'.length), 'pay');
-          // общая поддержка: команда /support или ссылка t.me/<бот>?start=support
+          // общая поддержка: команда /support или кнопка «Поддержка» в игре (t.me/<бот>?start=support)
           else if (u?.message?.text && /^\/support(@\w+)?(\s|$)/.test(u.message.text) && u.message.chat.type === 'private' && u.message.from)
             await this.onSupport(u.message.from, u.message.text.replace(/^\/support(@\w+)?/, ''), 'help');
           else if (u?.message?.text === '/start support' && u.message.chat.type === 'private' && u.message.from) await this.onSupport(u.message.from, '', 'help');

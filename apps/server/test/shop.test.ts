@@ -333,10 +333,10 @@ describe('гардероб', () => {
     expect(calls.some((c) => c.method === 'editMessageText')).toBe(false);
   });
 
-  it('/support и ссылка /start support: любой вопрос — в тот же чат поддержки, ответ — игроку', async () => {
+  it('/support и кнопка «Поддержка» в настройках (/start support): любой вопрос — в тот же чат поддержки, ответ — игроку', async () => {
     const { bot, calls } = makeBot();
     const sent = (chat: number | string) => calls.filter((c) => c.method === 'sendMessage' && String(c.body.chat_id) === String(chat)).map((c) => String(c.body.text));
-    // ссылка t.me/<бот>?start=support — подсказка игроку (общая, не про покупку), в поддержку пока ничего
+    // кнопка в настройках игры: /start support — подсказка игроку (общая, не про покупку), в поддержку пока ничего
     await hook(bot, { message: { chat: { id: 77, type: 'private' }, from: ANYA, text: '/start support' } });
     expect(sent(77).at(-1)).toMatch(/Поддержка на связи.*77/);
     expect(sent(77).at(-1)).not.toContain('покуп');
