@@ -2,8 +2,7 @@ import { DICTS, LANGS } from '@kto/game-core';
 import type { Lang } from '@kto/game-core';
 import { LANG_KEY } from '../lib/lang';
 import { getAudio } from '../game/audio';
-import { openTelegram, setTelegramBack } from '../lib/telegram';
-import { TG_APP } from '../lib/env';
+import { setTelegramBack } from '../lib/telegram';
 import { track } from '../lib/analytics';
 
 /**
@@ -147,9 +146,6 @@ const PLANE = `<svg viewBox="0 0 12 12" width="24" height="24" aria-hidden="true
   (r, y) => [...r].map((c, x) => (c === '#' ? `<rect x="${x}" y="${y}" width="1" height="1"/>` : '')),
 ).join('')}</svg>`;
 
-/** Поддержка — бот игры: /start support открывает обращение (apps/server/src/bot.ts › onSupport). */
-const SUPPORT_URL = `https://t.me/${(TG_APP || 'be_nobody_bot/play').split('/')[0]}?start=support`;
-
 export function mountTopBar(parent: HTMLElement, init: TopBarOptions): TopBar {
   ensureTopBarCss();
   let o: TopBarOptions = { ...init };
@@ -231,7 +227,7 @@ export function mountTopBar(parent: HTMLElement, init: TopBarOptions): TopBar {
               : `<a class="kto-learn" href="/learn">${t.ui.howTo}</a>`
         }
         <div class="kto-sheet-actions">
-          <p class="kto-credit"><a class="kto-support" href="${SUPPORT_URL}" target="_blank" rel="noopener">${t.ui.support}</a><br>${t.ui.author} · <a href="https://t.me/waldente" target="_blank" rel="noopener">@waldente</a></p>
+          <p class="kto-credit">${t.ui.author} · <a href="https://t.me/waldente" target="_blank" rel="noopener">@waldente</a></p>
           ${o.onExit ? `<button type="button" class="kto-sheet-exit">${t.ui.exit}</button>` : ''}
           <button type="button" class="kto-sheet-close">${t.ui.close}</button>
         </div>
@@ -289,12 +285,6 @@ export function mountTopBar(parent: HTMLElement, init: TopBarOptions): TopBar {
         o.roomMusic?.onOwn?.(on);
       }),
     );
-    // «Поддержка» — чат с ботом, команда /support (тот же чат поддержки, что у /paysupport); в Telegram — поверх игры
-    sheet.querySelector<HTMLAnchorElement>('.kto-support')?.addEventListener('click', (e) => {
-      track('support_open');
-      e.preventDefault();
-      openTelegram(SUPPORT_URL);
-    });
     sheet.querySelector('.kto-sheet-close')!.addEventListener('click', close);
     sheet.querySelector('.kto-sheet-exit')?.addEventListener('click', () => {
       close();
@@ -381,13 +371,12 @@ html.tg .kto-back{display:none!important}
   font-size:10px;text-decoration:none;box-shadow:0 4px 0 #0095e9,0 0 0 2px #181425}
 .kto-learn:focus-visible{outline:2px solid #fee761;outline-offset:2px}
 .kto-howto b{color:#ead4aa;font-weight:normal}
-.kto-sheet-actions{display:flex;gap:10px;justify-content:flex-end;align-items:flex-end;margin-top:16px;flex-wrap:wrap}
+.kto-sheet-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap}
 .kto-sheet-actions button{font:inherit;font-size:11px;min-height:48px;padding:0 16px;border:0;border-radius:0;cursor:pointer;
   background:#feae34;color:#181425;box-shadow:0 4px 0 #be4a2f,0 0 0 2px #181425}
 .kto-sheet-actions .kto-sheet-exit{background:#181425;color:#ead4aa;box-shadow:0 0 0 2px #5a6988}
 .kto-credit{margin:0 auto 0 0;align-self:center;font-size:8px;line-height:1.6;color:#8b9bb4;text-align:left}
 .kto-credit a{color:#8b9bb4;text-decoration:none;display:inline-flex;align-items:center;min-height:44px;padding:0 0 0 8px}
-.kto-credit a.kto-support{color:#2ce8f5;font-size:10px;padding:0;min-height:32px;text-decoration:underline;text-underline-offset:3px}
 /* низкий экран (SE внутри Telegram): лист помещается без прокрутки — сжимаем отступы, не кнопки */
 @media (max-height:540px){
   .kto-sheet-box{padding-top:12px;padding-bottom:calc(10px + var(--sab, env(safe-area-inset-bottom)))}

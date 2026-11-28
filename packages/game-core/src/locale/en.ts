@@ -383,7 +383,6 @@ export const en: Dict = {
     close: 'Close',
     exit: 'Exit to menu',
     author: 'made by',
-    support: 'Support',
   },
   clip: {
     hook: 'An actor is hiding.',
