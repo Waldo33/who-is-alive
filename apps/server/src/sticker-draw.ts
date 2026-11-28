@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { myDef } from '../../web/src/game/skins/my-sticker';
 import { withFx } from '../../web/src/game/skins/shine';
+import { withCapColor } from '../../web/src/game/skins/stickers';
 import { STICKERS, stickerFile } from '../../web/src/game/skins/stickers';
 import { warmRender } from './film-render';
 import type { StickerJob } from './sticker-render';
@@ -23,7 +24,7 @@ export async function renderMyWebm(s: StickerJob, o: { fonts: string; ffmpeg?: s
     // свой стикер (эффект — внутри myDef) или стандартный стикер пака с эффектом
     const std = 'std' in s ? STICKERS.find((x) => x.id === s.std) : null;
     if ('std' in s && !std) throw new Error('bad_sticker');
-    const def = std && 'std' in s ? withFx(std, s.fx) : myDef(s as Exclude<StickerJob, { std: unknown }>);
+    const def = std && 'std' in s ? withFx(withCapColor(std, s.color ?? null), s.fx) : myDef(s as Exclude<StickerJob, { std: unknown }>);
     const lang = 'std' in s ? s.lang : 'ru';
     for (let t = 0; t < FRAMES; t++) {
       const c = stickerFile(def, t, lang) as unknown as { encode(f: 'png'): Promise<Buffer> };

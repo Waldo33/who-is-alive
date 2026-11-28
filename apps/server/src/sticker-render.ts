@@ -8,14 +8,14 @@
  * По одному за раз, очередь короткая; сервер бота без ffmpeg просит игровой (/internal/sticker по туннелю).
  */
 import { fork } from 'node:child_process';
-import { isEffect, isMySticker, isStickerId } from '@kto/game-core';
+import { MY_COLORS, isEffect, isMySticker, isStickerId } from '@kto/game-core';
 import type { EffectId, Lang, MySticker, StickerId } from '@kto/game-core';
 import { workerPath } from './film';
 import type { Logger } from './log';
 
 export type MyLook = Pick<MySticker, 'fig' | 'pose' | 'color' | 'text' | 'fx'>;
 /** Стандартный стикер пака с эффектом (товар «Эффекты»): файлы без эффекта лежат готовыми, с эффектом — рисуем. */
-export type StdLook = { std: StickerId; fx: EffectId; lang: Lang };
+export type StdLook = { std: StickerId; fx: EffectId | null; color?: number | null; lang: Lang };
 export type StickerJob = MyLook | StdLook;
 
 /** Задача процессу рисования и его ответ. */
@@ -40,8 +40,10 @@ export class StickerRender {
     let clean: StickerJob;
     const s = look as Partial<StdLook> | null;
     if (s && typeof s === 'object' && 'std' in s) {
-      if (!isStickerId(s.std) || !isEffect(s.fx) || (s.lang !== 'ru' && s.lang !== 'en')) return Promise.reject(new Error('bad_sticker'));
-      clean = { std: s.std, fx: s.fx, lang: s.lang };
+      const color = s.color ?? null;
+      const colorOk = color === null || (Number.isInteger(color) && color >= 0 && color < MY_COLORS.length);
+      if (!isStickerId(s.std) || !(s.fx === null || isEffect(s.fx)) || !colorOk || (s.fx === null && color === null) || (s.lang !== 'ru' && s.lang !== 'en')) return Promise.reject(new Error('bad_sticker'));
+      clean = { std: s.std, fx: s.fx, color, lang: s.lang };
     } else {
       const v = { ...(look as MyLook), slot: 0, rev: 0 };
       if (!isMySticker(v)) return Promise.reject(new Error('bad_sticker'));
