@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { BADGE_IDS, badgeEmoji } from '@kto/game-core';
@@ -7,7 +8,7 @@ import type { Logger } from './log';
 
 /**
  * Значки для эмодзи-статуса (game-core/badges.ts): один общий набор эмодзи у бота — `massovka_badges_by_<бот>`.
- * Картинки 100×100 PNG — `apps/server/stickers/badges/<id>.png` (`pnpm --filter web badges`, едут с выкладкой
+ * Картинки 100×100 PNG — `apps/server/stickers/badges/<id>.png`, анимированные (значки-слоты) — `<id>.webm` (видео-эмодзи) (`pnpm --filter web badges`, едут с выкладкой
  * вместе со стикерами). Значок в наборе бот узнаёт по эмодзи. Ставит его в статус сам игрок из Mini App
  * (`WebApp.setEmojiStatus` по id эмодзи) — бот только держит набор и отдаёт id.
  *
@@ -103,8 +104,12 @@ export class BadgeSet {
     const missing = BADGE_IDS.filter((id) => !this.cache[id]);
     if (!missing.length) return;
     const owner = await this.ownerId();
-    const input = (id: BadgeId, i: number) => ({ sticker: `attach://f${i}`, format: 'static', emoji_list: [badgeEmoji(id)] });
-    const file = async (id: BadgeId) => new Blob([new Uint8Array(await readFile(join(this.d.dir, `${id}.png`)))], { type: 'image/png' });
+    // есть видео — значок анимированный (видео-эмодзи WEBM), иначе картинка PNG
+    const video = (id: BadgeId) => existsSync(join(this.d.dir, `${id}.webm`));
+    const input = (id: BadgeId, i: number) => ({ sticker: `attach://f${i}`, format: video(id) ? 'video' : 'static', emoji_list: [badgeEmoji(id)] });
+    const ext = (id: BadgeId) => (video(id) ? 'webm' : 'png');
+    const file = async (id: BadgeId) =>
+      new Blob([new Uint8Array(await readFile(join(this.d.dir, `${id}.${ext(id)}`)))], { type: video(id) ? 'video/webm' : 'image/png' });
     if (!list) {
       const form = new FormData();
       form.set('user_id', String(owner));
@@ -112,7 +117,7 @@ export class BadgeSet {
       form.set('title', `Массовка · значки · @${await this.d.username()}`.slice(0, 64));
       form.set('sticker_type', 'custom_emoji');
       form.set('stickers', JSON.stringify(missing.map(input)));
-      for (const [i, id] of missing.entries()) form.set(`f${i}`, await file(id), `${id}.png`);
+      for (const [i, id] of missing.entries()) form.set(`f${i}`, await file(id), `${id}.${ext(id)}`);
       await this.d.api('createNewStickerSet', form);
       this.d.log('info', 'badges_created', { name, n: missing.length });
     } else {
@@ -121,7 +126,7 @@ export class BadgeSet {
         form.set('user_id', String(owner));
         form.set('name', name);
         form.set('sticker', JSON.stringify(input(id, 0)));
-        form.set('f0', await file(id), `${id}.png`);
+        form.set('f0', await file(id), `${id}.${ext(id)}`);
         await this.d.api('addStickerToSet', form);
         this.d.log('info', 'badges_added', { id });
       }

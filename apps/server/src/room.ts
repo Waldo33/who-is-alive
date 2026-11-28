@@ -1,4 +1,4 @@
-import { DICTS, DIRECTOR_HUMANS, TICK_MS, fmt, earnedStickers, recordRound, renamePid, seasonLeadTheme } from '@kto/game-core';
+import { DICTS, DIRECTOR_HUMANS, slotHits, TICK_MS, fmt, earnedStickers, recordRound, renamePid, seasonLeadTheme } from '@kto/game-core';
 import type { GameConfig, PlayerInfo, SkinId } from '@kto/game-core';
 import { DEFAULT_WIRE_SETTINGS, HostSession } from '@kto/net';
 import type { Channel, PresenceMember, RoomMsg, ServerMsg, Transport, WireError, WireRoom, WireRoomSettings } from '@kto/net';
@@ -84,6 +84,8 @@ export interface MatchBadges {
   humans: string[];
   winners: string[];
   director: string | null;
+  /** 777 и черепа в «Крутках» матча по людям (только у кого что-то выпало). */
+  slots?: { pid: string; jackpots: number; skulls: number }[];
 }
 
 /** Готовый фильм матча: ролик в хранилище клипов и итог для подписи. */
@@ -812,7 +814,9 @@ export class Room {
       director = this.directorId;
       this.directorCounted = true;
     }
-    this.o.onBadges(this, { humans, winners, director });
+    const rounds = takes.map((t) => t.summary);
+    const slots = humans.map((pid) => ({ pid, ...slotHits(rounds, pid) })).filter((x) => x.jackpots || x.skulls);
+    this.o.onBadges(this, { humans, winners, director, ...(slots.length ? { slots } : {}) });
   }
 
   /**
