@@ -2,19 +2,21 @@
 
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { DICTS, MY_COLORS, MY_FIGS, MY_MAX, MY_POSES, STICKER_LIST, THEME_RULES, canDrop, fmt, myCaption } from '@kto/game-core';
+import { DICTS, EFFECTS, MY_COLORS, MY_FIGS, MY_MAX, MY_POSES, STICKER_LIST, THEME_RULES, canDrop, fmt, isEffect, myCaption } from '@kto/game-core';
 import type { EffectId, Lang, MyFig, MyPose, MySticker, ShopItemId, StickerMeta } from '@kto/game-core';
 import { PAL } from '@kto/assets';
 import { track } from '@/lib/analytics';
 import { detectLang } from '@/lib/lang';
-import { bootTelegram, haptic, linkTelegramOnce, openTelegram, shopClaim, shopMy, shopMyDel, shopFx, shopPick, shopRemind, shopCached, shopSignedIn, shopState, tgLink } from '@/lib/telegram';
+import { bootTelegram, haptic, inTelegram, linkTelegramOnce, openTelegram, shopClaim, shopMy, shopMyDel, shopFx, shopPick, shopRemind, shopBuy, shopCached, shopSignedIn, shopState, tgLink } from '@/lib/telegram';
 import type { ShopState } from '@/lib/telegram';
 import { TopBar } from '@/ui/TopBarView';
 import { ST_SIZE, STICKERS, stickerFrame } from '@/game/skins/stickers';
+import type { StickerDef } from '@/game/skins/stickers';
 import { myDef } from '@/game/skins/my-sticker';
 import { holoStrip, withFx } from '@/game/skins/shine';
 import type { MyLook } from '@/game/skins/my-sticker';
 import { loadAllThemes } from '@/game/themes';
+import { buyLabel, itemIcon, starsIcon } from '@/game/skins/wardrobe';
 
 /** Без Telegram (просто сайт): видно, каким бывает пак, — бесплатные стикеры и приманка; собрать можно только в Telegram. */
 const PREVIEW: Pick<ShopState, 'open' | 'off' | 'my' | 'figs' | 'earned' | 'pending' | 'pack' | 'items'> = {
@@ -28,7 +30,7 @@ const PREVIEW: Pick<ShopState, 'open' | 'off' | 'my' | 'figs' | 'earned' | 'pend
   items: [],
 };
 
-type Tab = 'pack' | 'make';
+type Tab = 'pack' | 'make' | 'fx';
 interface Draft {
   slot: number | null;
   fig: MyFig;
@@ -71,6 +73,14 @@ export default function StickersClient() {
     return () => clearInterval(h);
   }, [earnNext]);
   const [tab, setTab] = useState<Tab>('pack');
+  // вкладка «Эффекты»: какой эффект на витрине, иконки эффектов, звезда Telegram, игра внутри Telegram (покупка — только там)
+  const [fxSel, setFxSel] = useState<EffectId>(EFFECTS[0]);
+  const fxSelRef = useRef<EffectId>(EFFECTS[0]);
+  fxSelRef.current = fxSel;
+  const [fxIcons, setFxIcons] = useState<Record<string, string>>({});
+  const [star, setStar] = useState('');
+  const [inTg, setInTg] = useState(false);
+  const [fxNote, setFxNote] = useState('');
   const [pics, setPics] = useState<Record<string, string>>({});
   // стикеры с эффектом (товар «Эффекты»): голограмма — лента кадров для CSS-анимации, нуар — картинка
   const [fxPics, setFxPics] = useState<Record<string, string>>({});
@@ -86,6 +96,8 @@ export default function StickersClient() {
   const slotRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const lookRef = useRef<MyLook>({ fig: 'actor', pose: 'wave', color: 1, text: [] });
+  // витрина эффекта: стикер, на котором его показываем
+  const fxBaseRef = useRef<Pick<StickerDef, 'draw'>>(STICKERS[0]);
 
   const s = st ?? PREVIEW;
   const open = useMemo(() => new Set(s.open ?? []), [s.open]);
@@ -103,6 +115,15 @@ export default function StickersClient() {
     document.documentElement.lang = l;
     document.title = `${DICTS[l].shop.build.title} · ${DICTS[l].meta.title}`;
     track('stickers_view', {});
+    setInTg(inTelegram());
+    setStar(starsIcon().toDataURL());
+    setFxIcons(Object.fromEntries(EFFECTS.map((fx) => [fx, itemIcon(fx).toDataURL()])));
+    // /stickers?fx=holo — сразу вкладка «Эффекты» с этим эффектом (ссылки из гардероба и бота)
+    const want = new URLSearchParams(location.search).get('fx');
+    if (isEffect(want)) {
+      setFxSel(want);
+      setTab('fx');
+    }
     // в браузере — если вошёл через Telegram на сайте (гардероб › «Войти через Telegram»)
     const tgNow = shopSignedIn();
     setTgOn(tgNow);
@@ -189,7 +210,7 @@ export default function StickersClient() {
   // превью конструктора: целый масштаб в пикселях экрана, 10 кадров в секунду
   useEffect(() => {
     const slot = slotRef.current;
-    if (!slot || tab !== 'make') return;
+    if (!slot || tab === 'pack') return;
     const fit = () => {
       const dpr = window.devicePixelRatio || 1;
       const k = Math.floor(Math.min((slot.clientWidth * dpr) / ST_SIZE, (slot.clientHeight * dpr) / ST_SIZE));
@@ -202,7 +223,7 @@ export default function StickersClient() {
   }, [tab]);
   useEffect(() => {
     const c = canvasRef.current;
-    if (!c || !ready || !scale || tab !== 'make') return;
+    if (!c || !ready || !scale || tab === 'pack') return;
     c.width = ST_SIZE * scale;
     c.height = ST_SIZE * scale;
     const g = c.getContext('2d')!;
@@ -217,7 +238,8 @@ export default function StickersClient() {
       last = f;
       g.setTransform(1, 0, 0, 1, 0, 0);
       g.clearRect(0, 0, c.width, c.height);
-      g.drawImage(stickerFrame(myDef(lookRef.current), f, lang), 0, 0, c.width, c.height);
+      const def = tab === 'make' ? myDef(lookRef.current) : withFx(fxBaseRef.current, fxSelRef.current);
+      g.drawImage(stickerFrame(def, f, lang), 0, 0, c.width, c.height);
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
@@ -380,6 +402,66 @@ export default function StickersClient() {
   const free = st?.free;
 
   const status = st?.pending ? b.syncing : note;
+
+  // витрина эффекта — на выбранном открытом стикере, иначе на своём, иначе на первом открытом
+  const owns = new Set(st?.effects ?? []);
+  const fxBase = ((): { def: Pick<StickerDef, 'draw'>; name: string } => {
+    const pick = STICKER_LIST.find((x) => x.id === sel && open.has(x.id) && canDrop(x.id));
+    const std = (id: string) => ({ def: STICKERS.find((x) => x.id === id)!, name: t.stickers[id as StickerMeta['id']].join(' ') });
+    if (pick) return std(pick.id);
+    const m = my[0];
+    if (m) return { def: myDef({ fig: m.fig, pose: m.pose, color: m.color, text: m.text }), name: m.text.join(' ') || figName(m.fig) };
+    return std(STICKER_LIST.find((x) => open.has(x.id) && canDrop(x.id))?.id ?? STICKER_LIST[0].id);
+  })();
+  fxBaseRef.current = fxBase.def;
+  const toFx = (fx: EffectId) => {
+    setFxSel(fx);
+    setFxNote('');
+    setTab('fx');
+  };
+  const buyFx = async () => {
+    if (!inTg) return toTg('fx');
+    if (busy || owns.has(fxSel)) return;
+    const fx = fxSel;
+    setBusy(true);
+    setFxNote(t.paying);
+    track('shop_buy_tap', { item: fx, from: 'stickers' });
+    const r = await shopBuy(fx);
+    track('shop_buy', { item: fx, status: r, from: 'stickers' });
+    if (r === 'paid') {
+      haptic('success');
+      setFxNote(t.paidWait);
+      // эффект записывает бот по уведомлению Telegram — ждём его
+      for (let i = 0; i < 10; i++) {
+        const x = await shopState();
+        if (x) setSt(x);
+        if (x?.effects?.includes(fx)) {
+          setFxNote('');
+          break;
+        }
+        await new Promise((res) => setTimeout(res, 1500));
+      }
+    } else {
+      setFxNote(r === 'cancelled' ? t.cancelled : r === 'pending' ? t.paying : r === 'owned' ? '' : t.failed);
+      const x = await shopState();
+      if (x) setSt(x);
+    }
+    setBusy(false);
+  };
+  /** Строка выбора эффекта: купленные — накинуть, некупленные — с замком, ведут на витрину. */
+  const fxRow = (cur: EffectId | null, pick: (fx: EffectId | null) => void) => (
+    <div className="stickers-row stickers-poses stickers-fx" role="radiogroup" aria-label={b.fx}>
+      {[null, ...EFFECTS.filter((fx) => owns.has(fx)), ...EFFECTS.filter((fx) => !owns.has(fx))].map((fx) => {
+        const on = cur === fx;
+        const mine = !fx || owns.has(fx);
+        return (
+          <button key={fx ?? 'none'} role="radio" aria-checked={on} className={[on ? 'on' : '', mine ? '' : 'locked'].join(' ')} aria-disabled={busy} onClick={() => (!mine && fx ? toFx(fx) : !on && pick(fx))}>
+            {fx ? t.items[fx].title : b.fxNone}
+          </button>
+        );
+      })}
+    </div>
+  );
   const selMeta = STICKER_LIST.find((x) => x.id === sel);
   const buyItem = selMeta && !open.has(selMeta.id) && selMeta.set !== 'play' && selMeta.set !== 'starter' && !st?.items.includes(selMeta.set) ? (selMeta.set as ShopItemId) : null;
   const toPlay = () => {
@@ -398,7 +480,7 @@ export default function StickersClient() {
 
   return (
     <main className="daily stickers">
-      <TopBar lang={lang} onBack={() => (tab === 'make' ? setTab('pack') : router.push('/wardrobe'))} />
+      <TopBar lang={lang} onBack={() => (tab !== 'pack' ? setTab('pack') : router.push('/wardrobe'))} />
       <h1 className="daily-title">{b.title}</h1>
       <div className="stickers-tabs" role="tablist">
         <button role="tab" aria-selected={tab === 'pack'} className={tab === 'pack' ? 'on' : ''} onClick={() => setTab('pack')}>
@@ -406,6 +488,9 @@ export default function StickersClient() {
         </button>
         <button role="tab" aria-selected={tab === 'make'} className={tab === 'make' ? 'on' : ''} onClick={() => editMy(null)}>
           {b.tabMake}
+        </button>
+        <button role="tab" aria-selected={tab === 'fx'} className={tab === 'fx' ? 'on' : ''} onClick={() => toFx(fxSel)}>
+          {b.tabFx}
         </button>
       </div>
 
@@ -497,19 +582,8 @@ export default function StickersClient() {
                   fmt(b.myFull, { n: MY_MAX })
                 ))}
             </p>
-            {/* эффект выбранного стикера — из купленных в гардеробе */}
-            {selMeta && open.has(selMeta.id) && !off.has(selMeta.id) && canDrop(selMeta.id) && !!st?.effects?.length && (
-              <div className="stickers-row stickers-poses stickers-fx" role="radiogroup" aria-label={b.fx}>
-                {[null, ...st.effects].map((fx) => {
-                  const on = (st.fx?.[selMeta.id] ?? null) === fx;
-                  return (
-                    <button key={fx ?? 'none'} role="radio" aria-checked={on} className={on ? 'on' : ''} aria-disabled={busy} onClick={() => !on && void setFx(selMeta.id, fx)}>
-                      {fx ? t.items[fx].title : b.fxNone}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
+            {/* эффект выбранного стикера: купленные — накинуть, остальные — на витрину «Эффекты» */}
+            {tgOn && hasPack && selMeta && open.has(selMeta.id) && !off.has(selMeta.id) && canDrop(selMeta.id) && fxRow(st?.fx?.[selMeta.id] ?? null, (fx) => void setFx(selMeta.id, fx))}
             {buyItem ? (
               // закрытый стикер набора из гардероба — сразу покупка этого набора
               <button className="btn small" onClick={() => toShop(buyItem)}>
@@ -529,6 +603,45 @@ export default function StickersClient() {
                   {b.toTg}
                 </button>
               )
+            )}
+          </div>
+        </>
+      ) : tab === 'fx' ? (
+        <>
+          {/* эффекты лентой: купленные — с галочкой */}
+          <div className="wardrobe-sets stickers-fxset" role="tablist">
+            {EFFECTS.map((fx) => (
+              <button key={fx} role="tab" aria-selected={fx === fxSel} className={fx === fxSel ? 'wardrobe-set on' : 'wardrobe-set'} onClick={() => toFx(fx)} aria-label={t.items[fx].title}>
+                {fxIcons[fx] && <img src={fxIcons[fx]} alt="" width={18 * 2} height={30 * 2} />}
+                {owns.has(fx) ? <i className="wardrobe-mark mine">✓</i> : null}
+              </button>
+            ))}
+          </div>
+          <div className="daily-slot" ref={slotRef}>
+            {ready && (
+              <div className="daily-stage stickers-stage" style={{ width: (ST_SIZE * scale) / (globalThis.devicePixelRatio || 1), height: (ST_SIZE * scale) / (globalThis.devicePixelRatio || 1), visibility: scale ? 'visible' : 'hidden' }}>
+                <canvas ref={canvasRef} className="daily-canvas" style={{ width: '100%', height: '100%' }} />
+              </div>
+            )}
+          </div>
+          <div className="daily-actions stickers-fxinfo">
+            <p className="stickers-fxname">
+              <b>{t.items[fxSel].title}</b> · {t.items[fxSel].tagline}
+            </p>
+            <p className="stickers-note">{fxNote || (owns.has(fxSel) ? b.fxOwned : `${b.fxHint}: ${fxBase.name}`)}</p>
+            {owns.has(fxSel) ? (
+              <button className="btn small" onClick={() => setTab('pack')}>
+                {b.back}
+              </button>
+            ) : inTg ? (
+              <button className="btn" onClick={() => void buyFx()} aria-disabled={busy}>
+                {buyLabel(lang, fxSel)}
+                {star && <img className="wardrobe-star" src={star} alt="" width={26} height={26} />}
+              </button>
+            ) : (
+              <button className="btn tg" onClick={() => void buyFx()}>
+                {t.buyTg}
+              </button>
             )}
           </div>
         </>
@@ -579,15 +692,7 @@ export default function StickersClient() {
                 <button key={c} role="radio" aria-checked={draft.color === i} aria-label={c} className={draft.color === i ? 'on' : ''} style={{ background: PAL[c] }} onClick={() => setDraft((d) => ({ ...d, color: i }))} />
               ))}
             </div>
-            {!!st?.effects?.length && (
-              <div className="stickers-row stickers-poses stickers-fx" role="radiogroup" aria-label={b.fx}>
-                {[null, ...st.effects].map((fx) => (
-                  <button key={fx ?? 'none'} role="radio" aria-checked={draft.fx === fx} className={draft.fx === fx ? 'on' : ''} onClick={() => setDraft((d) => ({ ...d, fx }))}>
-                    {fx ? t.items[fx].title : b.fxNone}
-                  </button>
-                ))}
-              </div>
-            )}
+            {tgOn && hasPack && fxRow(draft.fx, (fx) => setDraft((d) => ({ ...d, fx })))}
             <input
               className="stickers-input"
               value={draft.caption}

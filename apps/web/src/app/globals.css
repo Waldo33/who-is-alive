@@ -340,7 +340,7 @@ button.summary { color: var(--sand); cursor: pointer; }
 
 /* «Собери свой стикерпак» (/stickers, за флагом shop): сетка пака и конструктор — экран без прокрутки */
 .stickers-tabs { display: flex; gap: 8px; flex-shrink: 0; }
-.stickers-tabs button { font: inherit; font-size: 10px; padding: 10px 12px; min-height: 40px; color: var(--slate); background: var(--night); border: 0;
+.stickers-tabs button { font: inherit; font-size: 10px; padding: 10px 9px; min-height: 40px; color: var(--slate); background: var(--night); border: 0;
   box-shadow: 0 0 0 2px var(--ink), 0 0 0 4px var(--dusk); }
 .stickers-tabs button.on { color: var(--ink); background: var(--yellow); }
 .stickers-grid-slot { flex: 1 1 0; min-height: 0; width: 100%; overflow: hidden; display: flex; align-items: center; justify-content: center; }
@@ -402,6 +402,12 @@ button.summary { color: var(--sand); cursor: pointer; }
 .stickers-fx { flex-wrap: nowrap; overflow-x: auto; justify-content: flex-start; padding: 2px; touch-action: pan-x; scrollbar-width: none; }
 .stickers-fx::-webkit-scrollbar { display: none; }
 .stickers-fx button { flex: 0 0 auto; }
+/* эффект не куплен — тусклый, ведёт на вкладку «Эффекты» */
+.stickers-fx button.locked { color: var(--steel); box-shadow: 0 0 0 2px var(--dusk); }
+/* вкладка «Эффекты»: лента эффектов, витрина, название и покупка */
+.stickers-fxset { justify-content: flex-start; }
+.stickers-fxname { margin: 0; font-size: 10px; line-height: 1.8; color: var(--sand); }
+.stickers-fxname b { color: var(--yellow); font-weight: normal; }
 
 /* «Значки» (/badges): список значков для эмодзи-статуса, экран без прокрутки */
 .badges .btn { gap: 10px; }
