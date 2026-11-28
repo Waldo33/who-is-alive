@@ -176,6 +176,9 @@ button.btn { border: 0; cursor: pointer; border-radius: 0; }
 .cast-card .actor { width: 42px; height: 54px; image-rendering: pixelated; display: block; }
 /* скин (20×32 против 14×18): тот же ×3, шире в стороны (поля −9 px) и выше — ряд карточек растёт, верх банана — в поле карточки */
 .cast-card .actor.skin { width: 60px; height: 96px; margin: -12px -9px 0; pointer-events: none; }
+/* эффект на персонаже (skins/aura.ts): поля 3 px по бокам, 6 сверху, 1 снизу — тот же ×3, лишнее уходит в отрицательные поля */
+.cast-card .actor.fx { width: 60px; height: 75px; margin: -18px -9px -3px; pointer-events: none; }
+.cast-card .actor.skin.fx { width: 78px; height: 117px; margin: -30px -18px -3px; }
 .cast-card .name { font: inherit; font-size: 9px; line-height: 1.8; color: var(--sand); background: none; border: 0; padding: 0; max-width: 100%; min-height: 0;
   overflow-wrap: anywhere; text-align: center; line-height: 1.4; cursor: default; }
 /* своё имя меняется касанием по всей карточке (зона больше 44×44) */
@@ -228,6 +231,8 @@ button.summary { color: var(--sand); cursor: pointer; }
   .cast-card { padding: 6px 4px; }
   .cast-card .actor { width: 28px; height: 36px; }
   .cast-card .actor.skin { width: 40px; height: 64px; margin: -8px -6px 0; }
+  .cast-card .actor.fx { width: 40px; height: 50px; margin: -12px -6px -2px; }
+  .cast-card .actor.skin.fx { width: 52px; height: 78px; margin: -20px -12px -2px; }
   /* лист условий: зазоры уже, чтобы и «Музыка в дубле» влезла без прокрутки */
   .lobby-sheet-box { gap: 8px; }
   .lobby-sheet-box .settings { gap: 6px; }

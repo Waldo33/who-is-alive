@@ -258,6 +258,21 @@ export function skinOf(items: readonly string[]): SkinId | undefined {
 export function wearItems(items: readonly string[], skin: SkinId | null): string[] {
   return [...items.filter((x) => !x.startsWith('wear:')), `wear:${skin ?? 'none'}`];
 }
+
+/**
+ * Эффект на своём персонаже (решение владельца 28.11.2026): купленный эффект стикеров можно «надеть» и на
+ * актёра (или скин). Активен один — отметка `aura:<эффект>`; вернул звёзды — эффект снимается сам.
+ * Виден там же, где скин: во время дубля на поле — ни у кого, потом — когда связь «игрок ↔ сущность» открыта.
+ */
+export function auraOf(items: readonly string[]): EffectId | undefined {
+  const mark = items.find((x) => x.startsWith('aura:'))?.slice(5);
+  return isEffect(mark) && items.includes(mark) ? mark : undefined;
+}
+
+/** Покупки после «Надеть» эффект на персонажа (fx) или «Снять» (null): отметка `aura:` одна или нет. */
+export function auraItems(items: readonly string[], fx: EffectId | null): string[] {
+  return [...items.filter((x) => !x.startsWith('aura:')), ...(fx ? [`aura:${fx}`] : [])];
+}
 // ───────────── «Собери свой стикерпак»: выбор стикеров и свои стикеры ─────────────
 
 /** Своих стикеров в паке — не больше. */

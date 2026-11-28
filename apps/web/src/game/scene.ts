@@ -68,6 +68,8 @@ import {
 } from './sprites';
 import { skinArt, skinFrame } from './skins/skin-art';
 import type { SkinArt } from './skins/skin-art';
+import { AURA_BOTTOM, AURA_TOP, AURA_X, auraFx, auraPixels, auraStep } from './skins/aura';
+import type { EffectId } from '@kto/game-core';
 import { isThemeLoaded, loadTheme, lookCount, preloadThemes, themeLook, themePack, variantOf } from './themes';
 import type { Look } from './themes';
 import { haptic, inviteLink, setClosingConfirmation } from '../lib/telegram';
@@ -96,6 +98,8 @@ export interface SceneInit {
   /** Песочница: свой скин (`?dev&skin=kotBanan`); `skinAi` — и у первого ИИ (проверить, что чужой на поле не виден). */
   skin?: string;
   skinAi?: boolean;
+  /** Песочница: свой эффект на персонаже (`?dev&fx=holo`); с `skinAi` — и у первого ИИ. */
+  fx?: string;
   fontFamily: string;
   audio: Audio;
   cfg?: Partial<GameConfig>;
@@ -485,11 +489,14 @@ export class GameScene extends Phaser.Scene {
       name,
       color: i,
       ...(this.init0.skin && (i === 0 || (i === 1 && this.init0.skinAi)) ? { skin: this.init0.skin } : {}),
+      ...(this.init0.fx && (i === 0 || (i === 1 && this.init0.skinAi)) ? { fx: this.init0.fx } : {}),
     }));
     const seed = this.init0.seed ?? (Date.now() & 0x7fffffff);
     this.sim = this.init0.createSession?.(this.cfg, players, seed) ?? createLocalSession(this.cfg, players, seed, ME);
     this.cfg = this.sim.cfg; // по сети конфиг задаёт хост
     this.sim.onWorldEvent((ev) => this.onWorldEvent(ev));
+    // эффект на персонаже победителя на триумфе: копия поверх картинки — после всех правок кадра
+    this.events.on(Phaser.Scenes.Events.POST_UPDATE, () => this.tickAuraExtra());
     this.events.once('shutdown', () => {
       this.sim.dispose();
       setClosingConfirmation(false);
@@ -2069,9 +2076,9 @@ export class GameScene extends Phaser.Scene {
     const players = known
       ? s!.reveal.map((r) => {
           const info = this.sim.info(r.pid)!;
-          return { eid: r.eid, name: info.name, color: info.color, ...(info.skin ? { skin: info.skin } : {}) };
+          return { eid: r.eid, name: info.name, color: info.color, ...(info.skin ? { skin: info.skin } : {}), ...(info.fx ? { fx: info.fx } : {}) };
         })
-      : [{ eid: dc.eid, name: me.name, color: me.color, ...(me.skin ? { skin: me.skin } : {}) }];
+      : [{ eid: dc.eid, name: me.name, color: me.color, ...(me.skin ? { skin: me.skin } : {}), ...(me.fx ? { fx: me.fx } : {}) }];
     const rec = recordRound(w, { round: this.sim.round, theme: this.sim.theme, players: known ? s!.reveal : [], playEnd: to, kills: s?.kills, slots: known ? s!.slots : mine });
     // «Купальская ночь»: забрал Леший или туман — подпись про них, а не «кто вырезал»
     const by = skull ? 'slot' : hasSanity(this.sim.theme) && dc.killer === undefined ? nightCause(this.cfg, w.log, dc.eid, dc.at, s?.kills) : undefined;
@@ -2710,11 +2717,111 @@ export class GameScene extends Phaser.Scene {
    * одинаковой массовке выдал бы актёра. Скины приходят по игроку (PlayerInfo.skin), сущность — из итогов.
    */
   private skinAt(eid: number, myEid: number, open: boolean): { id: string; art: SkinArt } | null {
-    const pid =
-      eid === myEid && myEid >= 0 ? this.sim.selfPid : open ? this.sim.summary?.reveal.find((r) => r.eid === eid)?.pid : undefined;
+    const pid = this.lookPid(eid, myEid, open);
     const id = pid ? this.sim.info(pid)?.skin : undefined;
     const art = id ? this.skinTex(id) : null;
     return id && art ? { id, art } : null;
+  }
+
+  /**
+   * Чей облик из гардероба (скин, эффект) можно показать на сущности: только когда связь «игрок ↔ сущность»
+   * открыта всем (`open`: повтор, финал разоблачения, итоги). Во время дубля его нет и на своём персонаже —
+   * игрок не путается, где он (решение владельца 28.11.2026); myEid оставлен для вызовов.
+   */
+  private lookPid(eid: number, myEid: number, open: boolean): string | undefined {
+    void myEid;
+    return open ? this.sim.summary?.reveal.find((r) => r.eid === eid)?.pid : undefined;
+  }
+
+  /** Эффект на персонаже у сущности — там же, где скин (skinAt). */
+  private fxAt(eid: number, myEid: number, open: boolean): EffectId | null {
+    const pid = this.lookPid(eid, myEid, open);
+    return pid ? auraFx(this.sim.info(pid)?.fx) : null;
+  }
+
+  /** Пиксели кадров для эффекта: исходник (по текстуре и кадру) и готовые шаги эффекта. */
+  private auraSrc = new Map<string, Uint8ClampedArray>();
+  private auraDone = new Map<string, ImageData>();
+  private auras = new Map<string, { img: Phaser.GameObjects.Image; tex: Phaser.Textures.CanvasTexture; tkey: string; last: string }>();
+  /** Картинки оверлеев (триумф) с эффектом: копия поверх них живёт, пока жива картинка. */
+  private auraExtra: { src: Phaser.GameObjects.Image; fx: EffectId; slot: string }[] = [];
+
+  private framePixels(fr: Phaser.Textures.Frame): Uint8ClampedArray {
+    const key = `${fr.texture.key}:${fr.name}`;
+    let d = this.auraSrc.get(key);
+    if (!d) {
+      const { c, g } = canvas(fr.cutWidth, fr.cutHeight);
+      g.drawImage(fr.source.image as CanvasImageSource, fr.cutX, fr.cutY, fr.cutWidth, fr.cutHeight, 0, 0, fr.cutWidth, fr.cutHeight);
+      d = g.getImageData(0, 0, fr.cutWidth, fr.cutHeight).data;
+      void c;
+      this.auraSrc.set(key, d);
+    }
+    return d;
+  }
+
+  /**
+   * Эффект на персонаже (skins/aura.ts): копия картинки `src` в эффекте — то же место, кадр, поворот, прозрачность
+   * и подсветка, — а сама картинка прячется до следующего кадра. fx null — копия спрятана.
+   */
+  private auraFollow(slot: string, src: Phaser.GameObjects.Image, fx: EffectId | null, visible = src.visible): void {
+    let a = this.auras.get(slot);
+    if (!fx || !visible || !src.active) {
+      a?.img.setVisible(false);
+      return;
+    }
+    const fr = src.frame;
+    const fw = fr.cutWidth;
+    const fh = fr.cutHeight;
+    const W = fw + 2 * AURA_X;
+    const H = AURA_TOP + fh + AURA_BOTTOM;
+    const tkey = `aura_${slot}_${W}x${H}`;
+    if (!a || a.tkey !== tkey || !a.img.active) {
+      a?.img.destroy();
+      const tex = (this.textures.exists(tkey) ? this.textures.get(tkey) : this.textures.createCanvas(tkey, W, H)) as Phaser.Textures.CanvasTexture;
+      a = { img: this.add.image(0, 0, tkey), tex, tkey, last: '' };
+      this.auras.set(slot, a);
+    }
+    const t = auraStep(performance.now());
+    const id = `${fr.texture.key}:${fr.name}:${fx}:${t}`;
+    if (a.last !== id) {
+      a.last = id;
+      let done = this.auraDone.get(id);
+      if (!done) {
+        const p = auraPixels(this.framePixels(fr), fw, fh, fx, t);
+        done = new ImageData(new Uint8ClampedArray(p.data), p.w, p.h);
+        if (this.auraDone.size > 3000) this.auraDone.clear();
+        this.auraDone.set(id, done);
+      }
+      a.tex.context.clearRect(0, 0, W, H);
+      a.tex.context.putImageData(done, 0, 0);
+      a.tex.refresh();
+    }
+    a.img
+      .setVisible(true)
+      .setPosition(src.x, src.y)
+      .setOrigin((src.originX * fw + AURA_X) / W, (src.originY * fh + AURA_TOP) / H)
+      .setFlipX(src.flipX)
+      .setAngle(src.angle)
+      .setAlpha(src.alpha)
+      .setScale(src.scaleX, src.scaleY)
+      .setDepth(src.depth);
+    if (!src.isTinted) a.img.clearTint();
+    else if (src.tintFill) a.img.setTintFill(src.tintTopLeft);
+    else a.img.setTint(src.tintTopLeft);
+    src.setVisible(false);
+  }
+
+  /** Эффекты на картинках оверлеев: каждый кадр (картинку прячет сам эффект — видимость помним за неё). */
+  private tickAuraExtra(): void {
+    this.auraExtra = this.auraExtra.filter((x) => {
+      if (x.src.active) {
+        this.auraFollow(x.slot, x.src, x.fx, true);
+        return true;
+      }
+      this.auras.get(x.slot)?.img.destroy();
+      this.auras.delete(x.slot);
+      return false;
+    });
   }
 
   /** Надеть на спрайт сущности её облик: человечка `fig` или скин (свои ленты и точка опоры). */
@@ -3194,6 +3301,12 @@ export class GameScene extends Phaser.Scene {
       if (q) v.q.setPosition(x + 5, sy - top - 2).setDepth(sy + 0.4);
     });
     if (!crownShown) this.crown.setVisible(false);
+    // эффект на персонаже — там же, где скин: свой всегда, чужие — когда раскрыты
+    w.entities.forEach((e, i) => {
+      const v = this.views[i];
+      if (v) this.auraFollow(`e${i}`, v.spr, this.fxAt(e.eid, myEid, open));
+    });
+    for (let i = w.entities.length; i < this.views.length; i++) this.auras.get(`e${i}`)?.img.setVisible(false);
     this.renderBoss(w, alpha, mode);
     for (let i = w.entities.length; i < this.views.length; i++) {
       const v = this.views[i];
@@ -3209,8 +3322,8 @@ export class GameScene extends Phaser.Scene {
       const y = Math.round(mine.py + (mine.y - mine.py) * alpha) + AY;
       const { yoff } = this.frameFor(mine, t);
       const bounce = Math.floor(performance.now() / 180) % 2;
-      const mySk = this.skinAt(mine.eid, myEid, false);
-      this.arrow.setVisible(true).setPosition(x, y + yoff - (mySk ? mySk.art.ay - 3 : CH_H) - 3 - bounce);
+      // во время дубля скина на своём нет — стрелка над обычным человечком
+      this.arrow.setVisible(true).setPosition(x, y + yoff - CH_H - 3 - bounce);
       this.ring.setVisible(true).setPosition(x, y).setDepth(y - 0.6);
       // начало дубля: два расходящихся круга вокруг себя — глаз сразу находит своего
       if (phase === 'countdown' && this.findMeAt < 0) this.findMeAt = performance.now();
@@ -4223,9 +4336,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   /** Ряд кнопок итогов от x = 9 до 171 с зазором 2: ширина по тексту, остаток — кнопке с flex. */
-  private addRow(y: number, row: RowButton[]): void {
-    const L = 9;
-    const R = 171;
+  private addRow(y: number, row: RowButton[], L = 9, R = 171): void {
     const H = 30;
     const need = (r: RowButton) => (r.label ? r.label.length * 8 + 12 : 0) + (r.icon ? (r.label ? 20 : 30) : 0);
     const fixed = row.reduce((s, r) => s + (r.flex ? 0 : need(r)), 0) + (row.length - 1) * 2;
@@ -4351,12 +4462,22 @@ export class GameScene extends Phaser.Scene {
         } }]
         : [{ id: 'share2', kind: 'secondary', icon: 'share', release: true, onTap: () => this.share() }, { ...rematch, flex: true }]);
     } else this.addRow(AY + 214, [{ id: 'share2', kind: 'secondary', icon: 'share', label: this.t.game.share, flex: true, release: true, onTap: () => this.share() }]);
-    // клип — третьей, тихой кнопкой с кадром плёнки в нижней панели. Открывается касанием: отпускание
-    // у нижнего края экрана браузер может забрать себе (Chrome на iPhone); отправка — кнопкой в окне клипа
-    if ((this.takes.length || this.init0.film?.current()) && !this.init0.spectator && !videoOff()) {
-      this.addRow(PANEL_Y + 3, [{ id: 'clip', kind: 'secondary', icon: 'film', label: this.t.clip.film, flex: true, onTap: () => this.openFilm() }]);
-      const b = this.buttons.find((x) => x.id === 'clip');
-      if (b) Object.assign(b, { x: 3, w: 174 });
+    // нижняя панель (x = 3…177): «В меню» домиком слева и клип — тихой кнопкой с кадром плёнки.
+    // Клип открывается касанием: отпускание у нижнего края экрана браузер может забрать себе (Chrome на iPhone);
+    // отправка — кнопкой в окне клипа. Без клипа «В меню» — во всю ширину с надписью.
+    if (!this.init0.spectator) {
+      const exit = this.init0.onExit;
+      const film = (this.takes.length || this.init0.film?.current()) && !videoOff();
+      const row: RowButton[] = [];
+      if (exit) {
+        row.push({ id: 'menu', kind: 'secondary', icon: 'home', label: film ? undefined : this.t.game.toMenu, flex: !film, release: true, onTap: () => {
+          this.track('menu_tap', { from: 'match_end' });
+          // выход уничтожает игру — не изнутри обработчика ввода Phaser
+          setTimeout(exit, 0);
+        } });
+      }
+      if (film) row.push({ id: 'clip', kind: 'secondary', icon: 'film', label: this.t.clip.film, flex: true, onTap: () => this.openFilm() });
+      if (row.length) this.addRow(PANEL_Y + 3, row, 3, 177);
     }
     // карточку рисуем заранее: к нажатию «Поделиться» файл уже готов, и меню откроется без задержки
     void resultCardFile({
@@ -4539,6 +4660,9 @@ export class GameScene extends Phaser.Scene {
       sk ? this.add.image(90, cy, 'sk' + info.skin, F.DANCE).setOrigin(sk.ax / sk.fw, sk.ay / sk.fh) : this.add.image(90, cy, 'ch' + fig, F.DANCE).setOrigin(6 / CH_W, 1),
       2052,
     ).setScale(3);
+    // эффект на персонаже победителя — как скин, его видят все
+    const fx = auraFx(info.fx);
+    if (fx) this.auraExtra.push({ src: body, fx, slot: 'triumph' });
     const head = (sk ? sk.ay - 3 : CH_H) * 3;
     const crown = this.ov(this.add.image(90, cy - head - 2, 'icons', this.icon('crown')).setOrigin(0.5, 1).setScale(3), 2053);
     const me = pid === sim.selfPid;

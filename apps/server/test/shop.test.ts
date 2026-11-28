@@ -7,7 +7,7 @@ import { silentLogger } from '../src/log';
 import { GameServer } from '../src/server';
 import { RemoteLedger, Shop, localLedger, packName, shopLedgerOp, wantedStickers } from '../src/shop';
 import { MemoryStore } from '../src/store';
-import { SHOP_ITEMS, skinOf } from '@kto/game-core';
+import { SHOP_ITEMS, auraOf, skinOf } from '@kto/game-core';
 
 /** Гардероб: бесплатный пак, покупка за звёзды, выдача стикеров в личный пак (shop.ts). */
 
@@ -438,6 +438,30 @@ describe('гардероб', () => {
     const on = await wear('kotBanan');
     expect((on.body as { worn: string | null }).worn).toBe('kotBanan');
     expect((await store.shopUser(77))!.items.filter((x) => x.startsWith('wear:'))).toEqual(['wear:kotBanan']);
+  });
+
+  it('эффект на персонажа: только купленный, активен один, «Снять» снимает; вернул звёзды — снят', async () => {
+    const { bot, store } = makeBot();
+    const aura = (item: unknown) => bot.handle('POST', '/shop/aura', {}, { initData: initData(ANYA), item });
+    // не куплен — не надеть; скин — не эффект; чужое имя — отказ
+    expect((await aura('holo')).status).toBe(403);
+    expect((await aura('kotBanan')).status).toBe(400);
+    expect((await aura('<b>')).status).toBe(400);
+    await hook(bot, payment({ total_amount: 59, invoice_payload: 'holo:77', telegram_payment_charge_id: 'ch_h' }));
+    await hook(bot, payment({ total_amount: 19, invoice_payload: 'sepia:77', telegram_payment_charge_id: 'ch_s' }));
+    // покупка эффекта сама на персонажа не надевается
+    expect(auraOf((await store.shopUser(77))!.items)).toBeUndefined();
+    const on = await aura('holo');
+    expect(on.status).toBe(200);
+    expect((on.body as { aura: string | null }).aura).toBe('holo');
+    expect((await aura('sepia')).status).toBe(200);
+    expect((await store.shopUser(77))!.items.filter((x) => x.startsWith('aura:'))).toEqual(['aura:sepia']);
+    const off = await aura(null);
+    expect((off.body as { aura: string | null }).aura).toBeNull();
+    expect(auraOf((await store.shopUser(77))!.items)).toBeUndefined();
+    // отметка без покупки (вернул звёзды) эффекта не даёт
+    expect(auraOf(['aura:holo'])).toBeUndefined();
+    expect(auraOf(['holo', 'aura:holo'])).toBe('holo');
   });
 
   it('значки для статуса: по счётчикам и покупкам, с id эмодзи из набора бота; «Звезда дубля» — со сроком', async () => {

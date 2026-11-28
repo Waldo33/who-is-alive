@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { DICTS, EMOJI_PACK, emojiIssued, emojiWanted, isRewardId, openRewards, rewardMark, STARTER_DRIP, mySlots, mySlotIn, packGames, starterOpen, EFFECTS, EARN_PER_DAY, NO_STATS, badgesOf, EARN_PER_MATCH, MY_FIGS, MY_ISSUED, MY_MARKS, MY_MAX, MY_POSE_EMOJI, RETIRED_STICKERS, SHOP_ITEMS, STICKER_LIST, TEST_ITEM, buyItem, shopItem, canDrop, colMark, fmt, fxMark, isEffect, isLookIssued, lookIssued, stdLook, MY_COLORS, isMySticker, issuedBase, stickerFx, isSkin, isStickerId, myFigOpen, myIssued, offSticker, parseMySticker, pickEarned, skinOf, wearItems } from '@kto/game-core';
+import { DICTS, EMOJI_PACK, emojiIssued, emojiWanted, isRewardId, openRewards, rewardMark, STARTER_DRIP, mySlots, mySlotIn, packGames, starterOpen, EFFECTS, EARN_PER_DAY, NO_STATS, badgesOf, EARN_PER_MATCH, MY_FIGS, MY_ISSUED, MY_MARKS, MY_MAX, MY_POSE_EMOJI, RETIRED_STICKERS, SHOP_ITEMS, STICKER_LIST, TEST_ITEM, buyItem, shopItem, canDrop, colMark, fmt, fxMark, isEffect, isLookIssued, lookIssued, stdLook, MY_COLORS, isMySticker, issuedBase, stickerFx, isSkin, isStickerId, myFigOpen, myIssued, offSticker, parseMySticker, pickEarned, skinOf, wearItems, auraOf, auraItems } from '@kto/game-core';
 import type { BadgeId, BadgeStats, EffectId, MySticker, StickerId, StickerMeta } from '@kto/game-core';
 import type { StickerJob } from './sticker-render';
 import { RateWindow } from './limits';
@@ -89,7 +89,7 @@ const earnable = (items: readonly string[]) =>
 /** Напоминание о стикерах — с 10 до 22 по Москве (не ночью). */
 const REMIND_FROM = 10;
 const REMIND_TO = 22;
-const ITEM = /^(?:starter|(?:st|in|own|made|off|wear):[A-Za-z]{1,24}|[A-Za-z]{1,24}|day:\d{8}:\d{1,2}|remind:\d{8}|fx:[A-Za-z]{1,24}:[a-z]{2,8}|col:[A-Za-z]{1,24}:\d|games:\d{1,5})$/;
+const ITEM = /^(?:starter|(?:st|in|own|made|off|wear|aura):[A-Za-z]{1,24}|[A-Za-z]{1,24}|day:\d{8}:\d{1,2}|remind:\d{8}|fx:[A-Za-z]{1,24}:[a-z]{2,8}|col:[A-Za-z]{1,24}:\d|games:\d{1,5})$/;
 const PACK = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
 /**
  * Номер платежа Telegram (telegram_payment_charge_id): у звёзд — длинный «stx…» с символами base64 и прочими.
@@ -396,6 +396,7 @@ export class Shop {
     if (path === '/shop/refund') return this.refundOwn(init.user, body.item, now);
     if (path === '/shop/link') return this.link(init.user, body.token, body.tz);
     if (path === '/shop/wear') return this.wear(id, body.item);
+    if (path === '/shop/aura') return this.aura(id, body.item);
     if (path === '/shop/pick') return this.pick(id, body.id, body.on);
     if (path === '/shop/my') return this.saveMy(id, body.slot, body.sticker, now);
     if (path === '/shop/my/del') return this.delMy(id, body.slot);
@@ -428,6 +429,8 @@ export class Shop {
       catalog: SHOP_ITEMS,
       /** Надетый скин (null — снят или не куплен). */
       worn: (u && skinOf(u.items)) ?? null,
+      /** Эффект на персонаже (null — снят или не куплен). */
+      aura: (u && auraOf(u.items)) ?? null,
       // «Собери свой стикерпак»: что открыто, что убрано, свои стикеры, открытые фигурки, сколько ещё делать боту
       open: open.map((s) => s.id),
       off: open.filter((s) => u?.items.includes(offSticker(s.id))).map((s) => s.id),
@@ -989,6 +992,16 @@ export class Shop {
     return { status: 200, body: await this.state(id, false) };
   }
 
+  /** Эффект на своего персонажа: «Надеть» (купленный эффект, активен один) или «Снять» (item: null). В комнате — со следующего входа. */
+  private async aura(id: number, raw: unknown): Promise<ShopReply> {
+    if (raw !== null && !isEffect(raw)) return { status: 400, body: { error: 'bad_item' } };
+    const u = await this.d.ledger.shopUser(id);
+    if (!u || (raw !== null && !u.items.includes(raw))) return { status: 403, body: { error: 'not_owned' } };
+    u.items = auraItems(u.items, raw);
+    await this.d.ledger.saveShopUser(u);
+    return { status: 200, body: await this.state(id, false) };
+  }
+
   private async buy(init: ShopInit, raw: unknown): Promise<ShopReply> {
     const item = buyItem(raw);
     if (!item) return { status: 400, body: { error: 'bad_item' } };
@@ -1256,7 +1269,7 @@ export class Shop {
     const u = await this.d.ledger.shopUser(p.userId);
     let removed = 0;
     if (u) {
-      u.items = u.items.filter((i) => i !== p.item && i !== `wear:${p.item}`);
+      u.items = u.items.filter((i) => i !== p.item && i !== `wear:${p.item}` && i !== `aura:${p.item}`);
       await this.d.ledger.saveShopUser(u);
       removed = await this.dropStickers(u, p.item);
     }
