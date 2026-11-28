@@ -12,7 +12,7 @@ import type { ShopState } from '@/lib/telegram';
 import { prepareWebLogin, resumeWebLogin, startWebLogin } from '@/lib/tg-login';
 import type { TgLogin } from '@/lib/tg-login';
 import { TopBar } from '@/ui/TopBarView';
-import { ST_SIZE, STICKERS, stickerFrame, withCapColor } from '@/game/skins/stickers';
+import { ST_SIZE, STICKERS, stickerFrame, stickerFrames, withCapColor } from '@/game/skins/stickers';
 import type { StickerDef } from '@/game/skins/stickers';
 import { myDef } from '@/game/skins/my-sticker';
 import { holoStrip, withFx } from '@/game/skins/shine';
@@ -267,12 +267,12 @@ export default function StickersClient() {
     let raf = 0;
     const loop = (now: number) => {
       raf = requestAnimationFrame(loop);
-      const f = Math.floor((now - t0) / 100) % 20;
+      const def = tab === 'make' ? (stdDefRef.current ?? myDef(lookRef.current)) : withFx(fxBaseRef.current, fxSelRef.current);
+      const f = Math.floor((now - t0) / 100) % stickerFrames(def);
       if (f === last) return;
       last = f;
       g.setTransform(1, 0, 0, 1, 0, 0);
       g.clearRect(0, 0, c.width, c.height);
-      const def = tab === 'make' ? (stdDefRef.current ?? myDef(lookRef.current)) : withFx(fxBaseRef.current, fxSelRef.current);
       g.drawImage(stickerFrame(def, f, lang), 0, 0, c.width, c.height);
     };
     raf = requestAnimationFrame(loop);
@@ -292,7 +292,7 @@ export default function StickersClient() {
     if ('theme' in d) return fmt(b.earn.theme, { theme: themeName(lang, d.theme) });
     return '';
   };
-  const figName = (f: MyFig): string => (f === 'actor' || f === 'kotBanan' ? b.figs[f] : themeName(lang, (MY_FIGS.find((x) => x.id === f) as { theme: string }).theme));
+  const figName = (f: MyFig): string => (f === 'actor' || f === 'kotBanan' || f === 'extinguisher' ? b.figs[f] : themeName(lang, (MY_FIGS.find((x) => x.id === f) as { theme: string }).theme));
 
   const apply = (r: Awaited<ReturnType<typeof shopPick>>): boolean => {
     if (!r) {

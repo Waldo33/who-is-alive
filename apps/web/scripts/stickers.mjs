@@ -1,6 +1,6 @@
 // Видеостикеры для Telegram: node scripts/stickers.mjs [папка-просмотра]
 // Рисует все стикеры (src/game/skins/stickers.ts) на обоих языках и кодирует их в WEBM VP9 с прозрачностью
-// (512×512, 10 кадров/с, 2 с, ≤ 256 КБ — требования Telegram) в apps/server/stickers/<язык>/<id>.webm.
+// (512×512, 10 кадров/с, 2 с — у «Пшшш!» 3 с, ≤ 256 КБ — требования Telegram) в apps/server/stickers/<язык>/<id>.webm.
 // Бот берёт файлы оттуда (они уезжают на сервер вместе с выкладкой). Папка-просмотра — лист первых кадров.
 import { build } from 'esbuild';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';

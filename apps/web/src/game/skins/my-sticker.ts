@@ -7,6 +7,7 @@ import type { Ctx } from '../pixels';
 import { themeLook } from '../themes';
 import type { Pose } from '../themes/types';
 import { kotBananFrame } from './kot-banan';
+import { extinguisherFrame } from './extinguisher';
 import { iceFrost, withFx } from './shine';
 import { R, ST_SIZE, actorFrame, orbit, put, say, star } from './stickers';
 import type { StickerDef } from './stickers';
@@ -104,6 +105,7 @@ function jumpFigure(fig: MyFig, t: number): { fr: HTMLCanvasElement; k: number }
     if (ph === 'crouch' || ph === 'land') return { fr: kotBananFrame(F.D, 'D', 0, 2), k: 2 };
     return { fr: kotBananFrame(ph === 'stand' ? F.D : F.DANCE + 3, 'D'), k: 2 };
   }
+  if (fig === 'extinguisher') return { fr: extinguisherFrame(ph === 'stand' || ph === 'crouch' || ph === 'land' ? F.D : F.DANCE + 3), k: 2 };
   const def = MY_FIGS.find((f) => f.id === fig);
   const theme = def && 'theme' in def ? THEME_RULES.findIndex((r) => r.id === def.theme) : -1;
   const j = jumpOf(theme);
@@ -117,6 +119,7 @@ function figure(fig: MyFig, pose: MyPose, t: number): { fr: HTMLCanvasElement; k
   const p = poseFrame(pose, t);
   if (fig === 'actor') return { fr: actorFrame(p.frame), k: 3, dx: p.dx * 3, dy: p.dy * 3, flip: false };
   if (fig === 'kotBanan') return { fr: kotBananFrame(p.frame, 'D'), k: 2, dx: p.dx * 2, dy: p.dy * 2, flip: false };
+  if (fig === 'extinguisher') return { fr: extinguisherFrame(p.frame), k: 2, dx: p.dx * 2, dy: p.dy * 2, flip: false };
   const def = MY_FIGS.find((f) => f.id === fig);
   const theme = def && 'theme' in def ? THEME_RULES.findIndex((r) => r.id === def.theme) : -1;
   if (theme < 0) return { fr: actorFrame(p.frame), k: 3, dx: 0, dy: 0, flip: false };

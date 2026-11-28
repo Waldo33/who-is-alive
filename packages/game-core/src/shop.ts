@@ -29,6 +29,8 @@ export interface ShopItem {
 
 export const SHOP_ITEMS: ShopItem[] = [
   { id: 'kotBanan', stars: 79, was: 129, isNew: true },
+  // «Огнетушка»: всё горит, а он по сценарию (идея владельца 28.11.2026 по мему про спокойствие среди пожара)
+  { id: 'extinguisher', stars: 79, was: 129, isNew: true },
   // эффекты — от самых эффектных к простым (сетка владельца 28.11.2026 под пополнение 100⭐: на сотню —
   // одна вещь из лучших и одна попроще, VHS самый дорогой — он на приманке «Собери свой пак!»)
   { id: 'vhs', stars: 69, isNew: true, effect: true },
@@ -144,6 +146,14 @@ export const STICKER_LIST: StickerMeta[] = [
   { id: 'happyTears', set: 'kotBanan', emoji: ['🥲', '👑'], now: false, earn: 'win' },
   { id: 'freeze', set: 'kotBanan', emoji: ['🥶', '🧊'], now: false, earn: 'unsuspected' },
   { id: 'meow', set: 'kotBanan', emoji: ['🐱', '❓'], now: false, earn: 'clairvoyant' },
+  // ── набор «Огнетушка»: два сразу, остальные — за награды ──
+  { id: 'asPlanned', set: 'extinguisher', emoji: ['🙂', '🔥'], now: true },
+  { id: 'spray', set: 'extinguisher', emoji: ['🧯', '💨'], now: true },
+  { id: 'fine', set: 'extinguisher', emoji: ['👌', '🔥'], now: false, earn: 'cut' },
+  { id: 'noDisturb', set: 'extinguisher', emoji: ['☕', '🤫'], now: false, earn: 'lose' },
+  { id: 'sfx', set: 'extinguisher', emoji: ['🎆', '😎'], now: false, earn: 'win' },
+  { id: 'takeOn', set: 'extinguisher', emoji: ['📽', '🎬'], now: false, earn: 'unsuspected' },
+  { id: 'intended', set: 'extinguisher', emoji: ['😉', '👍'], now: false, earn: 'clairvoyant' },
   // «за игру»: атрибуты площадки, потом костюмы тем
   { id: 'cut', set: 'play', emoji: ['✂️', '😵'], now: false, earn: 'cut' },
   { id: 'star', set: 'play', emoji: ['⭐', '🤩'], now: false, earn: 'stars' },
@@ -238,9 +248,9 @@ export function earnedStickers(pid: string, rounds: EarnRound[], match: Pick<Mat
   return STICKER_LIST.filter((s) => (s.earn === 'theme' ? !!s.theme && themes.has(s.theme) : s.earn && ev.has(s.earn))).map((s) => s.id);
 }
 
-/** Скины гардероба — наборы, которые меняют самого актёра (сейчас один: Кот-банан). */
-export type SkinId = 'kotBanan';
-export const SKINS: readonly SkinId[] = ['kotBanan'];
+/** Скины гардероба — наборы, которые меняют самого актёра: Кот-банан и Огнетушка. */
+export type SkinId = 'kotBanan' | 'extinguisher';
+export const SKINS: readonly SkinId[] = ['kotBanan', 'extinguisher'];
 export const isSkin = (x: unknown): x is SkinId => SKINS.includes(x as SkinId);
 /**
  * Какой скин надет у игрока с этими покупками (`ShopUser.items`). Выбор в гардеробе — отметка `wear:<скин>`
@@ -296,12 +306,13 @@ export const MY_LINES = 2;
 export const MY_LINE = 10;
 
 /**
- * Фигурки конструктора: обычный актёр — у всех; Кот-банан — за покупку набора; герои площадок — когда
+ * Фигурки конструктора: обычный актёр — у всех; Кот-банан и Огнетушка — за покупку набора; герои площадок — когда
  * открыт стикер этой площадки (сыграл на ней дубль). Порядок — порядок на странице.
  */
 export const MY_FIGS = [
   { id: 'actor' },
   { id: 'kotBanan', item: 'kotBanan' },
+  { id: 'extinguisher', item: 'extinguisher' },
   { id: 'chef', sticker: 'chef', theme: 'chefs' },
   { id: 'penguin', sticker: 'penguin', theme: 'penguins' },
   { id: 'cosmo', sticker: 'cosmo', theme: 'cosmonauts' },

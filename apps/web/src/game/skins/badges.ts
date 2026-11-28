@@ -5,6 +5,7 @@ import { F } from '../sprites';
 import { slotBadgeFrame, slotBadgeStill } from './badge-slots';
 import type { SlotBadge } from './badge-slots';
 import { kotBananFrame } from './kot-banan';
+import { extinguisherStand } from './extinguisher';
 
 /**
  * Значки для эмодзи-статуса Telegram (game-core/badges.ts): пиксельные иконки 18×18 + белый контур = 20×20,
@@ -128,6 +129,14 @@ function kotBananHead(): HTMLCanvasElement {
   return c;
 }
 
+/** Огнетушка целиком: баллон без пустого верха кадра. */
+function extinguisherBadge(): HTMLCanvasElement {
+  const f = extinguisherStand();
+  const { c, g } = canvas(f.width, 21);
+  g.drawImage(f, 0, -8);
+  return c;
+}
+
 const SLOT: Partial<Record<BadgeId, SlotBadge>> = { jackpot: 'jackpot', skulls: 'skulls' };
 
 /**
@@ -173,6 +182,7 @@ function starShine(src: HTMLCanvasElement, t: number): HTMLCanvasElement {
 function art(id: BadgeId, t?: number): HTMLCanvasElement {
   if (id === 'reel') return reel();
   if (id === 'kotBanan') return kotBananHead();
+  if (id === 'extinguisher') return extinguisherBadge();
   const rows = ROWS[id as keyof typeof ROWS];
   const { c, g } = canvas(rows[0]!.length, rows.length);
   grid(g, 0, 0, rows, K);

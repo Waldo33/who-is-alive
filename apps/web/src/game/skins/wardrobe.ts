@@ -1,13 +1,15 @@
 import { PAL } from '@kto/assets';
 import { DICTS, EFFECTS, STICKER_LIST, fmt, isEffect, shopItem } from '@kto/game-core';
 import type { EffectId } from '@kto/game-core';
-import type { Lang, ShopItemId, StickerId } from '@kto/game-core';
+import type { Lang, ShopItemId, SkinId, StickerId } from '@kto/game-core';
 import { text } from '../art';
 import { canvas, dither, outlineOf } from '../pixels';
 import type { Ctx } from '../pixels';
-import { F, frameSpec } from '../sprites';
+import { F } from '../sprites';
 import type { View } from '../themes/types';
 import { KB_W, kotBananFrame, tearArcs, wailFace } from './kot-banan';
+import { disc, extinguisherFrame, flame } from './extinguisher';
+import { skinFigure } from './figures';
 import { fxOver, holoOver, holoSparks } from './shine';
 import { actorFrame } from './stickers';
 
@@ -71,6 +73,13 @@ const ICON: Record<string, () => HTMLCanvasElement> = {
     return h;
   },
   meow: () => kotBananFrame(F.S, 'S'),
+  asPlanned: () => extinguisherFrame(F.D),
+  spray: () => extinguisherFrame(F.D, { hose: 'front', face: 'wide' }),
+  fine: () => extinguisherFrame(F.D, { soot: true, face: 'blink' }),
+  noDisturb: () => extinguisherFrame(F.D + 1),
+  sfx: () => extinguisherFrame(F.DANCE + 3),
+  takeOn: () => extinguisherFrame(F.WAVE + 1),
+  intended: () => extinguisherFrame(F.WAVE, { face: 'happy', foam: null }),
 };
 const icons = new Map<string, HTMLCanvasElement>();
 function icon(id: StickerId): HTMLCanvasElement {
@@ -90,8 +99,8 @@ export interface CardState {
   item: ShopItemId;
   /** Выданные стикеры (ярко), остальные — под замком. */
   issued: Set<string>;
-  /** Надет Кот-банан: эффект на витрине — на нём (эффект надевается и на своего персонажа). */
-  cat?: boolean;
+  /** Надетый скин: эффект на витрине — на нём (эффект надевается и на своего персонажа). */
+  skin?: SkinId | null;
 }
 
 /** Нарисовать кадр карточки на `ms` от начала. `g` уже в масштабе (setTransform(k…)). */
@@ -103,11 +112,28 @@ export function drawCard(g: Ctx, ms: number, st: CardState): void {
   };
   g.imageSmoothingEnabled = false;
   R(0, 0, CARD_W, CARD_H, PAL.night);
-  // сцена: дождь, прожектор, лужа
   const SY = 0;
   const SH = 146;
   const FLOOR = SY + SH - 8;
   const k = Math.floor(ms / 100);
+  if (st.item === 'extinguisher') exScene(g, ms, R, SY, SH, FLOOR);
+  else rainScene(g, k, R, SY, SH, FLOOR);
+  // ярлык «НОВОЕ» — у новых наборов (каталог: isNew)
+  if (shopItem(st.item)?.isNew) {
+    const tw = text(g, t.isNew, 0, -100, PAL.white, FONT, { outline: null });
+    R(CARD_W - tw - 12, SY + 6, tw + 6, 12, PAL.magenta);
+    text(g, t.isNew, CARD_W - 9 - tw / 2, SY + 8, PAL.white, FONT, { outline: null });
+  }
+  if (isEffect(st.item)) return fxCard(g, k, st.item, t, R, SY + SH, st.skin ?? null);
+  if (st.item !== 'extinguisher') catScene(g, ms, k, FLOOR);
+  R(0, SY + SH, CARD_W, 1, PAL.yellow);
+  giftRow(g, st, t, R);
+}
+
+type Rect = (x: number, y: number, w: number, h: number, c: string) => void;
+
+/** Сцена Кот-банана и эффектов: дождь, прожектор, лужа. */
+function rainScene(g: Ctx, k: number, R: Rect, SY: number, SH: number, FLOOR: number): void {
   R(0, SY, CARD_W, SH, PAL.navy);
   dither(g, 0, SY + 40, CARD_W, 40, PAL.night);
   R(0, SY + 80, CARD_W, SH - 80, PAL.night);
@@ -127,14 +153,78 @@ export function drawCard(g: Ctx, ms: number, st: CardState): void {
   R(46, FLOOR - 2, 88, 6, PAL.navy);
   R(56, FLOOR - 1, 68, 4, PAL.blue);
   R(66, FLOOR, 18, 1, PAL.cyan);
-  // ярлык «НОВОЕ» — у новых наборов (каталог: isNew)
-  if (shopItem(st.item)?.isNew) {
-    const tw = text(g, t.isNew, 0, -100, PAL.white, FONT, { outline: null });
-    R(CARD_W - tw - 12, SY + 6, tw + 6, 12, PAL.magenta);
-    text(g, t.isNew, CARD_W - 9 - tw / 2, SY + 8, PAL.white, FONT, { outline: null });
+}
+
+// Огнетушка: стоит → моргает → машет шлангом → «танцует» фонтанчиком пены; вокруг горит декорация
+const EX_SEQ: { f: number; ms: number }[] = [
+  { f: F.D, ms: 900 },
+  { f: F.D + 1, ms: 150 },
+  { f: F.D, ms: 500 },
+  ...[0, 1, 0, 1].map((i) => ({ f: F.WAVE + i, ms: 220 })),
+  { f: F.D, ms: 400 },
+  ...[0, 1, 2].flatMap(() => [0, 1, 2, 3].map((i) => ({ f: F.DANCE + i, ms: 160 }))),
+  { f: F.D, ms: 300 },
+];
+const EX_MS = EX_SEQ.reduce((a, p) => a + p.ms, 0);
+
+/** Витрина Огнетушки: тёмный павильон, горят фанерные декорации, прожектор, на полу — пена. */
+function exScene(g: Ctx, ms: number, R: Rect, SY: number, SH: number, FLOOR: number): void {
+  const k = Math.floor(ms / 100);
+  R(0, SY, CARD_W, SH, PAL.night);
+  dither(g, 0, SY, CARD_W, 30, PAL.ink);
+  // дым под потолком
+  for (let i = 0; i < 9; i++) {
+    const x = ((i * 23 + k) % (CARD_W + 30)) - 15;
+    disc(g, x, SY + 14 + (i % 3) * 5, 10 + (i % 2) * 4, PAL.dusk);
   }
-  if (isEffect(st.item)) return fxCard(g, k, st.item, t, R, SY + SH, !!st.cat);
-  // Кот-банан ×4
+  // фанерные декорации по бокам — горят
+  for (const [x, w] of [[6, 34], [CARD_W - 40, 34]] as const) {
+    R(x, SY + 56, w, FLOOR - SY - 56, PAL.brick);
+    R(x, SY + 56, w, 2, PAL.clay);
+    for (let i = 6; i < w; i += 8) R(x + i, SY + 58, 1, FLOOR - SY - 58, PAL.umber);
+    R(x + w / 2 - 1, FLOOR - 10, 2, 10, PAL.umber);
+  }
+  const fl: [number, number, number][] = [[10, 12, 46], [22, 14, 62], [34, 10, 40], [CARD_W - 34, 10, 44], [CARD_W - 22, 14, 66], [CARD_W - 10, 12, 50]];
+  fl.forEach(([cx, w, h], i) => flame(g, cx, FLOOR - 1, w + ((k + i) % 2), h + (((k + i * 2) % 4) - 1) * 3));
+  // искры
+  for (let i = 0; i < 10; i++) {
+    const side = i % 2 ? CARD_W - 24 : 24;
+    const y = FLOOR - 20 - ((i * 17 + k * 4) % 90);
+    R(side + ((i * 7) % 15) - 7, SY + y, 1, 1, i % 3 ? PAL.amber : PAL.yellow);
+  }
+  // прожектор и пол
+  g.fillStyle = 'rgba(254,231,97,0.10)';
+  g.beginPath();
+  g.moveTo(74, SY);
+  g.lineTo(106, SY);
+  g.lineTo(140, FLOOR + 4);
+  g.lineTo(40, FLOOR + 4);
+  g.fill();
+  R(0, FLOOR, CARD_W, SY + SH - FLOOR, PAL.dusk);
+  R(52, FLOOR, 76, 2, PAL.steel);
+  // лужа пены у ног
+  for (let x = 60; x < 120; x += 3) R(x, FLOOR - 1 + ((x / 3) % 2), 2, 1, (x / 3) % 4 ? PAL.white : PAL.mist);
+  // сама Огнетушка ×4
+  let t = ms % EX_MS;
+  let f: number = F.D;
+  for (const p of EX_SEQ) {
+    if (t < p.ms) {
+      f = p.f;
+      break;
+    }
+    t -= p.ms;
+  }
+  const h = extinguisherFrame(f);
+  const hs = 4;
+  const x0 = Math.round(CARD_W / 2 - (h.width * hs) / 2);
+  const y0 = FLOOR + 2 - h.height * hs;
+  holoOver(h.getContext('2d') as Ctx, k, { x: 0, y: 0, w: h.width, h: h.height, k: 1 }, 0.12);
+  g.drawImage(h, x0, y0, h.width * hs, h.height * hs);
+  holoSparks(g, k, { x: x0, y: y0, w: h.width * hs, h: h.height * hs, k: hs }, 2);
+}
+
+/** Кот-банан ×4 под дождём: ревёт, танцует, машет. */
+function catScene(g: Ctx, ms: number, k: number, FLOOR: number): void {
   const { p, k: pk } = poseAt(ms);
   const hs = 4;
   const h = kotBananFrame(p.f, p.v, p.s ?? 0);
@@ -147,7 +237,10 @@ export function drawCard(g: Ctx, ms: number, st: CardState): void {
   g.drawImage(h, x0, y0, h.width * hs, h.height * hs);
   if (p.cry !== undefined) tearArcs(g, x0, y0, hs, pk, 6 + p.cry * 4);
   holoSparks(g, k, { x: x0, y: y0, w: h.width * hs, h: h.height * hs, k: hs }, 2);
-  R(0, SY + SH, CARD_W, 1, PAL.yellow);
+}
+
+/** Имя набора, подпись и ряд из 7 стикеров в подарок. */
+function giftRow(g: Ctx, st: CardState, t: (typeof DICTS)['ru']['shop'], R: Rect): void {
   // имя, подпись, подарок
   text(g, t.items[st.item].name, 90, 152, PAL.yellow, FONT, { size: 2 });
   text(g, t.items[st.item].tagline, 90, 172, PAL.white, FONT);
@@ -179,21 +272,22 @@ export function drawCard(g: Ctx, ms: number, st: CardState): void {
   text(g, t.giftHow, 90, 236, PAL.mist, FONT);
 }
 
-/** Актёр (или Кот-банан) в эффекте: кадр `frame`, эффект на шаге `k` (тот же, что в стикере: пиксель спрайта — 1). */
-function fxActor(fx: EffectId, frame: number, k: number, cat = false): HTMLCanvasElement {
-  const a = cat ? kotBananFrame(frame, frameSpec(frame).view, frameSpec(frame).shift) : actorFrame(frame);
+/** Актёр (или надетый скин) в эффекте: кадр `frame`, эффект на шаге `k` (тот же, что в стикере: пиксель спрайта — 1). */
+function fxActor(fx: EffectId, frame: number, k: number, skin: SkinId | null = null): HTMLCanvasElement {
+  const a = skin ? skinFigure(skin, frame) : actorFrame(frame);
   const o = canvas(a.width, a.height);
   o.g.drawImage(a, 0, 0);
   fxOver(o.g, fx, k, { x: 0, y: 0, w: a.width, h: a.height, k: 1 });
   return o.c;
 }
 
-/** Карточка эффекта: свой персонаж (актёр или надетый Кот-банан) ×4 в эффекте машет и танцует, под ним — ещё три позы. */
-function fxCard(g: Ctx, k: number, fx: EffectId, t: (typeof DICTS)['ru']['shop'], R: (x: number, y: number, w: number, h: number, c: string) => void, top: number, cat: boolean): void {
+/** Карточка эффекта: свой персонаж (актёр или надетый скин) ×4 в эффекте машет и танцует, под ним — ещё три позы. */
+function fxCard(g: Ctx, k: number, fx: EffectId, t: (typeof DICTS)['ru']['shop'], R: Rect, top: number, skin: SkinId | null): void {
+  const cat = skin === 'kotBanan';
   // у кота руки спрятаны в банане — он не машет, а танцует
   const seq = cat ? [F.D, F.D, F.DANCE, F.DANCE + 1, F.DANCE + 2, F.DANCE + 3] : [F.D, F.D, F.WAVE, F.WAVE + 1, F.WAVE + 2, F.WAVE + 1, F.D, F.DANCE, F.DANCE + 1, F.DANCE + 2, F.DANCE + 3];
   const fr = seq[Math.floor(k / 3) % seq.length];
-  const h = fxActor(fx, fr, k, cat);
+  const h = fxActor(fx, fr, k, skin);
   const hs = 4;
   const x0 = Math.round(CARD_W / 2 - (h.width * hs) / 2);
   const y0 = top - 10 - h.height * hs;
@@ -205,7 +299,7 @@ function fxCard(g: Ctx, k: number, fx: EffectId, t: (typeof DICTS)['ru']['shop']
   // ещё три позы в эффекте маленькими, ×2 — эффект накидывается на любой стикер
   const poses = [cat ? F.DANCE + 1 : F.WAVE + 1, F.STARTLE, F.JUMP];
   poses.forEach((f, i) => {
-    const c = fxActor(fx, f, k + i * 3, cat);
+    const c = fxActor(fx, f, k + i * 3, skin);
     const cx = 36 + i * 54;
     g.drawImage(c, cx - c.width, 236 - c.height * 2, c.width * 2, c.height * 2);
   });
@@ -265,6 +359,6 @@ export function starsIcon(): HTMLCanvasElement {
 
 /** Значок набора в списке гардероба: маленький персонаж набора (×1, с контуром). */
 export function itemIcon(item: ShopItemId): HTMLCanvasElement {
-  const ICONS: Record<ShopItemId, () => HTMLCanvasElement> = { kotBanan: () => kotBananFrame(F.D, 'D'), ...(Object.fromEntries(EFFECTS.map((fx) => [fx, () => fxActor(fx, F.D, 6)])) as Record<EffectId, () => HTMLCanvasElement>) };
+  const ICONS: Record<ShopItemId, () => HTMLCanvasElement> = { kotBanan: () => kotBananFrame(F.D, 'D'), extinguisher: () => extinguisherFrame(F.D), ...(Object.fromEntries(EFFECTS.map((fx) => [fx, () => fxActor(fx, F.D, 6)])) as Record<EffectId, () => HTMLCanvasElement>) };
   return ICONS[item]();
 }

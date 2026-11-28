@@ -78,7 +78,7 @@ export function slotHits(rounds: readonly { reveal: readonly { pid: string; eid:
 }
 
 /** Эмодзи значков скинов (голова скина). */
-export const SKIN_BADGE_EMOJI: Record<SkinId, string> = { kotBanan: '🍌' };
+export const SKIN_BADGE_EMOJI: Record<SkinId, string> = { kotBanan: '🍌', extinguisher: '🧯' };
 
 export const BADGE_IDS: readonly BadgeId[] = [...PLAY_BADGES.map((b) => b.id), ...SKINS];
 export const isBadgeId = (x: unknown): x is BadgeId => BADGE_IDS.includes(x as BadgeId);

@@ -2,7 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
-import { DICTS, SHOP_ITEMS, STICKER_LIST, fmt, isEffect, shopItem } from '@kto/game-core';
+import { DICTS, SHOP_ITEMS, STICKER_LIST, fmt, isEffect, isSkin, shopItem } from '@kto/game-core';
 import type { Lang, ShopItemId } from '@kto/game-core';
 import { track } from '@/lib/analytics';
 import { TG_APP } from '@/lib/env';
@@ -78,10 +78,10 @@ export default function WardrobeClient() {
   // не показываем снова кнопку «Купить», ждём и опрашиваем — и после перезагрузки страницы тоже
   const [paidAt, setPaidAt] = useState(0);
   const waiting = !owned && paidAt > 0;
-  // эффект на витрине — на том, кто ты в игре: в надетом Кот-банане или обычным актёром
-  const cat = st?.worn === 'kotBanan';
-  const stRef = useRef({ lang, owned, item: ITEM, cat });
-  stRef.current = { lang, owned, item: ITEM, cat };
+  // эффект на витрине — на том, кто ты в игре: в надетом скине или обычным актёром
+  const skin = isSkin(st?.worn) ? st.worn : null;
+  const stRef = useRef({ lang, owned, item: ITEM, skin });
+  stRef.current = { lang, owned, item: ITEM, skin };
 
   useEffect(() => {
     const l = detectLang();
@@ -186,9 +186,9 @@ export default function WardrobeClient() {
       const f = Math.floor((now - t0) / 100);
       if (f === last) return;
       last = f;
-      const { lang: l, owned: o, item, cat } = stRef.current;
+      const { lang: l, owned: o, item, skin: sk } = stRef.current;
       g.setTransform(scale, 0, 0, scale, 0, 0);
-      drawCard(g, now - t0, { lang: l, item, cat, issued: new Set(o ? STICKER_LIST.filter((s) => s.set === item && s.now).map((s) => s.id) : []) });
+      drawCard(g, now - t0, { lang: l, item, skin: sk, issued: new Set(o ? STICKER_LIST.filter((s) => s.set === item && s.now).map((s) => s.id) : []) });
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);

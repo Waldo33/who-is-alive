@@ -8,14 +8,15 @@ import type { Ctx } from '../pixels';
 import { text } from '../art';
 import { KB_W, kotBananFrame, tearArcs, wailFace } from './kot-banan';
 import { PLAY_ART } from './stickers-play';
+import { EX_ART } from './stickers-ex';
 
 /**
  * Стикеры для Telegram (гардероб, за флагом shop): рисуются кодом из тех же спрайтов, что игра.
  * Стикер — холст 96×96 (подпись игровым шрифтом, белая стикерная обводка), в файл — ×5 с полями: 512×512.
  * Анимированные — 20 кадров по 100 мс (видеостикер WEBM, `pnpm --filter web stickers`).
  *
- * Наборы: `starter` — бесплатный пак с обычным актёром (после первого матча), `kotBanan` — за покупку
- * набора (2 сразу, остальные позже — за награды в матче в этом скине).
+ * Наборы: `starter` — бесплатный пак с обычным актёром (после первого матча), `kotBanan` и `extinguisher`
+ * (stickers-ex.ts) — за покупку набора (2 сразу, остальные позже — за награды в матче).
  */
 
 export const ST_SIZE = 96;
@@ -24,10 +25,13 @@ export const ST_FRAME_MS = 100;
 
 export interface StickerDef extends StickerMeta {
   draw(g: Ctx, t: number, lang: Lang): void;
+  /** Кадров в петле (по 100 мс), если не ST_FRAMES: «Пшшш!» Огнетушки — 30 (3 с, предел Telegram). */
+  frames?: number;
 }
 export interface Art {
   id: StickerId;
   draw(g: Ctx, t: number, lang: Lang): void;
+  frames?: number;
 }
 
 /** Второе семейство — латиница на сервере (film-render.ts регистрирует два файла шрифта); в браузере его нет и оно не мешает. */
@@ -270,7 +274,12 @@ const ART: Art[] = [
 ];
 
 /** Стикеры в порядке пака: данные — game-core › shop.ts, рисунок — здесь. */
-export const STICKERS: StickerDef[] = STICKER_LIST.map((m) => ({ ...m, draw: [...ART, ...PLAY_ART].find((a) => a.id === m.id)!.draw }));
+export const STICKERS: StickerDef[] = STICKER_LIST.map((m) => {
+  const a = [...ART, ...PLAY_ART, ...EX_ART].find((x) => x.id === m.id)!;
+  return { ...m, draw: a.draw, ...(a.frames ? { frames: a.frames } : {}) };
+});
+/** Кадров в петле стикера. */
+export const stickerFrames = (def: object): number => ('frames' in def && typeof def.frames === 'number' ? def.frames : ST_FRAMES);
 
 /** Белая стикерная обводка 2 пикс. по альфе — поверх прозрачного фона. */
 function stickerize(c: HTMLCanvasElement): HTMLCanvasElement {

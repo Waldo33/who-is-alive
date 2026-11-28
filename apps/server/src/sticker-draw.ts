@@ -9,14 +9,13 @@ import { join } from 'node:path';
 import { myDef } from '../../web/src/game/skins/my-sticker';
 import { withFx } from '../../web/src/game/skins/shine';
 import { withCapColor } from '../../web/src/game/skins/stickers';
-import { STICKERS, stickerFile } from '../../web/src/game/skins/stickers';
+import { STICKERS, stickerFile, stickerFrames } from '../../web/src/game/skins/stickers';
 import { warmRender } from './film-render';
 import type { StickerJob } from './sticker-render';
 
 const MAX_BYTES = 256 * 1024;
-const FRAMES = 20;
 
-/** Нарисовать и закодировать: 20 кадров 512×512 → WEBM VP9 с прозрачностью, ≤ 256 КБ. */
+/** Нарисовать и закодировать: 20 кадров (у «Пшшш!» — 30) 512×512 → WEBM VP9 с прозрачностью, ≤ 256 КБ. */
 export async function renderMyWebm(s: StickerJob, o: { fonts: string; ffmpeg?: string; tmp?: string }): Promise<Buffer> {
   await warmRender({ fonts: o.fonts });
   const dir = await mkdtemp(join(o.tmp ?? tmpdir(), 'my-sticker-'));
@@ -26,7 +25,8 @@ export async function renderMyWebm(s: StickerJob, o: { fonts: string; ffmpeg?: s
     if ('std' in s && !std) throw new Error('bad_sticker');
     const def = std && 'std' in s ? withFx(withCapColor(std, s.color ?? null), s.fx) : myDef(s as Exclude<StickerJob, { std: unknown }>);
     const lang = 'std' in s ? s.lang : 'ru';
-    for (let t = 0; t < FRAMES; t++) {
+    const frames = std ? stickerFrames(std) : 20;
+    for (let t = 0; t < frames; t++) {
       const c = stickerFile(def, t, lang) as unknown as { encode(f: 'png'): Promise<Buffer> };
       await writeFile(join(dir, `${String(t).padStart(2, '0')}.png`), await c.encode('png'));
     }

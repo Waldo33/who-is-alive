@@ -514,7 +514,7 @@ export const en: Dict = {
       preparing: 'Badges are getting ready, check back in a minute',
       progress: '{n} of {of}',
       hoursLeft: '{h} h left',
-      names: { onSet: 'On set', star: 'Star of the take', director: 'Director', reel: 'Film reel', oscar: 'Statuette', jackpot: 'Jackpot', skulls: 'Three skulls', kotBanan: 'Catnana' },
+      names: { onSet: 'On set', star: 'Star of the take', director: 'Director', reel: 'Film reel', oscar: 'Statuette', jackpot: 'Jackpot', skulls: 'Three skulls', kotBanan: 'Catnana', extinguisher: 'Foamy' },
       how: {
         onSet: 'Play your first match',
         star: 'Win a match, lasts a day',
@@ -524,6 +524,7 @@ export const en: Dict = {
         jackpot: 'Hit 777 on a casino spin',
         skulls: 'Hit a skull on a casino spin',
         kotBanan: 'Buy the set in the wardrobe',
+        extinguisher: 'Buy the set in the wardrobe',
       },
     },
     emojiPack: {
@@ -598,6 +599,7 @@ export const en: Dict = {
     logout: 'Log out',
     items: {
       kotBanan: { name: 'CATNANA', tagline: 'Crying, but a banana', title: 'Catnana', invoice: 'A Be Nobody set: the Catnana costume and 7 Telegram stickers.' },
+      extinguisher: { name: 'FOAMY', tagline: 'All as scripted', title: 'Foamy', invoice: 'A Be Nobody set: the Foamy costume and 7 Telegram stickers.' },
       holo: { name: 'HOLOGRAM', tagline: 'Your sticker shimmers', title: 'Hologram', invoice: 'A Be Nobody effect: any sticker in your pack shimmers like a hologram.' },
       noir: { name: 'NOIR', tagline: 'Like an old movie', title: 'Noir', invoice: 'A Be Nobody effect: any sticker in your pack goes black and white, like an old movie.' },
       sepia: { name: 'SEPIA', tagline: 'Old film reel', title: 'Sepia', invoice: 'A Be Nobody effect: any sticker in your pack goes old film, scratches and all.' },
@@ -619,6 +621,13 @@ export const en: Dict = {
       happyTears: ['Happy', 'tears'],
       freeze: ['Freeze'],
       meow: ['Meow?'],
+      asPlanned: ['All as', 'scripted'],
+      spray: ['Pssssh!'],
+      fine: ['I\'m fine'],
+      noDisturb: ['Do not', 'disturb'],
+      sfx: ['Special', 'effects'],
+      takeOn: ['Rolling!'],
+      intended: ['Meant', 'to happen'],
       cut: ['Cut!'],
       star: ['Star!'],
       jackpot: ['Jackpot!'],
@@ -706,7 +715,7 @@ export const en: Dict = {
         bad: 'Something went wrong, try again',
       },
       poses: { wave: 'Hi', dance: 'Dance', stun: 'Stunned', startle: 'Startled', jump: 'Jump', freeze: 'Freeze', ask: 'Question' },
-      figs: { actor: 'Actor', kotBanan: 'Catnana' },
+      figs: { actor: 'Actor', kotBanan: 'Catnana', extinguisher: 'Foamy' },
       /** What unlocks stickers and figures. */
       earn: {
         cut: 'get hit in a take',

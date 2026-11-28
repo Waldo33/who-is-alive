@@ -189,10 +189,10 @@ export default function HomeClient() {
         )}
         {/* одна плитка-предложение за раз: пока не забран бесплатный стикерпак — он, потом «Гардероб» (иначе не влезает в iPhone SE) */}
         {stickers === 'off' && (
-          <Link className="daily-tile" href="/wardrobe" onClick={() => track('shop_tap', { from: 'home' })}>
+          <Link className="daily-tile" href="/wardrobe?item=extinguisher" onClick={() => track('shop_tap', { from: 'home' })}>
             <span className="daily-tile-title">{t.shop.title}</span>
             <span className="daily-tile-sub">
-              {t.shop.isNew}: {t.shop.items.kotBanan.name}
+              {t.shop.isNew}: {t.shop.items.extinguisher.name}
             </span>
           </Link>
         )}

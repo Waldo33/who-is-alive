@@ -1,10 +1,10 @@
 import { PAL, PLAYER_COLORS } from '@kto/assets';
 import { isSkin } from '@kto/game-core';
 import type { SkinId } from '@kto/game-core';
-import { F, frameSpec } from '../sprites';
+import { F } from '../sprites';
 import { canvas, outlineOf } from '../pixels';
 import type { Ctx } from '../pixels';
-import { KB_H, KB_W, kotBananFrame } from './kot-banan';
+import { SKIN_H, SKIN_W, skinFigure } from './figures';
 
 /**
  * Скины гардероба в игре: лента кадров `F.*` (те же позы, что у человечка) в том же масштабе, что соседи —
@@ -47,20 +47,18 @@ function tinted(src: HTMLCanvasElement, color: string): HTMLCanvasElement {
 }
 
 function build(id: SkinId): SkinArt {
-  void id; // пока один скин — Кот-банан
-  const fw = KB_W;
-  const fh = KB_H;
+  const fw = SKIN_W;
+  const fh = SKIN_H;
   const ow = fw + 2;
   const oh = fh + 2;
   const body = canvas(fw * F.COUNT, fh);
   const outline = canvas(ow * F.COUNT, oh);
   for (let i = 0; i < F.COUNT; i++) {
-    const { view, shift } = frameSpec(i);
-    const one = kotBananFrame(i, view, shift);
+    const one = skinFigure(id, i);
     body.g.drawImage(one, i * fw, 0);
     outlineOf(one.getContext('2d')! as Ctx, fw, fh, outline.g, i * ow, 0, PAL.white);
   }
-  // кот стоит в кадре с отступом (3, 12) — ноги на 28-й строке, середина — 9-й столбец
+  // скин стоит в кадре так, что ноги — на 28-й строке, середина — 9-й столбец (figures.ts)
   return {
     body: body.c,
     outline: outline.c,
