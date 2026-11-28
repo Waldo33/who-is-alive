@@ -2723,9 +2723,14 @@ export class GameScene extends Phaser.Scene {
     return id && art ? { id, art } : null;
   }
 
-  /** Чей облик из гардероба (скин, эффект) можно показать на сущности: своей — всегда, чужой — когда раскрыта (`open`). */
+  /**
+   * Чей облик из гардероба (скин, эффект) можно показать на сущности: только когда связь «игрок ↔ сущность»
+   * открыта всем (`open`: повтор, финал разоблачения, итоги). Во время дубля его нет и на своём персонаже —
+   * игрок не путается, где он (решение владельца 28.11.2026); myEid оставлен для вызовов.
+   */
   private lookPid(eid: number, myEid: number, open: boolean): string | undefined {
-    return eid === myEid && myEid >= 0 ? this.sim.selfPid : open ? this.sim.summary?.reveal.find((r) => r.eid === eid)?.pid : undefined;
+    void myEid;
+    return open ? this.sim.summary?.reveal.find((r) => r.eid === eid)?.pid : undefined;
   }
 
   /** Эффект на персонаже у сущности — там же, где скин (skinAt). */
@@ -3317,8 +3322,8 @@ export class GameScene extends Phaser.Scene {
       const y = Math.round(mine.py + (mine.y - mine.py) * alpha) + AY;
       const { yoff } = this.frameFor(mine, t);
       const bounce = Math.floor(performance.now() / 180) % 2;
-      const mySk = this.skinAt(mine.eid, myEid, false);
-      this.arrow.setVisible(true).setPosition(x, y + yoff - (mySk ? mySk.art.ay - 3 : CH_H) - 3 - bounce);
+      // во время дубля скина на своём нет — стрелка над обычным человечком
+      this.arrow.setVisible(true).setPosition(x, y + yoff - CH_H - 3 - bounce);
       this.ring.setVisible(true).setPosition(x, y).setDepth(y - 0.6);
       // начало дубля: два расходящихся круга вокруг себя — глаз сразу находит своего
       if (phase === 'countdown' && this.findMeAt < 0) this.findMeAt = performance.now();
