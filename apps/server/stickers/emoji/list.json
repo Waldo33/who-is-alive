@@ -44,8 +44,8 @@
   "emoji": "✂️"
  },
  {
-  "id": "pause",
-  "emoji": "⏸️"
+  "id": "freeze",
+  "emoji": "❄️"
  },
  {
   "id": "crown",
@@ -56,8 +56,8 @@
   "emoji": "🥇"
  },
  {
-  "id": "chair",
-  "emoji": "🪑"
+  "id": "cinema",
+  "emoji": "🎦"
  },
  {
   "id": "mic",
@@ -68,7 +68,7 @@
   "emoji": "📼"
  },
  {
-  "id": "peel",
+  "id": "banana",
   "emoji": "🍌"
  },
  {

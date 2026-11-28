@@ -115,7 +115,8 @@ export class EmojiSet<Id extends string> {
     }
   }
 
-  private async ownerId(): Promise<number> {
+  /** Владелец набора в Telegram (человек): BADGES_OWNER или создатель чата поддержки. */
+  async ownerId(): Promise<number> {
     if (this.owner) return this.owner;
     const admins = await this.d.api<{ status: string; user: { id: number } }[]>('getChatAdministrators', { chat_id: this.d.supportChat });
     const creator = admins.find((a) => a.status === 'creator');

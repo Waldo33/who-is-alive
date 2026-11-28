@@ -144,42 +144,9 @@ const BOLT = [
 /** Глаза, смотрят вбок. */
 const EYE = ['..ooo..', '.owwwo.', 'owwwwwo', 'owwwwwo', 'owwoowo', 'owwoowo', 'owwoowo', 'owwwwwo', '.owwwo.', '..ooo..'];
 
-/** Монтажные ножницы: «вырезан». */
-const SCISSORS = [
-  'o..............o',
-  'omo...........mo',
-  '.omo........omo.',
-  '..omo......omo..',
-  '...omo....omo...',
-  '....omo..omo....',
-  '.....omoomo.....',
-  '......owwo......',
-  '.....oommoo.....',
-  '....orroorro....',
-  '...orro..orro...',
-  '..orro....orro..',
-  '.orrrro..orrrro.',
-  '.or..ro..or..ro.',
-  '.or..ro..or..ro.',
-  '..oooo....oooo..',
-];
 
-/** Стоп-кадр: пауза изо льда. */
-const PAUSE = [
-  'oooooo..oooooo',
-  'owwcco..owwcco',
-  'owccbo..owccbo',
-  'occcbo..occcbo',
-  'occcbo..occcbo',
-  'occcbo..occcbo',
-  'occcbo..occcbo',
-  'occcbo..occcbo',
-  'occcbo..occcbo',
-  'occcbo..occcbo',
-  'occcbo..occcbo',
-  'occbbo..occbbo',
-  'oooooo..oooooo',
-];
+
+
 
 /** Корона с камнями. */
 const CROWN = [
@@ -264,49 +231,26 @@ const NEW = [
   '.oooooooooooooooo.',
 ];
 
-/** Кресло режиссёра. */
-const CHAIR = [
-  'oo............oo',
-  'ouo..........ouo',
-  'ouoooooooooooouo',
-  'ouonnnnnnnnnnouo',
-  'ouonwwnwwnwwnouo',
-  'ouonnnnnnnnnnouo',
-  'ouoooooooooooouo',
-  'ouo..........ouo',
-  'oooooooooooooooo',
-  'ottttttttttttuuo',
-  'oooooooooooooooo',
-  '.ouo........ouo.',
-  '..ouo......ouo..',
-  '...ouo....ouo...',
-  '....ouooooouo...',
-  '...ouo....ouo...',
-  '..ouo......ouo..',
-  '.oo..........oo.',
+/** Кинозал: занавес и экран с кнопкой «пуск» — «премьера». */
+const CINEMA = [
+  'oooooooooooooooooo',
+  'ovvvvvvvvvvvvvvvvo',
+  'orvrvrvrvrvrvrvrvo',
+  'orrroooooooooorrro',
+  'orvrowwwwwwwwovrro',
+  'orvrowwwbwwwwovrro',
+  'orvrowwwbbwwwovrro',
+  'orvrowwwbbbwwovrro',
+  'orvrowwwbbwwwovrro',
+  'orvrowwwbwwwwovrro',
+  'orvrommmmmmmmovrro',
+  'orrroooooooooorrro',
+  'oooooooooooooooooo',
+  'onknknknknknknknko',
+  'oooooooooooooooooo',
 ];
 
-/** Хлопушка-конфетти. */
-const POPPER = [
-  '...........y...c..',
-  '.....c..r.........',
-  '..y.........g...r.',
-  '.......g..y.......',
-  '...r.........c....',
-  '..........ooo...y.',
-  '..c......oyyyo....',
-  '........oyrrryo.g.',
-  '......oorrryyyo...',
-  '.....oyyyrrrro....',
-  '....orrryyyyo.....',
-  '...oyyyrrrro......',
-  '..orrryyyyo.......',
-  '..oyyyrrro........',
-  '.orrryyyo.........',
-  '.oyyyrro..........',
-  'oaaaoo............',
-  'ooo...............',
-];
+
 
 /** Стрелка вправо. */
 const ARROW = [
@@ -375,44 +319,42 @@ const VHS = [
   'oooooooooooooooooo',
 ];
 
-/** Банановая кожура: на ней поскальзываются. */
-const PEEL = [
-  '.......oo.......',
-  '......ouuo......',
-  '......oyyo......',
-  '.....oyzzyo.....',
-  '....oyzzzzyo....',
-  '....oyzzzzyo....',
-  '...oyyzzzzyyo...',
-  '..oyyoyzzyoyyo..',
-  '.oyyo.oyyo.oyyo.',
-  '.oyo..oyyo..oyo.',
-  'oyao..oyao..oayo',
-  'oao...oyao...oao',
-  'oo....oaao....oo',
-  '......oooo......',
-]
+/** Банан. */
+const BANANA = [
+  '...............oo.',
+  '..............ouuo',
+  '.............oyyo.',
+  '............oyyao.',
+  '...........oyyyao.',
+  'oo........oyyyyao.',
+  'ouo......oyyyyyao.',
+  '.ozoo..ooyyyyyao..',
+  '.oyzzooyyyyyyyao..',
+  '..oyyzzyyyyyyaao..',
+  '...ooyyyyyyaaoo...',
+  '.....ooooooo......',
+];
 
-/** Студийный микрофон на стойке. */
+/** Микрофон. */
 const MIC = [
-  '...oooooo...',
-  '..ommmmmmo..',
-  '.omdmdmdmmo.',
-  '.ommmmmmmmo.',
-  '.omdmdmdmmo.',
-  '.ommmmmmmmo.',
-  '.omdmdmdmmo.',
-  '..ommmmmmo..',
-  '...oooooo...',
-  'o...odo....o',
-  'od..odo...do',
-  '.od.odo..do.',
-  '..ooodoooo..',
-  '.....odo....',
-  '.....odo....',
-  '...oooooo...',
-  '..oddddddo..',
-  '..oooooooo..',
+  '...oooo...',
+  '.oommmmoo.',
+  '.omdmmdmo.',
+  'ommwmmmmmo',
+  'omdmmmmdmo',
+  'ommmmmmmmo',
+  '.omdmmdmo.',
+  '.oommmmoo.',
+  '..oooooo..',
+  '..odnnno..',
+  '...odno...',
+  '...odno...',
+  '...odro...',
+  '...odno...',
+  '...odno...',
+  '...odno...',
+  '...odno...',
+  '...oooo...',
 ];
 
 /** Медаль за первое место. */
@@ -454,6 +396,98 @@ const ROCKET = [
   '......oyyo......',
   '.......oo.......',
 ];
+
+/** Монтажные ножницы «вырезан»: лезвия вправо, кольца слева. */
+function scissors(): HTMLCanvasElement {
+  return inked(
+    draw(17, 15, (P) => {
+      const piv = [8, 7] as const;
+      // ручки к кольцам
+      for (const [rx, ry] of [[3, 3], [3, 11]] as const) {
+        for (let i = 0; i <= 10; i++) {
+          const k = i / 10;
+          P(Math.round(piv[0] + (rx + 2 - piv[0]) * k), Math.round(piv[1] + (ry - piv[1]) * k), PAL.red);
+        }
+        for (let y = -3; y <= 3; y++)
+          for (let x = -3; x <= 3; x++) {
+            const r = Math.hypot(x, y);
+            if (r < 3.3 && r > 1.4) P(rx + x, ry + y, y > 1 || x < -1 ? PAL.wine : PAL.red);
+          }
+      }
+      // лезвия: от оси к кончикам
+      for (const [tx, ty] of [[16, 1], [16, 13]] as const)
+        for (let i = 0; i <= 20; i++) {
+          const k = i / 20;
+          const x = Math.round(piv[0] + (tx - piv[0]) * k);
+          const y = Math.round(piv[1] + (ty - piv[1]) * k);
+          const dn = ty < piv[1] ? 1 : -1;
+          P(x, y, PAL.white);
+          if (k < 0.85) P(x, y + dn, k < 0.5 ? PAL.white : PAL.mist);
+          if (k < 0.5) P(x, y + 2 * dn, PAL.mist);
+        }
+      P(piv[0], piv[1], PAL.steel);
+    }),
+  );
+}
+
+/** Снежинка: стоп-кадр — мир замёрз. */
+function snowflake(): HTMLCanvasElement {
+  return inked(
+    draw(15, 15, (P) => {
+      const c = 7;
+      for (let i = -7; i <= 7; i++) {
+        P(c + i, c, PAL.cyan);
+        P(c, c + i, PAL.cyan);
+      }
+      for (let i = -4; i <= 4; i++) {
+        if (Math.abs(i) < 2) continue;
+        P(c + i, c + i, PAL.mist);
+        P(c + i, c - i, PAL.mist);
+      }
+      // веточки «галочкой» на лучах
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+        const bx = c + dx * 6;
+        const by = c + dy * 6;
+        P(bx + dy - dx, by + dx - dy, PAL.cyan);
+        P(bx - dy - dx, by - dx - dy, PAL.cyan);
+        P(bx + 2 * dy - 2 * dx, by + 2 * dx - 2 * dy, PAL.cyan);
+        P(bx - 2 * dy - 2 * dx, by - 2 * dx - 2 * dy, PAL.cyan);
+      }
+      for (let y = -1; y <= 1; y++) for (let x = -1; x <= 1; x++) P(c + x, c + y, PAL.white);
+    }),
+  );
+}
+
+/** Хлопушка-конфетти: полосатый конус, из раструба летят конфетти и серпантин. */
+function popper(): HTMLCanvasElement {
+  return inked(
+    draw(17, 17, (P) => {
+      const [tx, ty] = [1, 15];
+      const [ox, oy] = [10, 6];
+      const len = Math.hypot(ox - tx, oy - ty);
+      const [ux, uy] = [(ox - tx) / len, (oy - ty) / len];
+      for (let y = 0; y < 17; y++)
+        for (let x = 0; x < 17; x++) {
+          const vx = x + 0.5 - tx;
+          const vy = y + 0.5 - ty;
+          const along = vx * ux + vy * uy;
+          const side = Math.abs(vx * -uy + vy * ux);
+          if (along < 0 || along > len) continue;
+          if (side > (along / len) * 3.6 + 0.4) continue;
+          P(x, y, Math.floor(along / 2.2) % 2 ? PAL.magenta : PAL.yellow);
+        }
+      const bits: [number, number, string][] = [
+        [13, 1, PAL.yellow], [15, 5, PAL.green], [9, 1, PAL.green], [15, 9, PAL.magenta], [12, 11, PAL.yellow],
+        [6, 3, PAL.cyan], [15, 13, PAL.cyan], [11, 3, PAL.white],
+      ];
+      for (const [x, y, col] of bits) {
+        P(x, y, col);
+        P(x + 1, y, col);
+      }
+      for (const [x, y] of [[12, 6], [13, 6], [14, 7], [15, 7], [16, 6]] as const) P(x, y, PAL.cyan);
+    }),
+  );
+}
 
 /** Будильник: «скоро». */
 function clock(): HTMLCanvasElement {
@@ -622,17 +656,17 @@ export const POST_EMOJI: readonly PostEmoji[] = [
   { id: 'sparkles', emoji: '✨', name: 'Искры', art: sparkles, anim: true },
   { id: 'bolt', emoji: '⚡', name: 'Удар', art: () => rows(BOLT) },
   { id: 'eyes', emoji: '👀', name: 'Глаза', art: eyes },
-  { id: 'scissors', emoji: '✂️', name: 'Вырезан', art: () => rows(SCISSORS) },
-  { id: 'pause', emoji: '⏸️', name: 'Стоп-кадр', art: () => rows(PAUSE) },
+  { id: 'scissors', emoji: '✂️', name: 'Вырезан', art: scissors },
+  { id: 'freeze', emoji: '❄️', name: 'Стоп-кадр', art: snowflake },
   { id: 'crown', emoji: '👑', name: 'Корона', art: () => rows(CROWN) },
   { id: 'medal', emoji: '🥇', name: 'Медаль', art: () => rows(MEDAL) },
-  { id: 'chair', emoji: '🪑', name: 'Кресло', art: () => rows(CHAIR) },
+  { id: 'cinema', emoji: '🎦', name: 'Премьера', art: () => rows(CINEMA) },
   { id: 'mic', emoji: '🎤', name: 'Микрофон', art: () => rows(MIC) },
   { id: 'vhs', emoji: '📼', name: 'VHS', art: () => rows(VHS) },
-  { id: 'peel', emoji: '🍌', name: 'Кожура', art: () => rows(PEEL) },
+  { id: 'banana', emoji: '🍌', name: 'Банан', art: () => rows(BANANA) },
   { id: 'phone', emoji: '📱', name: 'Телефон', art: () => rows(PHONE) },
   { id: 'gift', emoji: '🎁', name: 'Подарок', art: () => rows(GIFT) },
-  { id: 'popper', emoji: '🎉', name: 'Праздник', art: () => rows(POPPER) },
+  { id: 'popper', emoji: '🎉', name: 'Праздник', art: popper },
   { id: 'heart', emoji: '❤️', name: 'Сердце', art: () => rows(HEART) },
   { id: 'rocket', emoji: '🚀', name: 'Запуск', art: () => rows(ROCKET) },
   { id: 'clock', emoji: '⏰', name: 'Скоро', art: clock },

@@ -636,9 +636,10 @@ export class Bot {
     });
   }
 
-  /** /emoji: доделать набор эмодзи для постов и прислать ссылку на него (команда не в меню). */
+  /** /emoji: доделать набор эмодзи для постов и прислать ссылку на него. Только владельцу игры (решение владельца 28.11.2026), остальным — молчание. */
   private async onEmoji(msg: NonNullable<Update['message']>): Promise<void> {
-    const t = T[langOf(msg.from?.language_code)];
+    if (!msg.from || msg.from.id !== (await this.postEmoji.ownerId())) return;
+    const t = T[langOf(msg.from.language_code)];
     await this.postEmoji.kick();
     const ready = Object.keys(this.postEmoji.ids()).length > 0;
     await this.api('sendMessage', { chat_id: msg.chat.id, text: ready ? `${t.emojiText}\n${await this.postEmoji.link()}` : t.emojiWait });

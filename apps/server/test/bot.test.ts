@@ -82,6 +82,19 @@ describe('Telegram-бот', () => {
     expect(kb[0][0].web_app.url).toBe('https://site.example/stickers?src=tg');
   });
 
+  it('/emoji (набор эмодзи для постов) — только владельцу: чужому бот молчит и набор не трогает', async () => {
+    const { calls, store } = makeBot();
+    const fetchImpl = (async (url: string, init: { body: string }) => {
+      const method = url.split('/').pop()!;
+      calls.push({ method, body: JSON.parse(init.body) as Record<string, unknown> });
+      return new Response(JSON.stringify({ ok: true, result: method === 'getMe' ? { username: 'be_nobody_bot' } : true }));
+    }) as unknown as typeof fetch;
+    const bot = new Bot({ token: TOKEN, apiBase: 'https://api.example', site: 'https://site.example', store, log: silentLogger, fetchImpl, badgesOwner: 42 });
+    const upd = { message: { chat: { id: 7, type: 'private' }, text: '/emoji', from: { id: 7, language_code: 'ru' } } };
+    await bot.handle('POST', '/hook', { 'x-telegram-bot-api-secret-token': bot.hookSecret }, upd);
+    expect(calls.map((c) => c.method).filter((m) => m !== 'getMe')).toEqual([]);
+  });
+
   it('кастинг: первый результат за день окончательный, рейтинг чата по победам и попыткам', async () => {
     const { bot } = makeBot();
     const n = dailyNow();
