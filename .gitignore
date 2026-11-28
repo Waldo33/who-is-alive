@@ -4,7 +4,6 @@ out
 dist
 coverage
 .env*.local
-.vercel
 *.tsbuildinfo
 .live-e2e.mjs
 __pycache__/
