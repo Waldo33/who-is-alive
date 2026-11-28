@@ -6,11 +6,14 @@ import { ANIMATED_BADGES, BADGE_IDS, DICTS, fmt } from '@kto/game-core';
 import type { BadgeId, Lang } from '@kto/game-core';
 import { track } from '@/lib/analytics';
 import { detectLang } from '@/lib/lang';
-import { bootTelegram, emojiStatusCaps, haptic, inTelegram, linkTelegramOnce, shopCached, shopSignedIn, shopState, setEmojiStatus, tgLink } from '@/lib/telegram';
+import { bootTelegram, emojiStatusCaps, haptic, inTelegram, linkTelegramOnce, openTelegram, shopCached, shopSignedIn, shopState, setEmojiStatus, tgLink } from '@/lib/telegram';
 import type { ShopState } from '@/lib/telegram';
 import { TopBar } from '@/ui/TopBarView';
 import { badgeIcon } from '@/game/skins/badges';
 import { SLOT_BADGE_FPS, SLOT_BADGE_MS } from '@/game/skins/badge-slots';
+
+/** Официальный канал Telegram Premium: что даёт подписка и как её оформить (Mini App открывает только t.me). */
+const PREMIUM_LINK = 'https://t.me/premium';
 
 type Badge = NonNullable<ShopState['badges']>[number];
 type Icon = { src: string; frames: string[]; w: number; h: number };
@@ -37,6 +40,8 @@ export default function BadgesClient() {
   const [icons, setIcons] = useState<Partial<Record<BadgeId, Icon>>>({});
   const [inTg, setInTg] = useState(false);
   const [tgOn, setTgOn] = useState(false);
+  // без Telegram Premium статус не поставить: говорим сразу и вместо кнопок «В статус» — ссылка на Premium
+  const [noPremium, setNoPremium] = useState(false);
   const [list, setList] = useState<Badge[] | null>(null);
   const [known, setKnown] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -70,6 +75,8 @@ export default function BadgesClient() {
     }
     void (async () => {
       await bootTelegram();
+      const caps = emojiStatusCaps();
+      setNoPremium(caps.ok && !caps.premium);
       const c = shopCached();
       if (c?.badges) setList(c.badges);
       // счёт ведёт игровой сервер по связке «игрок ↔ Telegram»
@@ -118,11 +125,23 @@ export default function BadgesClient() {
     if (link) location.href = link;
   };
 
+  const premium = () => {
+    track('badges_premium', {});
+    openTelegram(PREMIUM_LINK);
+  };
+
   return (
     <main className="daily badges">
       <TopBar lang={lang} onBack={() => router.push('/wardrobe')} />
       <h1 className="daily-title">{t.title}</h1>
-      <p className="badges-hint">{note || t.hint}</p>
+      {noPremium && !note ? (
+        // строка-ссылка вместо кнопки внизу: на iPhone SE список значков занимает весь экран
+        <button className="badges-hint badges-premium" onClick={premium}>
+          {t.noPremium}
+        </button>
+      ) : (
+        <p className="badges-hint">{note || t.hint}</p>
+      )}
       <ul className="badges-list" style={{ visibility: known ? 'visible' : 'hidden' }}>
         {(list ?? BADGE_IDS.map((id): Badge => ({ id, have: false, n: 0, of: 1, until: null, emoji: null }))).map((b) => {
           const ic = icons[b.id];
@@ -133,7 +152,7 @@ export default function BadgesClient() {
                 <b>{t.names[b.id]}</b>
                 <span>{sub(b)}</span>
               </span>
-              {b.have && inTg && (
+              {b.have && inTg && !noPremium && (
                 <button className="btn small" onClick={() => void put(b)} aria-disabled={busy}>
                   {t.set}
                 </button>

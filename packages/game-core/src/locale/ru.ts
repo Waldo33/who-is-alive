@@ -580,6 +580,7 @@ export const ru = {
       setDone: 'Значок в статусе',
       setFail: 'Не вышло, попробуй ещё раз',
       premium: 'Статус ставится только с Telegram Premium',
+      noPremium: 'Значок в статус ставится с Telegram Premium ›',
       noTg: 'Значки ставятся в статус из игры в Telegram',
       openTg: 'Открыть в Telegram',
       preparing: 'Значки ещё готовятся, загляни через минуту',
