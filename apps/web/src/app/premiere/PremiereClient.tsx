@@ -13,7 +13,6 @@ import {
   SHARE_MAX,
   STREAK_REWARDS,
   dayTasks,
-  fmt,
   premiereDay,
   premierePhase,
   premiereWeek,
