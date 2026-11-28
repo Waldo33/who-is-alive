@@ -285,6 +285,7 @@ export function mountSandbox(root: HTMLElement, opts: ShellOptions): () => void 
         onShare,
         onSave,
         onSettings: () => bar.openSettings(),
+        onExit: exitToMenu,
         onEvent: track,
         // на сайте (не в автономном файле): после матча с ИИ — «С друзьями», создать комнату на главной
         onInvite: standalone ? undefined : () => location.assign('/?create=1'),
