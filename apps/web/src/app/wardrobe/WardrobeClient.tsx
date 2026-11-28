@@ -426,6 +426,12 @@ export default function WardrobeClient() {
         <button className="link" onClick={() => router.push('/stickers?fx=holo')}>
           {t.fxCategory}
         </button>
+        {/* значки для эмодзи-статуса: ставятся только внутри Telegram */}
+        {inTg && known && (
+          <button className="link" onClick={() => router.push('/badges')}>
+            {t.badges.open}
+          </button>
+        )}
         {/* браузер: вход через Telegram — купленное в боте (скин, стикерпак) и здесь */}
         {!inTg &&
           (login ? (

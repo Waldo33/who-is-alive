@@ -1,10 +1,12 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { join } from 'node:path';
 import { LOGIN_CODE, WebLogins } from './web-login';
 import { DICTS } from '@kto/game-core';
 import { RateWindow } from './limits';
 import { errFields } from './log';
 import type { Logger } from './log';
 import { cleanName } from './room';
+import { BadgeSet } from './badges';
 import { Shop, localLedger } from './shop';
 import type { ShopDeps, ShopLedger, VerifyToken } from './shop';
 import type { Store } from './store';
@@ -53,6 +55,10 @@ export interface BotOptions {
   verifyGameToken?: VerifyToken;
   /** Видеостикеры (<язык>/<id>.webm); нет — гардероб без выдачи стикеров. */
   stickersDir?: string;
+  /** Картинки значков для статуса (<id>.png, badges.ts); нет — `<stickersDir>/badges`. */
+  badgesDir?: string;
+  /** Владелец набора значков в Telegram (id человека); нет — создатель чата поддержки. */
+  badgesOwner?: number;
   /** Чат поддержки (бот — его участник): сюда бот пересылает /paysupport, ответ на пересылку уходит игроку. */
   supportChat?: string;
   /** Нарисовать свой стикер игрока (WEBM): sticker-render.ts здесь или игровой сервер по туннелю. */
@@ -102,13 +108,13 @@ const T = {
     clipTitle: 'Лучший момент дубля',
     solve: '🎬 На кастинг',
     openApp: 'Открыть игру',
-    filmAgain: '🎬 Реванш',
+    filmAgain: '🎬 Ещё дубль?',
     filmWatch: '▶ Смотреть фильм',
     filmPuzzle: '🔎 Найди актёра',
     filmDone: '🎬 Снято! Звезда фильма — {name}',
     filmDoneDraw: '🎬 Снято! Ничья: {names}',
     filmAward: '🏅 {title} — {names}',
-    filmRoom: 'Комната {code}. Реванш? Жми кнопку — та же комната.',
+    filmRoom: 'Комната {code}. Жми кнопку — та же комната.',
     cardGather: '🎬 Массовка · режиссёр собирает съёмку',
     cardSeats: 'В кадре: {names} · {n} из {max}',
     cardWait1: 'Ждём друзей — жми кнопку и заходи!',
@@ -151,13 +157,13 @@ const T = {
     clipTitle: 'Best moment of the take',
     solve: '🎬 Join the casting',
     openApp: 'Open the game',
-    filmAgain: '🎬 Rematch',
+    filmAgain: '🎬 Another take?',
     filmWatch: '▶ Watch the film',
     filmPuzzle: '🔎 Find the actor',
     filmDone: "🎬 That's a wrap! Star of the film: {name}",
     filmDoneDraw: "🎬 That's a wrap! Draw: {names}",
     filmAward: '🏅 {title}: {names}',
-    filmRoom: 'Room {code}. Rematch? Tap the button — same room.',
+    filmRoom: 'Room {code}. Tap the button — same room.',
     cardGather: '🎬 Be Nobody · the director is casting',
     cardSeats: 'On set: {names} · {n} of {max}',
     cardWait1: 'Waiting for friends — tap the button to join!',
@@ -265,7 +271,7 @@ interface PrepareBody {
   clip?: string;
   text?: string;
   thumb?: boolean;
-  /** kind 'clip' (фильм матча): кнопка «Реванш» — в ту же комнату (метка карточки или код). */
+  /** kind 'clip' (фильм матча): кнопка «Ещё дубль?» — в ту же комнату (метка карточки или код). */
   invite?: string;
   /** kind 'clip' (фильм матча): загадка из него — кнопкой «Найди актёра» в игру внутри Telegram. */
   puzzle?: string;
@@ -281,6 +287,7 @@ export class Bot {
   private meAt = 0;
   readonly hookSecret: string;
   readonly shop: Shop;
+  readonly badges: BadgeSet;
   private readonly supportChat: string;
   /** Кто недавно написал /paysupport: id → до какого времени пересылать его сообщения. */
   private readonly supportUntil = new Map<number, number>();
@@ -294,6 +301,14 @@ export class Bot {
     // секрет вебхука выводится из ключа бота — хранить отдельно не нужно (так же было в Supabase)
     this.supportChat = o.supportChat ?? SUPPORT_CHAT;
     this.hookSecret = createHash('sha256').update('kto-hook:' + o.token).digest('hex').slice(0, 48);
+    this.badges = new BadgeSet({
+      api: (m, b) => this.api(m, b),
+      username: async () => (await this.getMe()).username,
+      log: o.log,
+      dir: o.badgesDir ?? join(o.stickersDir ?? '', 'badges'),
+      supportChat: this.supportChat,
+      owner: o.badgesOwner,
+    });
     this.shop = new Shop({
       api: (m, b) => this.api(m, b),
       username: async () => (await this.getMe()).username,
@@ -305,6 +320,7 @@ export class Bot {
       channelId: '@' + CHANNEL.split('/').pop(),
       drawMy: o.drawMy,
       lease: o.lease,
+      badgeEmoji: () => this.badges.ids(),
     });
   }
 
@@ -340,10 +356,19 @@ export class Bot {
       `Ответь на это сообщение — ответ уйдёт игроку. Возврат: кнопка ниже → Run workflow, номер ${from.id}.`,
       `#u${from.id}`,
     ].join('\n');
+    // кнопки: профиль покупателя в Telegram (по нику — t.me, без ника — по id) и сразу страница возврата в GitHub
+    // (shop-refund.yml: номер покупателя вставить в поле who)
+    const refundBtn = { text: '↩️ Возврат: shop-refund', url: REFUND_URL };
+    const profileBtn = { text: '👤 Профиль покупателя', url: user ? `https://t.me/${from.username}` : `tg://user?id=${from.id}` };
+    const send = (rows: { text: string; url: string }[][]) => this.api('sendMessage', { chat_id: this.supportChat, text: card, disable_web_page_preview: true, reply_markup: { inline_keyboard: rows } });
     try {
-      // кнопка — сразу на страницу возврата в GitHub (shop-refund.yml): номер покупателя вставить в поле who
-      const refund = { inline_keyboard: [[{ text: '↩️ Возврат: shop-refund', url: REFUND_URL }]] };
-      await this.api('sendMessage', { chat_id: this.supportChat, text: card, disable_web_page_preview: true, reply_markup: refund });
+      try {
+        await send([[profileBtn], [refundBtn]]);
+      } catch (e) {
+        // ссылку по id Telegram не пускает, если игрок закрыл её настройками приватности, — тогда без профиля
+        if (user) throw e;
+        await send([[refundBtn]]);
+      }
     } catch (e) {
       // бот не в чате поддержки — игроку всё равно ответим; тревога — по журналу
       this.o.log('error', 'tg_support', errFields(e));
@@ -783,7 +808,7 @@ export class Bot {
 
   /**
    * Фильм матча готов: карточка приглашения превращается в видео «Снято!» со звездой, наградами и кнопкой
-   * «Реванш» (та же метка — та же комната). Каждый следующий матч этой комнаты заменяет видео на новое.
+   * «Ещё дубль?» (та же метка — та же комната). Каждый следующий матч этой комнаты заменяет видео на новое.
    * Telegram не смог взять видео — хотя бы текст с итогом и ссылкой на ролик.
    */
   async film(n: FilmNotice): Promise<BotReply> {
@@ -836,7 +861,7 @@ export class Bot {
     else if (body.kind === 'daily' && this.casting) result = await this.dailyCard(t, SQUARES.test(body.squares ?? '') ? body.squares! : '');
     else if (body.kind === 'clip' && CLIP_ID.test(body.clip ?? '')) {
       if (!this.o.clipBase) return { status: 503, body: { error: 'no_clips' } };
-      // фильм матча из комнаты — кнопка «Реванш» туда же (по метке карточки или по коду комнаты)
+      // фильм матча из комнаты — кнопка «Ещё дубль?» туда же (по метке карточки или по коду комнаты)
       const again = INVITE_TAG.test(body.invite ?? '') ? `g_${body.invite}` : /^[A-Z]{4}$/.test(body.code ?? '') ? `r_${body.code}` : '';
       const puzzle = /^[A-Z2-9]{5}$/.test(body.puzzle ?? '') ? body.puzzle! : '';
       let text = typeof body.text === 'string' ? safeCaption(body.text.slice(0, 300), this.o.site) : '';

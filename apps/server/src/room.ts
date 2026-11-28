@@ -1,4 +1,4 @@
-import { DICTS, TICK_MS, fmt, earnedStickers, recordRound, renamePid, seasonLeadTheme } from '@kto/game-core';
+import { DICTS, DIRECTOR_HUMANS, TICK_MS, fmt, earnedStickers, recordRound, renamePid, seasonLeadTheme } from '@kto/game-core';
 import type { GameConfig, PlayerInfo, SkinId } from '@kto/game-core';
 import { DEFAULT_WIRE_SETTINGS, HostSession } from '@kto/net';
 import type { Channel, PresenceMember, RoomMsg, ServerMsg, Transport, WireError, WireRoom, WireRoomSettings } from '@kto/net';
@@ -70,8 +70,20 @@ export interface RoomOptions {
   onCard?: (room: Room, card: RoomCard) => void;
   /** Матч сыгран: всем людям — что им открылось (game-core › earnedStickers, может быть пусто) — server.ts отдаст боту. */
   onStickers?: (room: Room, earned: { pid: string; stickers: string[] }[]) => void;
+  /**
+   * Матч сыгран: счётчики значков для статуса (game-core/badges.ts) — люди, победители и режиссёр, если комната
+   * впервые сыграла матч с `DIRECTOR_HUMANS` живыми (одна комната — одна засчитанная); server.ts запишет по связке с Telegram.
+   */
+  onBadges?: (room: Room, m: MatchBadges) => void;
   /** Комната переехала с соседнего экземпляра сервера (выкладка без обрыва): состав и настройки — оттуда. */
   restore?: RoomSnapshot;
+}
+
+/** Итог матча для значков: id людей, победителей и режиссёра, которому засчитана комната (или null). */
+export interface MatchBadges {
+  humans: string[];
+  winners: string[];
+  director: string | null;
 }
 
 /** Готовый фильм матча: ролик в хранилище клипов и итог для подписи. */
@@ -119,6 +131,8 @@ export interface RoomSnapshot {
   invite?: string;
   /** Матч уже был (карточку в чате держит фильм, а не сбор). */
   played?: boolean;
+  /** Комната уже засчитана режиссёру для значка «Режиссёр». */
+  directorCounted?: boolean;
 }
 
 /**
@@ -299,6 +313,8 @@ export class Room {
   private cardSig = '';
   /** Был ли тут матч: закрытие лобби без матча — «Съёмку отменили» на карточке. */
   private played = false;
+  /** Комната уже засчитана режиссёру для значка «Режиссёр» (матч с четырьмя живыми). */
+  private directorCounted = false;
 
   constructor(private readonly o: RoomOptions) {
     this.code = o.code;
@@ -317,6 +333,7 @@ export class Room {
       for (const m of snap.members) this.members.set(m.userId, { ...m, peer: null, offlineSince: m.offlineSince || o.now() });
       for (const id of snap.spectators) this.expectSpectators.add(id);
       this.played = snap.played === true;
+      this.directorCounted = snap.directorCounted === true;
       return;
     }
     // создатель занимает место и цвет 0 сразу (как create_room), подключится следом
@@ -634,6 +651,7 @@ export class Room {
     this.broadcastText(JSON.stringify({ t: 'film', state: 'none' } satisfies ServerMsg));
     runner.onLastTake = (takes) => {
       this.matchStickers(runner, takes);
+      this.matchBadges(runner, takes);
       this.startFilm(runner, takes);
     };
     runner.onKnockout = (pid, eid, round) => this.preclip(pid, eid, round);
@@ -781,6 +799,20 @@ export class Room {
     const earned = r.players.filter((p) => !p.ai).map((p) => ({ pid: p.pid, stickers: earnedStickers(p.pid, rounds, match) as string[] }));
     // всех людей: сыгранный матч сам по себе открывает бесплатный пак (shop.ts › earn)
     if (earned.length) this.o.onStickers(this, earned);
+  }
+
+  /** Последний дубль разоблачён: кто играл и кто победил — для значков (комната режиссёру — один раз). */
+  private matchBadges(r: MatchRunner, takes: FilmTake[]): void {
+    if (!this.o.onBadges || !takes.length) return;
+    const humans = r.players.filter((p) => !p.ai).map((p) => p.pid);
+    if (!humans.length) return;
+    const winners = r.host.sim.outcome().winners.filter((pid) => humans.includes(pid));
+    let director: string | null = null;
+    if (!this.directorCounted && humans.length >= DIRECTOR_HUMANS && humans.includes(this.directorId)) {
+      director = this.directorId;
+      this.directorCounted = true;
+    }
+    this.o.onBadges(this, { humans, winners, director });
   }
 
   /**
@@ -935,6 +967,7 @@ export class Room {
       spectators: [...this.spectators.keys(), ...this.expectSpectators],
       ...(this.invite ? { invite: this.invite } : {}),
       ...(this.played ? { played: true } : {}),
+      ...(this.directorCounted ? { directorCounted: true } : {}),
     };
   }
 

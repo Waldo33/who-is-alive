@@ -298,9 +298,11 @@ describe('гардероб', () => {
     expect(card).toContain('скин не появился');
     expect(card).not.toMatch(/evil\.example|@spam/);
     expect(card).toMatch(/#u77$/);
-    // кнопка — сразу на запуск возврата в GitHub Actions
     const msg = calls.filter((c) => c.method === 'sendMessage' && String(c.body.chat_id) === SUPPORT).at(-1)!;
-    expect(msg.body.reply_markup).toEqual({ inline_keyboard: [[{ text: '↩️ Возврат: shop-refund', url: 'https://github.com/Waldo33/who-is-alive/actions/workflows/shop-refund.yml' }]] });
+    // кнопки — профиль покупателя (у Ани нет ника — по id) и сразу запуск возврата в GitHub Actions
+    expect(msg.body.reply_markup).toEqual({
+      inline_keyboard: [[{ text: '👤 Профиль покупателя', url: 'tg://user?id=77' }], [{ text: '↩️ Возврат: shop-refund', url: 'https://github.com/Waldo33/who-is-alive/actions/workflows/shop-refund.yml' }]],
+    });
     // ответ на пересылку в чате поддержки — игроку; чужая группа и не ответ — никому
     const before = sent(77).length;
     await hook(bot, { message: { message_id: 5, chat: { id: Number(SUPPORT), type: 'group' }, from: { id: 1, first_name: 'Owner' }, text: 'Вернули звёзды', reply_to_message: { text: card, from: { id: 9, is_bot: true } } } });
@@ -325,6 +327,29 @@ describe('гардероб', () => {
     const on = await wear('kotBanan');
     expect((on.body as { worn: string | null }).worn).toBe('kotBanan');
     expect((await store.shopUser(77))!.items.filter((x) => x.startsWith('wear:'))).toEqual(['wear:kotBanan']);
+  });
+
+  it('значки для статуса: по счётчикам и покупкам, с id эмодзи из набора бота; «Звезда дубля» — со сроком', async () => {
+    const won = Date.now() - 3600_000;
+    const set = [
+      { emoji: '🎬', custom_emoji_id: 'e1' },
+      { emoji: '⭐️', custom_emoji_id: 'e2' },
+      { emoji: '🍌', custom_emoji_id: 'e3' },
+    ];
+    const { bot, store } = makeBot({ result: (m) => (m === 'getStickerSet' ? { stickers: set } : undefined) });
+    await store.bumpTgStats(77, { matches: 3, wins: 1, rooms: 0, winAt: won });
+    // первый заход: набор ещё сверяется в фоне — id эмодзи появятся следом
+    await bot.handle('POST', '/shop', {}, { initData: initData(ANYA) });
+    await bot.badges.kick();
+    await hook(bot, payment());
+    const st = await bot.handle('POST', '/shop', {}, { initData: initData(ANYA) });
+    const badges = (st.body as { badges: { id: string; have: boolean; n: number; of: number; until: number | null; emoji: string | null }[] }).badges;
+    const by = (id: string) => badges.find((b) => b.id === id)!;
+    expect(by('onSet')).toMatchObject({ have: true, emoji: 'e1' });
+    expect(by('star')).toMatchObject({ have: true, until: won + 24 * 3600_000, emoji: 'e2' });
+    expect(by('reel')).toMatchObject({ have: false, n: 3, of: 50 });
+    expect(by('director')).toMatchObject({ have: false, n: 0, of: 10, emoji: null });
+    expect(by('kotBanan')).toMatchObject({ have: true, emoji: 'e3' });
   });
 
   it('сбой Telegram: выдано записано, остальное дошлётся при заходе в гардероб; без «Старт» у бота — need_bot', async () => {
@@ -505,7 +530,7 @@ describe('гардероб', () => {
     // второй раз — уже нет; повторное «Войти» — отказ
     expect((await poll({ code: st.code, secret: st.secret })).state).toBe('gone');
     await hook(bot, { callback_query: { id: 'q2', from: { id: 99 }, data: `login:${st.code}` } });
-    expect(JSON.stringify(calls.at(-1)!.body)).toContain('show_alert');
+    expect(JSON.stringify(calls.filter((c) => c.method === 'answerCallbackQuery').at(-1)!.body)).toContain('show_alert');
     expect((await poll({ code: 'bad', secret: st.secret })).state).toBe('gone');
   });
 

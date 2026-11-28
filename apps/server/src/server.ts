@@ -28,7 +28,7 @@ import { localLedger, shopLedgerOp } from './shop';
 import type { ShopLedger } from './shop';
 import { MemoryStore, parseEvents } from './store';
 import type { Store } from './store';
-import type { Peer, RoomCard, RoomFilm, RoomSnapshot } from './room';
+import type { MatchBadges, Peer, RoomCard, RoomFilm, RoomSnapshot } from './room';
 import type { Geo } from './geo';
 import { VideoSwitch } from './video-switch';
 
@@ -424,6 +424,7 @@ export class GameServer {
       onFilm: (r, f) => this.filmToChat(r, f),
       onCard: (r, c) => this.cardToChat(r, c),
       onStickers: load ? undefined : (r, e) => this.stickersToBot(r, e),
+      onBadges: load ? undefined : (r, m) => this.badgesToStats(r, m),
     });
     this.rooms.set(code, room);
     if (load) this.loadRooms.add(code);
@@ -508,6 +509,7 @@ export class GameServer {
         onFilm: (r, f) => this.filmToChat(r, f),
         onCard: (r, c) => this.cardToChat(r, c),
         onStickers: snap.load === true ? undefined : (r, e) => this.stickersToBot(r, e),
+        onBadges: snap.load === true ? undefined : (r, m) => this.badgesToStats(r, m),
         restore: snap,
       });
       this.rooms.set(snap.code, room);
@@ -769,6 +771,30 @@ export class GameServer {
         this.log(r.ok ? 'info' : 'warn', 'stickers_to_bot', { room: room.code, status: r.status, users: users.length });
       })
       .catch((e) => this.log('warn', 'stickers_to_bot', { room: room.code, err: String(e) }));
+  }
+
+  /**
+   * Значки для статуса (game-core/badges.ts): матч, победа и засчитанная комната режиссёра — в счётчики игрока
+   * Telegram (tg_stats). Без связки с Telegram не считаем: значок ставится только в Telegram.
+   */
+  private badgesToStats(room: Room, m: MatchBadges): void {
+    const at = this.now();
+    void this.store
+      .telegramOf(m.humans)
+      .then(async (links) => {
+        // один аккаунт Telegram на двух телефонах в одном матче — один матч
+        const seen = new Set<number>();
+        for (const l of links) {
+          if (seen.has(l.tgUser)) continue;
+          seen.add(l.tgUser);
+          const mine = links.filter((x) => x.tgUser === l.tgUser).map((x) => x.gameUser);
+          const won = mine.some((g) => m.winners.includes(g));
+          const directed = m.director !== null && mine.includes(m.director);
+          await this.store.bumpTgStats(l.tgUser, { matches: 1, wins: won ? 1 : 0, rooms: directed ? 1 : 0, winAt: won ? at : null });
+        }
+        if (seen.size) this.log('info', 'badge_stats', { room: room.code, users: seen.size, ...(m.director ? { director: true } : {}) });
+      })
+      .catch((e) => this.log('warn', 'badge_stats', { room: room.code, err: String(e) }));
   }
 
   /**

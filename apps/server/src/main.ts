@@ -115,6 +115,7 @@ const bot = env.TELEGRAM_BOT_TOKEN
       verifyGameToken: (t) => gameAuth.verify(t),
       // видеостикеры: рядом с server.mjs (выкладка) или apps/server/stickers (разработка)
       stickersDir: env.STICKERS_DIR || [join(here, 'stickers'), join(here, '..', 'stickers')].find((d) => existsSync(d)),
+      badgesOwner: Number(env.BADGES_OWNER) || undefined,
       drawMy:
         // ffmpeg и шрифты — только у игрового сервера: сервер бота (есть EVENTS_UPSTREAM) всегда просит его
         env.EVENTS_UPSTREAM
