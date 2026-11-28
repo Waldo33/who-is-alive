@@ -43,6 +43,13 @@ export interface Store {
   linkTelegram(link: TgLink): Promise<void>;
   /** Связи для этих игроков сервера (кого нет — нет в ответе). */
   telegramOf(gameUsers: string[]): Promise<TgLink[]>;
+  /**
+   * Матч сыгран без входа через Telegram (сайт): что открылось — ждёт, пока игрок войдёт (до 30 дней).
+   * Стикеры копятся (без повторов, до 64), матч засчитан и с пустым списком.
+   */
+  savePendingEarn(gameUser: string, stickers: string[]): Promise<void>;
+  /** Забрать отложенное при входе: null — матчей без входа не было. */
+  takePendingEarn(gameUser: string): Promise<string[] | null>;
   /** Значки для статуса (game-core/badges.ts): прибавить к счётчикам игрока Telegram после матча. */
   bumpTgStats(tgUser: number, d: StatsDelta): Promise<void>;
   /** Счётчики игрока Telegram для значков (нет — нули). */
@@ -206,6 +213,12 @@ const MIGRATIONS: string[] = [
      tg_user bigint not null,
      name text not null default '',
      lang text not null default 'ru',
+     updated_at timestamptz not null default now()
+   )`,
+  // матчи до входа через Telegram (сайт): что открылось — отдаётся при входе
+  `create table if not exists tg_pending_earn (
+     game_user text primary key,
+     stickers text[] not null default '{}',
      updated_at timestamptz not null default now()
    )`,
   // значки для статуса: счётчики игрока Telegram (матчи, победы, комнаты режиссёра с 4 живыми, последняя победа)
@@ -375,6 +388,19 @@ export class PgStore implements Store {
     );
   }
 
+  async savePendingEarn(gameUser: string, stickers: string[]): Promise<void> {
+    await this.pool.query(
+      `insert into tg_pending_earn (game_user, stickers) values ($1, $2::text[])
+       on conflict (game_user) do update set stickers = (select coalesce(array_agg(y.x), '{}') from (select distinct x from unnest(tg_pending_earn.stickers || excluded.stickers) x limit 64) y), updated_at = now()`,
+      [gameUser, stickers.slice(0, 64)],
+    );
+  }
+
+  async takePendingEarn(gameUser: string): Promise<string[] | null> {
+    const res = await this.pool.query(`delete from tg_pending_earn where game_user = $1 and updated_at > now() - interval '30 days' returning stickers`, [gameUser]);
+    return res.rows[0] ? (res.rows[0].stickers as string[]) : null;
+  }
+
   async telegramOf(gameUsers: string[]): Promise<TgLink[]> {
     if (!gameUsers.length) return [];
     const res = await this.pool.query(`select game_user, tg_user, name, lang from tg_links where game_user = any($1::text[])`, [gameUsers]);
@@ -527,6 +553,18 @@ export class MemoryStore implements Store {
 
   async linkTelegram(l: TgLink): Promise<void> {
     this.links.set(l.gameUser, { ...l });
+  }
+
+  pending = new Map<string, string[]>();
+
+  async savePendingEarn(gameUser: string, stickers: string[]): Promise<void> {
+    this.pending.set(gameUser, [...new Set([...(this.pending.get(gameUser) ?? []), ...stickers])].slice(0, 64));
+  }
+
+  async takePendingEarn(gameUser: string): Promise<string[] | null> {
+    const x = this.pending.get(gameUser) ?? null;
+    this.pending.delete(gameUser);
+    return x;
   }
 
   async telegramOf(gameUsers: string[]): Promise<TgLink[]> {

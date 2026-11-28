@@ -389,6 +389,10 @@ button.summary { color: var(--sand); cursor: pointer; }
 .stickers-poses button.on { color: var(--ink); background: var(--amber); }
 .stickers-colors button { width: 30px; height: 30px; padding: 0; border: 0; box-shadow: 0 0 0 2px var(--ink); }
 .stickers-colors button.on { box-shadow: 0 0 0 2px var(--ink), 0 0 0 4px var(--yellow); }
+.stickers-colors button.own { position: relative; overflow: hidden; background: var(--night); }
+.stickers-colors.idle button:not(.on) { opacity: 0.3; }
+/* готовый стикер: надпись не меняется — поле тусклое, без рамки ввода */
+.stickers-input.locked { color: var(--slate); border-color: var(--dusk); pointer-events: none; }
 .stickers-input { font: inherit; font-size: 16px; width: min(100%, 320px); text-align: center; background: var(--ink); color: #fff; border: 2px solid var(--amber); padding: 8px; border-radius: 0; }
 .stickers .btn[aria-disabled='true'] { background: var(--night); color: var(--steel); box-shadow: 0 0 0 2px var(--ink); pointer-events: none; }
 /* «Напомнить» в подсказке стикерпака: ссылка, а не кнопка — строка не растёт */
@@ -402,8 +406,18 @@ button.summary { color: var(--sand); cursor: pointer; }
 .stickers-fx { flex-wrap: nowrap; overflow-x: auto; justify-content: flex-start; padding: 2px; touch-action: pan-x; scrollbar-width: none; }
 .stickers-fx::-webkit-scrollbar { display: none; }
 .stickers-fx button { flex: 0 0 auto; }
-/* эффект не куплен — тусклый, ведёт на вкладку «Эффекты» */
-.stickers-fx button.locked { color: var(--steel); box-shadow: 0 0 0 2px var(--dusk); }
+/* строка эффектов: всегда на месте (экран не прыгает), 8 квадратиков — этот же стикер в каждом эффекте */
+.stickers-fxpick { display: grid; grid-template-columns: repeat(8, minmax(0, 44px)); gap: 5px; justify-content: center; width: 100%; max-width: 420px; flex-shrink: 0; padding: 2px; }
+.stickers-fxpick button { position: relative; aspect-ratio: 1; padding: 0; border: 0; background: var(--night); box-shadow: 0 0 0 2px var(--ink); overflow: hidden; }
+.stickers-fxpick button img { width: 100%; height: 100%; image-rendering: pixelated; display: block; }
+.stickers-fxpick button.on { box-shadow: 0 0 0 2px var(--ink), 0 0 0 4px var(--amber); }
+.stickers-fxpick button.locked img { opacity: 0.4; }
+.stickers-fxpick.idle button:not(.on) img { opacity: 0.25; }
+.stickers-fxpick .stickers-mark.buy { color: var(--ink); background: var(--yellow); }
+/* «без эффекта» — перечёркнутый квадратик */
+.stickers-fxnone { position: absolute; inset: 0; background: linear-gradient(to top right, transparent calc(50% - 1.5px), var(--coral) calc(50% - 1.5px), var(--coral) calc(50% + 1.5px), transparent calc(50% + 1.5px)); opacity: 0.8; }
+/* подпись под сеткой — ровно две строки: текст меняется, экран стоит */
+.stickers-note.fix { height: 3.6em; min-height: 0; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 /* вкладка «Эффекты»: лента эффектов, витрина, название и покупка */
 .stickers-fxset { justify-content: flex-start; }
 .stickers-fxname { margin: 0; font-size: 10px; line-height: 1.8; color: var(--sand); }

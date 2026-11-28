@@ -756,6 +756,8 @@ export class GameServer {
     void this.store
       .telegramOf(earned.map((e) => e.pid))
       .then(async (links) => {
+        // без входа через Telegram (сайт): матч и стикеры подождут входа (/tg/shop/link)
+        for (const e of earned) if (!links.some((l) => l.gameUser === e.pid)) void this.store.savePendingEarn(e.pid, e.stickers).catch(() => undefined);
         const users = links.flatMap((l) => {
           const e = earned.find((x) => x.pid === l.gameUser);
           return e ? [{ tgUser: l.tgUser, name: l.name, lang: l.lang, stickers: e.stickers }] : [];
