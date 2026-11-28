@@ -959,14 +959,27 @@ describe('гардероб', () => {
     expect((await store.shopUser(77))?.issued).not.toContain('notCrying');
   });
 
-  it('свои стикеры: не больше пяти, правки — не чаще 12 в час', async () => {
-    const { bot } = makeBot({ drawMy: async () => Buffer.from('webm') });
+  it('свои стикеры: места открываются постепенно (1 сразу, +1 за 3 матча, до пяти), правки — не чаще 12 в час', async () => {
+    const { bot, calls } = makeBot({ drawMy: async () => Buffer.from('webm') });
     await played(bot);
     await bot.handle('POST', '/shop/claim', {}, { initData: initData(ANYA) });
     const my = (caption: string) => bot.handle('POST', '/shop/my', {}, { initData: initData(ANYA), sticker: { fig: 'actor', pose: 'wave', color: 0, caption } });
-    for (let i = 0; i < 5; i++) expect((await my(`Раз ${i}`)).status).toBe(200);
+    const state = async () => (await bot.handle('POST', '/shop', {}, { initData: initData(ANYA) })).body as { slots: number; slotIn: number | null };
+    expect(await state()).toMatchObject({ slots: 1, slotIn: 3 });
+    expect((await my('Раз')).status).toBe(200);
+    expect((await my('Два')).body).toEqual({ error: 'full' });
+    await played(bot);
+    await played(bot);
+    expect(await state()).toMatchObject({ slots: 1, slotIn: 1 });
+    calls.length = 0;
+    await played(bot);
+    expect(await state()).toMatchObject({ slots: 2, slotIn: 3 });
+    expect(calls.find((c) => c.method === 'sendMessage')?.body.text).toContain('2 из 5');
+    for (let i = 0; i < 9; i++) await played(bot);
+    expect(await state()).toMatchObject({ slots: 5, slotIn: null });
+    for (let i = 0; i < 4; i++) expect((await my(`Ещё ${i}`)).status).toBe(200);
     expect((await my('Шестой')).body).toEqual({ error: 'full' });
-    for (let i = 0; i < 6; i++) await my(`Ещё ${i}`);
+    for (let i = 0; i < 5; i++) await my(`Правка ${i}`);
     expect((await my('Хватит')).body).toEqual({ error: 'rate' });
   });
 

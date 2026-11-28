@@ -262,6 +262,20 @@ export function wearItems(items: readonly string[], skin: SkinId | null): string
 
 /** Своих стикеров в паке — не больше. */
 export const MY_MAX = 5;
+/**
+ * Места под свои стикеры открываются постепенно (решение владельца 28.11.2026): одно — с бесплатным паком,
+ * ещё одно — каждые MY_SLOT_EVERY матчей после него (все пять — примерно через 12 матчей). Матчи с паком
+ * считает отметка `games:<n>`. У забравших пак раньше (без STARTER_DRIP) — все места сразу.
+ */
+export const MY_SLOT_EVERY = 3;
+/** Сколько матчей сыграно с бесплатным паком (отметка `games:<n>`). */
+export const packGames = (items: readonly string[]): number => Number(items.find((i) => i.startsWith('games:'))?.slice(6)) || 0;
+/** Сколько мест под свои стикеры открыто. */
+export const mySlots = (items: readonly string[]): number =>
+  items.includes(STARTER_DRIP) ? Math.min(MY_MAX, 1 + Math.floor(packGames(items) / MY_SLOT_EVERY)) : MY_MAX;
+/** Через сколько матчей откроется следующее место (null — открыты все). */
+export const mySlotIn = (items: readonly string[]): number | null =>
+  mySlots(items) >= MY_MAX ? null : MY_SLOT_EVERY - (packGames(items) % MY_SLOT_EVERY);
 /** Подпись своего стикера: строк и знаков в строке (стикер 96 пикс., шрифт 8 пикс.). */
 export const MY_LINES = 2;
 export const MY_LINE = 10;

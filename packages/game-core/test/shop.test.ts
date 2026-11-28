@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { STICKER_LIST, THEME_RULES, earnedEvents, earnedStickers } from '../src';
+import { MY_MAX, STICKER_LIST, THEME_RULES, earnedEvents, earnedStickers, mySlotIn, mySlots } from '../src';
 import type { EarnRound } from '../src';
 
 /** Стикеры за события матча (shop.ts › earn): считаются по итогам дублей, одинаково на любом сервере. */
@@ -48,5 +48,15 @@ describe('стикеры за матч', () => {
     const rounds = [round({ accusations: [{ pid: 'b', eid: 9, correct: false }] })];
     expect(earnedStickers('zz', rounds, { winners: ['zz'] })).toEqual([]);
     expect(earnedStickers('b', rounds, { winners: [] })).not.toContain('meow');
+  });
+});
+
+describe('места под свои стикеры', () => {
+  it('у старых паков — все сразу; у новых (drip) — 1 и +1 каждые 3 матча', () => {
+    expect(mySlots(['starter', 'pack'])).toBe(MY_MAX);
+    expect(mySlotIn(['starter', 'pack'])).toBeNull();
+    const at = (n: number) => ['starter', 'pack', 'drip', `games:${n}`];
+    expect([0, 2, 3, 6, 11, 12, 40].map((n) => mySlots(at(n)))).toEqual([1, 1, 2, 3, 4, 5, 5]);
+    expect([0, 2, 3, 12].map((n) => mySlotIn(at(n)))).toEqual([3, 1, 3, null]);
   });
 });

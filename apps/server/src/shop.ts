@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { DICTS, STARTER_DRIP, starterOpen, EFFECTS, EARN_PER_DAY, NO_STATS, badgesOf, EARN_PER_MATCH, MY_FIGS, MY_ISSUED, MY_MARKS, MY_MAX, MY_POSE_EMOJI, RETIRED_STICKERS, SHOP_ITEMS, STICKER_LIST, TEST_ITEM, buyItem, canDrop, colMark, fmt, fxMark, isEffect, isLookIssued, lookIssued, stdLook, MY_COLORS, isMySticker, issuedBase, stickerFx, isSkin, isStickerId, myFigOpen, myIssued, offSticker, parseMySticker, pickEarned, skinOf, wearItems } from '@kto/game-core';
+import { DICTS, STARTER_DRIP, mySlots, mySlotIn, packGames, starterOpen, EFFECTS, EARN_PER_DAY, NO_STATS, badgesOf, EARN_PER_MATCH, MY_FIGS, MY_ISSUED, MY_MARKS, MY_MAX, MY_POSE_EMOJI, RETIRED_STICKERS, SHOP_ITEMS, STICKER_LIST, TEST_ITEM, buyItem, canDrop, colMark, fmt, fxMark, isEffect, isLookIssued, lookIssued, stdLook, MY_COLORS, isMySticker, issuedBase, stickerFx, isSkin, isStickerId, myFigOpen, myIssued, offSticker, parseMySticker, pickEarned, skinOf, wearItems } from '@kto/game-core';
 import type { BadgeId, BadgeStats, EffectId, MySticker, StickerId, StickerMeta } from '@kto/game-core';
 import type { StickerJob } from './sticker-render';
 import { RateWindow } from './limits';
@@ -84,7 +84,7 @@ const earnable = (items: readonly string[]) =>
 /** Напоминание о стикерах — с 10 до 22 по Москве (не ночью). */
 const REMIND_FROM = 10;
 const REMIND_TO = 22;
-const ITEM = /^(?:starter|(?:st|in|own|made|off|wear):[A-Za-z]{1,24}|[A-Za-z]{1,24}|day:\d{8}:\d{1,2}|remind:\d{8}|fx:[A-Za-z]{1,24}:[a-z]{2,8}|col:[A-Za-z]{1,24}:\d)$/;
+const ITEM = /^(?:starter|(?:st|in|own|made|off|wear):[A-Za-z]{1,24}|[A-Za-z]{1,24}|day:\d{8}:\d{1,2}|remind:\d{8}|fx:[A-Za-z]{1,24}:[a-z]{2,8}|col:[A-Za-z]{1,24}:\d|games:\d{1,5})$/;
 const PACK = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
 /**
  * Номер платежа Telegram (telegram_payment_charge_id): у звёзд — длинный «stx…» с символами base64 и прочими.
@@ -384,6 +384,9 @@ export class Shop {
       open: open.map((s) => s.id),
       off: open.filter((s) => u?.items.includes(offSticker(s.id))).map((s) => s.id),
       my: u?.my ?? [],
+      /** Открыто мест под свои стикеры и через сколько матчей следующее (null — все). */
+      slots: mySlots(u?.items ?? []),
+      slotIn: mySlotIn(u?.items ?? []),
       figs: MY_FIGS.filter((f) => myFigOpen(f.id, u?.items ?? [])).map((f) => f.id),
       earned: (u?.items ?? []).filter((i) => i.startsWith('st:')).map((i) => i.slice(3)),
       /** Дневной лимит стикеров за матчи исчерпан — когда снова (мс); null — можно открывать. */
@@ -442,6 +445,8 @@ export class Shop {
       const my = (u.my ??= []);
       const slot = typeof slotRaw === 'number' ? slotRaw : [...Array(MY_MAX).keys()].find((i) => !my.some((m) => m.slot === i));
       if (slot === undefined) return 'full';
+      // новое место сверх открытых — нельзя (правка уже сделанного — можно всегда)
+      if (!my.some((m) => m.slot === slot) && my.length >= mySlots(u.items)) return 'full';
       const old = my.find((m) => m.slot === slot);
       if (old && old.fig === v.fig && old.pose === v.pose && old.color === v.color && old.text.join('\n') === v.text.join('\n')) return null;
       // номер правки растёт и через удаление: убрал стикер и сразу сделал новый в той же ячейке, пока бот не
@@ -596,11 +601,17 @@ export class Shop {
         // первый сыгранный матч открывает бесплатный пак: бот предлагает его забрать
         const first = !u.items.includes('played');
         if (first) u.items.push('played');
-        if (!fresh.length && !first) return;
+        // матч с бесплатным паком — к счёту, по которому открываются места под свои стикеры
+        const slotsBefore = mySlots(u.items);
+        const counted = u.items.includes(STARTER_DRIP) && slotsBefore < MY_MAX;
+        if (counted) u.items = [...u.items.filter((i) => !i.startsWith('games:')), `games:${packGames(u.items) + 1}`];
+        const slotUp = mySlots(u.items) > slotsBefore;
+        if (!fresh.length && !first && !counted) return;
         u.items.push(...fresh.map((s) => `st:${s.id}`));
         if (fresh.length) u.items = [...u.items.filter((i) => !i.startsWith('day:')), `day:${today}:${usedToday + fresh.length}`];
         await this.d.ledger.saveShopUser(u);
         if (first && !u.items.includes('starter')) await this.offerFree(u);
+        if (slotUp && u.pack) await this.notify(id, u.lang, fmt(DICTS[u.lang].shop.botSlot, { n: mySlots(u.items), of: MY_MAX }), null, false, true);
         if (!fresh.length) return;
         this.d.log('info', 'shop_earned', { n: fresh.length });
         const before = new Set(u.issued);
@@ -990,12 +1001,12 @@ export class Shop {
     return (u?.items ?? []).filter((i) => !!buyItem(i));
   }
 
-  private async notify(chat: number, lang: Lang, text: string, pack: string | null, play = false): Promise<void> {
+  private async notify(chat: number, lang: Lang, text: string, pack: string | null, play = false, build = false): Promise<void> {
     const t = DICTS[lang].shop;
     const rows: { text: string; url?: string; web_app?: { url: string } }[][] = [];
     if (pack) rows.push([{ text: t.botPack, url: pack }]);
     // «Собери свой стикерпак» — страница в Mini App (пока за флагом shop: ссылка включает его у игрока)
-    if (pack && this.d.site) rows.push([{ text: t.botBuild, web_app: { url: `${this.d.site}/stickers?src=tg_sticker` } }]);
+    if ((pack || build) && this.d.site) rows.push([{ text: t.botBuild, web_app: { url: `${this.d.site}/stickers?src=tg_sticker` } }]);
     // «Играть» — Mini App игры: новый стикер зовёт обратно
     if (play && this.d.site) rows.push([{ text: t.botPlay, web_app: { url: `${this.d.site}/?src=tg_sticker` } }]);
     try {

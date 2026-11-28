@@ -2,7 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { DICTS, EFFECTS, LURE_FX, MY_COLORS, MY_FIGS, MY_MAX, MY_POSES, STICKER_LIST, THEME_RULES, canDrop, fmt, isEffect, myCaption } from '@kto/game-core';
+import { DICTS, EFFECTS, LURE_FX, MY_COLORS, MY_FIGS, MY_MAX, MY_POSES, MY_SLOT_EVERY, STICKER_LIST, THEME_RULES, canDrop, fmt, isEffect, myCaption } from '@kto/game-core';
 import type { EffectId, Lang, MyFig, MyPose, MySticker, ShopItemId, StickerId, StickerMeta } from '@kto/game-core';
 import { PAL } from '@kto/assets';
 import { track } from '@/lib/analytics';
@@ -204,7 +204,9 @@ export default function StickersClient() {
   }, [st?.pending]);
 
   // сетка: размер ячейки — самый крупный, при котором всё влезает без прокрутки
-  const count = STICKER_LIST.length + my.length + (my.length < MY_MAX ? 1 : 0);
+  // места под свои стикеры открываются постепенно: закрытые — замочками в конце сетки
+  const slots = Math.max(my.length, Math.min(MY_MAX, st?.slots ?? MY_MAX));
+  const count = STICKER_LIST.length + my.length + (my.length < slots ? 1 : 0) + (MY_MAX - slots);
   useEffect(() => {
     const el = gridRef.current;
     if (!el || tab !== 'pack') return;
@@ -668,11 +670,16 @@ export default function StickersClient() {
                     <i className="stickers-mark ok">✓</i>
                   </button>
                 ))}
-                {my.length < MY_MAX && (
+                {my.length < slots && (
                   <button className="stickers-tile add" onClick={() => editMy(null)} aria-label={b.newMy}>
                     +
                   </button>
                 )}
+                {Array.from({ length: MY_MAX - slots }, (_, i) => (
+                  <button key={`slot${i}`} className="stickers-tile add slot" onClick={() => setNote(fmt(b.slotLocked, { n: (st?.slotIn ?? 3) + i * MY_SLOT_EVERY }))} aria-label={b.newMy}>
+                    <i className="stickers-mark lock">?</i>
+                  </button>
+                ))}
               </div>
             )}
           </div>
@@ -875,7 +882,7 @@ export default function StickersClient() {
               </div>
             ) : (
             <div className="daily-buttons">
-              <button className="btn small" onClick={() => void saveMy()} aria-disabled={busy || !!capErr || (tgOn && !lockedItemFig && (!figs.has(draft.fig) || (draft.slot === null && my.length >= MY_MAX)))}>
+              <button className="btn small" onClick={() => void saveMy()} aria-disabled={busy || !!capErr || (tgOn && !lockedItemFig && (!figs.has(draft.fig) || (draft.slot === null && my.length >= slots)))}>
                 {!tgOn ? b.toTg : lockedItemFig ? fmt(b.buyFor, { item: t.items[lockedItemFig].name }) : draft.slot === null ? b.add : b.save}
               </button>
               {draft.slot !== null && (
