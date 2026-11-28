@@ -434,7 +434,7 @@ export class GameServer {
   }
 
   /**
-   * Аналитика воронки: пачка событий (как RPC log_events в Supabase). Тело — JSON с типом text/plain,
+   * Аналитика воронки: пачка событий. Тело — JSON с типом text/plain,
    * чтобы браузер слал без предварительного запроса и с keepalive при закрытии вкладки.
    */
   private async events(req: IncomingMessage, res: ServerResponse): Promise<void> {

@@ -390,10 +390,10 @@ jobs:
             # переезд комнат при выкладке — на тот адрес, что сейчас работает снаружи (до DNS — sslip.io)
             # бот в самом игровом сервере (BOT_HOME=eu) — /tg/* к активному экземпляру, без туннеля
             up=""; [ -s deploy/tunnel.pub ] && [ "$BOT_HOME" != eu ] && up="http://127.0.0.1:9090"
-            vars="HOST=api.benobody.app ALT_HOST=$SSLIP PEER_HOST=$HOST WS_HOSTS=api.benobody.app,$SSLIP REGION=eu SITE_HOST=benobody.app SITE_REDIRECT=https://who-is-alive.vercel.app BOT_UPSTREAM=$up"
+            vars="HOST=api.benobody.app ALT_HOST=$SSLIP PEER_HOST=$HOST WS_HOSTS=api.benobody.app,$SSLIP REGION=eu SITE_HOST=benobody.app BOT_UPSTREAM=$up"
           elif [ "$ROLE" = game ]; then
             up=""; [ -s deploy/tunnel.pub ] && up="http://127.0.0.1:9090"
-            vars="HOST=$HOST ALT_HOST=$SSLIP SITE_HOST=benobody.app SITE_REDIRECT=https://who-is-alive.vercel.app BOT_UPSTREAM=$up"
+            vars="HOST=$HOST ALT_HOST=$SSLIP SITE_HOST=benobody.app BOT_UPSTREAM=$up"
           else
             # игра живёт в Европе (переезд 24.11): аналитика с замера — туда (туннель :28080), Grafana,
             # копии базы и сторож — тоже туда
@@ -421,7 +421,7 @@ jobs:
           IP: ${{ steps.srv.outputs.ip }}
           HAS_TG: ${{ secrets.TELEGRAM_BOT_TOKEN != '' }}
         run: |
-          if [ "$HAS_TG" != true ]; then echo "TELEGRAM_BOT_TOKEN не задан в GitHub Secrets — бот остаётся в Supabase"; exit 0; fi
+          if [ "$HAS_TG" != true ]; then echo "TELEGRAM_BOT_TOKEN не задан в GitHub Secrets — бот не настроен"; exit 0; fi
           # сразу после перезапуска первый запрос к Telegram бывает неудачным — несколько попыток;
           # бот не должен останавливать выкладку игры
           info=""

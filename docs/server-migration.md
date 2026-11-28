@@ -346,9 +346,9 @@ infra/
 - [ ] Каждый день смотреть Grafana и Bugsink, разбирать жалобы по статистике.
 
 **Этап 6. Уборка (0,5 дня)**
-- [ ] Удалить `SupabaseTransport`, `SupabaseRoomBackend`, логику смены хоста в клиенте, `lib/supabase.ts`, зависимость `@supabase/supabase-js`.
-- [ ] Перенести `supabase/migrations` в `docs/archive/`.
-- [ ] Перенести на свой сервер то, что ещё живёт в Supabase: сервер бота `tg-bot` (маршруты `/tg/*` игрового сервера; ключ бота — из GitHub Secrets), таблицы `analytics_events` и `tg_daily_scores`, уборку по cron.
+- [x] Удалить `SupabaseTransport`, `SupabaseRoomBackend`, логику смены хоста в клиенте, `lib/supabase.ts`, зависимость `@supabase/supabase-js`.
+- [x] `supabase/` (миграции и Edge Function бота) удалена из репозитория 28.11.2026 — остались в истории git; запасной редирект Caddy на старый адрес Vercel (`SITE_REDIRECT`) убран. Старый адрес who-is-alive.vercel.app больше не поддерживается (решение владельца 28.11.2026): `vercel.json` и редирект в `next.config.ts` удалены.
+- [x] Перенести на свой сервер то, что ещё живёт в Supabase: сервер бота `tg-bot` (маршруты `/tg/*` игрового сервера; ключ бота — из GitHub Secrets), таблицы `analytics_events` и `tg_daily_scores`, уборку по cron.
 - [ ] Поставить проект Supabase на паузу; удалить через месяц.
 - [ ] Обновить `CLAUDE.md`, `AGENTS.md`, `docs/architecture.md`, `docs/gotchas.md`, `docs/roadmap.md`: новая карта кода, команды, как проверять, грабли сервера.
 

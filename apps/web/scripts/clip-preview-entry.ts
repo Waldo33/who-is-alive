@@ -24,7 +24,7 @@ for (const seed of seeds) {
   const self = sum.reveal.find((r) => r.pid === 'me')!.eid;
   const moment = findBestMoment({ ...rec, kills: sum.kills }, self)!;
   const cp = sum.reveal.map((r) => ({ eid: r.eid, name: players.find((p) => p.pid === r.pid)!.name, color: players.find((p) => p.pid === r.pid)!.color }));
-  const scene = new ClipPlayerScene({ rec, moment, arena: s.arena, players: cp, t: DICTS.ru, font: 'monospace', site: 'who-is-alive.vercel.app' });
+  const scene = new ClipPlayerScene({ rec, moment, arena: s.arena, players: cp, t: DICTS.ru, font: 'monospace', site: 'benobody.app' });
   const n = 10;
   for (let k = 0; k < n; k++) {
     const ms = (scene.duration * k) / n;

@@ -6,7 +6,7 @@ import type { BadgeStats, MySticker, StatsDelta } from '@kto/game-core';
 
 /**
  * Хранилище игрового сервера. Игре база не нужна (комнаты в памяти) — здесь аналитика воронки
- * и то, что раньше жило в Supabase. Без DATABASE_URL (тесты, разработка) — память.
+ * и учёт Telegram (бот, гардероб, стикеры, значки). Без DATABASE_URL (тесты, разработка) — память.
  */
 export interface AnalyticsEvent {
   name: string;
@@ -791,7 +791,7 @@ export class MemoryStore implements Store {
   async close(): Promise<void> {}
 }
 
-/** Проверка событий как в Supabase (log_events): имя по шаблону, не больше 30 за раз, props до 2 КБ. */
+/** Проверка событий: имя по шаблону, не больше 30 за раз, props до 2 КБ. */
 export function parseEvents(raw: unknown): { device: string; session: string | null; token: string | null; events: AnalyticsEvent[] } | null {
   const b = raw as { d?: unknown; s?: unknown; t?: unknown; e?: unknown } | null;
   if (!b || typeof b.d !== 'string' || !/^[A-Za-z0-9-]{8,64}$/.test(b.d)) return null;

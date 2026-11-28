@@ -1,6 +1,6 @@
 /**
  * Аналитика воронки: события пачками на свой сервер (`POST /v1/events`, таблица `analytics_events`
- * в Postgres сервера; раньше — RPC `log_events` в Supabase). Без имён и IP.
+ * в Postgres сервера). Без имён и IP.
  *
  * - `device_id` — случайный id телефона (localStorage), `session_id` — один заход на страницу;
  *   `user_id` сервер берёт из токена, если игрок уже вошёл анонимно.

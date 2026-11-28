@@ -2,8 +2,8 @@
 
 Этот файл — первое, что нужно прочитать перед работой в репозитории. Подробности — в `docs/`:
 
-- `docs/architecture.md` — как устроены ядро, сеть, Supabase, клиент, звук, клип, превью;
-- `docs/gotchas.md` — грабли, на которые уже наступали (Safari, Chrome на iPhone, Realtime, iOS-звук…);
+- `docs/architecture.md` — как устроены ядро, сеть, комнаты, клиент, звук, клип, превью;
+- `docs/gotchas.md` — грабли, на которые уже наступали (Safari, Chrome на iPhone, сеть, iOS-звук…);
 - `docs/roadmap.md` — что сделано, что дальше, отложенные решения и что нужно от владельца.
 - `docs/infra-plan.md` — план улучшения инфраструктуры: замеры, выкладка без обрыва матчей, S3, переезд игры в Европу, защита от всплеска;
 - `docs/campaign-day.md` — памятка на день рекламы: нагрузочный прогон, стоп-кран выкладок, что смотреть в Grafana, что делать при сбоях;
@@ -19,7 +19,7 @@
 **«Массовка» / «Be Nobody»** (раньше — «Кто тут живой?») — браузерная реалтайм-игра для компании, 2–4 игрока, только телефоны. Тон текстов — съёмочная площадка: раунд — «дубль», выбывший «вырезан» и «за кадром», хост — «режиссёр»; по-английски — extra / actor. Фразы с именами игроков — без падежей и рода (имена бывают любыми). Полный список — Claude Doc «Массовка / Be Nobody — текстовки».
 На пиксельной площади 32 одинаковых человечка: почти все — боты, остальные — игроки. Каждый прячется в толпе, вычисляет живых по поведению и бьёт первым. Удар по живому — выбил, по боту — сам оглушён и раскрыт. Три звезды — победа в раунде. «Море волнуется»: музыка обрывается, мир замирает (стоп-кадр), надо нажать ту же команду, что и толпа. Вырезанные за кадром ставят метку «?» на того, кого считают живым, — это обвинение; в конце раунда — разоблачение с повтором, награды. Матч до 8 очков (~5 минут).
 
-- Прод: **https://benobody.app** (песочница с ботами — `/sandbox`, комната — `/r/КОД`); старый адрес who-is-alive.vercel.app перенаправляет туда.
+- Прод: **https://benobody.app** (песочница с ботами — `/sandbox`, комната — `/r/КОД`).
 - Репозиторий: `Waldo33/who-is-alive` (приватный), ветка `main`; **каждый push в `main` выкатывается в прод** из GitHub Actions: `web-deploy` (сайт), `game-deploy` (игровой сервер) — сборка идёт сразу, а серверы меняются только после зелёного CI того же коммита (`infra/ci-wait.sh`). Стоп-кран: переменная репозитория `DEPLOY_FREEZE=1` — push не выкладывает, только запуск вручную (`gh workflow run`, аварийно — с `skip_ci=true`).
 - ТЗ — Claude Doc «Кто тут живой? — ТЗ для разработки». При расхождении прав код и `docs/`; ТЗ обновляет владелец.
 - Художника и композитора нет: **весь арт и звук делаются кодом** (процедурные спрайты из палитры, синтез на Web Audio).
@@ -27,7 +27,7 @@
 ## Стек
 
 - Монорепо **pnpm 10.18.3**, Node 22, TypeScript 5.9 strict, ESLint 9 (flat config в корне), Vitest 3.
-- `apps/web` — **Next.js 15.5** (App Router, React 19) + **Phaser 3.90**. Работает на своём сервере (Next standalone за Caddy, `.github/workflows/web-deploy.yml`, `infra/game/web.sh`). Vercel (проект `who-is-alive`, `prj_J1ZWu5Ncozw0FtcgTVoQGQFLrUNm`, команда `team_KRSpd6ofFYaA171W5rl60kY7`) — только перенаправление старого адреса (`redirects` в `next.config.ts` при `VERCEL`, пересборка лишь при изменении `next.config.ts`).
+- `apps/web` — **Next.js 15.5** (App Router, React 19) + **Phaser 3.90**. Работает на своём сервере (Next standalone за Caddy, `.github/workflows/web-deploy.yml`, `infra/game/web.sh`). Vercel не используется (старый адрес who-is-alive.vercel.app не поддерживается, из репозитория убран 28.11.2026).
 - **Свой игровой сервер** `apps/server` (Timeweb Cloud, с 24.11.2026 — Европа, Нидерланды; до того Москва; `https://api.benobody.app`): комнаты, лобби и матчи для всех — матч считает сервер, у всех игроков `RemoteSession` поверх `ServerLink`. Выкладка — `.github/workflows/game-deploy.yml` на каждый push в `apps/server`, `packages/*`, `infra/game` (живой прогон четырёх игроков в конце). Адрес для клиента — `GAME_API` в `apps/web/src/lib/env.ts`.
 - **Свои серверы** (Timeweb Cloud, всё ставит `game-deploy` по SSH: настройку машины — Ansible (`infra/ansible`, `docs/ansible.md`), версию — `setup.sh`; ключ выводится из `TWC_TOKEN`; в матрице — Европа, затем infra):
   - **Европа** `massovka-eu` (Cloud NL-40, 2 vCPU / 2 ГБ / 40 ГБ с 25.11.2026 — тариф в `infra/terraform/servers.tf`, `72.56.22.216`, `72-56-22-216.sslip.io`, тот же дата-центр, что `massovka-infra`): игровой сервер (`api.benobody.app`), сайт (`benobody.app`), Postgres (аналитика `analytics_events`), Caddy, копия базы раз в сутки. Адрес WebSocket — по входу (`PUBLIC_WS_HOSTS`). Переезд из Москвы — `docs/infra-plan.md › этап 3`, `.github/workflows/infra-move.yml`.
@@ -36,7 +36,7 @@
   - **Нидерланды** `massovka-infra` (1 vCPU / 2 ГБ, `72.56.73.184`, `72-56-73-184.sslip.io`): сторож с тревогами в Telegram (`infra/game/watch.sh`), наблюдение (`infra/game/observe.sh`): VictoriaMetrics, VictoriaLogs, **Grafana** — `https://72-56-73-184.sslip.io/grafana/` (логин `admin`, пароль — секрет `GRAFANA_PASSWORD`; панели — `infra/grafana/generate.py`), ночная копия базы игры (где живёт игра — `/etc/massovka/game-site`: `eu`).
   - Связь: туннели SSH всегда поднимают Нидерланды (соединения из Москвы за границу режет фильтр): `massovka-tunnel-eu` в Европу (база :25432, метрики игры :28080 и машины :29100 отсюда; бот -R 9090 и логи -R 9428 туда). **Telegram-бот и магазин** (`bot.ts`, `shop.ts`) с 28.11.2026 — в самом игровом сервере в Европе (`infra/game/bot-home`: `eu`; до того — на `massovka-infra` по туннелю, `docs/server-migration.md › 16`): `/tg/*` Caddy ведёт к активному экземпляру, оплаты сверяются с Telegram раз в 10 минут. Внутренние входы Caddy (`http://:8080`, только 127.0.0.1) — **без имени хоста**: через туннель приходят запросы с `Host: api.benobody.app`.
   - Секреты рождаются на сервере (`/etc/massovka/secrets.env`, папка закрыта — настройки служб лежат отдельно) или приходят из GitHub Secrets (`TWC_TOKEN`, `TELEGRAM_BOT_TOKEN`, `ALERTS_BOT_TOKEN`, `GRAFANA_PASSWORD`, `S3_ACCESS_KEY`/`S3_SECRET_KEY` — ключи бакета из панели Timeweb) файлами по SSH — не в командной строке.
-- **Supabase** (ref `wivildtgfkpuxvqoamqg`, Франкфурт) — больше не используется: там остались старые таблицы комнат, рейтинг кастинга и аналитика до 23.11 (`supabase/` — история). Сервисных ключей в репозитории нет и быть не должно.
+- **Supabase** (ref `wivildtgfkpuxvqoamqg`, Франкфурт) — не используется, из репозитория убран 28.11.2026 (старые миграции и Edge Function бота — в истории git). В проекте остались старые таблицы комнат, рейтинг кастинга и аналитика до 23.11. Ключей Supabase в репозитории нет и быть не должно.
 - `packages/game-core` — правила игры, чистый детерминированный TS.
 - `packages/net` — сетевой слой: транспорт, хост, гость, протокол (zod).
 - `packages/assets` — палитра 32 цвета `PAL`, `PLAYER_COLORS`.
@@ -75,7 +75,7 @@ CI (`.github/workflows/ci.yml`): lint, typecheck, test, `sim --rounds 200`.
 6. Phaser импортировать как `import * as Phaser from 'phaser'` (иначе ломается прод-сборка Next).
 7. Не ломать песочницу `/sandbox` — она работает без сети и без сервера.
 8. Перед push: `pnpm lint && pnpm typecheck && pnpm test` и `pnpm --filter web build`. Изменил игру — пройди матч в браузере (Playwright, см. ниже). Как коммитить и пушить — раздел «Коммиты и push» ниже.
-9. База своего сервера: схема — `MIGRATIONS` в `apps/server/src/store.ts`, только расширяющие изменения (сервер применяет при старте). Supabase — только для бота: миграции там — файл в `supabase/migrations/` и `apply_migration`.
+9. База своего сервера: схема — `MIGRATIONS` в `apps/server/src/store.ts`, только расширяющие изменения (сервер применяет при старте).
 10. **Безопасность** (подробно — `docs/security.md`: модель угроз, границы доверия, что делать при утечке ключа):
     - всё, что прислал телефон, — чужое: номер попытки, «угадал», очки, подпись карточки, текст ошибки, имя, id устройства. Считает и решает сервер;
     - токен игрока выдаётся любому — это «кто ты», а не «можно ли». Чужое (клип, итог, комната) меняет только владелец или участник;
@@ -89,7 +89,7 @@ CI (`.github/workflows/ci.yml`): lint, typecheck, test, `sim --rounds 200`.
 
 ## Коммиты и push
 
-- **Работаем прямо в `main`**, без веток и PR — так договорились с владельцем. Push в `main` = прод через минуту-две. Ветку делай, только если владелец попросил или нужен предпросмотр рискованной правки (Vercel собирает превью по веткам).
+- **Работаем прямо в `main`**, без веток и PR — так договорились с владельцем. Push в `main` = прод через минуту-две. Ветку делай, только если владелец попросил или нужен предпросмотр рискованной правки.
 - **Автор коммитов — `waldo <evgenijtser@gmail.com>`** (договорённость с владельцем). В новой среде сначала: `git config user.name waldo && git config user.email evgenijtser@gmail.com`. Если окружение (хук, инструкция) требует другого автора — не переписывай уже сделанные коммиты молча: скажи владельцу и делай, как он решит.
 - **Сообщение — на русском:**
   - первая строка — что изменилось (для игрока или проекта), до ~70 символов;
@@ -98,8 +98,7 @@ CI (`.github/workflows/ci.yml`): lint, typecheck, test, `sim --rounds 200`.
 - **Один коммит — одна законченная мысль**: не смешивай фичу со случайными правками. Пушь только законченное и проверенное, «посмотреть» — скриншотом или видео, не продом.
 - **Порядок перед push:**
   1. `pnpm lint && pnpm typecheck && pnpm test` и `pnpm --filter web build`; правил игру — матч в Playwright.
-  2. Есть миграция Supabase — сначала применить её к проекту (MCP `apply_migration`), потом push клиента, который на неё опирается: иначе прод на минуты сломан.
-  3. Миграции — только совместимые со старым клиентом: открытые вкладки и PWA живут на старой версии.
+  2. Миграции базы — только совместимые со старым клиентом: открытые вкладки и PWA живут на старой версии.
 - **Не коммитить:**
   - секреты и `.env*`;
   - `node_modules`, `.next`, `dist`;
@@ -144,9 +143,7 @@ CI (`.github/workflows/ci.yml`): lint, typecheck, test, `sim --rounds 200`.
 | `apps/web/src/ui/topbar.ts` | верхняя панель «< Назад» + шестерёнка (язык, музыка, звуки, «Как играть») |
 | `apps/web/src/lib/` | `telegram` (Telegram Mini App: SDK, полный экран, родные «Назад», вибрация, ссылки `startapp`, `docs/architecture.md › 4.1`), `features` (флаги фич: `featureOn('casting')` — «Кастинг дня» спрятан), `analytics` (`track` — события воронки на свой сервер, `POST /v1/events`), `share` (поделиться с запасными путями, `withLang` — `?l=` и метка `?src=` в ссылках), `meta` (метаданные превью по языку), `chunk` (перезагрузка при устаревшей вкладке), `preview` (комната с сервера для OG), `game-server`, `env`, `lang`, `name` |
 | `apps/web/public/sw.js` | сервис-воркер PWA |
-| `supabase/migrations/` | схема Supabase (история; сейчас нужна только боту) |
 | `apps/server/` | свой игровой сервер (в проде с 22.11.2026): `server.ts` — HTTP + WebSocket, лимиты, уборка комнат, `/v1/events` (аналитика); `room.ts` — комната и матч (безголовый `HostSession`); `auth.ts` — анонимные токены; `clips.ts` — клипы для Telegram (`/v1/clips`, 2 суток; телефон грузит заранее — `apps/web/src/lib/clips.ts`); `film.ts`, `film-worker.ts`, `film-render.ts` — монтаж «Фильма матча» и клипа выбывшего (`death-clip.ts`; телефон пишет сам, только если сервер занят) в отдельном процессе (кадры и кодирование — Rust-модуль `native/` через `film-native.ts`, запасной путь — @napi-rs/canvas; звук — node-web-audio-api; ffmpeg; импортирует сцены из `apps/web/src/game`, поэтому `game-deploy` срабатывает и на них); `recordings.ts` — записи матчей для перемонтажа (gzip JSON, формат стабильный, 2 суток; перемонтаж во всех вариантах финала — `scripts/film-variants.ts`, кнопка `film-variants.yml`); `store.ts` — Postgres; `s3.ts` — копия клипов, фильмов и записей матчей в S3 (Timeweb, Петербург, `infra/terraform/storage.tf`); `errors.ts` — свой трекер ошибок (телефоны, сервер, бот, монтаж: группы, source maps, тревоги в чат — `docs/architecture.md › 7`); `bot.ts` — Telegram-бот (в процессе игрового сервера). Развёртывание — `infra/game/` (`provision.py`, `setup.sh`, `caddy.sh`, `web.sh`, `observe.sh`, `watch.sh`), панели Grafana — `infra/grafana/`. Клиент к нему — `ServerLink` (`packages/net/src/ws.ts`), протокол — `wire.ts`. Запуск: `pnpm --filter @kto/server dev` |
-| `supabase/functions/tg-bot/` | прежний сервер бота (Edge Function, история; рабочая копия — `apps/server/src/bot.ts`, `docs/architecture.md › 4.2`) |
 
 ## Как проверять
 

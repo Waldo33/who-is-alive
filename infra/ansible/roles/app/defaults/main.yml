@@ -2,7 +2,6 @@
 app_alt_host: ''
 app_ws_hosts: ''
 app_site_host: ''
-app_site_redirect: ''
 app_bot_upstream: ''
 app_relay_front: ''
 app_events_up: ''
