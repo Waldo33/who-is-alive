@@ -22,3 +22,4 @@ export * from './slots';
 export * from './shop';
 export * from './badges';
 export * from './emoji-pack';
+export * from './premiere';

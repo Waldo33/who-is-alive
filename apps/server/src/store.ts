@@ -1,8 +1,12 @@
+import type { DrawRecord } from './premiere-draw';
 import pg from 'pg';
 import type { ErrorRow } from './errors';
 import type { Logger } from './log';
 import { NO_STATS } from '@kto/game-core';
-import type { BadgeStats, MySticker, StatsDelta } from '@kto/game-core';
+import type { BadgeStats, Gain, MySticker, PremiereState, StatsDelta } from '@kto/game-core';
+
+/** Запись журнала «Новогодней премьеры»: что и за что начислено (для проверки перед розыгрышем). */
+export type PremiereLogRow = Pick<Gain, 'reason' | 'n' | 'ref'>;
 
 /**
  * Хранилище игрового сервера. Игре база не нужна (комнаты в памяти) — здесь аналитика воронки
@@ -62,6 +66,19 @@ export interface Store {
   bumpTgStats(tgUser: number, d: StatsDelta): Promise<void>;
   /** Счётчики игрока Telegram для значков (нет — нули). */
   tgStats(tgUser: number): Promise<BadgeStats>;
+  /**
+   * «Новогодняя премьера» (game-core/premiere.ts): изменить учёт игрока Telegram под блокировкой строки.
+   * `fn` получает текущее состояние (нет — null) и возвращает новое; null — ничего не менять. Записи журнала
+   * (`log`) пишутся в той же транзакции.
+   */
+  premiereUpdate(tgUser: number, fn: (s: PremiereState | null) => { state: PremiereState; log: PremiereLogRow[] } | null): Promise<PremiereState | null>;
+  /** Учёт игрока (нет — null). */
+  premiere(tgUser: number): Promise<PremiereState | null>;
+  /** Участники розыгрыша: у кого не меньше `min` контрамарок, по возрастанию id Telegram. */
+  premiereEntrants(min: number): Promise<{ tgUser: number; tickets: number }[]>;
+  /** Жеребьёвка сезона (premiere-draw.ts): заморозка списка, раунд, победители, выданные подарки. */
+  premiereDraw(season: string): Promise<DrawRecord | null>;
+  premiereDrawSave(season: string, rec: DrawRecord): Promise<void>;
   /**
    * Аренда общей задачи (сверка оплат по расписанию): true — задача за этим экземпляром на `ms` (свою аренду
    * продлевает); false — её держит другой (синий и зелёный живут вместе при выкладке, база общая).
@@ -303,6 +320,27 @@ const MIGRATIONS: string[] = [
    )`,
   `create index if not exists tg_stats_updated_idx on tg_stats (updated_at)`,
   `create index if not exists tg_links_tg_user_idx on tg_links (tg_user)`,
+  // «Новогодняя премьера»: учёт контрамарок игрока Telegram (JSON — game-core/premiere.ts) и журнал начислений
+  `create table if not exists premiere (
+     tg_user bigint primary key,
+     state jsonb not null,
+     tickets integer not null default 0,
+     updated_at timestamptz not null default now()
+   )`,
+  `create table if not exists premiere_log (
+     id bigserial primary key,
+     tg_user bigint not null,
+     at timestamptz not null default now(),
+     reason text not null,
+     n integer not null,
+     ref text
+   )`,
+  `create index if not exists premiere_log_user_idx on premiere_log (tg_user, at)`,
+  `create table if not exists premiere_draw (
+     season text primary key,
+     data jsonb not null,
+     updated_at timestamptz not null default now()
+   )`,
 ];
 
 function nudgeFrom(x: Record<string, unknown>): NudgeState {
@@ -510,6 +548,55 @@ export class PgStore implements Store {
          rooms = tg_stats.rooms + excluded.rooms, last_win = greatest(tg_stats.last_win, excluded.last_win),
          jackpots = tg_stats.jackpots + excluded.jackpots, skulls = tg_stats.skulls + excluded.skulls, updated_at = now()`,
       [tgUser, d.matches, d.wins, d.rooms, d.winAt, d.jackpots ?? 0, d.skulls ?? 0],
+    );
+  }
+
+  async premiereUpdate(tgUser: number, fn: (s: PremiereState | null) => { state: PremiereState; log: PremiereLogRow[] } | null): Promise<PremiereState | null> {
+    const c = await this.pool.connect();
+    try {
+      await c.query('begin');
+      const r = await c.query(`select state from premiere where tg_user = $1 for update`, [tgUser]);
+      const next = fn(r.rows[0] ? (r.rows[0].state as PremiereState) : null);
+      if (!next) {
+        await c.query('rollback');
+        return r.rows[0] ? (r.rows[0].state as PremiereState) : null;
+      }
+      await c.query(
+        `insert into premiere (tg_user, state, tickets) values ($1, $2, $3)
+         on conflict (tg_user) do update set state = excluded.state, tickets = excluded.tickets, updated_at = now()`,
+        [tgUser, JSON.stringify(next.state), next.state.tickets],
+      );
+      for (const l of next.log) await c.query(`insert into premiere_log (tg_user, reason, n, ref) values ($1, $2, $3, $4)`, [tgUser, l.reason, l.n, l.ref ?? null]);
+      await c.query('commit');
+      return next.state;
+    } catch (e) {
+      await c.query('rollback').catch(() => {});
+      throw e;
+    } finally {
+      c.release();
+    }
+  }
+
+  async premiere(tgUser: number): Promise<PremiereState | null> {
+    const r = await this.pool.query(`select state from premiere where tg_user = $1`, [tgUser]);
+    return r.rows[0] ? (r.rows[0].state as PremiereState) : null;
+  }
+
+  async premiereEntrants(min: number): Promise<{ tgUser: number; tickets: number }[]> {
+    const r = await this.pool.query(`select tg_user, tickets from premiere where tickets >= $1 order by tg_user`, [min]);
+    return r.rows.map((x) => ({ tgUser: Number(x.tg_user), tickets: Number(x.tickets) }));
+  }
+
+  async premiereDraw(season: string): Promise<DrawRecord | null> {
+    const r = await this.pool.query(`select data from premiere_draw where season = $1`, [season]);
+    return (r.rows[0]?.data as DrawRecord | undefined) ?? null;
+  }
+
+  async premiereDrawSave(season: string, rec: DrawRecord): Promise<void> {
+    await this.pool.query(
+      `insert into premiere_draw (season, data) values ($1, $2)
+       on conflict (season) do update set data = excluded.data, updated_at = now()`,
+      [season, JSON.stringify(rec)],
     );
   }
 
@@ -742,6 +829,36 @@ export class MemoryStore implements Store {
 
   async tgStats(tgUser: number): Promise<BadgeStats> {
     return { ...(this.stats.get(tgUser) ?? NO_STATS) };
+  }
+
+  premiereRows = new Map<number, PremiereState>();
+  premiereLog: (PremiereLogRow & { tgUser: number })[] = [];
+
+  async premiereUpdate(tgUser: number, fn: (s: PremiereState | null) => { state: PremiereState; log: PremiereLogRow[] } | null): Promise<PremiereState | null> {
+    const cur = this.premiereRows.get(tgUser) ?? null;
+    const next = fn(cur ? structuredClone(cur) : null);
+    if (!next) return cur;
+    this.premiereRows.set(tgUser, structuredClone(next.state));
+    for (const l of next.log) this.premiereLog.push({ ...l, tgUser });
+    return next.state;
+  }
+
+  async premiere(tgUser: number): Promise<PremiereState | null> {
+    const s = this.premiereRows.get(tgUser);
+    return s ? structuredClone(s) : null;
+  }
+
+  async premiereEntrants(min: number): Promise<{ tgUser: number; tickets: number }[]> {
+    return [...this.premiereRows].filter(([, s]) => s.tickets >= min).sort((a, b) => a[0] - b[0]).map(([tgUser, s]) => ({ tgUser, tickets: s.tickets }));
+  }
+
+  draws = new Map<string, DrawRecord>();
+  async premiereDraw(season: string): Promise<DrawRecord | null> {
+    const d = this.draws.get(season);
+    return d ? structuredClone(d) : null;
+  }
+  async premiereDrawSave(season: string, rec: DrawRecord): Promise<void> {
+    this.draws.set(season, structuredClone(rec));
   }
 
   /** Когда игрок Telegram сыграл последний матч (как updated_at у tg_stats). */

@@ -13,6 +13,7 @@
  *
  * Вне Telegram всё здесь — пустые вызовы. Скрипт Telegram грузится только внутри Telegram.
  */
+import { premierePhase } from '@kto/game-core';
 import type { BadgeState, EffectId, MyFig, MySticker, RewardId, StickerId } from '@kto/game-core';
 import { GAME_API, TG_APP } from './env';
 import { ensureGameUser } from './game-server';
@@ -227,9 +228,51 @@ export function telegramLang(): 'ru' | 'en' | null {
  * и в адресе (`tgWebAppStartParam`) — так он известен сразу, ещё до загрузки SDK.
  */
 export function telegramStart(): string | null {
+  return splitStart(rawStart()).base;
+}
+
+function rawStart(): string | null {
   if (app?.initDataUnsafe.start_param) return app.initDataUnsafe.start_param;
   if (typeof location === 'undefined') return null;
   return new URLSearchParams(location.search).get('tgWebAppStartParam');
+}
+
+/**
+ * «Новогодняя премьера»: приглашения в сезон несут id Telegram пригласившего хвостом `_f<id>` (`r_КОД_f123`)
+ * или целиком `ref_<id>`. Хвост отрезаем до разбора, а id запоминаем: сервер засчитает друга, если игрок новичок
+ * (apps/server/src/premiere.ts › bindPremiereRef). Без хвоста — как раньше.
+ */
+function splitStart(start: string | null): { base: string | null; ref: number | null } {
+  if (!start) return { base: null, ref: null };
+  const only = /^ref_(\d{1,15})$/.exec(start);
+  if (only) return { base: null, ref: Number(only[1]) };
+  const tail = /^(.+)_f(\d{1,15})$/.exec(start);
+  return tail ? { base: tail[1], ref: Number(tail[2]) } : { base: start, ref: null };
+}
+
+/** Премьера видна: сезон (17–30.12) или до него — флаг `premiere` (проверка владельцем). */
+export function premiereOn(): boolean {
+  const p = premierePhase(Date.now());
+  return p === 'on' || (p === 'before' && featureOn('premiere'));
+}
+
+const REF_KEY = 'kto:ref';
+/** Кто позвал в игру (id Telegram из ссылки), если звали; запоминается при первом открытии. */
+export function premiereRef(): number | null {
+  const now = splitStart(rawStart()).ref;
+  try {
+    if (now && !localStorage.getItem(REF_KEY)) localStorage.setItem(REF_KEY, String(now));
+    const kept = Number(localStorage.getItem(REF_KEY));
+    return kept > 0 ? kept : now;
+  } catch {
+    return now;
+  }
+}
+
+/** Свой id Telegram (в Mini App или после входа на сайте) — для хвоста приглашений. */
+function myTgId(): number | null {
+  const id = app?.initDataUnsafe.user?.id ?? (inTelegram() ? undefined : currentWebLogin()?.id);
+  return typeof id === 'number' && id > 0 ? id : null;
 }
 
 /**
@@ -260,6 +303,8 @@ export function telegramStartTarget(): string | null {
   if (start === 'stickers' || start === 'ff_stickers') return '/stickers?src=tg';
   if (start === 'badges') return '/badges?src=tg';
   if (start === 'emoji') return '/emoji?src=tg';
+  // «Новогодняя премьера»: экран «Съёмочный план» (до сезона — ещё и флаг, чтобы владелец видел счётчик в меню)
+  if (start === 'premiere') return '/premiere?ff=premiere&src=tg';
   // загадка из фильма матча: кнопка «Найди актёра» под видео в чате
   const puzzle = /^c_([A-Z2-9]{5})$/.exec(start);
   if (puzzle) return `/${puzzle[1]}?src=tg_film`;
@@ -291,7 +336,10 @@ export function tgLinkFor(webUrl: string): string | null {
   const room = /^\/r\/([A-Z]{4})/.exec(path);
   // загадка из фильма: benobody.app/7KQ2P → c_7KQ2P
   const puzzle = /^\/([A-Z2-9]{5})$/.exec(path);
-  return tgLink(room ? `r_${room[1]}` : puzzle ? `c_${puzzle[1]}` : path.startsWith('/daily') ? 'daily' : 'home');
+  const start = room ? `r_${room[1]}` : puzzle ? `c_${puzzle[1]}` : path.startsWith('/daily') ? 'daily' : 'home';
+  // в сезон премьеры приглашение засчитывает друга пригласившему
+  const me = premiereOn() ? myTgId() : null;
+  return tgLink(me ? `${start}_f${me}` : start);
 }
 
 /**
@@ -503,6 +551,65 @@ export interface ShopState {
   badges?: (BadgeState & { emoji: string | null })[];
   /** Личный эмодзи-пак (game-core/emoji-pack.ts): забран ли, ссылка на набор, открытые награды, сколько ещё положить; старый сервер не шлёт. */
   emoji?: { claimed: boolean; pack: string | null; open: RewardId[]; pending: number };
+}
+
+/** «Съёмочный план» (apps/server/src/premiere.ts › premiereView + me, channel). */
+export interface PremiereTaskView {
+  id: string;
+  goal: number;
+  reward: number;
+  progress: number;
+  done: boolean;
+}
+export interface PremiereView {
+  phase: 'before' | 'on' | 'after';
+  tickets: number;
+  entry: number;
+  subscribed: boolean;
+  entered: boolean;
+  double: boolean;
+  day: PremiereTaskView[];
+  week: PremiereTaskView[];
+  streak: number;
+  playedToday: boolean;
+  /** Старый сервер не шлёт. */
+  matchesToday?: number;
+  basePerDay?: number;
+  streakRewards: { days: number; n: number }[];
+  friends: number;
+  friendsMax: number;
+  friendMatches: number;
+  shared: number;
+  sharedMax: number;
+  milestones: { at: number; id: 'sticker' | 'badge' | 'effect'; open: boolean }[];
+  me: number;
+  channel: string;
+}
+
+const PREMIERE_KEY = 'kto:premiere';
+/** Счёт и задания; заодно привязывает пригласившего друга (если звали по ссылке). null — нет входа или сети. */
+export async function premiereState(): Promise<PremiereView | null> {
+  const ref = premiereRef();
+  const v = await botPost<PremiereView>('/shop/premiere', ref ? { ref } : {});
+  if (v && typeof v.tickets === 'number') {
+    try {
+      localStorage.setItem(PREMIERE_KEY, JSON.stringify({ tg: v.me, v }));
+    } catch {
+      /* приватный режим */
+    }
+  }
+  return v && typeof v.tickets === 'number' ? v : null;
+}
+/** Последний ответ — чтобы счётчик в меню и экран рисовались сразу. */
+export function premiereCached(): PremiereView | null {
+  try {
+    const c = JSON.parse(localStorage.getItem(PREMIERE_KEY) ?? 'null') as { tg?: number; v?: PremiereView } | null;
+    const me = myTgId();
+    if (!c?.v || (me && c.tg !== me)) return null;
+    return c.v;
+  } catch {
+    return null;
+  }
 }
 
 /** Можно ли ставить эмодзи-статус: Telegram 8.0+ и Telegram Premium (без него статус не ставится). */

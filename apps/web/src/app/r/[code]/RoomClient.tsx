@@ -21,7 +21,7 @@ import { loadChunk } from '@/lib/chunk';
 import { setTrackContext, shareKind, track } from '@/lib/analytics';
 import { Snow, useNewYear } from '@/ui/Festive';
 import { Actor } from '@/ui/Actor';
-import { inTelegram, inviteLink, linkTelegramOnce, telegramInvite, telegramReady, telegramShare, telegramShareCard, tgLink } from '@/lib/telegram';
+import { inTelegram, inviteLink, linkTelegramOnce, premiereOn, premiereRef, premiereState, shopSignedIn, telegramInvite, telegramReady, telegramShare, telegramShareCard, tgLink } from '@/lib/telegram';
 import { download, shareContent, withLang } from '@/lib/share';
 import { Room, SPECTATE_DELAY_MS } from '@/net/room';
 import { GAME_API } from '@/lib/env';
@@ -38,13 +38,14 @@ export default function RoomClient({ code, bot = false }: { code: string; bot?: 
   const roomRef = useRef<Room | null>(null);
   const router = useRouter();
   const bar = useRef<Bar | null>(null);
-
   useEffect(() => {
     const l = detectLang();
     setLang(l);
     document.documentElement.lang = l;
     // стикеры за матч: сервер должен знать, какой это аккаунт Telegram (один раз на телефон)
     void linkTelegramOnce();
+    // «Новогодняя премьера»: пришёл по приглашению друга — привязать его до первого матча (сервер берёт только новичков)
+    if (premiereOn() && premiereRef() && shopSignedIn()) void premiereState();
   }, []);
 
   useEffect(() => {
@@ -358,6 +359,9 @@ export function Lobby({
   // никого, кроме себя: «Позвать» мигает, а первые два захода в лобби — подсказка про награду за компанию
   const alone = online.length <= 1;
   const [tip, setTip] = useState(false);
+  // «Новогодняя премьера»: в сезон приглашение обещает контрамарки (после монтирования — без расхождения с SSR)
+  const [premiere, setPremiere] = useState(false);
+  useEffect(() => setPremiere(premiereOn()), []);
   useEffect(() => {
     if (!alone) return setTip(false);
     let shown = 0;
@@ -463,7 +467,7 @@ export function Lobby({
         </div>
         {tip && !inviteFirst && (
           <button className="inv-tip" onClick={() => setTip(false)}>
-            {t.lobby.inviteTip}
+            {premiere ? t.lobby.inviteTipPremiere : t.lobby.inviteTip}
           </button>
         )}
       </section>
@@ -551,7 +555,7 @@ export function Lobby({
               <button className="btn" onClick={invite}>
                 {t.lobby.invite}
               </button>
-              <p className="perk">{t.lobby.invitePerk}</p>
+              <p className="perk">{premiere ? t.lobby.invitePerkPremiere : t.lobby.invitePerk}</p>
             </>
           ) : (
             <>
