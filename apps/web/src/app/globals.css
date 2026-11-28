@@ -320,7 +320,9 @@ button.summary { color: var(--sand); cursor: pointer; }
 /* «Гардероб» (/wardrobe, за флагом shop): та же раскладка, что у кастинга, — экран без прокрутки */
 .wardrobe .btn { gap: 10px; }
 .wardrobe .btn.small { min-height: 44px; padding: 10px 14px; font-size: 10px; }
-.wardrobe-was { color: var(--rust); font-size: 10px; }
+/* старая цена: цифра того же кегля, что у новой, и тёмная пиксельная черта поперёк — видно на янтарной кнопке */
+.wardrobe-was { position: relative; color: var(--rust); font-size: 12px; text-decoration: none; }
+.wardrobe-was::after { content: ''; position: absolute; left: -2px; right: -2px; top: 50%; height: 2px; margin-top: -1px; background: var(--ink); }
 .wardrobe-owned { color: var(--yellow); font-size: 12px !important; }
 .wardrobe-note { position: absolute; bottom: 6px; left: 50%; transform: translateX(-50%); width: max-content; max-width: calc(100% - 12px); margin: 0;
   font-size: 10px; line-height: 1.6; padding: 6px 10px; color: var(--sand); background: rgba(24, 20, 37, 0.92); box-shadow: 0 0 0 2px var(--ink); pointer-events: none; }

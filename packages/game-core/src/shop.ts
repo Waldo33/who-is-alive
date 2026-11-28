@@ -28,15 +28,16 @@ export interface ShopItem {
 }
 
 export const SHOP_ITEMS: ShopItem[] = [
-  { id: 'kotBanan', stars: 49, was: 99, isNew: true },
-  // эффекты — от простых к самым эффектным (цены — решение владельца 28.11.2026, минимум 19)
-  { id: 'gold', stars: 39, isNew: true, effect: true },
-  { id: 'holo', stars: 39, isNew: true, effect: true },
-  { id: 'fire', stars: 35, isNew: true, effect: true },
-  { id: 'vhs', stars: 29, isNew: true, effect: true },
-  { id: 'noir', stars: 25, isNew: true, effect: true },
+  { id: 'kotBanan', stars: 79, was: 129, isNew: true },
+  // эффекты — от самых эффектных к простым (сетка владельца 28.11.2026 под пополнение 100⭐: на сотню —
+  // одна вещь из лучших и одна попроще, VHS самый дорогой — он на приманке «Собери свой пак!»)
+  { id: 'vhs', stars: 69, isNew: true, effect: true },
+  { id: 'holo', stars: 59, isNew: true, effect: true },
+  { id: 'fire', stars: 49, isNew: true, effect: true },
+  { id: 'noir', stars: 39, isNew: true, effect: true },
+  { id: 'gold', stars: 35, isNew: true, effect: true },
+  { id: 'ice', stars: 25, isNew: true, effect: true },
   { id: 'sepia', stars: 19, isNew: true, effect: true },
-  { id: 'ice', stars: 19, isNew: true, effect: true },
 ];
 
 /** Эффекты стикеров — товары гардероба категории «Эффекты» (решение владельца 28.11.2026). */
