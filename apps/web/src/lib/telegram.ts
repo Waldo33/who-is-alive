@@ -222,7 +222,7 @@ export function telegramLang(): 'ru' | 'en' | null {
 }
 
 /**
- * Параметр запуска (?startapp=…): `r_КОД` — комната, `play` — сразу матч с ИИ, `friends` — новая
+ * Параметр запуска (?startapp=…): `r_КОД` — комната, `home` и `play` — главный экран, `friends` — новая
  * комната, `g_МЕТКА` — общее лобби по карточке бота «Собрать комнату», `c_КОД` — загадка из фильма, `daily` — загадка дня, `dev[_tN][_sN]` — песочница с дев-панелью (тема N, ускорение N), `shop` — «Гардероб», `shoptest` — дев-панель песочницы (там проверочная покупка), `stickers` — «Собери свой стикерпак» (`ff_shop`/`ff_stickers` — старые варианты). Telegram передаёт его
  * и в адресе (`tgWebAppStartParam`) — так он известен сразу, ещё до загрузки SDK.
  */
@@ -247,7 +247,7 @@ export function telegramStartTarget(): string | null {
   }
   const room = /^r_([A-Z]{4})$/.exec(start);
   if (room) return `/r/${room[1]}?src=tg`;
-  if (start === 'play') return '/?create=1&src=tg';
+  // `play` — кнопки «Играть» в старых сообщениях бота: главный экран, как и `home` (раньше — сразу новая комната)
   // дев-режим песочницы для владельца (в Telegram адрес не поправить руками): dev, dev_t7, dev_t7_s8 —
   // тема и ускорение, как ?dev&theme=7&speed=8
   const dev = /^dev(?:_t(\d{1,2}))?(?:_s(\d{1,2}))?$/.exec(start);

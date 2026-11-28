@@ -634,7 +634,7 @@ export class Bot {
       });
       await soft('commands', () => this.api('setMyCommands', { commands: [{ command: 'start', description: p.start }, { command: 'stickers', description: p.stickersCmd }, { command: 'support', description: p.helpCmd }, { command: 'paysupport', description: p.supportCmd }], language_code }));
     }
-    await soft('menu', () => this.api('setChatMenuButton', { menu_button: { type: 'web_app', text: P.ru.menu, web_app: { url: `${this.o.site}/?create=1&src=tg` } } }));
+    await soft('menu', () => this.api('setChatMenuButton', { menu_button: { type: 'web_app', text: P.ru.menu, web_app: { url: `${this.o.site}/?src=tg` } } }));
   }
 
   /** /stickers: кнопка на страницу «Мой стикерпак» в Mini App (там замок, свои стикеры, покупка набора). */
@@ -681,9 +681,9 @@ export class Bot {
     const t = T[langOf(msg.from?.language_code)];
     const param = (msg.text ?? '').split(' ')[1] ?? '';
     const room = /^r_[A-Z]{4}$/.test(param);
-    // «Играть» — новая комната (лобби): друзья приходят по приглашению, одному — свободные места займут ИИ-актёры.
-    // Песочница с ботами — только дев-режим (startapp=dev…). Второй кнопкой — свой стикерпак.
-    const path = room ? `/r/${param.slice(2)}` : param === 'daily' && this.casting ? '/daily' : '/?create=1';
+    // «Играть» — главный экран игры (решение владельца 28.11.2026: раньше сразу создавалась комната-лобби);
+    // приглашение r_КОД — прямо в комнату. Песочница с ботами — только дев-режим (startapp=dev…). Второй кнопкой — свой стикерпак.
+    const path = room ? `/r/${param.slice(2)}` : param === 'daily' && this.casting ? '/daily' : '/';
     // кнопка web_app — только в личке; в группах — прямая ссылка Mini App
     const priv = msg.chat.type === 'private';
     const web = (text: string, p: string) => ({ text, web_app: { url: `${this.o.site}${p}${p.includes('?') ? '&' : '?'}src=tg` } });
@@ -692,7 +692,7 @@ export class Bot {
     const rows = priv
       ? [[web(t.play, path)], ...(room ? [] : [[web(t.stickers, '/stickers'), web(t.wardrobe, '/wardrobe')]]), ...(this.casting ? [[web(t.daily, '/daily')]] : []), channel]
       : [
-          [{ text: t.play, url: await this.link(room ? param : 'friends') }],
+          [{ text: t.play, url: await this.link(room ? param : 'home') }],
           ...(room ? [] : [[{ text: t.stickers, url: await this.link('stickers') }, { text: t.wardrobe, url: await this.link('shop') }]]),
           ...(this.casting ? [[{ text: t.daily, url: await this.link('daily') }]] : []),
           channel,
@@ -989,7 +989,7 @@ export class Bot {
       caption: text || t.inviteText,
       reply_markup: {
         inline_keyboard: [
-          [again ? { text: t.filmAgain, url: await this.link(again) } : { text: t.play, url: await this.link('play') }],
+          [again ? { text: t.filmAgain, url: await this.link(again) } : { text: t.play, url: await this.link('home') }],
           ...(puzzle ? [[{ text: t.filmPuzzle, url: await this.link(`c_${puzzle}`) }]] : []),
         ],
       },
