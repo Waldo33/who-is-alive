@@ -21,6 +21,7 @@
     "clip-video": "node scripts/clip-video.mjs",
     "sound-check": "node scripts/sound-check.mjs",
     "stickers": "node scripts/stickers.mjs",
+    "gestures": "node scripts/gestures.mjs",
     "badges": "node scripts/badges.mjs",
     "post-emoji": "node scripts/post-emoji.mjs"
   },

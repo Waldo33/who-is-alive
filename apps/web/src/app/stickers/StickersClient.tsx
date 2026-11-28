@@ -2,7 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { DICTS, EFFECTS, LURE_FX, MY_COLORS, MY_FIGS, MY_MAX, MY_POSES, MY_SLOT_EVERY, STICKER_LIST, THEME_RULES, canDrop, fmt, isEffect, myCaption, myTop, rude } from '@kto/game-core';
+import { DICTS, EFFECTS, LURE_FX, MY_COLORS, MY_FIGS, MY_COMMON_POSES, MY_MAX, MY_SLOT_EVERY, STICKER_LIST, THEME_RULES, canDrop, fmt, isEffect, myCaption, myPosesOf, myTop, rude } from '@kto/game-core';
 import type { EffectId, Lang, MyFig, MyPose, MySticker, ShopItemId, StickerId, StickerMeta } from '@kto/game-core';
 import { PAL } from '@kto/assets';
 import { track } from '@/lib/analytics';
@@ -46,7 +46,7 @@ interface Draft {
   std: StickerId | null;
   stdColor: number | null;
 }
-const NEW_DRAFT: Draft = { slot: null, fig: 'actor', pose: 'wave', color: 1, caption: '', top: '', fx: null, std: null, stdColor: null };
+const NEW_DRAFT: Draft = { slot: null, fig: 'actor', pose: 'snap', color: 1, caption: '', top: '', fx: null, std: null, stdColor: null };
 
 const png = (c: HTMLCanvasElement) => c.toDataURL('image/png');
 const themeName = (lang: Lang, id: string) => DICTS[lang].themes[THEME_RULES.findIndex((r) => r.id === id)] ?? id;
@@ -106,7 +106,7 @@ export default function StickersClient() {
   const gridRef = useRef<HTMLDivElement>(null);
   const slotRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const lookRef = useRef<MyLook>({ fig: 'actor', pose: 'wave', color: 1, text: [] });
+  const lookRef = useRef<MyLook>({ fig: 'actor', pose: 'snap', color: 1, text: [] });
   // витрина эффекта: стикер, на котором его показываем
   const fxBaseRef = useRef<Pick<StickerDef, 'draw'>>(STICKERS[0]);
 
@@ -823,7 +823,8 @@ export default function StickersClient() {
                     onClick={() => {
                       // фигурку набора из гардероба можно примерить до покупки: кнопка станет «Купить …»
                       if (!isOpen && !('item' in f)) return setNote(`${figName(f.id)}: ${fmt(b.locked, { how: figHow(f.id) })}`);
-                      setDraft((d) => ({ ...d, fig: f.id }));
+                      // у каждой фигурки свои жесты: общая поза остаётся, свой жест прошлой фигурки — на первый жест новой
+                      setDraft((d) => ({ ...d, fig: f.id, pose: (MY_COMMON_POSES as readonly MyPose[]).includes(d.pose) ? d.pose : myPosesOf(f.id)[0] }));
                       if (!isOpen) return setNote(`${figName(f.id)}: ${fmt(b.locked, { how: figHow(f.id) })}`);
                       setNote(figName(f.id));
                     }}
@@ -836,7 +837,8 @@ export default function StickersClient() {
               })}
             </div>
             <div className="stickers-row stickers-poses" role="radiogroup" aria-label={b.pose}>
-              {MY_POSES.map((p) => (
+              {/* свои жесты фигурки, потом общие; у старого стикера со снятой позой (Привет, Танец…) — и она, чтобы было видно выбранное */}
+              {[...myPosesOf(draft.fig), ...(myPosesOf(draft.fig).includes(draft.pose) ? [] : [draft.pose])].map((p) => (
                 <button key={p} role="radio" aria-checked={draft.pose === p} className={draft.pose === p ? 'on' : ''} onClick={() => setDraft((d) => ({ ...d, pose: p }))}>
                   {b.poses[p]}
                 </button>

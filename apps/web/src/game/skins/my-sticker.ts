@@ -7,6 +7,7 @@ import type { Ctx } from '../pixels';
 import { themeLook } from '../themes';
 import type { Pose } from '../themes/types';
 import { kotBananFrame } from './kot-banan';
+import { drawGesture, hasGesture } from './gestures';
 import { iceFrost, withFx } from './shine';
 import { R, ST_SIZE, actorFrame, orbit, put, say, star } from './stickers';
 import type { StickerDef } from './stickers';
@@ -135,12 +136,19 @@ export function drawMy(g: Ctx, s: MyLook, t: number): void {
   const head = s.top ?? '';
   // без подписи фигурка ниже и по центру; с двумя строками — выше; строка сверху сдвигает фигурку вниз
   const top = head ? (lines.length === 2 ? 14 : 16) : lines.length === 0 ? 20 : lines.length === 1 ? 12 : 6;
+  const y0 = lines.length === 2 ? 76 : 84;
+  if (hasGesture(s.pose)) {
+    // свой жест фигурки — целая сцена с предметами (skins/gestures.ts), подпись — как у всех
+    drawGesture(g, s.pose, t, { lines: lines.length, head: !!head });
+    lines.forEach((ln, i) => say(g, ln, MID, y0 + i * 10, col));
+    if (head) say(g, head, MID, 2, col);
+    return;
+  }
   const { fr, k, dx, dy, flip } = figure(s.fig, s.pose, t);
   const w = fr.width * k;
   const h = fr.height * k;
   const x = Math.round(MID - w / 2 + dx);
   // «Прыжок»: земля — чуть ниже обычного, насколько пускает подпись снизу; потолок — край или строка сверху
-  const y0 = lines.length === 2 ? 76 : 84;
   const ground = s.pose === 'jump' ? Math.max(top, Math.min(top + 9, (lines.length ? y0 - 7 : ST_SIZE - 3) - h)) : top;
   const lift = s.pose === 'jump' ? Math.round(jumpAt(t).h * Math.min(18, ground - (head ? 12 : 0))) : 0;
   const y = ground + dy - lift;

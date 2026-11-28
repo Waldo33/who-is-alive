@@ -153,6 +153,10 @@ export const STICKER_LIST: StickerMeta[] = [
   { id: 'extra', set: 'play', emoji: ['👥', '😐'], now: false, earn: 'unsuspected' },
   { id: 'offscreen', set: 'play', emoji: ['👻', '👀'], now: false, earn: 'accuse' },
   { id: 'still', set: 'play', emoji: ['⏸', '🥶'], now: false, earn: 'survive' },
+  // мемы (28.11.2026): «Вычислил» — угадал актёра из-за кадра, «Всё, я спать» — за любой матч, «Последний раз» — дубль в казино
+  { id: 'busted', set: 'play', emoji: ['🔍', '🤨'], now: false, earn: 'clairvoyant' },
+  { id: 'sleep', set: 'play', emoji: ['😴', '📱'], now: false, earn: 'played' },
+  { id: 'lastTime', set: 'play', emoji: ['😩', '🎰'], now: false, earn: 'theme', theme: 'casino' },
   { id: 'chef', set: 'play', emoji: ['😋', '🍲'], now: false, earn: 'theme', theme: 'chefs' },
   { id: 'penguin', set: 'play', emoji: ['🐧', '🥶'], now: false, earn: 'theme', theme: 'penguins' },
   { id: 'cosmo', set: 'play', emoji: ['🚀', '🧑‍🚀'], now: false, earn: 'theme', theme: 'cosmonauts' },
@@ -313,10 +317,61 @@ export const MY_FIGS = [
 ] as const satisfies readonly { id: string; item?: ShopItemId; sticker?: StickerId; theme?: ThemeId }[];
 export type MyFig = (typeof MY_FIGS)[number]['id'];
 
-/** Позы (те же движения, что в игре) и эмодзи стикера для поиска в Telegram. */
-export const MY_POSES = ['wave', 'dance', 'stun', 'startle', 'jump', 'freeze', 'ask'] as const;
+/** Свои жесты фигурки (в редакторе — первыми, затем `MY_COMMON_POSES`). */
+export const MY_FIG_POSES: Record<MyFig, readonly MyPose[]> = {
+  actor: ['snap', 'facepalm', 'wait'],
+  kotBanan: ['sob', 'hide', 'plead'],
+  chef: ['chefKiss', 'onFire', 'orderUp'],
+  penguin: ['shiver', 'leave', 'flop'],
+  cosmo: ['liftoff', 'float', 'ping'],
+  office: ['call', 'coffee', 'typing', 'frame25'],
+  miami: ['shades', 'cocktail', 'friday', 'mask'],
+  party: ['toast', 'gift', 'karaoke'],
+  kupala: ['shh', 'fireJump', 'daisy'],
+  casino: ['lever', 'allIn', 'payday'],
+};
+/** Позы в редакторе для фигурки: свои жесты, потом общие. */
+export const myPosesOf = (fig: MyFig): readonly MyPose[] => [...MY_FIG_POSES[fig], ...MY_COMMON_POSES];
+/** Можно ли этой фигурке эту позу: общая, старая общая или её свой жест (чужой жест — нет). */
+export const myPoseFits = (fig: MyFig, pose: MyPose): boolean =>
+  (MY_COMMON_POSES as readonly MyPose[]).includes(pose) || MY_LEGACY_POSES.includes(pose) || MY_FIG_POSES[fig].includes(pose);
+
+/**
+ * Позы своего стикера и эмодзи для поиска в Telegram. Первые семь — общие движения из игры (у сохранённых
+ * стикеров остаются как были); дальше — свои жесты фигурок под переписку (решение владельца 28.11.2026):
+ * у каждой фигурки — `MY_FIG_POSES`. Порядок не важен: поза уходит в учёт и боту по имени.
+ */
+export const MY_POSES = [
+  'wave', 'dance', 'stun', 'startle', 'jump', 'freeze', 'ask',
+  'snap', 'facepalm', 'wait',
+  'sob', 'hide', 'plead',
+  'chefKiss', 'onFire', 'orderUp',
+  'shiver', 'leave', 'flop',
+  'liftoff', 'float', 'ping',
+  'call', 'coffee', 'typing', 'frame25',
+  'shades', 'cocktail', 'friday', 'mask',
+  'toast', 'gift', 'karaoke',
+  'shh', 'fireJump', 'daisy',
+  'lever', 'allIn', 'payday',
+] as const;
 export type MyPose = (typeof MY_POSES)[number];
-export const MY_POSE_EMOJI: Record<MyPose, string> = { wave: '👋', dance: '💃', stun: '😵', startle: '😱', jump: '🤩', freeze: '🥶', ask: '🤔' };
+export const MY_POSE_EMOJI: Record<MyPose, string> = {
+  wave: '👋', dance: '💃', stun: '😵', startle: '😱', jump: '🤩', freeze: '🥶', ask: '🤔',
+  snap: '👍', facepalm: '🤦', wait: '⏳',
+  sob: '😭', hide: '🙈', plead: '🥺',
+  chefKiss: '🤌', onFire: '🔥', orderUp: '🛎️',
+  shiver: '🥶', leave: '👋', flop: '🫠',
+  liftoff: '🚀', float: '🌌', ping: '📡',
+  call: '📞', coffee: '☕', typing: '⌨️', frame25: '🥊',
+  shades: '😎', cocktail: '🍹', friday: '🕺', mask: '🎭',
+  toast: '🥂', gift: '🎁', karaoke: '🎤',
+  shh: '🤫', fireJump: '🔥', daisy: '🌼',
+  lever: '🎰', allIn: '💸', payday: '🤑',
+};
+/** Общие позы — у любой фигурки (в редакторе — после её своих жестов). */
+export const MY_COMMON_POSES = ['stun', 'startle', 'ask'] as const satisfies readonly MyPose[];
+/** Старые общие позы: в редакторе их больше нет, но сохранённые стикеры с ними остаются в силе. */
+const MY_LEGACY_POSES: readonly MyPose[] = ['wave', 'dance', 'jump', 'freeze'];
 /** Цвет подписи и искр — имена из палитры PAL (рисует клиент). */
 export const MY_COLORS = ['white', 'yellow', 'orange', 'cyan', 'green', 'orchid'] as const;
 /**
@@ -438,7 +493,7 @@ export function parseMySticker(x: unknown, items: readonly string[]): Omit<MySti
   const fig = MY_FIGS.find((f) => f.id === v.fig)?.id;
   const pose = MY_POSES.find((p) => p === v.pose);
   const color = typeof v.color === 'number' && Number.isInteger(v.color) && v.color >= 0 && v.color < MY_COLORS.length ? v.color : -1;
-  if (!fig || !pose || color < 0) return { error: 'bad' };
+  if (!fig || !pose || color < 0 || !myPoseFits(fig, pose)) return { error: 'bad' };
   if (!myFigOpen(fig, items)) return { error: 'locked' };
   // эффект — только купленный
   const fx = v.fx === undefined || v.fx === null ? undefined : isEffect(v.fx) ? v.fx : null;
@@ -458,7 +513,7 @@ export function isMySticker(x: unknown): x is MySticker {
   const v = x as MySticker | null;
   if (!v || typeof v !== 'object') return false;
   if (!Number.isInteger(v.slot) || v.slot < 0 || v.slot >= MY_MAX || !Number.isInteger(v.rev) || v.rev < 0 || v.rev > 1e6) return false;
-  if (!MY_FIGS.some((f) => f.id === v.fig) || !MY_POSES.includes(v.pose) || !Number.isInteger(v.color) || v.color < 0 || v.color >= MY_COLORS.length) return false;
+  if (!MY_FIGS.some((f) => f.id === v.fig) || !MY_POSES.includes(v.pose) || !myPoseFits(v.fig, v.pose) || !Number.isInteger(v.color) || v.color < 0 || v.color >= MY_COLORS.length) return false;
   if (!Array.isArray(v.text) || v.text.length > MY_LINES) return false;
   if (v.fx !== undefined && !isEffect(v.fx)) return false;
   if (v.top !== undefined) {
