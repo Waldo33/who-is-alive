@@ -645,6 +645,8 @@ export const en: Dict = {
       fxOwned: 'Yours! Tap a sticker in the Stickers tab and pick the effect',
       fxHint: 'Shown on the selected sticker',
       fxPick: 'Tap a sticker in the pack first',
+      fxPut: 'Put on “{name}”',
+      fxSave: 'Effect is on — tap Save',
       back: 'Back to stickers',
       errors: {
         long: 'Too long: 2 lines of 10',
