@@ -176,7 +176,7 @@ button.btn { border: 0; cursor: pointer; border-radius: 0; }
 .cast-card .actor { width: 42px; height: 54px; image-rendering: pixelated; display: block; }
 /* скин (20×32 против 14×18): тот же ×3, шире в стороны (поля −9 px) и выше — ряд карточек растёт, верх банана — в поле карточки */
 .cast-card .actor.skin { width: 60px; height: 96px; margin: -12px -9px 0; pointer-events: none; }
-.cast-card .name { font: inherit; font-size: 9px; color: var(--sand); background: none; border: 0; padding: 0; max-width: 100%; min-height: 0;
+.cast-card .name { font: inherit; font-size: 9px; line-height: 1.8; color: var(--sand); background: none; border: 0; padding: 0; max-width: 100%; min-height: 0;
   overflow-wrap: anywhere; text-align: center; line-height: 1.4; cursor: default; }
 /* своё имя меняется касанием по всей карточке (зона больше 44×44) */
 .cast-card .name:not(:disabled) { cursor: pointer; }
@@ -432,6 +432,7 @@ button.summary { color: var(--sand); cursor: pointer; }
 .badges .btn.small { min-height: 36px; padding: 6px 10px; font-size: 10px; flex-shrink: 0; }
 .badges .btn.tg { background: #0099db; color: #fff; box-shadow: 0 4px 0 var(--ink); }
 .badges-hint { margin: 0; min-height: 3.2em; font-size: 9px; line-height: 1.6; color: var(--mist); max-width: 40ch; }
+.badges-premium { appearance: none; border: 0; padding: 0; background: none; font: inherit; font-size: 9px; line-height: 1.8; color: var(--sand); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
 .badges-list { list-style: none; margin: 0; padding: 0; width: 100%; max-width: 420px; flex: 1 1 0; min-height: 0; overflow: hidden;
   display: flex; flex-direction: column; justify-content: center; gap: 8px; }
 .badges-list li { display: flex; align-items: center; gap: 10px; padding: 6px 10px; background: var(--night); box-shadow: 0 0 0 2px var(--ink); text-align: left; opacity: 0.55; }

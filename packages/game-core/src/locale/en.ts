@@ -504,6 +504,7 @@ export const en: Dict = {
       setDone: 'Badge is in your status',
       setFail: 'Didn’t work, try again',
       premium: 'Status needs Telegram Premium',
+      noPremium: 'Badges go into your status with Telegram Premium ›',
       noTg: 'Badges go into your status from the game in Telegram',
       openTg: 'Open in Telegram',
       preparing: 'Badges are getting ready, check back in a minute',
