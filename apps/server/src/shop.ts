@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { DICTS, STARTER_DRIP, mySlots, mySlotIn, packGames, starterOpen, EFFECTS, EARN_PER_DAY, NO_STATS, badgesOf, EARN_PER_MATCH, MY_FIGS, MY_ISSUED, MY_MARKS, MY_MAX, MY_POSE_EMOJI, RETIRED_STICKERS, SHOP_ITEMS, STICKER_LIST, TEST_ITEM, buyItem, canDrop, colMark, fmt, fxMark, isEffect, isLookIssued, lookIssued, stdLook, MY_COLORS, isMySticker, issuedBase, stickerFx, isSkin, isStickerId, myFigOpen, myIssued, offSticker, parseMySticker, pickEarned, skinOf, wearItems } from '@kto/game-core';
+import { DICTS, STARTER_DRIP, mySlots, mySlotIn, packGames, starterOpen, EFFECTS, EARN_PER_DAY, NO_STATS, badgesOf, EARN_PER_MATCH, MY_FIGS, MY_ISSUED, MY_MARKS, MY_MAX, MY_POSE_EMOJI, RETIRED_STICKERS, SHOP_ITEMS, STICKER_LIST, TEST_ITEM, buyItem, shopItem, canDrop, colMark, fmt, fxMark, isEffect, isLookIssued, lookIssued, stdLook, MY_COLORS, isMySticker, issuedBase, stickerFx, isSkin, isStickerId, myFigOpen, myIssued, offSticker, parseMySticker, pickEarned, skinOf, wearItems } from '@kto/game-core';
 import type { BadgeId, BadgeStats, EffectId, MySticker, StickerId, StickerMeta } from '@kto/game-core';
 import type { StickerJob } from './sticker-render';
 import { RateWindow } from './limits';
@@ -24,7 +24,7 @@ import type { ShopPayment, ShopUser, Store, TgLink } from './store';
  * Вебхук: pre_checkout_query (проверка перед оплатой), message.successful_payment (набор — и его стикеры сразу
  * в пак), callback_query «free:claim» («Забрать стикерпак» / «Я подписался»), /start stickers (бесплатный пак по
  * внешней ссылке t.me/<бот>?start=stickers), /paysupport (обязателен для оплаты звёздами).
- * Возврат — только изнутри: POST /internal/tg/refund { charge }.
+ * Возврат — только изнутри: POST /internal/tg/refund { charge }; подарок от админа — POST /internal/tg/gift { userId, item }.
  *
  * Пак — один на игрока (`pack`, «Массовка · Имя · @бот»): бесплатные, «за игру» и купленные наборы; последней —
  * приманка «Собери свой пак!». Бот правит лишь паки, которые создал сам.
@@ -162,7 +162,7 @@ export async function shopLedgerOp(store: ShopLedger, raw: unknown): Promise<{ s
   }
   if (b?.op === 'pay') {
     const p = b.payment as Partial<ShopPayment> | null;
-    if (!p || typeof p.charge !== 'string' || !CHARGE.test(p.charge) || !userId(p.userId) || !buyItem(p.item) || !Number.isInteger(p.stars) || p.stars! < 1) return bad;
+    if (!p || typeof p.charge !== 'string' || !CHARGE.test(p.charge) || !userId(p.userId) || !buyItem(p.item) || !Number.isInteger(p.stars) || p.stars! < (p.charge.startsWith('gift:') ? 0 : 1)) return bad;
     return { status: 200, body: { result: await store.saveShopPayment({ charge: p.charge, userId: p.userId, item: p.item!, stars: p.stars!, refunded: false }) } };
   }
   if (b?.op === 'link') {
@@ -900,22 +900,53 @@ export class Shop {
     const u = await this.user(from);
     // проверочная покупка — только отметка (без пака, стикеров и сообщения): её сразу возвращают кнопкой
     const test = p.item.id === TEST_ITEM.id;
-    // набор и пак (один на игрока: «Массовка · Имя»; нет — создастся) — записать до выдачи
-    const add = (test ? [p.item.id] : [p.item.id, 'pack']).filter((i) => !u.items.includes(i));
-    if (add.length) {
-      u.items.push(...add);
-      // купленный скин сразу надет (даже если раньше был «Снять»): без отметки надет последний купленный
-      if (isSkin(p.item.id) && add.includes(p.item.id)) u.items = u.items.filter((x) => !x.startsWith('wear:'));
-      await this.d.ledger.saveShopUser(u);
-    }
+    await this.give(u, p.item.id, !test);
     if (!fresh) return;
     this.d.log('info', 'shop_paid', { item: p.item.id, stars: sp.total_amount });
     if (test) return;
-    // стикеры набора — сразу в пак; сбой Telegram — дошлётся при заходе в гардероб; сообщение — со ссылкой на пак
+    const t = DICTS[u.lang].shop;
+    await this.deliver(u, isEffect(p.item.id) ? fmt(t.botFxBought, { name: t.items[p.item.id].title }) : t.botBought);
+  }
+
+  /** Записать игроку вещь (и пак: один на игрока, «Массовка · Имя»; нет — создастся) — до выдачи стикеров. */
+  private async give(u: ShopUser, item: string, pack: boolean): Promise<void> {
+    const add = (pack ? [item, 'pack'] : [item]).filter((i) => !u.items.includes(i));
+    if (!add.length) return;
+    u.items.push(...add);
+    // новый скин сразу надет (даже если раньше был «Снять»): без отметки надет последний полученный
+    if (isSkin(item) && add.includes(item)) u.items = u.items.filter((x) => !x.startsWith('wear:'));
+    await this.d.ledger.saveShopUser(u);
+  }
+
+  /** Стикеры вещи — сразу в пак (сбой Telegram — дошлётся при заходе в гардероб); игроку — сообщение со ссылкой на пак. */
+  private async deliver(u: ShopUser, text: string): Promise<void> {
     await this.issue(u.userId);
     const st = await this.state(u.userId, false);
+    await this.notify(u.userId, u.lang, text, st.pack);
+  }
+
+  /**
+   * Подарок от админа (изнутри машины: /internal/tg/gift, кнопка shop-gift.yml): та же выдача, что после оплаты,
+   * только без звёзд. В учёте — платёж на 0 звёзд с номером `gift:<игрок>:<вещь>:<время>`: он виден в списке
+   * покупок, и подарок можно забрать кнопкой shop-refund (звёзды при этом не возвращаются — их не было).
+   * Вещь уже есть — 409, ничего не пишем. known — игрок уже заходил в гардероб (иначе запись заводится с нуля).
+   */
+  async gift(raw: unknown): Promise<ShopReply> {
+    const b = raw as { userId?: unknown; item?: unknown } | null;
+    const item = shopItem(b?.item);
+    if (!item || !userId(b?.userId)) return { status: 400, body: { error: 'bad_request' } };
+    const id = b.userId;
+    const known = await this.d.ledger.shopUser(id);
+    if (known?.items.includes(item.id)) return { status: 409, body: { error: 'already_owned', item: item.id, name: known.name } };
+    const charge = `gift:${id}:${item.id}:${(this.d.now ?? Date.now)()}`;
+    await this.d.ledger.saveShopPayment({ charge, userId: id, item: item.id, stars: 0, refunded: false });
+    // незнакомый игрок (ещё не заходил в гардероб) — по-русски: почти все игроки отсюда
+    const u = await this.user({ id, language_code: 'ru' });
+    await this.give(u, item.id, true);
+    this.d.log('info', 'shop_gift', { item: item.id });
     const t = DICTS[u.lang].shop;
-    await this.notify(u.userId, u.lang, isEffect(p.item.id) ? fmt(t.botFxBought, { name: t.items[p.item.id].title }) : t.botBought, st.pack);
+    await this.deliver(u, fmt(isEffect(item.id) ? t.botFxGift : t.botGift, { name: t.items[item.id].title }));
+    return { status: 200, body: { ok: true, item: item.id, charge, name: u.name, known: !!known } };
   }
 
   /**
@@ -952,8 +983,9 @@ export class Shop {
     if (typeof charge !== 'string' || !CHARGE.test(charge)) return { status: 400, body: { error: 'bad_charge' } };
     const p = await this.d.ledger.refundShopPayment(charge);
     if (!p) return { status: 404, body: { error: 'not_found' } };
+    // подарок (0 звёзд, shop-gift): возвращать в Telegram нечего — только забрать вещь
     try {
-      await this.d.api('refundStarPayment', { user_id: p.userId, telegram_payment_charge_id: charge });
+      if (p.stars > 0) await this.d.api('refundStarPayment', { user_id: p.userId, telegram_payment_charge_id: charge });
     } catch (e) {
       this.d.log('error', 'shop_refund', { charge, ...errFields(e) });
       return { status: 502, body: { error: 'telegram' } };

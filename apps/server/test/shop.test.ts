@@ -1,4 +1,5 @@
 import { createHash, createHmac } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { Bot } from '../src/bot';
@@ -6,7 +7,7 @@ import { silentLogger } from '../src/log';
 import { GameServer } from '../src/server';
 import { RemoteLedger, localLedger, packName, shopLedgerOp, wantedStickers } from '../src/shop';
 import { MemoryStore } from '../src/store';
-import { skinOf } from '@kto/game-core';
+import { SHOP_ITEMS, skinOf } from '@kto/game-core';
 
 /** Гардероб: бесплатный пак, покупка за звёзды, выдача стикеров в личный пак (shop.ts). */
 
@@ -431,6 +432,50 @@ describe('гардероб', () => {
     } finally {
       await srv.close();
     }
+  });
+
+  it('подарок от админа: вещь без звёзд, как после оплаты; повтор — 409; забрать — тем же возвратом, без звёзд; снаружи — 404', async () => {
+    const { bot, calls, store } = makeBot();
+    const srv = new GameServer({ authSecret: 'x'.repeat(32), log: silentLogger, trustProxy: true, store, bot });
+    const port = await srv.listen(0, '127.0.0.1');
+    const post = (path: string, body: unknown, headers: Record<string, string> = {}) =>
+      fetch(`http://127.0.0.1:${port}${path}`, { method: 'POST', headers, body: JSON.stringify(body) });
+    try {
+      expect((await post('/internal/tg/gift', { userId: 77, item: 'kotBanan' }, { 'x-forwarded-for': '1.2.3.4' })).status).toBe(404);
+      expect((await post('/internal/tg/gift', { userId: 77, item: 'test' })).status).toBe(400);
+      expect((await post('/internal/tg/gift', { userId: -1, item: 'kotBanan' })).status).toBe(400);
+      expect(await store.shopUser(77)).toBeNull();
+
+      const r = await post('/internal/tg/gift', { userId: 77, item: 'kotBanan' });
+      expect(r.status).toBe(200);
+      const body = (await r.json()) as { charge: string; known: boolean };
+      expect(body).toMatchObject({ ok: true, item: 'kotBanan', known: false });
+      // как после оплаты: набор, пак, скин надет, стикеры набора выданы, игроку — сообщение о подарке
+      const u = (await store.shopUser(77))!;
+      expect(u.items).toEqual(expect.arrayContaining(['kotBanan', 'pack']));
+      expect(skinOf(u.items)).toBe('kotBanan');
+      expect(u.issued).toContain('justBanana');
+      expect(calls.some((c) => c.method === 'sendMessage' && String(c.body.text).startsWith('🎁 Подарок'))).toBe(true);
+
+      expect((await post('/internal/tg/gift', { userId: 77, item: 'kotBanan' })).status).toBe(409);
+      // эффект — другой вещью тому же игроку
+      expect((await post('/internal/tg/gift', { userId: 77, item: 'vhs' })).status).toBe(200);
+      expect((await store.shopUser(77))!.items).toContain('vhs');
+
+      // забрать подарок: звёзд не было — Telegram не зовём, вещь пропадает
+      const back = await post('/internal/tg/refund', { charge: body.charge });
+      expect(back.status).toBe(200);
+      expect(calls.some((c) => c.method === 'refundStarPayment')).toBe(false);
+      expect((await store.shopUser(77))!.items).not.toContain('kotBanan');
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('список кнопки shop-gift — весь каталог гардероба', async () => {
+    const yml = await readFile(join(import.meta.dirname, '..', '..', '..', '.github', 'workflows', 'shop-gift.yml'), 'utf8');
+    const ids = [...yml.matchAll(/^ {10}- '([A-Za-z]+) — /gm)].map((m) => m[1]);
+    expect(ids).toEqual(SHOP_ITEMS.map((x) => x.id));
   });
 
   it('безопасность: без подписи initData — 401; чужой payload не выдаёт набор; учёт снаружи закрыт и проверяет вход', async () => {
