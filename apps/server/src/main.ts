@@ -130,6 +130,8 @@ const bot = env.TELEGRAM_BOT_TOKEN
 if (!bot) log('warn', 'TELEGRAM_BOT_TOKEN не задан — бота нет');
 // оплаты, о которых Telegram не сообщил (перезапуск, сбой учёта), — раз в 10 минут, даже если игрок не зайдёт в гардероб
 bot?.shop.sweepEvery(10 * 60_000);
+// чужие стикеры в личных паках (игрок добавил сам в Telegram) — убрать раз в сутки, молча (shop.ts › cleanPacks)
+bot?.shop.cleanDaily();
 // напоминания «звезда дубля гаснет» (nudges.ts): счётчики побед — в базе игры, поэтому только у бота в процессе игры
 if (!env.EVENTS_UPSTREAM) bot?.nudges.sweepEvery(10 * 60_000);
 

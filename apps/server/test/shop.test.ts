@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { Bot } from '../src/bot';
 import { silentLogger } from '../src/log';
 import { GameServer } from '../src/server';
-import { RemoteLedger, localLedger, packName, shopLedgerOp, wantedStickers } from '../src/shop';
+import { RemoteLedger, Shop, localLedger, packName, shopLedgerOp, wantedStickers } from '../src/shop';
 import { MemoryStore } from '../src/store';
 import { SHOP_ITEMS, skinOf } from '@kto/game-core';
 
@@ -989,6 +989,110 @@ describe('гардероб', () => {
     await bot.handle('POST', '/shop/pick', {}, { initData: initData(ANYA), id: 'hi', on: true });
     await bot.shop.issue(77);
     expect(calls.filter((c) => c.method === 'addStickerToSet').flatMap((c) => c.files.map((f) => f.split(':')[1]))).toEqual(['hi.webm']);
+  });
+
+  it('уборка паков: чужие стикеры (игрок добавил сам в Telegram) удаляются молча, всё из «Моего стикерпака» — на месте', async () => {
+    const store = new MemoryStore();
+    await store.saveShopUser({ userId: 77, lang: 'ru', name: 'Аня', items: ['pack', 'starter'], pack: 'm77_by_be_nobody_bot', issued: ['hi', 'dance', 'lure~vhs'] });
+    // пак собран до уборки: свои узнаём по первому эмодзи выданного (💃 — тоже с U+FE0F не страшно)
+    let set = {
+      stickers: [
+        { file_id: 'F_hi', file_unique_id: 'U_hi', emoji: '👋' },
+        { file_id: 'F_frog', file_unique_id: 'U_frog', emoji: '🐸' },
+        { file_id: 'F_dance', file_unique_id: 'U_dance', emoji: '💃' },
+        { file_id: 'F_cat', file_unique_id: 'U_cat', emoji: '😺' },
+        { file_id: 'F_lure', file_unique_id: 'U_lure', emoji: '🎁' },
+      ],
+    };
+    const { bot, calls } = makeBot({ store, result: (m) => (m === 'getStickerSet' ? set : undefined) });
+    expect(await bot.shop.cleanPacks()).toBe(2);
+    expect(calls.filter((c) => c.method === 'deleteStickerFromSet').map((c) => c.body.sticker)).toEqual(['F_frog', 'F_cat']);
+    // игроку ничего не пишем
+    expect(calls.some((c) => /^send/.test(c.method))).toBe(false);
+    expect(await store.packOwn(77)).toEqual(['U_hi', 'U_dance', 'U_lure']);
+
+    // дальше — по file_unique_id: чужой с тем же эмодзи, что у игрового, удаляется; свой с изменённым эмодзи — нет
+    set = {
+      stickers: [
+        { file_id: 'F_hi', file_unique_id: 'U_hi', emoji: '🙂' },
+        { file_id: 'F_dance', file_unique_id: 'U_dance', emoji: '💃' },
+        { file_id: 'F_fake', file_unique_id: 'U_fake', emoji: '👋' },
+        { file_id: 'F_lure', file_unique_id: 'U_lure', emoji: '🎁' },
+      ],
+    };
+    calls.length = 0;
+    expect(await bot.shop.cleanPacks()).toBe(1);
+    expect(calls.filter((c) => c.method === 'deleteStickerFromSet').map((c) => c.body.sticker)).toEqual(['F_fake']);
+
+    // чужих нет — ничего не трогаем; пак удалён игроком — тоже
+    set = { stickers: set.stickers.filter((s) => s.file_id !== 'F_fake') };
+    calls.length = 0;
+    expect(await bot.shop.cleanPacks()).toBe(0);
+    expect(calls.filter((c) => c.method === 'deleteStickerFromSet')).toEqual([]);
+    const gone = makeBot({ store, fail: (m) => (m === 'getStickerSet' ? 'Bad Request: STICKERSET_INVALID' : null) });
+    expect(await gone.bot.shop.cleanPacks()).toBe(0);
+  });
+
+  it('уборка паков — раз в сутки после 4:00 по Москве и одним экземпляром (аренда на день)', async () => {
+    vi.useFakeTimers();
+    try {
+      // 02:00 по Москве
+      let now = Date.UTC(2026, 10, 27, 23, 0);
+      const held = new Set<string>();
+      const make = (owner: boolean) => {
+        const shop = new Shop({ api: async () => true as never, username: async () => 'b', ledger: localLedger(new MemoryStore()), log: silentLogger, stickersDir: '', channel: '', now: () => now, lease: async (name) => (owner ? (held.add(name), true) : !held.has(name)) });
+        const spy = vi.spyOn(shop, 'cleanPacks').mockResolvedValue(0);
+        return { stop: shop.cleanDaily(), spy };
+      };
+      const a = make(true);
+      const tick = async (ms: number) => {
+        now += ms;
+        await vi.advanceTimersByTimeAsync(ms);
+      };
+      await tick(5 * 60_000);
+      expect(a.spy).not.toHaveBeenCalled();
+      await tick(2 * 3600_000);
+      expect(a.spy).toHaveBeenCalledTimes(1);
+      // второй экземпляр (синий/зелёный) в тот же день — не убирает; первый — тоже не повторяет
+      const b = make(false);
+      await tick(3 * 3600_000);
+      expect(a.spy).toHaveBeenCalledTimes(1);
+      expect(b.spy).not.toHaveBeenCalled();
+      a.stop();
+      b.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('уборка паков: стикеры, которые положил бот при выдаче, запоминаются своими и не удаляются', async () => {
+    const store = new MemoryStore();
+    await store.saveShopUser({ userId: 77, lang: 'ru', name: 'Аня', items: ['pack', 'starter', 'st:cut'], pack: 'm77_by_be_nobody_bot', issued: ['hi', 'lure~vhs'] });
+    await store.savePackOwn(77, ['U_hi', 'U_lure']);
+    const set = {
+      stickers: [
+        { file_id: 'F_hi', file_unique_id: 'U_hi', emoji: '👋' },
+        { file_id: 'F_frog', file_unique_id: 'U_frog', emoji: '🐸' },
+        { file_id: 'F_lure', file_unique_id: 'U_lure', emoji: '🎁' },
+      ],
+    };
+    // Telegram кладёт добавленный стикер в конец пака
+    const { bot, calls } = makeBot({
+      store,
+      result: (m) => {
+        if (m === 'addStickerToSet') set.stickers.push({ file_id: `F_new${set.stickers.length}`, file_unique_id: `U_new${set.stickers.length}`, emoji: '✂️' });
+        return m === 'getStickerSet' ? structuredClone(set) : undefined;
+      },
+    });
+    await bot.shop.issue(77);
+    expect(calls.some((c) => c.method === 'addStickerToSet')).toBe(true);
+    const own = (await store.packOwn(77))!;
+    expect(own).toContain('U_hi');
+    expect(own.some((x) => x.startsWith('U_new'))).toBe(true);
+    expect(own).not.toContain('U_frog');
+    calls.length = 0;
+    await bot.shop.cleanPacks();
+    expect(calls.filter((c) => c.method === 'deleteStickerFromSet').map((c) => c.body.sticker)).toEqual(['F_frog']);
   });
 
   it('стикер, убранный из набора («Я не плачу», 27.11), уходит и из выданного пака', async () => {

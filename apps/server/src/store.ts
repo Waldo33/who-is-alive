@@ -35,6 +35,14 @@ export interface Store {
   saveShopUser(u: ShopUser): Promise<void>;
   /** Игроки гардероба с этой отметкой в учёте (до 500) — для напоминаний бота. */
   shopUsersWith(item: string): Promise<number[]>;
+  /** Игроки с личным паком, по возрастанию id, после `after` (до `limit`) — для уборки чужих стикеров. */
+  shopPacks(after: number, limit: number): Promise<number[]>;
+  /**
+   * Стикеры личного пака, которые положил бот (file_unique_id из getStickerSet). null — ещё не записаны (пак
+   * собран до уборки): бот узнает свои по первому эмодзи.
+   */
+  packOwn(userId: number): Promise<string[] | null>;
+  savePackOwn(userId: number, ids: string[]): Promise<void>;
   /** Записать оплату. false — этот платёж уже записан (Telegram повторил обновление). */
   saveShopPayment(p: ShopPayment): Promise<boolean>;
   /** Отметить возврат. null — платежа нет или он уже возвращён. */
@@ -287,6 +295,12 @@ const MIGRATIONS: string[] = [
      updated_at timestamptz not null default now()
    )`,
   `create index if not exists tg_stats_last_win_idx on tg_stats (last_win)`,
+  // уборка личных паков (shop.ts › cleanPacks): какие стикеры пака положил бот — остальные добавил сам игрок
+  `create table if not exists tg_pack_own (
+     user_id bigint primary key,
+     ids text[] not null default '{}',
+     updated_at timestamptz not null default now()
+   )`,
   `create index if not exists tg_stats_updated_idx on tg_stats (updated_at)`,
   `create index if not exists tg_links_tg_user_idx on tg_links (tg_user)`,
 ];
@@ -422,6 +436,23 @@ export class PgStore implements Store {
   async shopUsersWith(item: string): Promise<number[]> {
     const res = await this.pool.query(`select user_id from shop_users where $1 = any(items) limit 500`, [item]);
     return res.rows.map((r: { user_id: string | number }) => Number(r.user_id));
+  }
+
+  async shopPacks(after: number, limit: number): Promise<number[]> {
+    const res = await this.pool.query(`select user_id from shop_users where pack is not null and user_id > $1 order by user_id limit $2`, [after, limit]);
+    return res.rows.map((r: { user_id: string | number }) => Number(r.user_id));
+  }
+
+  async packOwn(userId: number): Promise<string[] | null> {
+    const res = await this.pool.query(`select ids from tg_pack_own where user_id = $1`, [userId]);
+    return res.rows[0] ? (res.rows[0].ids as string[]) : null;
+  }
+
+  async savePackOwn(userId: number, ids: string[]): Promise<void> {
+    await this.pool.query(
+      `insert into tg_pack_own (user_id, ids) values ($1, $2) on conflict (user_id) do update set ids = excluded.ids, updated_at = now()`,
+      [userId, ids],
+    );
   }
 
   async saveShopUser(u: ShopUser): Promise<void> {
@@ -636,6 +667,21 @@ export class MemoryStore implements Store {
 
   async shopUsersWith(item: string): Promise<number[]> {
     return [...this.shop.values()].filter((u) => u.items.includes(item)).map((u) => u.userId).slice(0, 500);
+  }
+
+  async shopPacks(after: number, limit: number): Promise<number[]> {
+    return [...this.shop.values()].filter((u) => u.pack && u.userId > after).map((u) => u.userId).sort((a, b) => a - b).slice(0, limit);
+  }
+
+  packOwnIds = new Map<number, string[]>();
+
+  async packOwn(userId: number): Promise<string[] | null> {
+    const ids = this.packOwnIds.get(userId);
+    return ids ? [...ids] : null;
+  }
+
+  async savePackOwn(userId: number, ids: string[]): Promise<void> {
+    this.packOwnIds.set(userId, [...ids]);
   }
 
   async saveShopUser(u: ShopUser): Promise<void> {
