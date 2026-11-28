@@ -13,7 +13,7 @@ import type { EffectId, Lang, MySticker, StickerId } from '@kto/game-core';
 import { workerPath } from './film';
 import type { Logger } from './log';
 
-export type MyLook = Pick<MySticker, 'fig' | 'pose' | 'color' | 'text' | 'fx'>;
+export type MyLook = Pick<MySticker, 'fig' | 'pose' | 'color' | 'text' | 'top' | 'fx'>;
 /** Стандартный стикер пака с эффектом (товар «Эффекты»): файлы без эффекта лежат готовыми, с эффектом — рисуем. */
 export type StdLook = { std: StickerId; fx: EffectId | null; color?: number | null; lang: Lang };
 export type StickerJob = MyLook | StdLook;
@@ -47,7 +47,7 @@ export class StickerRender {
     } else {
       const v = { ...(look as MyLook), slot: 0, rev: 0 };
       if (!isMySticker(v)) return Promise.reject(new Error('bad_sticker'));
-      clean = { fig: v.fig, pose: v.pose, color: v.color, text: [...v.text], ...(v.fx ? { fx: v.fx } : {}) };
+      clean = { fig: v.fig, pose: v.pose, color: v.color, text: [...v.text], ...(v.top ? { top: v.top } : {}), ...(v.fx ? { fx: v.fx } : {}) };
     }
     if (this.waiting >= 4) return Promise.reject(new Error('busy'));
     this.waiting++;

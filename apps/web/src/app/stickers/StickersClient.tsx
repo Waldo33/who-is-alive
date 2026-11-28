@@ -2,7 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { DICTS, EFFECTS, LURE_FX, MY_COLORS, MY_FIGS, MY_MAX, MY_POSES, MY_SLOT_EVERY, STICKER_LIST, THEME_RULES, canDrop, fmt, isEffect, myCaption } from '@kto/game-core';
+import { DICTS, EFFECTS, LURE_FX, MY_COLORS, MY_FIGS, MY_MAX, MY_POSES, MY_SLOT_EVERY, STICKER_LIST, THEME_RULES, canDrop, fmt, isEffect, myCaption, myTop, rude } from '@kto/game-core';
 import type { EffectId, Lang, MyFig, MyPose, MySticker, ShopItemId, StickerId, StickerMeta } from '@kto/game-core';
 import { PAL } from '@kto/assets';
 import { track } from '@/lib/analytics';
@@ -39,12 +39,14 @@ interface Draft {
   pose: MyPose;
   color: number;
   caption: string;
+  /** Строка сверху (как в мемах). */
+  top: string;
   fx: EffectId | null;
   /** Готовый стикер пака в редакторе: эффект и цвет надписи (null — родной), надпись не меняется. */
   std: StickerId | null;
   stdColor: number | null;
 }
-const NEW_DRAFT: Draft = { slot: null, fig: 'actor', pose: 'wave', color: 1, caption: '', fx: null, std: null, stdColor: null };
+const NEW_DRAFT: Draft = { slot: null, fig: 'actor', pose: 'wave', color: 1, caption: '', top: '', fx: null, std: null, stdColor: null };
 
 const png = (c: HTMLCanvasElement) => c.toDataURL('image/png');
 const themeName = (lang: Lang, id: string) => DICTS[lang].themes[THEME_RULES.findIndex((r) => r.id === id)] ?? id;
@@ -115,12 +117,23 @@ export default function StickersClient() {
   const figs = new Set(s.figs ?? ['actor']);
   const hasPack = !!st?.items.includes('pack');
   const cap = myCaption(draft.caption);
-  const capErr = !draft.std && 'error' in cap ? b.errors[cap.error] : '';
+  const topCap = myTop(draft.top);
+  const topLine = 'error' in topCap ? '' : topCap.line;
+  // ошибка верхней строки, потом нижней, потом мат, разрезанный между строк (то же решит сервер)
+  const capErr = draft.std
+    ? ''
+    : 'error' in topCap
+      ? topCap.error === 'long' ? b.errors.topLong : b.errors[topCap.error]
+      : 'error' in cap
+        ? b.errors[cap.error]
+        : topLine && cap.lines.length && rude(`${topLine} ${cap.lines.join(' ')}`) ? b.errors.rude : '';
   // готовый стикер в редакторе — его рисунок с выбранным цветом надписи и эффектом
   const stdBase = draft.std ? STICKERS.find((x) => x.id === draft.std) : undefined;
   const stdDefRef = useRef<Pick<StickerDef, 'draw'> | null>(null);
   stdDefRef.current = stdBase ? withFx(withCapColor(stdBase, draft.stdColor), draft.fx) : null;
-  lookRef.current = { fig: draft.fig, pose: draft.pose, color: draft.color, text: 'error' in cap ? lookRef.current.text : cap.lines, ...(draft.fx ? { fx: draft.fx } : {}) };
+  // пока строка с ошибкой — на превью остаётся последняя верная
+  const lookTop = 'error' in topCap ? lookRef.current.top : topLine;
+  lookRef.current = { fig: draft.fig, pose: draft.pose, color: draft.color, text: 'error' in cap ? lookRef.current.text : cap.lines, ...(lookTop ? { top: lookTop } : {}), ...(draft.fx ? { fx: draft.fx } : {}) };
 
   useEffect(() => {
     const l = detectLang();
@@ -339,7 +352,7 @@ export default function StickersClient() {
     }
     setSel(null);
     const lure = !canDrop(m.id);
-    setDraft({ ...NEW_DRAFT, std: m.id, caption: t.stickers[m.id].join(' '), fx: lure ? LURE_FX : (st?.fx?.[m.id] ?? null), stdColor: lure ? null : (st?.col?.[m.id] ?? null) });
+    setDraft({ ...NEW_DRAFT, std: m.id, caption: t.stickers[m.id].join(' '), top: '', fx: lure ? LURE_FX : (st?.fx?.[m.id] ?? null), stdColor: lure ? null : (st?.col?.[m.id] ?? null) });
     setNote(lure ? b.lureFixed : off.has(m.id) ? b.outPack : b.inPack);
     setTab('make');
   };
@@ -375,7 +388,7 @@ export default function StickersClient() {
 
   const editMy = (m: MySticker | null) => {
     setSel(null);
-    setDraft(m ? { slot: m.slot, fig: m.fig, pose: m.pose, color: m.color, caption: m.text.join(' '), fx: m.fx ?? null, std: null, stdColor: null } : NEW_DRAFT);
+    setDraft(m ? { slot: m.slot, fig: m.fig, pose: m.pose, color: m.color, caption: m.text.join(' '), top: m.top ?? '', fx: m.fx ?? null, std: null, stdColor: null } : NEW_DRAFT);
     setNote('');
     setTab('make');
   };
@@ -420,7 +433,7 @@ export default function StickersClient() {
     setBusy(true);
     setNote(b.syncing);
     track('stickers_my', { fig: draft.fig, pose: draft.pose, edit: draft.slot !== null });
-    const ok = apply(await shopMy({ fig: draft.fig, pose: draft.pose, color: draft.color, caption: draft.caption, ...(draft.fx ? { fx: draft.fx } : {}) }, draft.slot ?? undefined));
+    const ok = apply(await shopMy({ fig: draft.fig, pose: draft.pose, color: draft.color, caption: draft.caption, ...(topLine ? { top: topLine } : {}), ...(draft.fx ? { fx: draft.fx } : {}) }, draft.slot ?? undefined));
     setBusy(false);
     if (ok) {
       haptic('success');
@@ -472,13 +485,15 @@ export default function StickersClient() {
     if (fxFor) {
       const c = myCaption(fxFor.caption);
       const text = 'error' in c ? [] : c.lines;
-      return { def: myDef({ fig: fxFor.fig, pose: fxFor.pose, color: fxFor.color, text }), name: text.join(' ') || figName(fxFor.fig) };
+      const tc = myTop(fxFor.top);
+      const top = 'error' in tc ? '' : tc.line;
+      return { def: myDef({ fig: fxFor.fig, pose: fxFor.pose, color: fxFor.color, text, ...(top ? { top } : {}) }), name: [top, ...text].join(' ').trim() || figName(fxFor.fig) };
     }
     const pick = STICKER_LIST.find((x) => x.id === sel && open.has(x.id) && canDrop(x.id));
     const std = (id: string) => ({ def: STICKERS.find((x) => x.id === id)!, name: t.stickers[id as StickerMeta['id']].join(' ') });
     if (pick) return std(pick.id);
     const m = my[0];
-    if (m) return { def: myDef({ fig: m.fig, pose: m.pose, color: m.color, text: m.text }), name: m.text.join(' ') || figName(m.fig) };
+    if (m) return { def: myDef({ fig: m.fig, pose: m.pose, color: m.color, text: m.text, ...(m.top ? { top: m.top } : {}) }), name: [m.top ?? '', ...m.text].join(' ').trim() || figName(m.fig) };
     return std(STICKER_LIST.find((x) => open.has(x.id) && canDrop(x.id))?.id ?? STICKER_LIST[0].id);
   })();
   fxBaseRef.current = fxBase.def;
@@ -538,11 +553,11 @@ export default function StickersClient() {
   };
   // строка эффектов: тот же стикер во всех эффектах — у выбранного в паке и у своего в редакторе
   const draftText = 'error' in cap ? '' : cap.lines.join('|');
-  const thumbKey = draft.std ? `std:${draft.std}:${draft.stdColor ?? ''}` : `my:${draft.fig}:${draft.pose}:${draft.color}:${draftText}`;
+  const thumbKey = draft.std ? `std:${draft.std}:${draft.stdColor ?? ''}` : `my:${draft.fig}:${draft.pose}:${draft.color}:${topLine}:${draftText}`;
   const fxThumbs = useMemo(() => {
     if (!ready) return {} as Record<string, string>;
     const def: Pick<StickerDef, 'draw'> | undefined = thumbKey.startsWith('my:')
-      ? myDef({ fig: draft.fig, pose: draft.pose, color: draft.color, text: draftText ? draftText.split('|') : [] })
+      ? myDef({ fig: draft.fig, pose: draft.pose, color: draft.color, text: draftText ? draftText.split('|') : [], ...(topLine ? { top: topLine } : {}) })
       : stdBase && withCapColor(stdBase, draft.stdColor);
     if (!def) return {} as Record<string, string>;
     return Object.fromEntries([null, ...EFFECTS].map((fx) => [fx ?? 'none', png(stickerFrame(withFx(def, fx), 5, lang))]));
@@ -665,7 +680,7 @@ export default function StickersClient() {
                   );
                 })}
                 {my.map((m) => (
-                  <button key={`my${m.slot}`} className="stickers-tile in mine" onClick={() => editMy(m)} aria-label={m.text.join(' ') || figName(m.fig)}>
+                  <button key={`my${m.slot}`} className="stickers-tile in mine" onClick={() => editMy(m)} aria-label={[m.top ?? '', ...m.text].join(' ').trim() || figName(m.fig)}>
                     {myPics[m.slot] && <img src={myPics[m.slot]} alt="" />}
                     <i className="stickers-mark ok">✓</i>
                   </button>
@@ -853,6 +868,19 @@ export default function StickersClient() {
               </div>
             )}
             {fxRow(draft.fx, (fx) => setDraft((d) => ({ ...d, fx })), !stdLocked, b.lureFixed)}
+            <input
+              className={draft.std ? 'stickers-input top locked' : 'stickers-input top'}
+              readOnly={!!draft.std}
+              tabIndex={draft.std ? -1 : undefined}
+              value={draft.top}
+              maxLength={12}
+              placeholder={draft.std ? '' : b.topHint}
+              aria-label={b.top}
+              autoComplete="off"
+              enterKeyHint="next"
+              onChange={(e) => setDraft((d) => ({ ...d, top: e.target.value }))}
+              onKeyDown={(e) => e.key === 'Enter' && ((e.target as HTMLInputElement).nextElementSibling as HTMLInputElement | null)?.focus()}
+            />
             <input
               className={draft.std ? 'stickers-input locked' : 'stickers-input'}
               readOnly={!!draft.std}

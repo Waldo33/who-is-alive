@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MY_FIGS, MY_MARKS, STICKER_LIST, isMySticker, myCaption, myFigOpen, parseMySticker, rude } from '../src';
+import { MY_FIGS, MY_MARKS, STICKER_LIST, isMySticker, myCaption, myFigOpen, myTop, parseMySticker, rude } from '../src';
 
 /** «Собери свой стикерпак»: свои стикеры, подпись и фильтр (game-core › shop.ts). Решает сервер тем же кодом. */
 
@@ -50,5 +50,23 @@ describe('свой стикер', () => {
     expect(isMySticker({ slot: 0, rev: 1, fig: 'actor', pose: 'wave', color: 0, text: ['Йо'] })).toBe(true);
     expect(isMySticker({ slot: 5, rev: 1, fig: 'actor', pose: 'wave', color: 0, text: [] })).toBe(false);
     expect(isMySticker({ slot: 0, rev: 1, fig: 'actor', pose: 'wave', color: 0, text: ['@x'] })).toBe(false);
+  });
+
+  it('строка сверху, как в мемах: до 10 знаков, те же правила, мат между строк ловится', () => {
+    expect(myTop('  Я не   плачу ')).toEqual({ line: 'Я не плачу' });
+    expect(myTop('')).toEqual({ line: '' });
+    expect(myTop('Я совсем не плачу')).toEqual({ error: 'long' });
+    expect(myTop('@durov')).toEqual({ error: 'chars' });
+    expect(myTop('сука')).toEqual({ error: 'rude' });
+    const meme = parseMySticker({ fig: 'actor', pose: 'stun', color: 3, top: 'Я не плачу', caption: 'Это просто слезы' }, []);
+    expect(meme).toEqual({ fig: 'actor', pose: 'stun', color: 3, top: 'Я не плачу', text: ['Это просто', 'слезы'] });
+    // пустая верхняя строка — поля нет (старые стикеры и старые клиенты — как раньше)
+    expect(parseMySticker({ fig: 'actor', pose: 'wave', color: 1, top: ' ', caption: 'Йо' }, [])).toEqual({ fig: 'actor', pose: 'wave', color: 1, text: ['Йо'] });
+    expect(parseMySticker({ fig: 'actor', pose: 'wave', color: 1, top: 'Я совсем не плачу' }, [])).toEqual({ error: 'long' });
+    expect(parseMySticker({ fig: 'actor', pose: 'wave', color: 1, top: 'х', caption: 'уй' }, [])).toEqual({ error: 'rude' });
+    expect(isMySticker({ slot: 0, rev: 1, fig: 'actor', pose: 'wave', color: 0, top: 'Я не плачу', text: ['Это просто', 'слезы'] })).toBe(true);
+    expect(isMySticker({ slot: 0, rev: 1, fig: 'actor', pose: 'wave', color: 0, top: '', text: [] })).toBe(false);
+    expect(isMySticker({ slot: 0, rev: 1, fig: 'actor', pose: 'wave', color: 0, top: 'Я совсем не плачу', text: [] })).toBe(false);
+    expect(isMySticker({ slot: 0, rev: 1, fig: 'actor', pose: 'wave', color: 0, top: 42, text: [] })).toBe(false);
   });
 });

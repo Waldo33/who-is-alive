@@ -634,8 +634,11 @@ export const en: Dict = {
       pose: 'Pose',
       color: 'Color',
       colorOwn: 'Original color',
-      caption: 'Caption',
-      captionHint: 'Up to 2 lines of 10',
+      caption: 'Bottom caption',
+      captionHint: 'Bottom: 2 lines of 10',
+      /** Top line of your own sticker, like in memes. */
+      top: 'Top caption',
+      topHint: 'Top: up to 10',
       add: 'Add to pack',
       save: 'Save',
       del: 'Remove from pack',
@@ -655,6 +658,7 @@ export const en: Dict = {
       back: 'Back to stickers',
       errors: {
         long: 'Too long: 2 lines of 10',
+        topLong: 'Top is too long: up to 10',
         chars: 'Letters, digits and . , ! ? only',
         link: 'No links',
         rude: 'Keep it clean: this is a film set',

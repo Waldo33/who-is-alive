@@ -317,8 +317,10 @@ export interface MySticker {
   pose: MyPose;
   /** Индекс в MY_COLORS. */
   color: number;
-  /** Строки подписи (0–2), уже проверенные `myCaption`. */
+  /** Строки подписи снизу (0–2), уже проверенные `myCaption`. */
   text: string[];
+  /** Строка сверху, как в мемах (≤ MY_LINE знаков, `myTop`); нет — только снизу. */
+  top?: string;
   /** Номер правки: изменился — бот заменяет стикер в паке на месте. */
   rev: number;
   /** Эффект (купленный в гардеробе); нет — без эффекта. */
@@ -376,18 +378,32 @@ export function rude(s: string): boolean {
 /** Ошибки подписи: длинно, чужие знаки (@, ссылки, эмодзи), похоже на адрес сайта, мат. */
 export type CaptionError = 'long' | 'chars' | 'link' | 'rude';
 
+/** Общая проверка текста подписи: пробелы схлопнуты, длина, знаки, ссылки, мат. */
+function capClean(raw: unknown, max: number): string | { error: CaptionError } {
+  if (typeof raw !== 'string') return { error: 'chars' };
+  const s = raw.replace(/\s+/g, ' ').trim();
+  if (s.length > max) return { error: 'long' };
+  if (!CAP_CHARS.test(s)) return { error: 'chars' };
+  // адрес сайта: «что-то.ru», «www», «http»
+  if (/[a-zа-я0-9]\.[a-zа-я]{2}/iu.test(s) || /www|https?/i.test(s)) return { error: 'link' };
+  if (rude(s)) return { error: 'rude' };
+  return s;
+}
+
+/** Верхняя строка своего стикера: одна строка до MY_LINE знаков (пусто — без неё). */
+export function myTop(raw: unknown): { line: string } | { error: CaptionError } {
+  const c = capClean(raw, MY_LINE);
+  return typeof c === 'string' ? { line: c } : c;
+}
+
 /**
  * Подпись своего стикера: одна строка с телефона → до двух строк по MY_LINE знаков (перенос по пробелу).
  * Решает сервер; клиент проверяет тем же кодом, чтобы сразу показать ошибку.
  */
 export function myCaption(raw: unknown): { lines: string[] } | { error: CaptionError } {
-  if (typeof raw !== 'string') return { error: 'chars' };
-  const s = raw.replace(/\s+/g, ' ').trim();
-  if (s.length > MY_LINE * MY_LINES + 1) return { error: 'long' };
-  if (!CAP_CHARS.test(s)) return { error: 'chars' };
-  // адрес сайта: «что-то.ru», «www», «http»
-  if (/[a-zа-я0-9]\.[a-zа-я]{2}/iu.test(s) || /www|https?/i.test(s)) return { error: 'link' };
-  if (rude(s)) return { error: 'rude' };
+  const c = capClean(raw, MY_LINE * MY_LINES + 1);
+  if (typeof c !== 'string') return c;
+  const s = c;
   if (!s) return { lines: [] };
   if (s.length <= MY_LINE) return { lines: [s] };
   // перенос по последнему пробелу, который даёт обе строки не длиннее MY_LINE
@@ -413,9 +429,13 @@ export function parseMySticker(x: unknown, items: readonly string[]): Omit<MySti
   const fx = v.fx === undefined || v.fx === null ? undefined : isEffect(v.fx) ? v.fx : null;
   if (fx === null) return { error: 'bad' };
   if (fx && !items.includes(fx)) return { error: 'locked' };
+  const top = myTop(v.top ?? '');
+  if ('error' in top) return top;
   const cap = myCaption(v.caption ?? '');
   if ('error' in cap) return cap;
-  return { fig, pose, color, text: cap.lines, ...(fx ? { fx } : {}) };
+  // мат, разрезанный между строк: сверху «х», снизу «уй»
+  if (top.line && cap.lines.length && rude(`${top.line} ${cap.lines.join(' ')}`)) return { error: 'rude' };
+  return { fig, pose, color, text: cap.lines, ...(top.line ? { top: top.line } : {}), ...(fx ? { fx } : {}) };
 }
 
 /** Проверка уже сохранённого своего стикера (учёт по туннелю: всё, что пришло по сети, — снова проверяем). */
@@ -426,6 +446,10 @@ export function isMySticker(x: unknown): x is MySticker {
   if (!MY_FIGS.some((f) => f.id === v.fig) || !MY_POSES.includes(v.pose) || !Number.isInteger(v.color) || v.color < 0 || v.color >= MY_COLORS.length) return false;
   if (!Array.isArray(v.text) || v.text.length > MY_LINES) return false;
   if (v.fx !== undefined && !isEffect(v.fx)) return false;
+  if (v.top !== undefined) {
+    const top = myTop(v.top);
+    if ('error' in top || !top.line || top.line !== v.top) return false;
+  }
   const cap = myCaption(v.text.join(' '));
   return !('error' in cap) && cap.lines.join(' ') === v.text.join(' ');
 }
