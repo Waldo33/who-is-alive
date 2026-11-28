@@ -1052,11 +1052,18 @@ export class Shop {
     // а Telegram, получив стикер, обычно тут же обновляет у себя копию пака (иначе — только после перезапуска)
     let fresh: Entry | null = null;
 
-    // убрать и заменить — нужен список стикеров пака (file_id по первому эмодзи)
+    // пак уже есть: список его стикеров (file_id по первому эмодзи) — убрать, заменить и проверить приманку
+    const set = u.pack ? await this.d.api<{ stickers?: { file_id: string; emoji?: string }[] }>('getStickerSet', { name: u.pack }) : null;
+    const byEmoji = new Map((set?.stickers ?? []).map((x) => [em(x.emoji), x.file_id]));
+    // игрок удалил «Собери свой пак!» руками в Telegram — вернём её (добавится ниже и встанет последней)
+    const lure = STICKER_LIST.find((x) => x.lure);
+    if (Array.isArray(set?.stickers) && lure && !byEmoji.has(em(lure.emoji[0])) && u.issued.some((x) => issuedBase(x) === lure.id)) {
+      u.issued = u.issued.filter((x) => issuedBase(x) !== lure.id);
+      await this.saveIssued(u);
+      this.d.log('info', 'shop_lure_back', {});
+    }
     const first = syncPlan(u);
     if (u.pack && (first.drop.length || first.replace.length)) {
-      const set = await this.d.api<{ stickers?: { file_id: string; emoji?: string }[] }>('getStickerSet', { name: u.pack });
-      const byEmoji = new Map((set?.stickers ?? []).map((x) => [em(x.emoji), x.file_id]));
       for (const d of first.drop) {
         const fid = byEmoji.get(em(d.emoji));
         if (fid) await this.call('deleteStickerFromSet', jsonForm({ sticker: fid }));
