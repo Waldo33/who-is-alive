@@ -9,7 +9,7 @@ import type { SkinId } from './shop';
  *
  * Счёт ведёт игровой сервер по связке «игрок ↔ Telegram» (`tg_stats`); здесь — только правила.
  */
-export type PlayBadgeId = 'onSet' | 'star' | 'director' | 'reel' | 'oscar';
+export type PlayBadgeId = 'onSet' | 'star' | 'director' | 'reel' | 'oscar' | 'jackpot' | 'skulls';
 export type BadgeId = PlayBadgeId | SkinId;
 
 /** Счётчики игрока Telegram (`tg_stats`). */
@@ -22,9 +22,13 @@ export interface BadgeStats {
   rooms: number;
   /** Последняя победа, мс; нет — null. */
   lastWin: number | null;
+  /** Сколько раз выбил 777 в «Крутке» (площадка «Казино», slots.ts). */
+  jackpots: number;
+  /** Сколько раз выбил череп в «Крутке». */
+  skulls: number;
 }
 
-export const NO_STATS: BadgeStats = { matches: 0, wins: 0, rooms: 0, lastWin: null };
+export const NO_STATS: BadgeStats = { matches: 0, wins: 0, rooms: 0, lastWin: null, jackpots: 0, skulls: 0 };
 
 /** «Звезда дубля» держится сутки после победы (и в статусе — на столько же). */
 export const STAR_MS = 24 * 3600_000;
@@ -46,7 +50,32 @@ export const PLAY_BADGES: readonly PlayBadge[] = [
   { id: 'director', emoji: '📣', of: 10, count: (s) => s.rooms },
   { id: 'reel', emoji: '🎥', of: 50, count: (s) => s.matches },
   { id: 'oscar', emoji: '🏆', of: 100, count: (s) => s.wins },
+  // «Казино» (решение владельца 28.11.2026): значки-слоты, в статусе — анимация барабанов
+  { id: 'jackpot', emoji: '🎰', of: 1, count: (s) => s.jackpots },
+  { id: 'skulls', emoji: '💀', of: 1, count: (s) => s.skulls },
 ];
+
+/** Значки с анимацией (видео-эмодзи): автомат крутит барабаны. Картинки — `skins/badge-slots.ts`. */
+export const ANIMATED_BADGES: readonly BadgeId[] = ['jackpot', 'skulls'];
+
+/**
+ * Что выбил игрок в «Крутках» матча: по итогам дублей (вращения — по сущности, `reveal` связывает её с игроком).
+ * Считаются вращения, а не «Крутки»: 777 во втором вращении той же «Крутки» — тоже джекпот.
+ */
+export function slotHits(rounds: readonly { reveal: readonly { pid: string; eid: number }[]; slots?: readonly { eid: number; outcome: string }[] }[], pid: string): { jackpots: number; skulls: number } {
+  let jackpots = 0;
+  let skulls = 0;
+  for (const r of rounds) {
+    const eid = r.reveal.find((x) => x.pid === pid)?.eid;
+    if (eid === undefined) continue;
+    for (const s of r.slots ?? []) {
+      if (s.eid !== eid) continue;
+      if (s.outcome === 'seven') jackpots++;
+      if (s.outcome === 'skull') skulls++;
+    }
+  }
+  return { jackpots, skulls };
+}
 
 /** Эмодзи значков скинов (голова скина). */
 export const SKIN_BADGE_EMOJI: Record<SkinId, string> = { kotBanan: '🍌' };
@@ -87,4 +116,7 @@ export interface StatsDelta {
   rooms: number;
   /** Победил в этом матче — время победы (мс). */
   winAt: number | null;
+  /** 777 и черепа в «Крутках» матча (нет — 0; старые вызовы не шлют). */
+  jackpots?: number;
+  skulls?: number;
 }

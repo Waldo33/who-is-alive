@@ -426,7 +426,7 @@ button.summary { color: var(--sand); cursor: pointer; }
 
 /* «Значки» (/badges): список значков для эмодзи-статуса, экран без прокрутки */
 .badges .btn { gap: 10px; }
-.badges .btn.small { min-height: 40px; padding: 8px 12px; font-size: 10px; flex-shrink: 0; }
+.badges .btn.small { min-height: 36px; padding: 6px 10px; font-size: 10px; flex-shrink: 0; }
 .badges .btn.tg { background: #0099db; color: #fff; box-shadow: 0 4px 0 var(--ink); }
 .badges-hint { margin: 0; min-height: 3.2em; font-size: 9px; line-height: 1.6; color: var(--mist); max-width: 40ch; }
 .badges-list { list-style: none; margin: 0; padding: 0; width: 100%; max-width: 420px; flex: 1 1 0; min-height: 0; overflow: hidden;
@@ -440,4 +440,4 @@ button.summary { color: var(--sand); cursor: pointer; }
 .badges-text b { font-weight: normal; font-size: 10px; color: var(--slate); }
 .badges-list li.have .badges-text b { color: var(--yellow); }
 .badges-text span { font-size: 8px; line-height: 1.5; color: var(--mist); }
-@media (max-height: 600px) { .badges-list { gap: 4px; } .badges-list li { padding: 3px 8px; } .badges-icon { height: 42px; } }
+@media (max-height: 700px) { .badges-list { gap: 4px; } .badges-list li { padding: 3px 8px; } .badges-icon { height: 42px; } }

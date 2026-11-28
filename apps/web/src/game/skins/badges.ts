@@ -2,6 +2,8 @@ import { PAL } from '@kto/assets';
 import type { BadgeId } from '@kto/game-core';
 import { canvas, grid, outlineOf } from '../pixels';
 import { F } from '../sprites';
+import { slotBadgeFrame, slotBadgeStill } from './badge-slots';
+import type { SlotBadge } from './badge-slots';
 import { kotBananFrame } from './kot-banan';
 
 /**
@@ -126,17 +128,22 @@ function kotBananHead(): HTMLCanvasElement {
   return c;
 }
 
+const SLOT: Partial<Record<BadgeId, SlotBadge>> = { jackpot: 'jackpot', skulls: 'skulls' };
+
 function art(id: BadgeId): HTMLCanvasElement {
   if (id === 'reel') return reel();
   if (id === 'kotBanan') return kotBananHead();
-  const rows = ROWS[id];
+  const rows = ROWS[id as keyof typeof ROWS];
   const { c, g } = canvas(rows[0]!.length, rows.length);
   grid(g, 0, 0, rows, K);
   return c;
 }
 
 /** Значок с белым контуром, без масштаба (20×20 и около). */
-export function badgeIcon(id: BadgeId): HTMLCanvasElement {
+export function badgeIcon(id: BadgeId, t?: number): HTMLCanvasElement {
+  // значки-слоты: свой автомат с белым контуром; t — кадр анимации (нет — выигрыш на месте)
+  const slot = SLOT[id];
+  if (slot) return t === undefined ? slotBadgeStill(slot) : slotBadgeFrame(slot, t);
   const src = art(id);
   const { c, g } = canvas(src.width + 2, src.height + 2);
   outlineOf(src.getContext('2d')!, src.width, src.height, g, 0, 0, PAL.white);
@@ -146,8 +153,8 @@ export function badgeIcon(id: BadgeId): HTMLCanvasElement {
 
 /** Файл для набора Telegram: 100×100, целый масштаб, по центру, фон прозрачный. */
 export const BADGE_PX = 100;
-export function badgeFile(id: BadgeId): HTMLCanvasElement {
-  const ic = badgeIcon(id);
+export function badgeFile(id: BadgeId, t?: number): HTMLCanvasElement {
+  const ic = badgeIcon(id, t);
   const s = Math.floor(BADGE_PX / Math.max(ic.width, ic.height));
   const { c, g } = canvas(BADGE_PX, BADGE_PX);
   g.imageSmoothingEnabled = false;

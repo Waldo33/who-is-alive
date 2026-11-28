@@ -230,6 +230,9 @@ const MIGRATIONS: string[] = [
      last_win timestamptz,
      updated_at timestamptz not null default now()
    )`,
+  // значки-слоты «Казино»: сколько раз выбил 777 и череп в «Крутке»
+  `alter table tg_stats add column if not exists jackpots integer not null default 0`,
+  `alter table tg_stats add column if not exists skulls integer not null default 0`,
   // аренда общих задач (сверка оплат): кто держит и до какого времени
   `create table if not exists job_leases (
      name text primary key,
@@ -409,17 +412,20 @@ export class PgStore implements Store {
 
   async bumpTgStats(tgUser: number, d: StatsDelta): Promise<void> {
     await this.pool.query(
-      `insert into tg_stats (tg_user, matches, wins, rooms, last_win) values ($1, $2, $3, $4, to_timestamp($5::double precision / 1000))
+      `insert into tg_stats (tg_user, matches, wins, rooms, last_win, jackpots, skulls) values ($1, $2, $3, $4, to_timestamp($5::double precision / 1000), $6, $7)
        on conflict (tg_user) do update set matches = tg_stats.matches + excluded.matches, wins = tg_stats.wins + excluded.wins,
-         rooms = tg_stats.rooms + excluded.rooms, last_win = greatest(tg_stats.last_win, excluded.last_win), updated_at = now()`,
-      [tgUser, d.matches, d.wins, d.rooms, d.winAt],
+         rooms = tg_stats.rooms + excluded.rooms, last_win = greatest(tg_stats.last_win, excluded.last_win),
+         jackpots = tg_stats.jackpots + excluded.jackpots, skulls = tg_stats.skulls + excluded.skulls, updated_at = now()`,
+      [tgUser, d.matches, d.wins, d.rooms, d.winAt, d.jackpots ?? 0, d.skulls ?? 0],
     );
   }
 
   async tgStats(tgUser: number): Promise<BadgeStats> {
-    const r = await this.pool.query(`select matches, wins, rooms, extract(epoch from last_win) * 1000 as last_win from tg_stats where tg_user = $1`, [tgUser]);
+    const r = await this.pool.query(`select matches, wins, rooms, extract(epoch from last_win) * 1000 as last_win, jackpots, skulls from tg_stats where tg_user = $1`, [tgUser]);
     const x = r.rows[0];
-    return x ? { matches: Number(x.matches), wins: Number(x.wins), rooms: Number(x.rooms), lastWin: x.last_win === null ? null : Math.round(Number(x.last_win)) } : { ...NO_STATS };
+    return x
+      ? { matches: Number(x.matches), wins: Number(x.wins), rooms: Number(x.rooms), lastWin: x.last_win === null ? null : Math.round(Number(x.last_win)), jackpots: Number(x.jackpots), skulls: Number(x.skulls) }
+      : { ...NO_STATS };
   }
 
   async lease(name: string, owner: string, ms: number): Promise<boolean> {
@@ -580,6 +586,8 @@ export class MemoryStore implements Store {
       wins: s.wins + d.wins,
       rooms: s.rooms + d.rooms,
       lastWin: d.winAt === null ? s.lastWin : Math.max(s.lastWin ?? 0, d.winAt),
+      jackpots: s.jackpots + (d.jackpots ?? 0),
+      skulls: s.skulls + (d.skulls ?? 0),
     });
   }
 
