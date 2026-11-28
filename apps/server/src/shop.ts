@@ -4,6 +4,7 @@ import { DICTS, STARTER_DRIP, starterOpen, EFFECTS, EARN_PER_DAY, NO_STATS, badg
 import type { BadgeId, BadgeStats, EffectId, MySticker, StickerId, StickerMeta } from '@kto/game-core';
 import type { StickerJob } from './sticker-render';
 import { RateWindow } from './limits';
+import { isTz } from './nudges';
 import { errFields } from './log';
 import type { Logger } from './log';
 import type { ShopPayment, ShopUser, Store, TgLink } from './store';
@@ -274,6 +275,8 @@ function jsonForm(o: Record<string, string>): FormData {
 export interface ShopDeps {
   /** Значки для статуса: id эмодзи в наборе бота (badges.ts › BadgeSet.ids; набор ещё не готов — пусто, и бот его доделает). */
   badgeEmoji?: () => Partial<Record<BadgeId, string>>;
+  /** Пояс с телефона при входе (минуты `getTimezoneOffset`) — напоминания бота не пишут ночью (nudges.ts). */
+  tz?: (tgUser: number, tz: number) => Promise<void>;
   api<R = unknown>(method: string, body: Record<string, unknown> | FormData): Promise<R>;
   username(): Promise<string>;
   ledger: ShopLedger;
@@ -335,7 +338,7 @@ export class Shop {
   }
 
   /** Маршрут /tg/shop… с проверенным initData. */
-  async route(path: string, init: ShopInit, body: { item?: unknown; mode?: unknown; token?: unknown; id?: unknown; on?: unknown; slot?: unknown; sticker?: unknown; fx?: unknown; color?: unknown }): Promise<ShopReply> {
+  async route(path: string, init: ShopInit, body: { item?: unknown; mode?: unknown; token?: unknown; id?: unknown; on?: unknown; slot?: unknown; sticker?: unknown; fx?: unknown; color?: unknown; tz?: unknown }): Promise<ShopReply> {
     const id = init.user.id;
     const now = (this.d.now ?? Date.now)();
     if (!this.rate.take(String(id), now)) return { status: 429, body: { error: 'rate_limited' } };
@@ -349,7 +352,7 @@ export class Shop {
     if (path === '/shop/pack') return { status: 200, body: await this.state(id, true) };
     if (path === '/shop/buy') return this.buy(init, body.item);
     if (path === '/shop/refund') return this.refundOwn(init.user, body.item, now);
-    if (path === '/shop/link') return this.link(init.user, body.token);
+    if (path === '/shop/link') return this.link(init.user, body.token, body.tz);
     if (path === '/shop/wear') return this.wear(id, body.item);
     if (path === '/shop/pick') return this.pick(id, body.id, body.on);
     if (path === '/shop/my') return this.saveMy(id, body.slot, body.sticker, now);
@@ -554,10 +557,11 @@ export class Shop {
   }
 
   /** Связать игрока игрового сервера (его токен из Mini App) с этим пользователем Telegram. */
-  private async link(from: ShopInit['user'], token: unknown): Promise<ShopReply> {
+  private async link(from: ShopInit['user'], token: unknown, tz?: unknown): Promise<ShopReply> {
     if (typeof token !== 'string' || !TOKEN.test(token)) return { status: 400, body: { error: 'bad_token' } };
     const name = packName(from.first_name) || packName(from.username) || 'Актёр';
     const ok = await this.d.ledger.linkGame(token, { tgUser: from.id, name, lang: langOf(from.language_code) });
+    if (ok && isTz(tz)) await this.d.tz?.(from.id, tz).catch((e: unknown) => this.d.log('warn', 'nudge_tz', errFields(e)));
     // матчи на сайте до входа: засчитать (бесплатный пак) и открыть стикеры — с теми же лимитами, что после матча
     if (ok && typeof ok === 'object') await this.earnOne({ tgUser: from.id, name, lang: langOf(from.language_code), stickers: ok.played });
     return ok ? { status: 200, body: { ok: true } } : { status: 403, body: { error: 'bad_token' } };
