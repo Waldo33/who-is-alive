@@ -479,6 +479,9 @@ export interface ShopState {
   off?: StickerId[];
   my?: MySticker[];
   figs?: MyFig[];
+  /** Открыто мест под свои стикеры и через сколько матчей следующее (null — все); старый сервер не шлёт. */
+  slots?: number;
+  slotIn?: number | null;
   earned?: string[];
   /** Дневной лимит стикеров за матчи исчерпан — когда снова (мс); null — можно открывать. */
   earnNext?: number | null;

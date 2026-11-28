@@ -368,6 +368,7 @@ button.summary { color: var(--sand); cursor: pointer; }
 .stickers-tile.sel { box-shadow: 0 0 0 2px var(--ink), 0 0 0 4px var(--yellow); }
 .stickers-tile.mine { background: #3e2731; }
 .stickers-tile.add { color: var(--yellow); box-shadow: 0 0 0 2px var(--ink), inset 0 0 0 2px var(--amber); }
+.stickers-tile.add.slot { opacity: 0.45; box-shadow: 0 0 0 2px var(--ink), inset 0 0 0 2px var(--dusk, var(--sand)); }
 .stickers-mark { position: absolute; top: 1px; right: 1px; font-style: normal; font-size: 8px; line-height: 1; padding: 2px; }
 /* «в паке» — пиксельная галочка 8×7 (×2): зелёный значок с тенью и рамкой, без системного глифа */
 .stickers-mark.ok, .wardrobe-mark.mine { top: 2px; right: 2px; width: 16px; height: 14px; padding: 0; font-size: 0; color: transparent; image-rendering: pixelated;
