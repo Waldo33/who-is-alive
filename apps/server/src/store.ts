@@ -1,7 +1,8 @@
 import pg from 'pg';
 import type { ErrorRow } from './errors';
 import type { Logger } from './log';
-import type { MySticker } from '@kto/game-core';
+import { NO_STATS } from '@kto/game-core';
+import type { BadgeStats, MySticker, StatsDelta } from '@kto/game-core';
 
 /**
  * Хранилище игрового сервера. Игре база не нужна (комнаты в памяти) — здесь аналитика воронки
@@ -42,6 +43,10 @@ export interface Store {
   linkTelegram(link: TgLink): Promise<void>;
   /** Связи для этих игроков сервера (кого нет — нет в ответе). */
   telegramOf(gameUsers: string[]): Promise<TgLink[]>;
+  /** Значки для статуса (game-core/badges.ts): прибавить к счётчикам игрока Telegram после матча. */
+  bumpTgStats(tgUser: number, d: StatsDelta): Promise<void>;
+  /** Счётчики игрока Telegram для значков (нет — нули). */
+  tgStats(tgUser: number): Promise<BadgeStats>;
   /**
    * Аренда общей задачи (сверка оплат по расписанию): true — задача за этим экземпляром на `ms` (свою аренду
    * продлевает); false — её держит другой (синий и зелёный живут вместе при выкладке, база общая).
@@ -201,6 +206,15 @@ const MIGRATIONS: string[] = [
      tg_user bigint not null,
      name text not null default '',
      lang text not null default 'ru',
+     updated_at timestamptz not null default now()
+   )`,
+  // значки для статуса: счётчики игрока Telegram (матчи, победы, комнаты режиссёра с 4 живыми, последняя победа)
+  `create table if not exists tg_stats (
+     tg_user bigint primary key,
+     matches integer not null default 0,
+     wins integer not null default 0,
+     rooms integer not null default 0,
+     last_win timestamptz,
      updated_at timestamptz not null default now()
    )`,
   // аренда общих задач (сверка оплат): кто держит и до какого времени
@@ -367,6 +381,21 @@ export class PgStore implements Store {
     return res.rows.map((x) => ({ gameUser: x.game_user, tgUser: Number(x.tg_user), name: x.name, lang: x.lang === 'en' ? 'en' : 'ru' }));
   }
 
+  async bumpTgStats(tgUser: number, d: StatsDelta): Promise<void> {
+    await this.pool.query(
+      `insert into tg_stats (tg_user, matches, wins, rooms, last_win) values ($1, $2, $3, $4, to_timestamp($5::double precision / 1000))
+       on conflict (tg_user) do update set matches = tg_stats.matches + excluded.matches, wins = tg_stats.wins + excluded.wins,
+         rooms = tg_stats.rooms + excluded.rooms, last_win = greatest(tg_stats.last_win, excluded.last_win), updated_at = now()`,
+      [tgUser, d.matches, d.wins, d.rooms, d.winAt],
+    );
+  }
+
+  async tgStats(tgUser: number): Promise<BadgeStats> {
+    const r = await this.pool.query(`select matches, wins, rooms, extract(epoch from last_win) * 1000 as last_win from tg_stats where tg_user = $1`, [tgUser]);
+    const x = r.rows[0];
+    return x ? { matches: Number(x.matches), wins: Number(x.wins), rooms: Number(x.rooms), lastWin: x.last_win === null ? null : Math.round(Number(x.last_win)) } : { ...NO_STATS };
+  }
+
   async lease(name: string, owner: string, ms: number): Promise<boolean> {
     // одна строка на задачу: занять свободную (или просроченную, или свою) — атомарно, одним запросом
     const r = await this.pool.query(
@@ -502,6 +531,22 @@ export class MemoryStore implements Store {
 
   async telegramOf(gameUsers: string[]): Promise<TgLink[]> {
     return gameUsers.flatMap((g) => (this.links.has(g) ? [{ ...this.links.get(g)! }] : []));
+  }
+
+  stats = new Map<number, BadgeStats>();
+
+  async bumpTgStats(tgUser: number, d: StatsDelta): Promise<void> {
+    const s = this.stats.get(tgUser) ?? { ...NO_STATS };
+    this.stats.set(tgUser, {
+      matches: s.matches + d.matches,
+      wins: s.wins + d.wins,
+      rooms: s.rooms + d.rooms,
+      lastWin: d.winAt === null ? s.lastWin : Math.max(s.lastWin ?? 0, d.winAt),
+    });
+  }
+
+  async tgStats(tgUser: number): Promise<BadgeStats> {
+    return { ...(this.stats.get(tgUser) ?? NO_STATS) };
   }
 
   leases = new Map<string, { owner: string; until: number }>();

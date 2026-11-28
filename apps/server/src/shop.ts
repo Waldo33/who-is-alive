@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { DICTS, EFFECTS, FX_ISSUED, EARN_PER_DAY, EARN_PER_MATCH, MY_FIGS, MY_ISSUED, MY_MARKS, MY_MAX, MY_POSE_EMOJI, RETIRED_STICKERS, SHOP_ITEMS, STICKER_LIST, TEST_ITEM, buyItem, canDrop, fmt, fxIssued, fxMark, isEffect, isMySticker, issuedBase, stickerFx, isSkin, isStickerId, myFigOpen, myIssued, offSticker, parseMySticker, pickEarned, skinOf, wearItems } from '@kto/game-core';
-import type { EffectId, MySticker, StickerId, StickerMeta } from '@kto/game-core';
+import { DICTS, EFFECTS, FX_ISSUED, EARN_PER_DAY, NO_STATS, badgesOf, EARN_PER_MATCH, MY_FIGS, MY_ISSUED, MY_MARKS, MY_MAX, MY_POSE_EMOJI, RETIRED_STICKERS, SHOP_ITEMS, STICKER_LIST, TEST_ITEM, buyItem, canDrop, fmt, fxIssued, fxMark, isEffect, isMySticker, issuedBase, stickerFx, isSkin, isStickerId, myFigOpen, myIssued, offSticker, parseMySticker, pickEarned, skinOf, wearItems } from '@kto/game-core';
+import type { BadgeId, BadgeStats, EffectId, MySticker, StickerId, StickerMeta } from '@kto/game-core';
 import type { StickerJob } from './sticker-render';
 import { RateWindow } from './limits';
 import { errFields } from './log';
@@ -35,7 +35,7 @@ import type { ShopPayment, ShopUser, Store, TgLink } from './store';
  */
 
 export type ShopLedger = Pick<Store, 'shopUser' | 'saveShopUser' | 'saveShopPayment' | 'refundShopPayment'> &
-  Partial<Pick<Store, 'shopUsersWith'>> & {
+  Partial<Pick<Store, 'shopUsersWith' | 'tgStats'>> & {
   /** Связать игрока игрового сервера (по его токену — проверяет игровой сервер) с пользователем Telegram. false — токен чужой. */
   linkGame(token: string, link: Omit<TgLink, 'gameUser'>): Promise<boolean>;
 };
@@ -50,6 +50,7 @@ export function localLedger(store: Store, verify?: VerifyToken, onLink?: (gameUs
     shopUser: (id) => store.shopUser(id),
     saveShopUser: (u) => store.saveShopUser(u),
     shopUsersWith: (item) => store.shopUsersWith(item),
+    tgStats: (id) => store.tgStats(id),
     saveShopPayment: (p) => store.saveShopPayment(p),
     refundShopPayment: (c) => store.refundShopPayment(c),
     async linkGame(token, link) {
@@ -123,6 +124,9 @@ export class RemoteLedger implements ShopLedger {
   linkGame(token: string, link: Omit<TgLink, 'gameUser'>) {
     return this.op<boolean>({ op: 'link', token, link });
   }
+  tgStats(userId: number) {
+    return this.op<BadgeStats>({ op: 'stats', userId });
+  }
 }
 
 const userId = (x: unknown): x is number => typeof x === 'number' && Number.isSafeInteger(x) && x > 0;
@@ -161,6 +165,7 @@ export async function shopLedgerOp(store: ShopLedger, raw: unknown): Promise<{ s
     return { status: 200, body: { result: await store.linkGame(b.token, { tgUser: l.tgUser, name: packName(l.name), lang: l.lang }) } };
   }
   if (b?.op === 'with') return typeof b.item === 'string' && ITEM.test(b.item) && store.shopUsersWith ? { status: 200, body: { result: await store.shopUsersWith(b.item) } } : bad;
+  if (b?.op === 'stats') return userId(b.userId) && store.tgStats ? { status: 200, body: { result: await store.tgStats(b.userId) } } : bad;
   if (b?.op === 'refund') return typeof b.charge === 'string' && CHARGE.test(b.charge) ? { status: 200, body: { result: await store.refundShopPayment(b.charge) } } : bad;
   return bad;
 }
@@ -261,6 +266,8 @@ function jsonForm(o: Record<string, string>): FormData {
 }
 
 export interface ShopDeps {
+  /** Значки для статуса: id эмодзи в наборе бота (badges.ts › BadgeSet.ids; набор ещё не готов — пусто, и бот его доделает). */
+  badgeEmoji?: () => Partial<Record<BadgeId, string>>;
   api<R = unknown>(method: string, body: Record<string, unknown> | FormData): Promise<R>;
   username(): Promise<string>;
   ledger: ShopLedger;
@@ -383,7 +390,21 @@ export class Shop {
       remind: !!u?.items.some((i) => i.startsWith('remind:') && i.slice(7) > dayKey(now)),
       pending,
       free,
+      /** Значки для эмодзи-статуса: заработан ли, прогресс, срок «Звезды дубля», id эмодзи в Telegram (null — набор не готов). */
+      badges: await this.badges(id, u?.items ?? [], now),
     };
+  }
+
+  private async badges(id: number, items: string[], now: number) {
+    let stats = NO_STATS;
+    try {
+      if (this.d.ledger.tgStats) stats = await this.d.ledger.tgStats(id);
+    } catch (e) {
+      // старый игровой сервер (без op stats) или сбой туннеля — значки по покупкам, счётчики нулевые
+      this.d.log('warn', 'shop_badge_stats', { err: String(e).slice(0, 200) });
+    }
+    const emoji = this.d.badgeEmoji?.() ?? {};
+    return badgesOf(stats, items, now).map((b) => ({ ...b, emoji: emoji[b.id] ?? null }));
   }
 
   /** Убрать стикер из пака или вернуть (только открытые; приманку — нельзя). */
