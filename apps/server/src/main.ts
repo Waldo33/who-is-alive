@@ -99,6 +99,8 @@ const bot = env.TELEGRAM_BOT_TOKEN
       apiBase: env.PUBLIC_API_BASE || (env.PUBLIC_WS_BASE ?? '').replace(/^wss:/, 'https:').replace(/^ws:/, 'http:'),
       site: env.SITE_URL || 'https://benobody.app',
       app: env.TG_APP_NAME || 'play',
+      // тестовый контур: бот из тестовой среды Telegram (ненастоящие звёзды)
+      testEnv: env.TELEGRAM_TEST === '1',
       features: (env.FEATURES ?? '').split(',').map((s) => s.trim()).filter(Boolean),
       store,
       log,

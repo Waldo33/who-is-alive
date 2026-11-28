@@ -8,6 +8,7 @@ export const en: Dict = {
     short: 'Be Nobody',
     tagline: 'Everyone’s an extra. Someone’s acting.',
     description: 'A pixel party game: hide in a crowd of bots and spot your friends before they spot you.',
+    stage: 'TEST',
   },
   awards: {
     blindNeighbors: { title: 'Blind Neighbors', text: '{n} s together' },

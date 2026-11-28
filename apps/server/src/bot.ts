@@ -50,6 +50,11 @@ export interface BotOptions {
   clipPublic?: string;
   /** Подмена api.telegram.org (тесты). */
   fetchImpl?: typeof fetch;
+  /**
+   * Тестовая среда Telegram (тестовый контур, `TELEGRAM_TEST=1`): методы — `/bot<токен>/test/<метод>`,
+   * звёзды там ненастоящие. Бот и аккаунты — свои, из тестовой среды (core.telegram.org/bots/webapps#testing-mini-apps).
+   */
+  testEnv?: boolean;
   /** Учёт гардероба (shop.ts): нет — своё хранилище (store). */
   shopLedger?: ShopLedger;
   /** Проверка токена игрока игрового сервера (учёт в своей базе): связь игрока с Telegram для стикеров за матчи. */
@@ -428,7 +433,7 @@ export class Bot {
   /** Метод Bot API; FormData — с файлами (стикеры). */
   async api<R = unknown>(method: string, body: Record<string, unknown> | FormData = {}): Promise<R> {
     const form = body instanceof FormData;
-    const r = await this.f(`https://api.telegram.org/bot${this.o.token}/${method}`, {
+    const r = await this.f(`https://api.telegram.org/bot${this.o.token}/${this.o.testEnv ? 'test/' : ''}${method}`, {
       method: 'POST',
       ...(form ? {} : { headers: { 'Content-Type': 'application/json' } }),
       body: form ? body : JSON.stringify(body),
