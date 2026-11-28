@@ -2,7 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
-import { BADGE_IDS, DICTS, fmt } from '@kto/game-core';
+import { ANIMATED_BADGES, BADGE_IDS, DICTS, fmt } from '@kto/game-core';
 import type { BadgeId, Lang } from '@kto/game-core';
 import { track } from '@/lib/analytics';
 import { detectLang } from '@/lib/lang';
@@ -10,8 +10,21 @@ import { bootTelegram, emojiStatusCaps, haptic, inTelegram, linkTelegramOnce, sh
 import type { ShopState } from '@/lib/telegram';
 import { TopBar } from '@/ui/TopBarView';
 import { badgeIcon } from '@/game/skins/badges';
+import { SLOT_BADGE_FPS, SLOT_BADGE_MS } from '@/game/skins/badge-slots';
 
 type Badge = NonNullable<ShopState['badges']>[number];
+type Icon = { src: string; frames: string[]; w: number; h: number };
+
+/** Значок на странице: у значков-слотов, когда он заработан, барабаны крутятся, как в статусе. */
+function BadgeImg({ ic, play }: { ic: Icon; play: boolean }) {
+  const [i, setI] = useState(0);
+  useEffect(() => {
+    if (!play || !ic.frames.length) return;
+    const id = window.setInterval(() => setI((n) => (n + 1) % ic.frames.length), 1000 / SLOT_BADGE_FPS);
+    return () => clearInterval(id);
+  }, [play, ic]);
+  return <img src={play && ic.frames.length ? ic.frames[i] : ic.src} alt="" width={ic.w} height={ic.h} />;
+}
 
 /**
  * «Значки» (/badges): значки за игру и покупки (game-core/badges.ts) — игрок ставит их в эмодзи-статус Telegram
@@ -21,7 +34,7 @@ export default function BadgesClient() {
   const router = useRouter();
   const [lang, setLang] = useState<Lang>('ru');
   const t = DICTS[lang].shop.badges;
-  const [icons, setIcons] = useState<Partial<Record<BadgeId, { src: string; w: number; h: number }>>>({});
+  const [icons, setIcons] = useState<Partial<Record<BadgeId, Icon>>>({});
   const [inTg, setInTg] = useState(false);
   const [tgOn, setTgOn] = useState(false);
   const [list, setList] = useState<Badge[] | null>(null);
@@ -42,7 +55,9 @@ export default function BadgesClient() {
     document.title = `${DICTS[l].shop.badges.title} · ${DICTS[l].meta.title}`;
     setIcons(Object.fromEntries(BADGE_IDS.map((id) => {
       const c = badgeIcon(id);
-      return [id, { src: c.toDataURL(), w: c.width * 2, h: c.height * 2 }];
+      const n = ANIMATED_BADGES.includes(id) ? Math.round((SLOT_BADGE_MS / 1000) * SLOT_BADGE_FPS) : 0;
+      const frames = Array.from({ length: n }, (_, k) => badgeIcon(id, (k * 1000) / SLOT_BADGE_FPS).toDataURL());
+      return [id, { src: c.toDataURL(), frames, w: c.width * 2, h: c.height * 2 }];
     })));
     const inTgNow = inTelegram();
     setInTg(inTgNow);
@@ -113,7 +128,7 @@ export default function BadgesClient() {
           const ic = icons[b.id];
           return (
             <li key={b.id} className={b.have ? 'have' : ''}>
-              <span className="badges-icon">{ic && <img src={ic.src} alt="" width={ic.w} height={ic.h} />}</span>
+              <span className="badges-icon">{ic && <BadgeImg ic={ic} play={b.have} />}</span>
               <span className="badges-text">
                 <b>{t.names[b.id]}</b>
                 <span>{sub(b)}</span>

@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { BADGE_IDS, STAR_MS, badgeEmoji } from '@kto/game-core';
+import { ANIMATED_BADGES, BADGE_IDS, STAR_MS, badgeEmoji, slotHits } from '@kto/game-core';
 import { BadgeSet } from '../src/badges';
 import { silentLogger } from '../src/log';
 import { localLedger, shopLedgerOp } from '../src/shop';
@@ -54,7 +54,10 @@ describe('значки: набор эмодзи у бота', () => {
     await b.kick();
     const made = calls.find((c) => c.method === 'createNewStickerSet')!;
     expect(made.body).toMatchObject({ user_id: '42', name: 'massovka_badges_by_be_nobody_bot', sticker_type: 'custom_emoji' });
-    expect(made.files.map((f) => f.split(':')[1])).toEqual(BADGE_IDS.map((id) => `${id}.png`));
+    // значки-слоты — видео-эмодзи (WEBM), остальные — картинки
+    expect(made.files.map((f) => f.split(':')[1])).toEqual(BADGE_IDS.map((id) => `${id}.${ANIMATED_BADGES.includes(id) ? 'webm' : 'png'}`));
+    const formats = (made.body.stickers as { format: string }[]).map((x) => x.format);
+    expect(formats).toEqual(BADGE_IDS.map((id) => (ANIMATED_BADGES.includes(id) ? 'video' : 'static')));
     // картинки — настоящие файлы из apps/server/stickers/badges
     for (const f of made.files) expect(Number(f.split(':')[2])).toBeGreaterThan(100);
     const ids = b.ids();
@@ -99,16 +102,28 @@ describe('значки: счётчики игрока', () => {
     const store = new MemoryStore();
     await store.bumpTgStats(77, { matches: 1, wins: 1, rooms: 0, winAt: 5_000 });
     await store.bumpTgStats(77, { matches: 1, wins: 0, rooms: 1, winAt: null });
-    await store.bumpTgStats(77, { matches: 1, wins: 1, rooms: 0, winAt: 3_000 });
-    expect(await store.tgStats(77)).toEqual({ matches: 3, wins: 2, rooms: 1, lastWin: 5_000 });
-    expect(await store.tgStats(78)).toEqual({ matches: 0, wins: 0, rooms: 0, lastWin: null });
+    await store.bumpTgStats(77, { matches: 1, wins: 1, rooms: 0, winAt: 3_000, jackpots: 2, skulls: 1 });
+    expect(await store.tgStats(77)).toEqual({ matches: 3, wins: 2, rooms: 1, lastWin: 5_000, jackpots: 2, skulls: 1 });
+    expect(await store.tgStats(78)).toEqual({ matches: 0, wins: 0, rooms: 0, lastWin: null, jackpots: 0, skulls: 0 });
     expect(STAR_MS).toBe(24 * 3600_000);
   });
 
   it('учёт по туннелю: op stats — только с числовым id игрока', async () => {
     const store = new MemoryStore();
     await store.bumpTgStats(77, { matches: 2, wins: 0, rooms: 0, winAt: null });
-    expect(await shopLedgerOp(localLedger(store), { op: 'stats', userId: 77 })).toEqual({ status: 200, body: { result: { matches: 2, wins: 0, rooms: 0, lastWin: null } } });
+    expect(await shopLedgerOp(localLedger(store), { op: 'stats', userId: 77 })).toEqual({ status: 200, body: { result: { matches: 2, wins: 0, rooms: 0, lastWin: null, jackpots: 0, skulls: 0 } } });
     expect((await shopLedgerOp(localLedger(store), { op: 'stats', userId: '77; drop' })).status).toBe(400);
+  });
+
+  it('значки-слоты: 777 и черепа — только свои вращения, по связке игрок ↔ сущность из итогов дубля', () => {
+    const rounds = [
+      { reveal: [{ pid: 'a', eid: 3 }, { pid: 'b', eid: 9 }], slots: [{ eid: 3, outcome: 'seven' }, { eid: 9, outcome: 'skull' }, { eid: 3, outcome: 'seven' }, { eid: 9, outcome: 'star' }] },
+      // в другом дубле у игрока другая сущность
+      { reveal: [{ pid: 'a', eid: 9 }, { pid: 'b', eid: 3 }], slots: [{ eid: 9, outcome: 'skull' }] },
+      { reveal: [{ pid: 'a', eid: 1 }] },
+    ];
+    expect(slotHits(rounds, 'a')).toEqual({ jackpots: 2, skulls: 1 });
+    expect(slotHits(rounds, 'b')).toEqual({ jackpots: 0, skulls: 1 });
+    expect(slotHits(rounds, 'c')).toEqual({ jackpots: 0, skulls: 0 });
   });
 });

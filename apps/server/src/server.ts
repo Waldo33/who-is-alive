@@ -792,7 +792,8 @@ export class GameServer {
           const mine = links.filter((x) => x.tgUser === l.tgUser).map((x) => x.gameUser);
           const won = mine.some((g) => m.winners.includes(g));
           const directed = m.director !== null && mine.includes(m.director);
-          await this.store.bumpTgStats(l.tgUser, { matches: 1, wins: won ? 1 : 0, rooms: directed ? 1 : 0, winAt: won ? at : null });
+          const hit = (k: 'jackpots' | 'skulls') => (m.slots ?? []).filter((x) => mine.includes(x.pid)).reduce((n, x) => n + x[k], 0);
+          await this.store.bumpTgStats(l.tgUser, { matches: 1, wins: won ? 1 : 0, rooms: directed ? 1 : 0, winAt: won ? at : null, jackpots: hit('jackpots'), skulls: hit('skulls') });
         }
         if (seen.size) this.log('info', 'badge_stats', { room: room.code, users: seen.size, ...(m.director ? { director: true } : {}) });
       })
