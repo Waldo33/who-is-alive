@@ -252,6 +252,70 @@ describe('гардероб', () => {
     expect((await bot.handle('POST', '/shop/refund', {}, { initData: initData(ANYA), item: 'kotBanan' })).status).toBe(403);
   });
 
+  it('игрок удалил пак в Telegram: при открытии страницы бот собирает его заново, имя занято — следующим', async () => {
+    // Telegram: удалённого набора нет (STICKERSET_INVALID), а имя m77 не отдаёт («already occupied»)
+    const alive = new Set<string>();
+    const dead = new Set<string>();
+    let last = '';
+    const { bot, calls, store } = makeBot({
+      result: (m) => (m === 'getStickerSet' ? { stickers: [] } : undefined),
+      fail: (m) => {
+        if (m === 'getStickerSet' && !alive.has(last)) return 'Bad Request: STICKERSET_INVALID';
+        if (m === 'createNewStickerSet' && dead.has(last)) return 'Bad Request: sticker set name is already occupied';
+        if (m === 'addStickerToSet' && !alive.has(last)) return 'Bad Request: STICKERSET_INVALID';
+        return null;
+      },
+    });
+    // имя набора из последнего запроса — fetch видит тело раньше, чем решает, падать ли
+    const orig = calls.push.bind(calls);
+    calls.push = (...c: Call[]) => {
+      last = String(c[0].body.name ?? '');
+      if (c[0].method === 'createNewStickerSet' && !dead.has(last)) alive.add(last);
+      return orig(...c);
+    };
+    await played(bot);
+    await bot.handle('POST', '/shop/claim', {}, { initData: initData(ANYA) });
+    expect((await store.shopUser(77))?.pack).toBe('m77_by_be_nobody_bot');
+    // через @Stickers: пака нет, имя занято навсегда
+    alive.delete('m77_by_be_nobody_bot');
+    dead.add('m77_by_be_nobody_bot');
+    const later = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 120_000);
+    try {
+      calls.length = 0;
+      const r = (await bot.handle('POST', '/shop', {}, { initData: initData(ANYA) })).body as { pack: string | null; pending: number };
+      // пока собирается — без ссылки, со «Собираем…»
+      expect(r.pack).toBeNull();
+      expect(r.pending).toBeGreaterThan(0);
+      await new Promise((res) => setTimeout(res, 50));
+      const made = calls.filter((c) => c.method === 'createNewStickerSet').map((c) => c.body.name);
+      expect(made).toEqual(['m77_by_be_nobody_bot', 'm77_2_by_be_nobody_bot']);
+      const again = (await bot.handle('POST', '/shop', {}, { initData: initData(ANYA) })).body as { pack: string; pending: number; error: string | null };
+      expect(again).toMatchObject({ pack: 'https://t.me/addstickers/m77_2_by_be_nobody_bot', pending: 0, error: null });
+      expect((await store.shopUser(77))?.issued).toEqual(['hi', 'lure~vhs']);
+    } finally {
+      later.mockRestore();
+    }
+  });
+
+  it('пак удалён, а выдача пришла раньше страницы (новый стикер за матч) — тоже собирает заново, не падает', async () => {
+    const store = new MemoryStore();
+    await store.saveShopUser({ userId: 77, lang: 'ru', name: 'Аня', items: ['starter', 'pack', 'played'], pack: 'm77_by_be_nobody_bot', issued: ['hi'] });
+    let gone = true;
+    const { bot, calls } = makeBot({
+      store,
+      // Telegram отдал имя удалённого набора — пересоздаём тем же
+      fail: (m) => (gone && (m === 'getStickerSet' || m === 'addStickerToSet') ? 'Bad Request: STICKERSET_INVALID' : null),
+      result: (m) => (m === 'createNewStickerSet' ? ((gone = false), true) : undefined),
+    });
+    await bot.shop.issue(77);
+    expect(calls.filter((c) => c.method === 'addStickerToSet')).toEqual([]);
+    expect(calls.filter((c) => c.method === 'createNewStickerSet').map((c) => c.body.name)).toEqual(['m77_by_be_nobody_bot']);
+    const u = await store.shopUser(77);
+    expect(u?.pack).toBe('m77_by_be_nobody_bot');
+    // «Привет!» был выдан в удалённый пак — снова в новом, вместе с приманкой
+    expect(u?.issued).toEqual(expect.arrayContaining(['hi', 'lure~vhs']));
+  });
+
   it('бесплатный пак есть — купленный набор сразу добавляется в него; пак по внешней ссылке /start stickers', async () => {
     // пак в Telegram: приманка (🎁) уже не последняя — бот переставит её в конец
     const set = { stickers: [...['👋', '💃', '😵', '🤨'].map((e, i) => ({ file_id: `f${i}`, emoji: e })), { file_id: 'lure_id', emoji: '🎁' }, { file_id: 'f5', emoji: '😭' }, { file_id: 'f6', emoji: '🍌' }] };

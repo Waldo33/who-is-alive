@@ -297,6 +297,12 @@ export function syncPlan(u: ShopUser): { add: Entry[]; drop: { key: string; emoj
 }
 const total = (p: ReturnType<typeof syncPlan>) => p.add.length + p.drop.length + p.replace.length;
 
+/** Ответ Telegram «такого набора нет» — игрок удалил пак (через @Stickers). */
+const isGone = (e: unknown) => /STICKERSET_INVALID/i.test(String(e));
+
+/** Имя личного набора: `m` — стикеры, `e` — эмодзи; n > 1 — пересобранный после удаления. */
+const setName = (p: 'm' | 'e', id: number, bot: string, n: number) => `${p}${id}${n > 1 ? `_${n}` : ''}_by_${bot}`.slice(0, 64);
+
 /** Простой вызов Telegram формой (call() ждёт FormData). */
 function jsonForm(o: Record<string, string>): FormData {
   const f = new FormData();
@@ -359,6 +365,8 @@ export class Shop {
   private readonly queue = new Map<number, Promise<void>>();
   /** Почему не вышло выдать (покажет гардероб): need_bot — игрок не открыл бота. */
   private readonly failed = new Map<number, string>();
+  /** Когда последний раз спрашивали Telegram, жив ли пак игрока (`s<id>` — стикеры, `e<id>` — эмодзи). */
+  private readonly alive = new Map<string, number>();
   private readonly rate = new RateWindow(20, 60_000);
   /** Свои стикеры рисует сервер — не чаще 12 правок в час на игрока. */
   private readonly myRate = new RateWindow(12, 3_600_000);
@@ -398,7 +406,9 @@ export class Shop {
   }
 
   private async state(id: number, kick: boolean) {
-    const u = await this.d.ledger.shopUser(id);
+    let u = await this.d.ledger.shopUser(id);
+    // игрок удалил пак в Telegram (@Stickers) — ссылка ведёт в «набора не существует»: забыть пак и собрать заново
+    if (kick && u?.pack && !this.queue.has(id) && this.due(`s${id}`) && (await this.setGone(u.pack))) u = await this.packGone(u);
     const plan = u ? syncPlan(u) : null;
     const pending = plan ? plan.add.length + plan.drop.length + plan.replace.length : 0;
     // недовыданное и неубранное (сбой Telegram, перезапуск) — дослать в фоне
@@ -457,7 +467,11 @@ export class Shop {
   }
 
   private async emojiState(id: number, u: ShopUser | null, kick: boolean) {
-    const items = u?.items ?? [];
+    let items = u?.items ?? [];
+    // набор удалён в Telegram — забыть положенное и собрать заново (тем же или следующим именем)
+    if (kick && u && items.some((i) => i.startsWith('ei:')) && !this.queue.has(id) && this.due(`e${id}`) && (await this.setGone(this.emojiName(id, await this.d.username(), items)))) {
+      items = (await this.emojiGone(id)) ?? items;
+    }
     const jp = await this.jackpots(id);
     const want = emojiWanted(items, jp);
     const left = want.filter((e) => !items.includes(emojiIssued(e.id))).length;
@@ -466,14 +480,73 @@ export class Shop {
     const made = items.some((i) => i.startsWith('ei:'));
     return {
       claimed: items.includes(EMOJI_PACK),
-      pack: made ? `https://t.me/addemoji/${this.emojiName(id, await this.d.username())}` : null,
+      pack: made ? `https://t.me/addemoji/${this.emojiName(id, await this.d.username(), items)}` : null,
       open: openRewards(items, jp),
       pending: left,
     };
   }
 
-  private emojiName(id: number, bot: string): string {
-    return `e${id}_by_${bot}`.slice(0, 64);
+  /** Имя эмодзи-пака: `e<id>_by_<бот>`, после пересборки удалённого — `e<id>_<n>_by_<бот>` (n — отметка `ev:<n>`). */
+  private emojiName(id: number, bot: string, items: string[]): string {
+    const v = items.find((i) => i.startsWith('ev:'));
+    return setName('e', id, bot, v ? Number(v.slice(3)) : 1);
+  }
+
+  /** Эмодзи-пак удалён: убрать отметки «положено» и имя — бот соберёт набор заново. Ответ — свежие items. */
+  private async emojiGone(id: number): Promise<string[] | null> {
+    const fresh = await this.d.ledger.shopUser(id);
+    if (!fresh) return null;
+    fresh.items = fresh.items.filter((i) => !i.startsWith('ei:') && !i.startsWith('ev:'));
+    await this.d.ledger.saveShopUser(fresh);
+    this.d.log('info', 'shop_emoji_gone', {});
+    return fresh.items;
+  }
+
+  /** Пора ли снова спросить Telegram, жив ли пак (не чаще раза в минуту: страница опрашивает состояние каждые 2 с). */
+  private due(key: string): boolean {
+    const now = (this.d.now ?? Date.now)();
+    if (now - (this.alive.get(key) ?? -Infinity) < 60_000) return false;
+    if (this.alive.size > 10_000) this.alive.clear();
+    this.alive.set(key, now);
+    return true;
+  }
+
+  /** Пака с таким именем в Telegram нет (удалён игроком). Сбой связи — «есть»: не пересоздаём зря. */
+  private async setGone(name: string): Promise<boolean> {
+    try {
+      await this.d.api('getStickerSet', { name });
+      return false;
+    } catch (e) {
+      return isGone(e);
+    }
+  }
+
+  /** Стикерпак удалён: забыть имя и выданное (свежая запись) — выдача соберёт новый пак из «Моего стикерпака». */
+  private async packGone(u: ShopUser): Promise<ShopUser> {
+    const fresh = (await this.d.ledger.shopUser(u.userId)) ?? u;
+    const next = { ...fresh, pack: null, issued: [] };
+    await this.d.ledger.saveShopUser(next);
+    await this.d.ledger.savePackOwn?.(u.userId, []);
+    this.d.log('info', 'shop_pack_gone', {});
+    return next;
+  }
+
+  /**
+   * Создать набор. Имя занято — либо набор уже есть (упали между созданием и записью: дальше докладываем по одному),
+   * либо игрок его удалил, а имя Telegram не отдаёт, — тогда следующее имя (`<p><id>_2_by_<бот>`…).
+   */
+  private async createSet(p: 'm' | 'e', id: number, bot: string, form: (name: string) => Promise<FormData>): Promise<{ name: string; n: number; made: boolean }> {
+    for (let n = 1; n <= 9; n++) {
+      const name = setName(p, id, bot, n);
+      try {
+        await this.call('createNewStickerSet', await form(name));
+        return { name, n, made: true };
+      } catch (e) {
+        if (!/already occupied/i.test(String(e))) throw e;
+      }
+      if (!(await this.setGone(name))) return { name, n, made: false };
+    }
+    throw new Error('no_set_name');
   }
 
   /** «Забрать эмодзи-пак»: отметка в учёте, набор соберёт бот в очереди игрока. */
@@ -516,14 +589,14 @@ export class Shop {
    * Положить в набор недостающее: общие и открытые награды (файлы apps/server/stickers/emoji/<id>.webm|png).
    * Вызывается уже внутри очереди игрока. `tell` — написать игроку о новых наградах.
    */
-  private async emojiRun(id: number, tell: boolean): Promise<void> {
+  private async emojiRun(id: number, tell: boolean, again = false): Promise<void> {
     const u = await this.d.ledger.shopUser(id);
     if (!u?.items.includes(EMOJI_PACK)) return;
     const want = emojiWanted(u.items, await this.jackpots(id));
     const missing = want.filter((e) => !u.items.includes(emojiIssued(e.id)));
     if (!missing.length) return;
     const bot = await this.d.username();
-    const name = this.emojiName(id, bot);
+    let name = this.emojiName(id, bot, u.items);
     const dir = join(this.d.stickersDir, 'emoji');
     const video = (eid: string) => existsSync(join(dir, `${eid}.webm`));
     const blob = async (eid: string) =>
@@ -539,21 +612,26 @@ export class Shop {
     let rest = missing;
     if (!u.items.some((i) => i.startsWith('ei:'))) {
       const list = rest.slice(0, 50);
-      const form = new FormData();
-      form.set('user_id', String(id));
-      form.set('name', name);
-      form.set('title', `${fmt(DICTS[u.lang].shop.emojiPack.title, { name: u.name })} · @${bot}`.slice(0, 64));
-      form.set('sticker_type', 'custom_emoji');
-      form.set('stickers', JSON.stringify(list.map(input)));
-      for (const [i, e] of list.entries()) form.set(`f${i}`, await blob(e.id), `${e.id}.${video(e.id) ? 'webm' : 'png'}`);
-      try {
-        await this.call('createNewStickerSet', form);
+      const made = await this.createSet('e', id, bot, async (n) => {
+        const form = new FormData();
+        form.set('user_id', String(id));
+        form.set('name', n);
+        form.set('title', `${fmt(DICTS[u.lang].shop.emojiPack.title, { name: u.name })} · @${bot}`.slice(0, 64));
+        form.set('sticker_type', 'custom_emoji');
+        form.set('stickers', JSON.stringify(list.map(input)));
+        for (const [i, e] of list.entries()) form.set(`f${i}`, await blob(e.id), `${e.id}.${video(e.id) ? 'webm' : 'png'}`);
+        return form;
+      });
+      name = made.name;
+      // имя не первое (прежний набор удалён) — запомнить номер, им строится ссылка
+      const fresh = (await this.d.ledger.shopUser(id)) ?? u;
+      fresh.items = [...fresh.items.filter((i) => !i.startsWith('ev:')), ...(made.n > 1 ? [`ev:${made.n}`] : [])];
+      u.items = fresh.items;
+      await this.d.ledger.saveShopUser(fresh);
+      if (made.made) {
         await mark(list.map((e) => e.id));
         rest = rest.slice(list.length);
         this.d.log('info', 'shop_emoji_made', { n: list.length });
-      } catch (e) {
-        // набор уже есть (упали между созданием и записью) — дальше по одному
-        if (!/already occupied/i.test(String(e))) throw e;
       }
     }
     const added: string[] = [];
@@ -563,7 +641,14 @@ export class Shop {
       form.set('name', name);
       form.set('sticker', JSON.stringify(input(e, 0)));
       form.set('f0', await blob(e.id), `${e.id}.${video(e.id) ? 'webm' : 'png'}`);
-      await this.call('addStickerToSet', form);
+      try {
+        await this.call('addStickerToSet', form);
+      } catch (err) {
+        // набор удалили в Telegram — собрать заново (один раз за проход)
+        if (again || !isGone(err)) throw err;
+        await this.emojiGone(id);
+        return this.emojiRun(id, tell, true);
+      }
       await mark([e.id]);
       added.push(e.id);
     }
@@ -1189,7 +1274,11 @@ export class Shop {
     const bare = (e: string | undefined) => (e ?? '').replace(/\uFE0F/g, '');
     let n = 0;
     try {
-      const set = await this.d.api<{ stickers?: { file_id: string; emoji?: string }[] }>('getStickerSet', { name: u.pack });
+      // пак удалён игроком — убирать нечего, только забыть выданное
+      const set = await this.d.api<{ stickers?: { file_id: string; emoji?: string }[] }>('getStickerSet', { name: u.pack }).catch((e: unknown) => {
+        if (isGone(e)) return null;
+        throw e;
+      });
       for (const s of mine) {
         const st = set?.stickers?.find((x) => bare(x.emoji) === bare(s.emoji[0]));
         if (st) await this.d.api('deleteStickerFromSet', { sticker: st.file_id });
@@ -1272,7 +1361,6 @@ export class Shop {
     const bot = await this.d.username();
     const t = DICTS[u.lang].shop;
     // один пак на игрока: «Массовка · Имя · @бот» — бесплатные, «за игру», купленные наборы и свои
-    const name = `m${id}_by_${bot}`.slice(0, 64);
     const title = fmt(t.packTitle, { name: u.name });
     const file = (e: Entry) =>
       e.my ? this.draw({ fig: e.my.fig, pose: e.my.pose, color: e.my.color, text: e.my.text, ...(e.my.top ? { top: e.my.top } : {}), ...(e.my.fx ? { fx: e.my.fx } : {}) }) : e.std ? readFile(join(this.d.stickersDir, u.lang, `${e.key}.webm`)).catch(() => this.draw({ std: e.std!.id, fx: e.std!.fx, color: e.std!.color, lang: u.lang })) : readFile(join(this.d.stickersDir, u.lang, `${e.key}.webm`));
@@ -1284,7 +1372,16 @@ export class Shop {
     let fresh: Entry | null = null;
 
     // пак уже есть: список его стикеров (file_id по первому эмодзи) — убрать, заменить и проверить приманку
-    const set = u.pack ? await this.d.api<{ stickers?: SetSticker[] }>('getStickerSet', { name: u.pack }) : null;
+    let set: { stickers?: SetSticker[] } | null = null;
+    if (u.pack) {
+      try {
+        set = await this.d.api<{ stickers?: SetSticker[] }>('getStickerSet', { name: u.pack });
+      } catch (e) {
+        // игрок удалил пак в Telegram — собрать новый из «Моего стикерпака»
+        if (!isGone(e)) throw e;
+        Object.assign(u, await this.packGone(u));
+      }
+    }
     // только стикеры бота: чужой стикер игрока с тем же эмодзи не удалим и не заменим по ошибке
     const known = (await this.d.ledger.packOwn?.(id)) ?? null;
     const before = new Set((set?.stickers ?? []).map((x) => x.file_unique_id));
@@ -1333,22 +1430,23 @@ export class Shop {
       if (!u.pack) {
         // приманка — последней и при создании
         const list = [...left.filter((e) => !e.lure), ...left.filter((e) => e.lure)].slice(-50);
-        const form = new FormData();
-        form.set('user_id', String(id));
-        form.set('name', name);
-        form.set('title', `${title} · @${bot}`.slice(0, 64));
-        form.set('stickers', JSON.stringify(list.map(input)));
-        for (const [i, e] of list.entries()) form.set(`f${i}`, await blob(e), `${e.key}.webm`);
-        try {
-          await this.call('createNewStickerSet', form);
+        const made = await this.createSet('m', id, bot, async (name) => {
+          const form = new FormData();
+          form.set('user_id', String(id));
+          form.set('name', name);
+          form.set('title', `${title} · @${bot}`.slice(0, 64));
+          form.set('stickers', JSON.stringify(list.map(input)));
+          for (const [i, e] of list.entries()) form.set(`f${i}`, await blob(e), `${e.key}.webm`);
+          return form;
+        });
+        if (made.made) {
           created = true;
           u.issued.push(...list.map((e) => e.key));
           fresh = list.filter((e) => !!e.my).pop() ?? fresh;
-        } catch (e) {
-          // пак уже есть (упали между созданием и записью) — дальше добавляем по одному
-          if (!/already occupied/i.test(String(e))) throw e;
         }
-        u.pack = name;
+        u.pack = made.name;
+        // только что создан — проверять, жив ли, незачем
+        this.alive.set(`s${id}`, (this.d.now ?? Date.now)());
         await this.saveIssued(u);
         continue;
       }

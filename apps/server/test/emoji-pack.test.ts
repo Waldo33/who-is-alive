@@ -1,7 +1,7 @@
 import { createHmac } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { EMOJI_BASE, REWARDS } from '@kto/game-core';
 import { Bot } from '../src/bot';
 import { silentLogger } from '../src/log';
@@ -21,7 +21,7 @@ function initData(user: object): string {
   return p.toString();
 }
 
-function makeBot() {
+function makeBot(fail?: (method: string, body: Record<string, unknown>) => string | null) {
   const calls: { method: string; body: Record<string, unknown>; files: string[] }[] = [];
   const fetchImpl = (async (url: string, init: { body: string | FormData }) => {
     const method = url.split('/').pop()!;
@@ -34,6 +34,8 @@ function makeBot() {
       }
     } else body = JSON.parse(init.body) as Record<string, unknown>;
     calls.push({ method, body, files });
+    const err = fail?.(method, body);
+    if (err) return new Response(JSON.stringify({ ok: false, description: err }));
     return new Response(JSON.stringify({ ok: true, result: method === 'getMe' ? { username: 'be_nobody_bot' } : true }));
   }) as unknown as typeof fetch;
   const store = new MemoryStore();
@@ -86,5 +88,39 @@ describe('личный эмодзи-пак', () => {
     expect((await store.shopUser(78))?.items).toContain('em:th_casino');
     expect(calls.some((c) => c.method === 'createNewStickerSet' || c.method === 'addStickerToSet')).toBe(false);
     expect((await bot.shop.earn({ users: [{ tgUser: 78, name: 'Боря', lang: 'ru', stickers: [], rewards: ['hack'] }] })).users).toBe(0);
+  });
+
+  it('игрок удалил набор в Telegram: страница замечает, бот собирает его заново — имя занято, значит следующим', async () => {
+    const dead = new Set<string>();
+    const { bot, calls, store } = makeBot((m, b) => {
+      const name = String(b.name ?? '');
+      if ((m === 'getStickerSet' || m === 'addStickerToSet') && dead.has(name)) return 'Bad Request: STICKERSET_INVALID';
+      if (m === 'createNewStickerSet' && dead.has(name)) return 'Bad Request: sticker set name is already occupied';
+      return null;
+    });
+    await store.saveShopUser({ userId: 77, lang: 'ru', name: 'Аня', items: [], pack: null, issued: [] });
+    await bot.handle('POST', '/shop/emoji', {}, { initData: initData(ANYA) });
+    await settle();
+    dead.add('e77_by_be_nobody_bot');
+    const later = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 120_000);
+    try {
+      calls.length = 0;
+      const st = (await bot.handle('POST', '/shop', {}, { initData: initData(ANYA) })).body as { emoji: { pack: string | null; pending: number } };
+      expect(st.emoji).toMatchObject({ pack: null, pending: EMOJI_BASE.length });
+      await settle();
+      expect(calls.filter((c) => c.method === 'createNewStickerSet').map((c) => c.body.name)).toEqual(['e77_by_be_nobody_bot', 'e77_2_by_be_nobody_bot']);
+      const again = (await bot.handle('POST', '/shop', {}, { initData: initData(ANYA) })).body as { emoji: { pack: string; pending: number } };
+      expect(again.emoji).toMatchObject({ pack: 'https://t.me/addemoji/e77_2_by_be_nobody_bot', pending: 0 });
+
+      // новая награда, а набор снова удалён (страницу не открывали) — пересобирается при докладке, без ошибки
+      dead.add('e77_2_by_be_nobody_bot');
+      calls.length = 0;
+      await bot.shop.earn({ users: [{ tgUser: 77, name: 'Аня', lang: 'ru', stickers: [], rewards: ['th_miami'] }] });
+      await settle();
+      expect(calls.filter((c) => c.method === 'createNewStickerSet').map((c) => c.body.name)).toEqual(['e77_by_be_nobody_bot', 'e77_2_by_be_nobody_bot', 'e77_3_by_be_nobody_bot']);
+      expect(calls.find((c) => c.method === 'createNewStickerSet' && c.body.name === 'e77_3_by_be_nobody_bot')?.files).toContain('th_miami.webm');
+    } finally {
+      later.mockRestore();
+    }
   });
 });
