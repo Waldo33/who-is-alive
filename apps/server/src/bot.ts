@@ -7,6 +7,7 @@ import { errFields } from './log';
 import type { Logger } from './log';
 import { cleanName } from './room';
 import { BadgeSet } from './badges';
+import { PostEmojiSet } from './emoji-set';
 import { Shop, localLedger } from './shop';
 import { Nudges } from './nudges';
 import type { ShopDeps, ShopLedger, VerifyToken } from './shop';
@@ -86,6 +87,8 @@ const T = {
   ru: {
     start: 'Массовка — пиксельная игра для компании: спрячься в толпе ботов и вычисли друзей раньше, чем они тебя.\n\n🎁 Сыграй первый матч — и получишь бесплатный стикерпак со своим актёром.',
     stickersText: '🎨 Твой стикерпак: какие стикеры в паке и свои стикеры с подписью.',
+    emojiText: '✨ Эмодзи «Массовки» — добавить набор:',
+    emojiWait: 'Набор эмодзи ещё собирается. Попробуй через 10 минут.',
     startCasting: ' А каждый день — «Кастинг дня»: найди актёра в массовке.',
     play: '▶ Играть',
     loginAsk: '🔑 Вход на сайт benobody.app.\n\nНажми «Войти», если входишь ты. Чужие ссылки для входа не нажимай.',
@@ -135,6 +138,8 @@ const T = {
   en: {
     start: 'Be Nobody is a pixel party game: hide in a crowd of bots and spot your friends before they spot you.\n\n🎁 Play your first match and get a free sticker pack with your actor.',
     stickersText: '🎨 Your sticker pack: pick what goes in it and make your own with a caption.',
+    emojiText: '✨ Be Nobody emoji — add the set:',
+    emojiWait: 'The emoji set is still being built. Try again in 10 minutes.',
     startCasting: ' Plus a daily casting: spot the actor among the extras.',
     play: '▶ Play',
     loginAsk: '🔑 Logging in to benobody.app.\n\nTap “Log in” if this is you. Never tap login links from others.',
@@ -294,6 +299,8 @@ export class Bot {
   readonly hookSecret: string;
   readonly shop: Shop;
   readonly badges: BadgeSet;
+  /** Эмодзи для постов канала (emoji-set.ts): набор собирается по /emoji. */
+  readonly postEmoji: PostEmojiSet;
   /** Напоминания, которые зовут обратно (звезда гаснет, стикер недели) — nudges.ts. */
   readonly nudges: Nudges;
   private readonly supportChat: string;
@@ -314,6 +321,14 @@ export class Bot {
       username: async () => (await this.getMe()).username,
       log: o.log,
       dir: o.badgesDir ?? join(o.stickersDir ?? '', 'badges'),
+      supportChat: this.supportChat,
+      owner: o.badgesOwner,
+    });
+    this.postEmoji = new PostEmojiSet({
+      api: (m, b) => this.api(m, b),
+      username: async () => (await this.getMe()).username,
+      log: o.log,
+      dir: join(o.stickersDir ?? '', 'emoji'),
       supportChat: this.supportChat,
       owner: o.badgesOwner,
     });
@@ -514,6 +529,7 @@ export class Bot {
           else if (u?.message?.text?.startsWith('/paysupport') && u.message.chat.type === 'private' && u.message.from) await this.onSupport(u.message.from, u.message.text.slice('/paysupport'.length), true);
           else if (u?.message && String(u.message.chat.id) === this.supportChat) await this.onSupportReply(u.message);
           else if (u?.message?.text?.startsWith('/stickers') && u.message.chat.type === 'private') await this.onStickers(u.message);
+          else if (u?.message?.text?.startsWith('/emoji') && u.message.chat.type === 'private') await this.onEmoji(u.message);
           else if (u?.message?.text?.startsWith('/start login_') && u.message.chat.type === 'private') await this.onLoginStart(u.message);
           else if (u?.message?.text?.startsWith('/start')) await this.onStart(u.message);
           else if (u?.message?.text && u.message.chat.type === 'private' && u.message.from && this.supportOpen(u.message.from.id)) await this.onSupport(u.message.from, u.message.text, false);
@@ -618,6 +634,15 @@ export class Bot {
       text: t.stickersText,
       reply_markup: { inline_keyboard: [[{ text: t.stickers, web_app: { url: `${this.o.site}/stickers?src=tg` } }]] },
     });
+  }
+
+  /** /emoji: доделать набор эмодзи для постов и прислать ссылку на него. Только владельцу игры (решение владельца 28.11.2026), остальным — молчание. */
+  private async onEmoji(msg: NonNullable<Update['message']>): Promise<void> {
+    if (!msg.from || msg.from.id !== (await this.postEmoji.ownerId())) return;
+    const t = T[langOf(msg.from.language_code)];
+    await this.postEmoji.kick();
+    const ready = Object.keys(this.postEmoji.ids()).length > 0;
+    await this.api('sendMessage', { chat_id: msg.chat.id, text: ready ? `${t.emojiText}\n${await this.postEmoji.link()}` : t.emojiWait });
   }
 
   /** Сайт прислал игрока по ссылке входа: спросить кнопкой — вход подтверждает нажатие, а не сама ссылка. */
