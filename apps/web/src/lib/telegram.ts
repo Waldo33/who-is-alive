@@ -605,8 +605,49 @@ export function shopRefund(item: string): Promise<ShopState | null> {
   return botPost<ShopState>('/shop/refund', { item }, 20_000);
 }
 
-/** Купить набор: счёт в звёздах поверх игры. Итог — как у Telegram; 'owned' — уже куплено. */
+/** Ссылки на счёт, взятые заранее (сайт): Telegram надо открыть прямо в нажатии, без ожидания сети. */
+const invoices = new Map<string, { link: string; at: number }>();
+/** Ссылка на счёт живёт долго; на всякий случай берём свежую раз в час. */
+const INVOICE_MS = 60 * 60_000;
+
+/** Сайт с входом через Telegram: заранее взять ссылку на счёт товара (кнопка «Купить» откроет её сразу). */
+export async function prefetchInvoice(item: string): Promise<void> {
+  if (inTelegram() || !currentWebLogin()) return;
+  const c = invoices.get(item);
+  if (c && Date.now() - c.at < INVOICE_MS) return;
+  const r = await botPost<{ link?: string }>('/shop/buy', { item });
+  if (r?.link?.startsWith('https://t.me/')) invoices.set(item, { link: r.link, at: Date.now() });
+}
+
+const ownsItem = (s: ShopState | null, item: string) => !!s && (s.items.includes(item) || !!s.effects?.some((e) => e === item));
+
+/**
+ * Покупка с сайта (вход через Telegram): ссылка на счёт открывает оплату в приложении Telegram, сайт ждёт,
+ * пока покупка появится у игрока (опрос, пока вкладка на виду; до 15 минут). 'pending' — не дождались.
+ */
+async function buyFromSite(item: string): Promise<'paid' | 'failed' | 'pending' | 'owned'> {
+  const c = invoices.get(item);
+  let link = c && Date.now() - c.at < INVOICE_MS ? c.link : null;
+  if (!link) {
+    const r = await botPost<{ link?: string; error?: string }>('/shop/buy', { item });
+    if (r?.error === 'owned') return 'owned';
+    link = r?.link?.startsWith('https://t.me/') ? r.link : null;
+  }
+  if (!link) return 'failed';
+  invoices.delete(item);
+  location.href = link;
+  const t0 = Date.now();
+  while (Date.now() - t0 < 15 * 60_000) {
+    await new Promise((r) => setTimeout(r, 3000));
+    if (document.visibilityState !== 'visible') continue;
+    if (ownsItem(await shopState(), item)) return 'paid';
+  }
+  return 'pending';
+}
+
+/** Купить набор: счёт в звёздах поверх игры (на сайте — в приложении Telegram). Итог — как у Telegram; 'owned' — уже куплено. */
 export async function shopBuy(item: string): Promise<'paid' | 'cancelled' | 'failed' | 'pending' | 'owned'> {
+  if (!inTelegram()) return currentWebLogin() ? buyFromSite(item) : 'failed';
   const w = await bootTelegram();
   if (!w?.openInvoice || !at('6.1')) return 'failed';
   const r = await botPost<{ link?: string; error?: string }>('/shop/buy', { item });

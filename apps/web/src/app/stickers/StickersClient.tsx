@@ -7,7 +7,7 @@ import type { EffectId, Lang, MyFig, MyPose, MySticker, ShopItemId, StickerMeta 
 import { PAL } from '@kto/assets';
 import { track } from '@/lib/analytics';
 import { detectLang } from '@/lib/lang';
-import { bootTelegram, haptic, inTelegram, linkTelegramOnce, openTelegram, shopClaim, shopMy, shopMyDel, shopFx, shopPick, shopRemind, shopBuy, shopCached, shopSignedIn, shopState, tgLink } from '@/lib/telegram';
+import { bootTelegram, haptic, inTelegram, linkTelegramOnce, openTelegram, shopClaim, shopMy, shopMyDel, shopFx, shopPick, shopRemind, shopBuy, prefetchInvoice, shopCached, shopSignedIn, shopState, tgLink } from '@/lib/telegram';
 import type { ShopState } from '@/lib/telegram';
 import { TopBar } from '@/ui/TopBarView';
 import { ST_SIZE, STICKERS, stickerFrame } from '@/game/skins/stickers';
@@ -419,13 +419,18 @@ export default function StickersClient() {
     setFxNote('');
     setTab('fx');
   };
+  // сайт с входом через Telegram: ссылка на счёт эффекта — заранее (оплата откроется сразу из нажатия)
+  useEffect(() => {
+    if (!inTg && tgOn && tab === 'fx' && st && !st.effects?.includes(fxSel)) void prefetchInvoice(fxSel);
+  }, [inTg, tgOn, tab, st, fxSel]);
   const buyFx = async () => {
-    if (!inTg) return toTg('fx');
+    // сайт: с входом через Telegram — оплата в приложении Telegram, без входа — в бота
+    if (!inTg && !tgOn) return toTg('fx');
     if (busy || owns.has(fxSel)) return;
     const fx = fxSel;
     setBusy(true);
-    setFxNote(t.paying);
-    track('shop_buy_tap', { item: fx, from: 'stickers' });
+    setFxNote(inTg ? t.paying : t.payInTg);
+    track('shop_buy_tap', { item: fx, from: 'stickers', ...(inTg ? {} : { site: true }) });
     const r = await shopBuy(fx);
     track('shop_buy', { item: fx, status: r, from: 'stickers' });
     if (r === 'paid') {
@@ -633,7 +638,7 @@ export default function StickersClient() {
               <button className="btn small" onClick={() => setTab('pack')}>
                 {b.back}
               </button>
-            ) : inTg ? (
+            ) : inTg || tgOn ? (
               <button className="btn" onClick={() => void buyFx()} aria-disabled={busy}>
                 {buyLabel(lang, fxSel)}
                 {star && <img className="wardrobe-star" src={star} alt="" width={26} height={26} />}

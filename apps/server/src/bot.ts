@@ -516,8 +516,8 @@ export class Bot {
         // Mini App — initData; браузер (сайт без Telegram) — данные входа через Telegram (виджет на benobody.app)
         const init = this.verify(b.initData ?? '') ?? this.verifyLogin(b.login, b.lang);
         if (!init) return { status: 401, body: { error: 'bad_init' } };
-        // покупка — только в Telegram: счёт открывается поверх Mini App
-        if (path === '/shop/buy' && !b.initData) return { status: 401, body: { error: 'bad_init' } };
+        // покупка с сайта (вход через бота): ссылка на счёт откроет оплату в приложении Telegram; оплату засчитают
+        // только тому, кто в счёте (shop.ts › preCheckout/paid сверяют плательщика с invoice_payload)
         return await this.shop.route(path, init, b);
       }
       // вход на сайт через бота: код и ссылка на бота; опрос — пока игрок не нажмёт «Войти» в чате

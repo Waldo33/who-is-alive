@@ -7,7 +7,7 @@ import type { Lang, ShopItemId } from '@kto/game-core';
 import { track } from '@/lib/analytics';
 import { TG_APP } from '@/lib/env';
 import { detectLang } from '@/lib/lang';
-import { bootTelegram, haptic, inTelegram, linkTelegramOnce, openTelegram, shopBuy, shopCached, shopSignedIn, shopState, shopWear, tgLink } from '@/lib/telegram';
+import { bootTelegram, haptic, inTelegram, linkTelegramOnce, openTelegram, prefetchInvoice, shopBuy, shopCached, shopSignedIn, shopState, shopWear, tgLink } from '@/lib/telegram';
 import { currentWebLogin, prepareWebLogin, resumeWebLogin, startWebLogin, webLogout } from '@/lib/tg-login';
 import type { TgLogin } from '@/lib/tg-login';
 import type { ShopState } from '@/lib/telegram';
@@ -227,9 +227,14 @@ export default function WardrobeClient() {
     void prepareWebLogin().then(setLoginReady);
   };
 
+  // сайт с входом через Telegram: ссылку на счёт берём заранее — «Купить» откроет оплату в Telegram сразу
+  useEffect(() => {
+    if (!inTg && login && st && !owned) void prefetchInvoice(ITEM);
+  }, [inTg, login, st, owned, ITEM]);
+
   const buy = async () => {
-    // вне Telegram покупка невозможна — ведём в гардероб внутри бота
-    if (!inTg) {
+    // вне Telegram без входа покупка невозможна — ведём в гардероб внутри бота
+    if (!inTg && !login) {
       track('shop_to_tg', { item: ITEM });
       const link = tgLink('shop');
       if (link) location.href = link;
@@ -238,8 +243,8 @@ export default function WardrobeClient() {
     if (busy || owned) return;
     setBusy('buy');
     clearTimeout(noteTimer.current);
-    setNote(t.paying);
-    track('shop_buy_tap', { item: ITEM });
+    setNote(inTg ? t.paying : t.payInTg);
+    track('shop_buy_tap', { item: ITEM, ...(inTg ? {} : { site: true }) });
     const r = await shopBuy(ITEM);
     track('shop_buy', { item: ITEM, status: r });
     if (r === 'paid') {
@@ -346,7 +351,7 @@ export default function WardrobeClient() {
           </>
         ) : (
           <>
-            {inTg ? (
+            {inTg || login ? (
               <button className="btn" onClick={() => void buy()} aria-disabled={!!busy}>
                 {was && <s className="wardrobe-was">{was}</s>}
                 {buyLabel(lang, ITEM)}
@@ -366,10 +371,13 @@ export default function WardrobeClient() {
             {t.build.open}
           </button>
         )}
-        {/* эффекты для стикеров — во вкладке стикерпака */}
-        <button className="link" onClick={() => router.push('/stickers?fx=holo')}>
-          {t.fxCategory}
-        </button>
+        {/* эффекты для стикеров — во вкладке стикерпака; на сайте после покупки место занимает строка входа
+            (iPhone SE: витрина должна влезть), эффекты — там же, за «Собрать свой стикерпак» */}
+        {!(owned && !inTg) && (
+          <button className="link" onClick={() => router.push('/stickers?fx=holo')}>
+            {t.fxCategory}
+          </button>
+        )}
         {/* значки для эмодзи-статуса: ставятся только внутри Telegram */}
         {inTg && known && (
           <button className="link" onClick={() => router.push('/badges')}>

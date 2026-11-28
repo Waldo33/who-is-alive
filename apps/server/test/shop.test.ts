@@ -492,7 +492,7 @@ describe('гардероб', () => {
     }
   });
 
-  it('вход через Telegram на сайте: подпись виджета, 30 дней; связь с игроком — как из Mini App; покупка — только в Telegram', async () => {
+  it('вход через Telegram на сайте: подпись виджета, 30 дней; связь с игроком — как из Mini App; покупка — ссылкой на счёт', async () => {
     const store = new MemoryStore();
     const srv = new GameServer({ authSecret: 'x'.repeat(32), log: silentLogger, trustProxy: true, store });
     const port = await srv.listen(0, '127.0.0.1');
@@ -515,7 +515,10 @@ describe('гардероб', () => {
       expect(await store.telegramOf([me.userId])).toEqual([{ gameUser: me.userId, tgUser: 77, name: 'Аня', lang: 'ru' }]);
       expect((await bot.handle('POST', '/shop', {}, { login })).status).toBe(200);
       expect((await bot.handle('POST', '/shop/link', {}, { login: { ...login, id: 99 }, token: me.token })).status).toBe(401);
-      expect((await bot.handle('POST', '/shop/buy', {}, { login, item: 'kotBanan' })).status).toBe(401);
+      // покупка с сайта — ссылка на счёт этого игрока Telegram (оплатить в приложении)
+      const buy = await bot.handle('POST', '/shop/buy', {}, { login, item: 'kotBanan' });
+      expect(buy.status).toBe(200);
+      expect(buy.body).toEqual({ link: 'https://t.me/$invoice' });
       expect((await bot.handle('GET', '/info', {}, null)).body).toMatchObject({ id: 123456 });
     } finally {
       await srv.close();
