@@ -333,7 +333,7 @@ describe('гардероб', () => {
     expect(calls.some((c) => c.method === 'editMessageText')).toBe(false);
   });
 
-  it('/support и ссылка /start support': любой вопрос — в тот же чат поддержки, ответ — игроку', async () => {
+  it('/support и ссылка /start support: любой вопрос — в тот же чат поддержки, ответ — игроку', async () => {
     const { bot, calls } = makeBot();
     const sent = (chat: number | string) => calls.filter((c) => c.method === 'sendMessage' && String(c.body.chat_id) === String(chat)).map((c) => String(c.body.text));
     // ссылка t.me/<бот>?start=support — подсказка игроку (общая, не про покупку), в поддержку пока ничего
