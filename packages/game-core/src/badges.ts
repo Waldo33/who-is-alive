@@ -55,8 +55,8 @@ export const PLAY_BADGES: readonly PlayBadge[] = [
   { id: 'skulls', emoji: '💀', of: 1, count: (s) => s.skulls },
 ];
 
-/** Значки с анимацией (видео-эмодзи): автомат крутит барабаны. Картинки — `skins/badge-slots.ts`. */
-export const ANIMATED_BADGES: readonly BadgeId[] = ['jackpot', 'skulls'];
+/** Значки с анимацией (видео-эмодзи): блик на звезде, автомат крутит барабаны. Картинки — `skins/badges.ts`, `skins/badge-slots.ts`. */
+export const ANIMATED_BADGES: readonly BadgeId[] = ['star', 'jackpot', 'skulls'];
 
 /**
  * Что выбил игрок в «Крутках» матча: по итогам дублей (вращения — по сущности, `reveal` связывает её с игроком).
