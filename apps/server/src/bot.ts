@@ -80,7 +80,9 @@ const REFUND_URL = 'https://github.com/Waldo33/who-is-alive/actions/workflows/sh
 const CHANNEL = 'https://t.me/benobody_app';
 /** Группа «benobody alerts» (как ALERTS_CHAT в game-deploy.yml): id чата не секрет без ключа бота. */
 const SUPPORT_CHAT = '-5387784292';
-/** Сколько после /paysupport бот пересылает обычные сообщения игрока в поддержку. */
+/** О чём обращение: pay — /paysupport (покупка, возврат), help — /support (любой вопрос по игре). */
+type SupportKind = 'pay' | 'help';
+/** Сколько после /paysupport или /support бот пересылает обычные сообщения игрока в поддержку. */
 const SUPPORT_OPEN_MS = 30 * 60_000;
 
 const T = {
@@ -304,8 +306,8 @@ export class Bot {
   /** Напоминания, которые зовут обратно (звезда гаснет, стикер недели) — nudges.ts. */
   readonly nudges: Nudges;
   private readonly supportChat: string;
-  /** Кто недавно написал /paysupport: id → до какого времени пересылать его сообщения. */
-  private readonly supportUntil = new Map<number, number>();
+  /** Кто недавно написал /paysupport или /support: id → до какого времени пересылать его сообщения и о чём обращение. */
+  private readonly supportUntil = new Map<number, { until: number; kind: SupportKind }>();
   private readonly supportRate = new RateWindow(5, 10 * 60_000);
 
   constructor(private readonly o: BotOptions) {
@@ -350,21 +352,24 @@ export class Bot {
   }
 
   private supportOpen(id: number): boolean {
-    const until = this.supportUntil.get(id);
-    if (until !== undefined && until < Date.now()) this.supportUntil.delete(id);
-    return (this.supportUntil.get(id) ?? 0) >= Date.now();
+    const open = this.supportUntil.get(id);
+    if (open !== undefined && open.until < Date.now()) this.supportUntil.delete(id);
+    return (this.supportUntil.get(id)?.until ?? 0) >= Date.now();
   }
 
   /**
-   * /paysupport и сообщения после него: игроку — «запрос передан», в чат поддержки — кто, что куплено и текст
-   * (без чужих ссылок и @упоминаний). Метка #u<id> в пересылке — по ней ответ из чата уходит игроку.
+   * /paysupport (покупки, обязателен для звёзд), /support (любой вопрос — кнопка «Поддержка» в шестерёнке игры,
+   * ссылка t.me/<бот>?start=support) и сообщения после них: игроку — «запрос передан», в чат поддержки — кто,
+   * что куплено и текст (без чужих ссылок и @упоминаний). Метка #u<id> в пересылке — по ней ответ из чата уходит игроку.
+   * kind — только у команды; у сообщения после неё — тот, с которым обращение открыто.
    */
-  private async onSupport(from: { id: number; first_name?: string; username?: string; language_code?: string }, raw: string, command: boolean): Promise<void> {
+  private async onSupport(from: { id: number; first_name?: string; username?: string; language_code?: string }, raw: string, command?: SupportKind): Promise<void> {
     const text = safeCaption(raw, this.o.site ?? '').slice(0, 1000);
-    if (command) this.supportUntil.set(from.id, Date.now() + SUPPORT_OPEN_MS);
-    // пустой /paysupport: игроку — подсказка, в поддержку — пока ничего
+    if (command) this.supportUntil.set(from.id, { until: Date.now() + SUPPORT_OPEN_MS, kind: command });
+    const kind = command ?? this.supportUntil.get(from.id)?.kind ?? 'pay';
+    // пустая команда: игроку — подсказка, в поддержку — пока ничего
     if (!text) {
-      if (command) await this.shop.support(from.id, from.language_code, false);
+      if (command) await this.shop.support(from.id, from.language_code, false, kind);
       return;
     }
     if (!this.supportRate.take(String(from.id), Date.now())) return;
@@ -372,7 +377,7 @@ export class Bot {
     const name = cleanName(safeCaption(from.first_name ?? '', ''), '—');
     const user = from.username && /^\w{3,32}$/.test(from.username) ? ` · ${from.username}` : '';
     const card = [
-      `🧾 Поддержка: ${name}${user}`,
+      `${kind === 'pay' ? '🧾 Поддержка (покупка)' : '🎬 Поддержка'}: ${name}${user}`,
       `Номер покупателя: ${from.id}`,
       `Куплено: ${items.length ? items.join(', ') : 'ничего'}`,
       '',
@@ -401,7 +406,7 @@ export class Bot {
       // бот не в чате поддержки — игроку всё равно ответим; тревога — по журналу
       this.o.log('error', 'tg_support', errFields(e));
     }
-    if (command) await this.shop.support(from.id, from.language_code, true);
+    if (command) await this.shop.support(from.id, from.language_code, true, kind);
   }
 
   /**
@@ -526,13 +531,17 @@ export class Bot {
           else if (u?.callback_query) await this.shop.onCallback(u.callback_query);
           // бесплатный стикерпак по внешней ссылке t.me/<бот>?start=stickers (только в личке: пак — этого игрока)
           else if (u?.message?.text === '/start stickers' && u.message.chat.type === 'private' && u.message.from) await this.shop.claimInChat(u.message.from);
-          else if (u?.message?.text?.startsWith('/paysupport') && u.message.chat.type === 'private' && u.message.from) await this.onSupport(u.message.from, u.message.text.slice('/paysupport'.length), true);
+          else if (u?.message?.text?.startsWith('/paysupport') && u.message.chat.type === 'private' && u.message.from) await this.onSupport(u.message.from, u.message.text.slice('/paysupport'.length), 'pay');
+          // общая поддержка: команда /support или кнопка «Поддержка» в игре (t.me/<бот>?start=support)
+          else if (u?.message?.text && /^\/support(@\w+)?(\s|$)/.test(u.message.text) && u.message.chat.type === 'private' && u.message.from)
+            await this.onSupport(u.message.from, u.message.text.replace(/^\/support(@\w+)?/, ''), 'help');
+          else if (u?.message?.text === '/start support' && u.message.chat.type === 'private' && u.message.from) await this.onSupport(u.message.from, '', 'help');
           else if (u?.message && String(u.message.chat.id) === this.supportChat) await this.onSupportReply(u.message);
           else if (u?.message?.text?.startsWith('/stickers') && u.message.chat.type === 'private') await this.onStickers(u.message);
           else if (u?.message?.text?.startsWith('/emoji') && u.message.chat.type === 'private') await this.onEmoji(u.message);
           else if (u?.message?.text?.startsWith('/start login_') && u.message.chat.type === 'private') await this.onLoginStart(u.message);
           else if (u?.message?.text?.startsWith('/start')) await this.onStart(u.message);
-          else if (u?.message?.text && u.message.chat.type === 'private' && u.message.from && this.supportOpen(u.message.from.id)) await this.onSupport(u.message.from, u.message.text, false);
+          else if (u?.message?.text && u.message.chat.type === 'private' && u.message.from && this.supportOpen(u.message.from.id)) await this.onSupport(u.message.from, u.message.text);
           else if (u?.inline_query) await this.onInline(u.inline_query);
           else if (u?.chosen_inline_result) await this.onChosen(u.chosen_inline_result);
         } catch (e) {
@@ -581,6 +590,7 @@ export class Bot {
         short: 'Пати-игра на 2–4 телефона и свой стикерпак: собери стикеры из дублей и шли друзьям.',
         stickersCmd: 'Мой стикерпак',
         supportCmd: 'Помощь с покупкой',
+        helpCmd: 'Написать в поддержку',
         name: 'Массовка',
         start: 'Играть в Массовку',
         menu: 'Играть',
@@ -592,6 +602,7 @@ export class Bot {
         short: 'A party game for 2–4 phones and your own sticker pack: collect stickers from your takes.',
         stickersCmd: 'My sticker pack',
         supportCmd: 'Purchase help',
+        helpCmd: 'Contact support',
         name: 'Be Nobody',
         start: 'Play Be Nobody',
         menu: 'Play',
@@ -621,7 +632,7 @@ export class Bot {
         const cur = await this.api<{ short_description: string }>('getMyShortDescription', { language_code });
         if (cur.short_description !== p.short) await this.api('setMyShortDescription', { short_description: p.short, language_code });
       });
-      await soft('commands', () => this.api('setMyCommands', { commands: [{ command: 'start', description: p.start }, { command: 'stickers', description: p.stickersCmd }, { command: 'paysupport', description: p.supportCmd }], language_code }));
+      await soft('commands', () => this.api('setMyCommands', { commands: [{ command: 'start', description: p.start }, { command: 'stickers', description: p.stickersCmd }, { command: 'support', description: p.helpCmd }, { command: 'paysupport', description: p.supportCmd }], language_code }));
     }
     await soft('menu', () => this.api('setChatMenuButton', { menu_button: { type: 'web_app', text: P.ru.menu, web_app: { url: `${this.o.site}/?create=1&src=tg` } } }));
   }

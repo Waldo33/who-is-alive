@@ -333,6 +333,32 @@ describe('гардероб', () => {
     expect(calls.some((c) => c.method === 'editMessageText')).toBe(false);
   });
 
+  it('/support и кнопка «Поддержка» (/start support): любой вопрос — в тот же чат поддержки, ответ — игроку', async () => {
+    const { bot, calls } = makeBot();
+    const sent = (chat: number | string) => calls.filter((c) => c.method === 'sendMessage' && String(c.body.chat_id) === String(chat)).map((c) => String(c.body.text));
+    // кнопка в игре: /start support — подсказка игроку (общая, не про покупку), в поддержку пока ничего
+    await hook(bot, { message: { chat: { id: 77, type: 'private' }, from: ANYA, text: '/start support' } });
+    expect(sent(77).at(-1)).toMatch(/Поддержка на связи.*77/);
+    expect(sent(77).at(-1)).not.toContain('покуп');
+    expect(sent(SUPPORT)).toHaveLength(0);
+    // следующее сообщение — в поддержку с меткой общего вопроса; ссылки и @ вычищены
+    await hook(bot, { message: { chat: { id: 77, type: 'private' }, from: ANYA, text: 'зависло на дубле evil.example/x @spammer' } });
+    const card = sent(SUPPORT).at(-1)!;
+    expect(card).toMatch(/^🎬 Поддержка: /);
+    expect(card).toContain('зависло на дубле');
+    expect(card).not.toMatch(/evil\.example|@spam/);
+    expect(card).toMatch(/#u77$/);
+    // /support с текстом сразу — одной командой; ответ из чата поддержки — игроку
+    await hook(bot, { message: { chat: { id: 78, type: 'private' }, from: { ...ANYA, id: 78 }, text: '/support нет звука' } });
+    expect(sent(SUPPORT).at(-1)).toMatch(/нет звука[\s\S]*#u78$/);
+    expect(sent(78).at(-1)).toMatch(/Передали команде.*78/);
+    await hook(bot, { message: { message_id: 6, chat: { id: Number(SUPPORT), type: 'group' }, from: { id: 1, first_name: 'Owner' }, text: 'Починили', reply_to_message: { text: card, from: { id: 9, is_bot: true } } } });
+    expect(sent(77).at(-1)).toBe('Починили');
+    // /paysupport по-прежнему — про покупку
+    await hook(bot, { message: { chat: { id: 79, type: 'private' }, from: { ...ANYA, id: 79 }, text: '/paysupport верните звёзды' } });
+    expect(sent(SUPPORT).at(-1)).toMatch(/^🧾 Поддержка \(покупка\): /);
+  });
+
   it('«Надеть» / «Снять»: только купленный скин; новая покупка надевается сама', async () => {
     const { bot, store } = makeBot();
     const wear = (item: unknown) => bot.handle('POST', '/shop/wear', {}, { initData: initData(ANYA), item });

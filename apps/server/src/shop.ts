@@ -1025,10 +1025,14 @@ export class Shop {
     return n;
   }
 
-  /** /paysupport: игроку — «запрос передан» (sent) или подсказка написать, что случилось; номер покупателя — в обоих. */
-  async support(chat: number, code: string | undefined, sent: boolean): Promise<void> {
+  /**
+   * /paysupport (pay) и /support (help): игроку — «запрос передан» (sent) или подсказка написать, что случилось;
+   * номер — в обоих.
+   */
+  async support(chat: number, code: string | undefined, sent: boolean, kind: 'pay' | 'help' = 'pay'): Promise<void> {
     const t = DICTS[langOf(code)].shop;
-    await this.d.api('sendMessage', { chat_id: chat, text: fmt(sent ? t.botSupportSent : t.botSupport, { id: chat }) });
+    const text = kind === 'help' ? (sent ? t.botHelpSent : t.botHelp) : sent ? t.botSupportSent : t.botSupport;
+    await this.d.api('sendMessage', { chat_id: chat, text: fmt(text, { id: chat }) });
   }
 
   /** Что куплено (наборы, без стикеров и меток) — для запроса в поддержку. */
