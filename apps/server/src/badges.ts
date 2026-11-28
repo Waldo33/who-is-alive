@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { BADGE_IDS, badgeEmoji } from '@kto/game-core';
@@ -7,7 +8,7 @@ import type { Logger } from './log';
 
 /**
  * Значки для эмодзи-статуса (game-core/badges.ts): один общий набор эмодзи у бота — `massovka_badges_by_<бот>`.
- * Картинки 100×100 PNG — `apps/server/stickers/badges/<id>.png` (`pnpm --filter web badges`, едут с выкладкой
+ * Картинки 100×100 PNG — `apps/server/stickers/badges/<id>.png`, анимированные (значки-слоты) — `<id>.webm` (видео-эмодзи) (`pnpm --filter web badges`, едут с выкладкой
  * вместе со стикерами). Значок в наборе бот узнаёт по эмодзи. Ставит его в статус сам игрок из Mini App
  * (`WebApp.setEmojiStatus` по id эмодзи) — бот только держит набор и отдаёт id.
  *
@@ -30,6 +31,8 @@ export interface BadgeSetDeps {
 interface TgSticker {
   emoji?: string;
   custom_emoji_id?: string;
+  file_id?: string;
+  is_video?: boolean;
 }
 
 const RETRY_MS = 10 * 60_000;
@@ -37,6 +40,8 @@ const bare = (e: string | undefined) => (e ?? '').replace(/️/g, '');
 
 export class BadgeSet {
   private cache: Partial<Record<BadgeId, string>> = {};
+  /** Значок стал анимированным (появился <id>.webm), а в наборе ещё картинка: заменить (id → file_id картинки). */
+  private stale = new Map<BadgeId, string>();
   private busy: Promise<void> | null = null;
   private lastTry = -Infinity;
   private owner: number | undefined;
@@ -47,7 +52,7 @@ export class BadgeSet {
 
   /** id эмодзи значков, что уже есть в наборе. Чего-то нет — в фоне доделать набор. */
   ids(): Partial<Record<BadgeId, string>> {
-    if (BADGE_IDS.some((id) => !this.cache[id])) this.kick();
+    if (BADGE_IDS.some((id) => !this.cache[id]) || this.stale.size) this.kick();
     return { ...this.cache };
   }
 
@@ -80,10 +85,17 @@ export class BadgeSet {
     }
   }
 
+  /** Есть видео — значок анимированный (видео-эмодзи WEBM), иначе картинка PNG. */
+  private video(id: BadgeId): boolean {
+    return existsSync(join(this.d.dir, `${id}.webm`));
+  }
+
   private remember(list: TgSticker[]): void {
+    this.stale.clear();
     for (const id of BADGE_IDS) {
       const s = list.find((x) => bare(x.emoji) === bare(badgeEmoji(id)) && x.custom_emoji_id);
       if (s?.custom_emoji_id) this.cache[id] = s.custom_emoji_id;
+      if (s?.file_id && !s.is_video && this.video(id)) this.stale.set(id, s.file_id);
     }
   }
 
@@ -101,10 +113,13 @@ export class BadgeSet {
     let list = await this.read(name);
     if (list) this.remember(list);
     const missing = BADGE_IDS.filter((id) => !this.cache[id]);
-    if (!missing.length) return;
+    if (!missing.length && !this.stale.size) return;
     const owner = await this.ownerId();
-    const input = (id: BadgeId, i: number) => ({ sticker: `attach://f${i}`, format: 'static', emoji_list: [badgeEmoji(id)] });
-    const file = async (id: BadgeId) => new Blob([new Uint8Array(await readFile(join(this.d.dir, `${id}.png`)))], { type: 'image/png' });
+    const video = (id: BadgeId) => this.video(id);
+    const input = (id: BadgeId, i: number) => ({ sticker: `attach://f${i}`, format: video(id) ? 'video' : 'static', emoji_list: [badgeEmoji(id)] });
+    const ext = (id: BadgeId) => (video(id) ? 'webm' : 'png');
+    const file = async (id: BadgeId) =>
+      new Blob([new Uint8Array(await readFile(join(this.d.dir, `${id}.${ext(id)}`)))], { type: video(id) ? 'video/webm' : 'image/png' });
     if (!list) {
       const form = new FormData();
       form.set('user_id', String(owner));
@@ -112,7 +127,7 @@ export class BadgeSet {
       form.set('title', `Массовка · значки · @${await this.d.username()}`.slice(0, 64));
       form.set('sticker_type', 'custom_emoji');
       form.set('stickers', JSON.stringify(missing.map(input)));
-      for (const [i, id] of missing.entries()) form.set(`f${i}`, await file(id), `${id}.png`);
+      for (const [i, id] of missing.entries()) form.set(`f${i}`, await file(id), `${id}.${ext(id)}`);
       await this.d.api('createNewStickerSet', form);
       this.d.log('info', 'badges_created', { name, n: missing.length });
     } else {
@@ -121,9 +136,20 @@ export class BadgeSet {
         form.set('user_id', String(owner));
         form.set('name', name);
         form.set('sticker', JSON.stringify(input(id, 0)));
-        form.set('f0', await file(id), `${id}.png`);
+        form.set('f0', await file(id), `${id}.${ext(id)}`);
         await this.d.api('addStickerToSet', form);
         this.d.log('info', 'badges_added', { id });
+      }
+      // значок стал анимированным: картинку в наборе меняем на видео (id эмодзи у Telegram при этом новый)
+      for (const [id, old] of [...this.stale]) {
+        const form = new FormData();
+        form.set('user_id', String(owner));
+        form.set('name', name);
+        form.set('old_sticker', old);
+        form.set('sticker', JSON.stringify(input(id, 0)));
+        form.set('f0', await file(id), `${id}.${ext(id)}`);
+        await this.d.api('replaceStickerInSet', form);
+        this.d.log('info', 'badges_replaced', { id });
       }
     }
     list = await this.read(name);

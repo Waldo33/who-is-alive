@@ -306,7 +306,7 @@ describe('фильм матча в комнате', () => {
     expect(earned.map((e) => e.pid).sort()).toEqual(['a', 'b']);
     for (const e of earned) expect(e.stickers).toContain(room.runner!.host.match!.winners.includes(e.pid) ? 'happyTears' : 'allGood');
     // значки: матч засчитан обоим, победители — из итога; двое живых — комната режиссёру не засчитана
-    expect(badges).toEqual([{ humans: ['a', 'b'], winners: room.runner!.host.match!.winners, director: null }]);
+    expect(badges).toMatchObject([{ humans: ['a', 'b'], winners: room.runner!.host.match!.winners, director: null }]);
     await new Promise((r) => setTimeout(r, 0));
     for (const p of [pa, pb]) {
       const f = p.got.filter((m) => m.t === 'film');

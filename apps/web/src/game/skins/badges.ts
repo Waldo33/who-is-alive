@@ -1,7 +1,9 @@
 import { PAL } from '@kto/assets';
 import type { BadgeId } from '@kto/game-core';
-import { canvas, grid, outlineOf } from '../pixels';
+import { canvas, grid, outlineOf, px } from '../pixels';
 import { F } from '../sprites';
+import { slotBadgeFrame, slotBadgeStill } from './badge-slots';
+import type { SlotBadge } from './badge-slots';
 import { kotBananFrame } from './kot-banan';
 
 /**
@@ -126,18 +128,63 @@ function kotBananHead(): HTMLCanvasElement {
   return c;
 }
 
-function art(id: BadgeId): HTMLCanvasElement {
-  if (id === 'reel') return reel();
-  if (id === 'kotBanan') return kotBananHead();
-  const rows = ROWS[id];
-  const { c, g } = canvas(rows[0]!.length, rows.length);
-  grid(g, 0, 0, rows, K);
+const SLOT: Partial<Record<BadgeId, SlotBadge>> = { jackpot: 'jackpot', skulls: 'skulls' };
+
+/**
+ * «Звезда дубля» с бликом (решение владельца 28.11.2026): по звезде наискосок пробегает светлая полоса,
+ * потом на кончике вспыхивает искра. Круг — 3 с, как у значков-слотов; t нет — звезда без блика.
+ */
+function starShine(src: HTMLCanvasElement, t: number): HTMLCanvasElement {
+  const { c, g } = canvas(src.width, src.height);
+  g.drawImage(src, 0, 0);
+  const d = src.getContext('2d')!.getImageData(0, 0, src.width, src.height).data;
+  const yellow = [0xfe, 0xe7, 0x61];
+  const amber = [0xfe, 0xae, 0x34];
+  const is = (i: number, rgb: number[]) => d[i + 3]! > 0 && d[i] === rgb[0] && d[i + 1] === rgb[1] && d[i + 2] === rgb[2];
+  const k = t % 3000;
+  // полоса проходит за 700 мс: x + y от -4 до 40
+  if (k < 700) {
+    const pos = -4 + (k / 700) * 44;
+    for (let y = 0; y < src.height; y++)
+      for (let x = 0; x < src.width; x++) {
+        const i = (y * src.width + x) * 4;
+        const v = x + y - pos;
+        if (v < 0 || v >= 4) continue;
+        if (is(i, yellow)) px(g, x, y, v < 2 ? PAL.white : PAL.yellow);
+        else if (is(i, amber)) px(g, x, y, PAL.yellow);
+      }
+  }
+  // искра на теле звезды: вспыхивает крестиком и гаснет
+  const sp = k - 800;
+  if (sp >= 0 && sp < 600) {
+    const r = sp < 150 || sp >= 450 ? 0 : 1;
+    const [sx, sy] = [11, 8];
+    px(g, sx, sy, PAL.white);
+    if (r) {
+      px(g, sx - 1, sy, PAL.white);
+      px(g, sx + 1, sy, PAL.white);
+      px(g, sx, sy - 1, PAL.white);
+      px(g, sx, sy + 1, PAL.white);
+    }
+  }
   return c;
 }
 
+function art(id: BadgeId, t?: number): HTMLCanvasElement {
+  if (id === 'reel') return reel();
+  if (id === 'kotBanan') return kotBananHead();
+  const rows = ROWS[id as keyof typeof ROWS];
+  const { c, g } = canvas(rows[0]!.length, rows.length);
+  grid(g, 0, 0, rows, K);
+  return id === 'star' && t !== undefined ? starShine(c, t) : c;
+}
+
 /** Значок с белым контуром, без масштаба (20×20 и около). */
-export function badgeIcon(id: BadgeId): HTMLCanvasElement {
-  const src = art(id);
+export function badgeIcon(id: BadgeId, t?: number): HTMLCanvasElement {
+  // значки-слоты: свой автомат с белым контуром; t — кадр анимации (нет — выигрыш на месте)
+  const slot = SLOT[id];
+  if (slot) return t === undefined ? slotBadgeStill(slot) : slotBadgeFrame(slot, t);
+  const src = art(id, t);
   const { c, g } = canvas(src.width + 2, src.height + 2);
   outlineOf(src.getContext('2d')!, src.width, src.height, g, 0, 0, PAL.white);
   g.drawImage(src, 1, 1);
@@ -146,8 +193,8 @@ export function badgeIcon(id: BadgeId): HTMLCanvasElement {
 
 /** Файл для набора Telegram: 100×100, целый масштаб, по центру, фон прозрачный. */
 export const BADGE_PX = 100;
-export function badgeFile(id: BadgeId): HTMLCanvasElement {
-  const ic = badgeIcon(id);
+export function badgeFile(id: BadgeId, t?: number): HTMLCanvasElement {
+  const ic = badgeIcon(id, t);
   const s = Math.floor(BADGE_PX / Math.max(ic.width, ic.height));
   const { c, g } = canvas(BADGE_PX, BADGE_PX);
   g.imageSmoothingEnabled = false;

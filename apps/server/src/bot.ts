@@ -8,6 +8,7 @@ import type { Logger } from './log';
 import { cleanName } from './room';
 import { BadgeSet } from './badges';
 import { Shop, localLedger } from './shop';
+import { Nudges } from './nudges';
 import type { ShopDeps, ShopLedger, VerifyToken } from './shop';
 import type { Store } from './store';
 
@@ -293,6 +294,8 @@ export class Bot {
   readonly hookSecret: string;
   readonly shop: Shop;
   readonly badges: BadgeSet;
+  /** Напоминания, которые зовут обратно (звезда гаснет, стикер недели) — nudges.ts. */
+  readonly nudges: Nudges;
   private readonly supportChat: string;
   /** Кто недавно написал /paysupport: id → до какого времени пересылать его сообщения. */
   private readonly supportUntil = new Map<number, number>();
@@ -326,7 +329,9 @@ export class Bot {
       drawMy: o.drawMy,
       lease: o.lease,
       badgeEmoji: () => this.badges.ids(),
+      tz: (id, tz) => this.nudges.setTz(id, tz),
     });
+    this.nudges = new Nudges({ api: (m, b) => this.api(m, b), store: o.store, site: o.site, log: o.log, lease: o.lease });
   }
 
   private supportOpen(id: number): boolean {
@@ -497,9 +502,12 @@ export class Bot {
           return { status: 200, body: { ok: true } };
         }
         try {
+          // игрок сам открыл бота — напоминания снова можно (после «Не напоминать» или блокировки)
+          if (u?.message?.text?.startsWith('/start') && u.message.chat.type === 'private' && u.message.from) await this.nudges.onStart(u.message.from.id).catch(() => undefined);
           if (u?.pre_checkout_query) await this.shop.preCheckout(u.pre_checkout_query);
           else if (u?.callback_query?.data?.startsWith('login:')) await this.onLoginConfirm(u.callback_query);
           else if (u?.callback_query?.data === 'sup:close') await this.onSupportClose(u.callback_query);
+          else if (u?.callback_query?.data === 'nudge:off') await this.nudges.onCallback(u.callback_query);
           else if (u?.callback_query) await this.shop.onCallback(u.callback_query);
           // бесплатный стикерпак по внешней ссылке t.me/<бот>?start=stickers (только в личке: пак — этого игрока)
           else if (u?.message?.text === '/start stickers' && u.message.chat.type === 'private' && u.message.from) await this.shop.claimInChat(u.message.from);

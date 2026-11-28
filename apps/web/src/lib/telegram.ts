@@ -487,6 +487,8 @@ export interface ShopState {
   /** Эффекты на стандартных стикерах пака (id → эффект) и купленные эффекты. */
   fx?: Record<string, EffectId>;
   effects?: EffectId[];
+  /** Цвет надписи стандартных стикеров (индекс MY_COLORS), у кого не родной; старый сервер не шлёт. */
+  col?: Record<string, number>;
   /** Сколько ещё боту добавить, убрать или заменить в паке. */
   pending?: number;
   /** Бесплатный пак ещё не забран: сыгран ли матч, есть ли подписка на канал (экран-замок; старый сервер не шлёт). */
@@ -546,9 +548,9 @@ export function shopMy(sticker: { fig: MyFig; pose: string; color: number; capti
   return botCall<ShopState>('/shop/my', { sticker, slot });
 }
 
-/** Эффект на стандартный стикер пака (null — снять): бот заменит стикер на месте. */
-export function shopFx(id: string, fx: EffectId | null) {
-  return botCall<ShopState>('/shop/fx', { id, fx });
+/** Облик стандартного стикера пака: эффект (null — снять) и цвет надписи (null — родной; не передан — не трогать). */
+export function shopFx(id: string, fx: EffectId | null, color?: number | null) {
+  return botCall<ShopState>('/shop/fx', { id, fx, ...(color !== undefined ? { color } : {}) });
 }
 
 /** «Напомнить»: бот напишет, когда стикеры за дубли снова откроются (дневной лимит). */
@@ -681,7 +683,8 @@ export async function linkTelegramOnce(): Promise<void> {
     const me = await ensureGameUser();
     const key = `${tg}:${me.userId}`;
     if (localStorage.getItem('kto:tglink') === key) return;
-    const r = await botPost<{ ok?: boolean }>('/shop/link', { token: me.token });
+    // пояс телефона — чтобы бот не писал напоминания ночью
+    const r = await botPost<{ ok?: boolean }>('/shop/link', { token: me.token, tz: new Date().getTimezoneOffset() });
     if (r?.ok) localStorage.setItem('kto:tglink', key);
   } catch {
     /* нет сети или приватный режим — свяжем в следующий раз */

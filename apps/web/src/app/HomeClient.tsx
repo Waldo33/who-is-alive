@@ -34,7 +34,6 @@ export default function HomeClient() {
   const [newbie, setNewbie] = useState(false);
   // на сайте (не внутри Telegram) — кнопка «Играть в Telegram»: там приглашения и клипы удобнее
   const [web, setWeb] = useState(false);
-  const [tg, setTg] = useState(false);
   // кастинг дня: номер и пройден ли сегодня (localStorage — как на /daily)
   const [daily, setDaily] = useState({ on: false, n: 0, done: false });
   // бесплатный стикерпак с актёром — плашкой после первого матча, пока не забран (за тем же флагом)
@@ -76,7 +75,6 @@ export default function HomeClient() {
     const first = !tutorialDone();
     setNewbie(first);
     setWeb(!inTelegram());
-    setTg(inTelegram());
     track('page_view', first ? { page: 'home', first: true } : { page: 'home' });
     getAudio().setMusic('menu');
     // «С друзьями» в конце матча с ИИ: сразу создать комнату и позвать
@@ -139,6 +137,15 @@ export default function HomeClient() {
         lang={lang}
         barRef={bar}
         onShare={() => void shareGame()}
+        // на сайте — значок Telegram в углу (вместо большой кнопки «Играть в Telegram»)
+        onTelegram={
+          web
+            ? () => {
+                track('tg_tap', { what: 'play', from: 'corner' });
+                location.href = tgLink('play') ?? 'https://t.me/be_nobody_bot';
+              }
+            : undefined
+        }
         onLang={(l) => {
           setLang(l);
           document.documentElement.lang = l;
@@ -167,12 +174,6 @@ export default function HomeClient() {
         >
           {busy ? t.lobby.connecting : t.start.quickPlay}
         </button>
-        {/* кнопки игры — вместе; карточки (гардероб, стикеры, кастинг) — ниже, отдельной группой */}
-        {web && (
-          <a className="btn tg" href={tgLink('play') ?? 'https://t.me/be_nobody_bot'} onClick={() => track('tg_tap', { what: 'play' })}>
-            {t.start.playTelegram}
-          </a>
-        )}
 {daily.on && (
         <Link className="daily-tile" href="/daily" onClick={() => track('daily_tap', { from: 'home' })}>
             <span className="daily-tile-title">
@@ -191,8 +192,8 @@ export default function HomeClient() {
             </span>
           </Link>
         )}
-        {/* в Telegram кнопки «Играть в Telegram» нет — место есть и для своего стикерпака (после бесплатного пака) */}
-        {tg && stickers === 'off' && (
+        {/* свой стикерпак — и в Telegram, и на сайте (там: открыть в Telegram или войти через Telegram) */}
+        {stickers === 'off' && (
           <Link className="daily-tile" href="/stickers" onClick={() => track('stickers_tap', { from: 'home_tile' })}>
             <span className="daily-tile-title">{t.shop.build.title}</span>
             <span className="daily-tile-sub">{t.shop.build.homeSub}</span>
@@ -211,9 +212,12 @@ export default function HomeClient() {
                   /* приватный режим */
                 }
               };
-              // вне Telegram — ссылка на бота (/start stickers), он пришлёт пак; внутри — пак сразу
-              if (!inTelegram()) return done();
               e.preventDefault();
+              // вне Telegram — страница стикерпака: там «Открыть в Telegram» или «Войти через Telegram»; внутри — пак сразу
+              if (!inTelegram()) {
+                done();
+                return router.push('/stickers?src=home');
+              }
               if (stickers === 'busy') return;
               setStickers('busy');
               void shopClaim().then((s) => {
