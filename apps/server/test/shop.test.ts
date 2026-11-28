@@ -918,6 +918,27 @@ describe('гардероб', () => {
     expect((await store.shopUser(77))?.issued).toContain('hi');
   });
 
+  it('игрок удалил «Собери свой пак!» руками в Telegram — при следующем обновлении пака она возвращается', async () => {
+    let set = { stickers: [...['👋', '💃', '😵', '🤨', '🎁'].map((e, i) => ({ file_id: `f${i}`, emoji: e }))] };
+    const { bot, calls, store } = makeBot({ result: (m) => (m === 'getStickerSet' ? set : undefined) });
+    await played(bot);
+    await bot.handle('POST', '/shop/claim', {}, { initData: initData(ANYA) });
+    await bot.shop.issue(77);
+    // удалил приманку в Telegram, потом убрал «Привет» на странице стикерпака
+    set = { stickers: set.stickers.filter((x) => x.emoji !== '🎁') };
+    calls.length = 0;
+    await bot.handle('POST', '/shop/pick', {}, { initData: initData(ANYA), id: 'hi', on: false });
+    await bot.shop.issue(77);
+    expect(calls.filter((c) => c.method === 'addStickerToSet').flatMap((c) => c.files.map((f) => f.split(':')[1]))).toEqual(['lure~vhs.webm']);
+    expect((await store.shopUser(77))?.issued).toContain('lure~vhs');
+    // приманка на месте — ничего не добавляется
+    set = { stickers: [...set.stickers, { file_id: 'fL', emoji: '🎁' }] };
+    calls.length = 0;
+    await bot.handle('POST', '/shop/pick', {}, { initData: initData(ANYA), id: 'hi', on: true });
+    await bot.shop.issue(77);
+    expect(calls.filter((c) => c.method === 'addStickerToSet').flatMap((c) => c.files.map((f) => f.split(':')[1]))).toEqual(['hi.webm']);
+  });
+
   it('стикер, убранный из набора («Я не плачу», 27.11), уходит и из выданного пака', async () => {
     const inPack = [{ file_id: 'F_cry', emoji: '😭' }, { file_id: 'F_banana', emoji: '🍌' }];
     const { bot, calls, store } = makeBot({ result: (m) => (m === 'getStickerSet' ? { stickers: inPack } : undefined) });
