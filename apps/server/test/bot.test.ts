@@ -63,15 +63,28 @@ describe('Telegram-бот', () => {
     expect(JSON.stringify(send.body)).toContain('https://site.example/r/ABCD?src=tg');
   });
 
-  it('/start без параметра: «Играть» — новая комната (лобби), «Мой стикерпак» — страница пака', async () => {
+  it('/start без параметра: «Играть» — главный экран, «Мой стикерпак» — страница пака', async () => {
     const { bot, calls } = makeBot();
     const upd = { message: { chat: { id: 1, type: 'private' }, text: '/start', from: { language_code: 'ru' } } };
     await bot.handle('POST', '/hook', { 'x-telegram-bot-api-secret-token': bot.hookSecret }, upd);
     const kb = (calls.find((c) => c.method === 'sendMessage')!.body as { reply_markup: { inline_keyboard: { text: string; web_app: { url: string } }[][] } }).reply_markup.inline_keyboard;
-    expect(kb[0][0].web_app.url).toBe('https://site.example/?create=1&src=tg');
+    expect(kb[0][0].web_app.url).toBe('https://site.example/?src=tg');
     expect(kb[1][0].web_app.url).toBe('https://site.example/stickers?src=tg');
     expect(kb[1][1].web_app.url).toBe('https://site.example/wardrobe?src=tg');
     expect(JSON.stringify(kb.at(-1))).toContain('https://t.me/benobody_app');
+  });
+
+  it('«Играть» в меню бота и в группе — главный экран, а не новое лобби; приглашение — в комнату', async () => {
+    const { bot, calls } = makeBot();
+    await bot.setup();
+    const menu = calls.find((c) => c.method === 'setChatMenuButton')!.body as { menu_button: { web_app: { url: string } } };
+    expect(menu.menu_button.web_app.url).toBe('https://site.example/?src=tg');
+    const hook = { 'x-telegram-bot-api-secret-token': bot.hookSecret };
+    const kbOf = () => (calls.filter((c) => c.method === 'sendMessage').at(-1)!.body as { reply_markup: { inline_keyboard: { url?: string }[][] } }).reply_markup.inline_keyboard;
+    await bot.handle('POST', '/hook', hook, { message: { chat: { id: -5, type: 'group' }, text: '/start', from: { language_code: 'ru' } } });
+    expect(kbOf()[0][0].url).toBe('https://t.me/be_nobody_bot/play?startapp=home');
+    await bot.handle('POST', '/hook', hook, { message: { chat: { id: -5, type: 'group' }, text: '/start r_ABCD', from: { language_code: 'ru' } } });
+    expect(kbOf()[0][0].url).toBe('https://t.me/be_nobody_bot/play?startapp=r_ABCD');
   });
 
   it('/stickers в личке: кнопка на страницу «Мой стикерпак»', async () => {
