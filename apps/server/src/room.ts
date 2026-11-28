@@ -1,5 +1,5 @@
-import { DICTS, DIRECTOR_HUMANS, slotHits, TICK_MS, fmt, earnedRewards, earnedStickers, recordRound, renamePid, seasonLeadTheme } from '@kto/game-core';
-import type { EffectId, GameConfig, PlayerInfo, SkinId } from '@kto/game-core';
+import { DICTS, DIRECTOR_HUMANS, slotHits, TICK_MS, fmt, earnedRewards, earnedStickers, recordRound, renamePid, seasonLeadTheme, premiereFacts } from '@kto/game-core';
+import type { EffectId, GameConfig, PlayerInfo, PremiereFacts, SkinId } from '@kto/game-core';
 import { DEFAULT_WIRE_SETTINGS, HostSession } from '@kto/net';
 import type { Channel, PresenceMember, RoomMsg, ServerMsg, Transport, WireError, WireRoom, WireRoomSettings } from '@kto/net';
 import type { Logger } from './log';
@@ -91,6 +91,8 @@ export interface MatchBadges {
   director: string | null;
   /** 777 и черепа в «Крутках» матча по людям (только у кого что-то выпало). */
   slots?: { pid: string; jackpots: number; skulls: number }[];
+  /** «Новогодняя премьера»: что сделал в матче каждый человек (game-core/premiere.ts › premiereFacts). */
+  facts?: Record<string, PremiereFacts>;
 }
 
 /** Готовый фильм матча: ролик в хранилище клипов и итог для подписи. */
@@ -823,7 +825,10 @@ export class Room {
     }
     const rounds = takes.map((t) => t.summary);
     const slots = humans.map((pid) => ({ pid, ...slotHits(rounds, pid) })).filter((x) => x.jackpots || x.skulls);
-    this.o.onBadges(this, { humans, winners, director, ...(slots.length ? { slots } : {}) });
+    const outcome = r.host.sim.outcome();
+    const withRec = takes.map((t) => ({ ...t.summary, rec: t.rec }));
+    const facts = Object.fromEntries(humans.map((pid) => [pid, premiereFacts(pid, withRec, outcome)]));
+    this.o.onBadges(this, { humans, winners, director, ...(slots.length ? { slots } : {}), facts });
   }
 
   /**

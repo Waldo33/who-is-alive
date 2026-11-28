@@ -24,6 +24,7 @@ import { errFields, jsonLogger } from './log';
 import type { Logger } from './log';
 import type { Bot, CardNotice, FilmNotice } from './bot';
 import { Room } from './room';
+import { premiereAfterMatch } from './premiere';
 import { localLedger, shopLedgerOp } from './shop';
 import type { ShopLedger } from './shop';
 import { MemoryStore, parseEvents } from './store';
@@ -802,6 +803,9 @@ export class GameServer {
           await this.store.bumpTgStats(l.tgUser, { matches: 1, wins: won ? 1 : 0, rooms: directed ? 1 : 0, winAt: won ? at : null, jackpots: hit('jackpots'), skulls: hit('skulls') });
         }
         if (seen.size) this.log('info', 'badge_stats', { room: room.code, users: seen.size, ...(m.director ? { director: true } : {}) });
+        // «Новогодняя премьера»: контрамарки за матч (вне сезона — ничего)
+        const tickets = await premiereAfterMatch(this.store, links, m, at);
+        if (tickets) this.log('info', 'premiere_match', { room: room.code, users: seen.size, tickets });
       })
       .catch((e) => this.log('warn', 'badge_stats', { room: room.code, err: String(e) }));
   }

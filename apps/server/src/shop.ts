@@ -5,6 +5,7 @@ import { DICTS, EMOJI_PACK, emojiIssued, emojiWanted, isRewardId, openRewards, r
 import type { BadgeId, BadgeStats, EffectId, MySticker, StickerId, StickerMeta } from '@kto/game-core';
 import type { StickerJob } from './sticker-render';
 import { RateWindow } from './limits';
+import { bindPremiereRef, premiereView } from './premiere';
 import { isTz } from './nudges';
 import { errFields } from './log';
 import type { Logger } from './log';
@@ -37,7 +38,7 @@ import type { ShopPayment, ShopUser, Store, TgLink } from './store';
  */
 
 export type ShopLedger = Pick<Store, 'shopUser' | 'saveShopUser' | 'saveShopPayment' | 'refundShopPayment'> &
-  Partial<Pick<Store, 'shopUsersWith' | 'tgStats' | 'shopPacks' | 'packOwn' | 'savePackOwn'>> & {
+  Partial<Pick<Store, 'shopUsersWith' | 'tgStats' | 'shopPacks' | 'packOwn' | 'savePackOwn' | 'premiere' | 'premiereUpdate'>> & {
   /**
    * Связать игрока игрового сервера (по его токену — проверяет игровой сервер) с пользователем Telegram. false — токен
    * чужой; `{ played }` — игрок сыграл матчи до входа (сайт): что открылось там (бот засчитает как матч).
@@ -59,6 +60,8 @@ export function localLedger(store: Store, verify?: VerifyToken, onLink?: (gameUs
     packOwn: (id) => store.packOwn(id),
     savePackOwn: (id, ids) => store.savePackOwn(id, ids),
     tgStats: (id) => store.tgStats(id),
+    premiere: (id) => store.premiere(id),
+    premiereUpdate: (id, fn) => store.premiereUpdate(id, fn),
     saveShopPayment: (p) => store.saveShopPayment(p),
     refundShopPayment: (c) => store.refundShopPayment(c),
     async linkGame(token, link) {
@@ -380,7 +383,7 @@ export class Shop {
   }
 
   /** Маршрут /tg/shop… с проверенным initData. */
-  async route(path: string, init: ShopInit, body: { item?: unknown; mode?: unknown; token?: unknown; id?: unknown; on?: unknown; slot?: unknown; sticker?: unknown; fx?: unknown; color?: unknown; tz?: unknown }): Promise<ShopReply> {
+  async route(path: string, init: ShopInit, body: { item?: unknown; mode?: unknown; token?: unknown; ref?: unknown; id?: unknown; on?: unknown; slot?: unknown; sticker?: unknown; fx?: unknown; color?: unknown; tz?: unknown }): Promise<ShopReply> {
     const id = init.user.id;
     const now = (this.d.now ?? Date.now)();
     if (!this.rate.take(String(id), now)) return { status: 429, body: { error: 'rate_limited' } };
@@ -403,6 +406,7 @@ export class Shop {
     if (path === '/shop/remind') return this.remindMe(id, now);
     if (path === '/shop/fx') return this.setFx(id, body.id, body.fx, body.color, now);
     if (path === '/shop/emoji') return this.claimEmoji(init.user);
+    if (path === '/shop/premiere') return this.premiere(id, body.ref, now);
     return { status: 404, body: { error: 'not_found' } };
   }
 
@@ -954,6 +958,18 @@ export class Shop {
    * Подписан ли игрок на канал игры. Проверить нельзя (бот не админ канала, сбой Telegram) — считаем, что да:
    * пак бесплатный, из-за настройки канала игроку отказывать не стоит.
    */
+  /**
+   * «Новогодняя премьера»: экран «Съёмочный план». `ref` — id Telegram друга из ссылки `startapp=ref_<id>`:
+   * привязываем, только если игрок новичок (premiere.ts › bindPremiereRef).
+   */
+  private async premiere(id: number, ref: unknown, now: number): Promise<ShopReply> {
+    const l = this.d.ledger;
+    if (!l.premiere || !l.premiereUpdate || !l.tgStats) return { status: 503, body: { error: 'no_store' } };
+    const store = { premiere: l.premiere, premiereUpdate: l.premiereUpdate, tgStats: l.tgStats };
+    if (typeof ref === 'number' || (typeof ref === 'string' && /^\d{1,15}$/.test(ref))) await bindPremiereRef(store, id, Number(ref), now);
+    return { status: 200, body: await premiereView(store, id, now, await this.subscribed(id)) };
+  }
+
   private async subscribed(id: number): Promise<boolean> {
     if (!this.d.channelId) return true;
     try {
