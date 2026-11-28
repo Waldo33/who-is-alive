@@ -383,6 +383,7 @@ export const en: Dict = {
     close: 'Close',
     exit: 'Exit to menu',
     author: 'made by',
+    support: 'Support',
   },
   clip: {
     hook: 'An actor is hiding.',
@@ -729,6 +730,8 @@ export const en: Dict = {
     botNudgeOffDone: "Got it, no more reminders. To turn them back on, send /start.",
     botSupport: 'Questions about a purchase or need a refund? Write here in one message what happened and which purchase to refund. Buyer number: {id}.',
     botSupportSent: 'Request sent. We will reply in this chat and refund the Stars if something went wrong. Buyer number: {id}.',
+    botHelp: '🎬 Support here. What happened on set: a bug, a freeze, an idea? Write here in one message. Your number: {id}.',
+    botHelpSent: 'Passed to the crew. We will reply in this chat. Your number: {id}.',
   },
   share: {
     text: '{title} {name}: {points}, {kills}. {squares}',
