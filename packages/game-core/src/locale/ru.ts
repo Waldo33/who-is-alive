@@ -915,6 +915,8 @@ export const ru = {
     loading: 'Готовим план…',
     fail: 'Не загрузилось. Попробуй ещё раз',
     retry: 'Ещё раз',
+    botWin: '🎬 Твоя контрамарка выиграла в «Новогодней премьере»! Дарим Telegram Premium на {m} мес. С Новым годом!',
+    giftText: 'Новогодняя премьера «Массовки» — с Новым годом!',
   },
   share: {
     text: '{title} {name}: {points}, {kills}. {squares}',

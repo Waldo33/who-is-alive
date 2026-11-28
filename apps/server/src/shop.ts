@@ -2,6 +2,9 @@ import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DICTS, EMOJI_PACK, emojiIssued, emojiWanted, isRewardId, openRewards, rewardMark, STARTER_DRIP, mySlots, mySlotIn, packGames, starterOpen, EFFECTS, EARN_PER_DAY, NO_STATS, badgesOf, EARN_PER_MATCH, MY_FIGS, MY_ISSUED, MY_MARKS, MY_MAX, MY_POSE_EMOJI, RETIRED_STICKERS, SHOP_ITEMS, STICKER_LIST, TEST_ITEM, buyItem, shopItem, canDrop, colMark, fmt, fxMark, isEffect, isLookIssued, lookIssued, stdLook, MY_COLORS, isMySticker, issuedBase, stickerFx, isSkin, isStickerId, myFigOpen, myIssued, offSticker, parseMySticker, pickEarned, skinOf, wearItems, auraOf, auraItems } from '@kto/game-core';
+import { PREMIERE, PREMIERE_ENTRY, premierePhase } from '@kto/game-core';
+import { DRAND, PRIZES, drandRound, drandTime, drawWinners, entrantsText, sha256 } from './premiere-draw';
+import type { DrawRecord, Entrant } from './premiere-draw';
 import type { BadgeId, BadgeStats, EffectId, MySticker, StickerId, StickerMeta } from '@kto/game-core';
 import type { StickerJob } from './sticker-render';
 import { RateWindow } from './limits';
@@ -38,7 +41,7 @@ import type { ShopPayment, ShopUser, Store, TgLink } from './store';
  */
 
 export type ShopLedger = Pick<Store, 'shopUser' | 'saveShopUser' | 'saveShopPayment' | 'refundShopPayment'> &
-  Partial<Pick<Store, 'shopUsersWith' | 'tgStats' | 'shopPacks' | 'packOwn' | 'savePackOwn' | 'premiere' | 'premiereUpdate'>> & {
+  Partial<Pick<Store, 'shopUsersWith' | 'tgStats' | 'shopPacks' | 'packOwn' | 'savePackOwn' | 'premiere' | 'premiereUpdate' | 'premiereEntrants' | 'premiereDraw' | 'premiereDrawSave'>> & {
   /**
    * Связать игрока игрового сервера (по его токену — проверяет игровой сервер) с пользователем Telegram. false — токен
    * чужой; `{ played }` — игрок сыграл матчи до входа (сайт): что открылось там (бот засчитает как матч).
@@ -62,6 +65,9 @@ export function localLedger(store: Store, verify?: VerifyToken, onLink?: (gameUs
     tgStats: (id) => store.tgStats(id),
     premiere: (id) => store.premiere(id),
     premiereUpdate: (id, fn) => store.premiereUpdate(id, fn),
+    premiereEntrants: (min) => store.premiereEntrants(min),
+    premiereDraw: (season) => store.premiereDraw(season),
+    premiereDrawSave: (season, rec) => store.premiereDrawSave(season, rec),
     saveShopPayment: (p) => store.saveShopPayment(p),
     refundShopPayment: (c) => store.refundShopPayment(c),
     async linkGame(token, link) {
@@ -326,6 +332,8 @@ export interface ShopDeps {
   stickersDir: string;
   /** Канал игры (кнопка «Подписаться» за бесплатный пак). */
   channel: string;
+  /** Запрос JSON наружу (маяк drand при жеребьёвке); в тестах — подмена. */
+  fetchJson?: (url: string) => Promise<unknown>;
   /** Адрес игры (кнопка «Играть» в сообщении о новом стикере). */
   site?: string;
   /** Канал игры для проверки подписки (getChatMember; бот должен быть админом канала): «@имя». */
@@ -1240,6 +1248,85 @@ export class Shop {
     const t = DICTS[u.lang].shop;
     await this.deliver(u, fmt(isEffect(item.id) ? t.botFxGift : t.botGift, { name: t.items[item.id].title }));
     return { status: 200, body: { ok: true, item: item.id, charge, name: u.name, known: !!known } };
+  }
+
+  /**
+   * Жеребьёвка «Новогодней премьеры» (изнутри машины: /internal/premiere, кнопка premiere-draw.yml; правила —
+   * premiere-draw.ts). Шаги по порядку, каждый можно повторить:
+   *  - `freeze` — после конца сезона: участники (≥ 5 контрамарок и подписка на канал), хеш списка и раунд drand
+   *    (`at` — когда тянуть, мс; по умолчанию 31.12 18:00 МСК). Повтор до розыгрыша пересобирает список.
+   *  - `draw` — когда раунд вышел: случайность из drand → победители. Повтор отдаёт тот же итог.
+   *  - `gift` — подарить Premium победителям (звёзды с баланса бота) и написать им. Подаренным повтор не дарит.
+   */
+  async premiereAdmin(raw: unknown, now: number): Promise<ShopReply> {
+    const l = this.d.ledger;
+    if (!l.premiereEntrants || !l.premiereDraw || !l.premiereDrawSave) return { status: 503, body: { error: 'no_store' } };
+    const b = raw as { action?: unknown; at?: unknown } | null;
+    const season = PREMIERE.draw;
+    const rec = await l.premiereDraw(season);
+    const brief = (r: DrawRecord) => ({ count: r.list.length, tickets: r.list.reduce((a, e) => a + e.tickets, 0), digest: r.digest, round: r.round, roundAt: new Date(drandTime(r.round)).toISOString(), winners: r.winners ?? null, gifted: r.gifted ?? {} });
+    if (b?.action === 'freeze') {
+      if (premierePhase(now) !== 'after') return { status: 409, body: { error: 'season_on' } };
+      if (rec?.winners) return { status: 409, body: { error: 'already_drawn', ...brief(rec) } };
+      const at = typeof b.at === 'number' && b.at > now ? b.at : Date.parse(`${PREMIERE.draw}T18:00:00+03:00`);
+      const list: Entrant[] = [];
+      for (const e of await l.premiereEntrants(PREMIERE_ENTRY)) if (await this.subscribedStrict(e.tgUser)) list.push({ tg: e.tgUser, tickets: e.tickets });
+      const text = entrantsText(list);
+      const next: DrawRecord = { frozenAt: now, list, digest: sha256(text), round: drandRound(Math.max(at, now + 60_000)) };
+      await l.premiereDrawSave(season, next);
+      this.d.log('info', 'premiere_freeze', { count: list.length, digest: next.digest, round: next.round });
+      return { status: 200, body: brief(next) };
+    }
+    if (!rec) return { status: 409, body: { error: 'not_frozen' } };
+    if (b?.action === 'draw') {
+      if (rec.winners) return { status: 200, body: brief(rec) };
+      if (now < drandTime(rec.round)) return { status: 409, body: { error: 'too_early', ...brief(rec) } };
+      const fetchJson = this.d.fetchJson ?? (async (url: string) => (await fetch(url, { signal: AbortSignal.timeout(15_000) })).json());
+      const beacon = (await fetchJson(`${DRAND.url}${rec.round}`).catch(() => null)) as { round?: number; randomness?: string } | null;
+      if (beacon?.round !== rec.round || typeof beacon.randomness !== 'string') return { status: 502, body: { error: 'no_beacon' } };
+      const next = { ...rec, randomness: beacon.randomness, winners: drawWinners(rec.list, beacon.randomness) };
+      await l.premiereDrawSave(season, next);
+      this.d.log('info', 'premiere_draw', { round: rec.round, winners: next.winners.length });
+      return { status: 200, body: { ...brief(next), randomness: next.randomness } };
+    }
+    if (b?.action === 'gift') {
+      if (!rec.winners) return { status: 409, body: { error: 'not_drawn' } };
+      const gifted = { ...(rec.gifted ?? {}) };
+      const failed: { tg: number; error: string }[] = [];
+      for (const [k, tg] of rec.winners.entries()) {
+        if (gifted[tg]) continue;
+        const prize = PRIZES[k];
+        const u = await this.user({ id: tg, language_code: 'ru' });
+        const t = DICTS[u.lang].premiere;
+        try {
+          await this.d.api('giftPremiumSubscription', { user_id: tg, month_count: prize.months, star_count: prize.stars, text: t.giftText });
+        } catch (e) {
+          failed.push({ tg, error: String(e).slice(0, 200) });
+          continue;
+        }
+        gifted[tg] = now;
+        // сохраняем после каждого подарка: сбой посередине не подарит дважды
+        await l.premiereDrawSave(season, { ...rec, gifted });
+        await this.d.api('sendMessage', { chat_id: tg, text: fmt(t.botWin, { m: prize.months }) }).catch(() => undefined);
+      }
+      this.d.log(failed.length ? 'warn' : 'info', 'premiere_gift', { gifted: Object.keys(gifted).length, failed: failed.length });
+      return { status: failed.length ? 502 : 200, body: { ...brief({ ...rec, gifted }), failed } };
+    }
+    return { status: 200, body: brief(rec) };
+  }
+
+  /** Подписка для жеребьёвки: не смогли проверить — не участник (в отличие от бесплатного пака). */
+  private async subscribedStrict(id: number): Promise<boolean> {
+    if (!this.d.channelId) return true;
+    try {
+      const m = await this.d.api<{ status?: string; is_member?: boolean }>('getChatMember', { chat_id: this.d.channelId, user_id: id });
+      if (m?.status === 'left' || m?.status === 'kicked') return false;
+      if (m?.status === 'restricted') return m.is_member === true;
+      return typeof m?.status === 'string';
+    } catch (e) {
+      this.d.log('warn', 'premiere_sub_check', { err: String(e).slice(0, 200) });
+      return false;
+    }
   }
 
   /**

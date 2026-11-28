@@ -1,0 +1,67 @@
+# Жеребьёвка «Новогодней премьеры» (apps/server/src/premiere-draw.ts, shop.ts › premiereAdmin). Шаги по порядку:
+#   status — где мы: участники, хеш списка, раунд drand, победители, кому подарено;
+#   freeze — после конца сезона (31.12 с 00:00 МСК): список участников (≥ 5 контрамарок и подписка на канал),
+#            его SHA-256 и номер раунда drand на 31.12 18:00 МСК — их публикуем в канал заранее;
+#   draw   — после выхода раунда: случайность drand → 6 победителей (повтор отдаёт тот же итог);
+#   gift   — подарить Telegram Premium победителям со звёзд бота (1×12 мес, 5×3 мес — 7500 ⭐) и написать им.
+#            Необратимо: звёзды списываются. Подаренным повтор не дарит.
+# Запуск: Actions → premiere-draw → Run workflow → шаг. Итог — в Summary запуска (id победителей там же:
+# Summary видят только люди с доступом к репозиторию).
+name: premiere-draw
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Шаг'
+        required: true
+        type: choice
+        options:
+          - status
+          - freeze
+          - draw
+          - gift
+
+permissions:
+  contents: read
+
+concurrency:
+  group: premiere-draw
+  cancel-in-progress: false
+
+jobs:
+  draw:
+    runs-on: ubuntu-latest
+    # секреты прода — только в окружении production, а оно пускает только ветку main (docs/security.md)
+    environment: production
+    timeout-minutes: 15
+    env:
+      TWC_TOKEN: ${{ secrets.TWC_TOKEN }}
+      SSH_OPTS: -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=20 -o LogLevel=ERROR
+      FIND_ONLY: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Проверить ввод
+        env:
+          ACTION: ${{ inputs.action }}
+        run: echo "$ACTION" | grep -Eq '^(status|freeze|draw|gift)$' || { echo "::error::непонятный шаг"; exit 1; }
+      - run: python3 -m venv /tmp/py && /tmp/py/bin/pip install -q cryptography
+      - name: Где живёт бот (infra/game/bot-home)
+        run: |
+          h=$(tr -d ' \n' < infra/game/bot-home)
+          if [ "$h" = eu ]; then echo "BOT_SERVER=massovka-eu" >> "$GITHUB_ENV"; else echo "BOT_SERVER=massovka-infra" >> "$GITHUB_ENV"; fi
+      - id: infra
+        env: { SERVER_NAME: '${{ env.BOT_SERVER }}' }
+        run: /tmp/py/bin/python infra/game/provision.py
+      - name: Шаг жеребьёвки
+        env:
+          IP: ${{ steps.infra.outputs.ip }}
+          ACTION: ${{ inputs.action }}
+        run: |
+          # вход /internal — только изнутри машины
+          ssh $SSH_OPTS root@$IP "ACTION='$ACTION' bash -s" <<'SH' | tee /tmp/out.txt
+          printf '%s' "{\"action\":\"$ACTION\"}" | curl -sS -m 600 -X POST -H 'Content-Type: application/json' --data-binary @- -w '\nHTTP %{http_code}\n' http://127.0.0.1:8080/internal/premiere
+          SH
+          body=$(head -1 /tmp/out.txt)
+          { echo "### premiere-draw: $ACTION"; echo; echo '```json'; echo "$body" | python3 -m json.tool 2>/dev/null || echo "$body"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          grep -q '^HTTP 200' /tmp/out.txt || { echo "::error::шаг не прошёл: $(echo "$body" | head -c 300)"; exit 1; }

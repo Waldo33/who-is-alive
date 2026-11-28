@@ -820,6 +820,8 @@ export const en: Dict = {
     loading: 'Preparing the schedule…',
     fail: 'Couldn’t load. Try again',
     retry: 'Retry',
+    botWin: '🎬 Your ticket won the New Year Premiere! Here’s Telegram Premium for {m} months. Happy New Year!',
+    giftText: 'Be Nobody New Year Premiere — Happy New Year!',
   },
   share: {
     text: '{title} {name}: {points}, {kills}. {squares}',
