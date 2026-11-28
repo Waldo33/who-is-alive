@@ -298,9 +298,11 @@ describe('гардероб', () => {
     expect(card).toContain('скин не появился');
     expect(card).not.toMatch(/evil\.example|@spam/);
     expect(card).toMatch(/#u77$/);
-    // кнопка — сразу на запуск возврата в GitHub Actions
     const msg = calls.filter((c) => c.method === 'sendMessage' && String(c.body.chat_id) === SUPPORT).at(-1)!;
-    expect(msg.body.reply_markup).toEqual({ inline_keyboard: [[{ text: '↩️ Возврат: shop-refund', url: 'https://github.com/Waldo33/who-is-alive/actions/workflows/shop-refund.yml' }]] });
+    // кнопки — профиль покупателя (у Ани нет ника — по id) и сразу запуск возврата в GitHub Actions
+    expect(msg.body.reply_markup).toEqual({
+      inline_keyboard: [[{ text: '👤 Профиль покупателя', url: 'tg://user?id=77' }], [{ text: '↩️ Возврат: shop-refund', url: 'https://github.com/Waldo33/who-is-alive/actions/workflows/shop-refund.yml' }]],
+    });
     // ответ на пересылку в чате поддержки — игроку; чужая группа и не ответ — никому
     const before = sent(77).length;
     await hook(bot, { message: { message_id: 5, chat: { id: Number(SUPPORT), type: 'group' }, from: { id: 1, first_name: 'Owner' }, text: 'Вернули звёзды', reply_to_message: { text: card, from: { id: 9, is_bot: true } } } });

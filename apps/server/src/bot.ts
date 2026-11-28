@@ -340,10 +340,19 @@ export class Bot {
       `Ответь на это сообщение — ответ уйдёт игроку. Возврат: кнопка ниже → Run workflow, номер ${from.id}.`,
       `#u${from.id}`,
     ].join('\n');
+    // кнопки: профиль покупателя в Telegram (по нику — t.me, без ника — по id) и сразу страница возврата в GitHub
+    // (shop-refund.yml: номер покупателя вставить в поле who)
+    const refundBtn = { text: '↩️ Возврат: shop-refund', url: REFUND_URL };
+    const profileBtn = { text: '👤 Профиль покупателя', url: user ? `https://t.me/${from.username}` : `tg://user?id=${from.id}` };
+    const send = (rows: { text: string; url: string }[][]) => this.api('sendMessage', { chat_id: this.supportChat, text: card, disable_web_page_preview: true, reply_markup: { inline_keyboard: rows } });
     try {
-      // кнопка — сразу на страницу возврата в GitHub (shop-refund.yml): номер покупателя вставить в поле who
-      const refund = { inline_keyboard: [[{ text: '↩️ Возврат: shop-refund', url: REFUND_URL }]] };
-      await this.api('sendMessage', { chat_id: this.supportChat, text: card, disable_web_page_preview: true, reply_markup: refund });
+      try {
+        await send([[profileBtn], [refundBtn]]);
+      } catch (e) {
+        // ссылку по id Telegram не пускает, если игрок закрыл её настройками приватности, — тогда без профиля
+        if (user) throw e;
+        await send([[refundBtn]]);
+      }
     } catch (e) {
       // бот не в чате поддержки — игроку всё равно ответим; тревога — по журналу
       this.o.log('error', 'tg_support', errFields(e));
