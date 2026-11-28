@@ -86,6 +86,8 @@ export default function StickersClient() {
   const [star, setStar] = useState('');
   const [inTg, setInTg] = useState(false);
   const [fxNote, setFxNote] = useState('');
+  // витрина открыта из редактора стикера: эффект показываем на нём, купил — сразу на этот стикер
+  const [fxFor, setFxFor] = useState<Draft | null>(null);
   // сайт без входа: «Войти через Telegram» (тот же вход через бота, что в гардеробе) — пак собирается и здесь
   const [loginReady, setLoginReady] = useState(false);
   const [pics, setPics] = useState<Record<string, string>>({});
@@ -464,6 +466,12 @@ export default function StickersClient() {
   // витрина эффекта — на выбранном открытом стикере, иначе на своём, иначе на первом открытом
   const owns = new Set(st?.effects ?? []);
   const fxBase = ((): { def: Pick<StickerDef, 'draw'>; name: string } => {
+    if (fxFor?.std) return { def: withCapColor(STICKERS.find((x) => x.id === fxFor.std)!, fxFor.stdColor), name: t.stickers[fxFor.std].join(' ') };
+    if (fxFor) {
+      const c = myCaption(fxFor.caption);
+      const text = 'error' in c ? [] : c.lines;
+      return { def: myDef({ fig: fxFor.fig, pose: fxFor.pose, color: fxFor.color, text }), name: text.join(' ') || figName(fxFor.fig) };
+    }
     const pick = STICKER_LIST.find((x) => x.id === sel && open.has(x.id) && canDrop(x.id));
     const std = (id: string) => ({ def: STICKERS.find((x) => x.id === id)!, name: t.stickers[id as StickerMeta['id']].join(' ') });
     if (pick) return std(pick.id);
@@ -472,10 +480,24 @@ export default function StickersClient() {
     return std(STICKER_LIST.find((x) => open.has(x.id) && canDrop(x.id))?.id ?? STICKER_LIST[0].id);
   })();
   fxBaseRef.current = fxBase.def;
-  const toFx = (fx: EffectId) => {
+  const toFx = (fx: EffectId, from: Draft | null = null) => {
     setFxSel(fx);
+    setFxFor(from);
     setFxNote('');
     setTab('fx');
+  };
+  /** Эффект — на стикер, с которого пришли на витрину: готовый — сразу в пак, свой — в редактор (останется «Сохранить»). */
+  const fxApply = async (fx: EffectId) => {
+    const d = fxFor;
+    if (!d) return setTab('pack');
+    setFxFor(null);
+    setDraft({ ...d, fx });
+    setTab('make');
+    if (!d.std) return setNote(b.fxSave);
+    setBusy(true);
+    setNote(b.syncing);
+    if (apply(await shopFx(d.std, fx, d.stdColor))) haptic('success');
+    setBusy(false);
   };
   // сайт с входом через Telegram: ссылка на счёт эффекта — заранее (оплата откроется сразу из нажатия)
   useEffect(() => {
@@ -500,7 +522,8 @@ export default function StickersClient() {
         if (x) setSt(x);
         if (x?.effects?.includes(fx)) {
           setFxNote('');
-          break;
+          setBusy(false);
+          return void fxApply(fx);
         }
         await new Promise((res) => setTimeout(res, 1500));
       }
@@ -541,7 +564,7 @@ export default function StickersClient() {
             className={[now ? 'on' : '', mine ? '' : 'locked'].join(' ')}
             onClick={() => {
               if (!on) return setNote(idle);
-              if (!mine && fx) return toFx(fx);
+              if (!mine && fx) return toFx(fx, tab === 'make' ? draft : null);
               if (!now) pick(fx);
               setNote(name);
             }}
@@ -571,7 +594,7 @@ export default function StickersClient() {
 
   return (
     <main className="daily stickers">
-      <TopBar lang={lang} onBack={() => (tab !== 'pack' ? setTab('pack') : router.push('/wardrobe'))} />
+      <TopBar lang={lang} onBack={() => (tab === 'fx' && fxFor ? setTab('make') : tab !== 'pack' ? setTab('pack') : router.push('/wardrobe'))} />
       <h1 className="daily-title">{b.title}</h1>
       <div className="stickers-tabs" role="tablist">
         <button role="tab" aria-selected={tab === 'pack' || (tab === 'make' && !!draft.std)} className={tab === 'pack' || (tab === 'make' && draft.std) ? 'on' : ''} onClick={() => setTab('pack')}>
@@ -720,7 +743,7 @@ export default function StickersClient() {
           {/* эффекты лентой: купленные — с галочкой */}
           <div className="wardrobe-sets stickers-fxset" role="tablist">
             {EFFECTS.map((fx) => (
-              <button key={fx} role="tab" aria-selected={fx === fxSel} className={fx === fxSel ? 'wardrobe-set on' : 'wardrobe-set'} onClick={() => toFx(fx)} aria-label={t.items[fx].title}>
+              <button key={fx} role="tab" aria-selected={fx === fxSel} className={fx === fxSel ? 'wardrobe-set on' : 'wardrobe-set'} onClick={() => toFx(fx, fxFor)} aria-label={t.items[fx].title}>
                 {fxIcons[fx] && <img src={fxIcons[fx]} alt="" width={18 * 2} height={30 * 2} />}
                 {owns.has(fx) ? <i className="wardrobe-mark mine">✓</i> : null}
               </button>
@@ -737,10 +760,10 @@ export default function StickersClient() {
             <p className="stickers-fxname">
               <b>{t.items[fxSel].title}</b> · {t.items[fxSel].tagline}
             </p>
-            <p className="stickers-note">{fxNote || (owns.has(fxSel) ? b.fxOwned : `${b.fxHint}: ${fxBase.name}`)}</p>
+            <p className="stickers-note">{fxNote || (owns.has(fxSel) && !fxFor ? b.fxOwned : `${b.fxHint}: ${fxBase.name}`)}</p>
             {owns.has(fxSel) ? (
-              <button className="btn small" onClick={() => setTab('pack')}>
-                {b.back}
+              <button className="btn small" onClick={() => void fxApply(fxSel)} aria-disabled={busy}>
+                {fxFor ? fmt(b.fxPut, { name: fxBase.name }) : b.back}
               </button>
             ) : inTg || tgOn ? (
               <button className="btn" onClick={() => void buyFx()} aria-disabled={busy}>
