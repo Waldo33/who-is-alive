@@ -43,16 +43,20 @@ describe('скин гардероба', () => {
     room.join('a', 'A', pa);
     room.join('b', 'B', pb);
     room.setSkin('b', 'kotBanan');
-    room.setSkin('a', null);
+    room.setSkin('a', null, 'holo');
     const last = [...pa.got].reverse().find((m) => m.t === 'room') as Extract<ServerMsg, { t: 'room' }>;
     expect(last.room.members.find((m) => m.userId === 'b')?.skin).toBe('kotBanan');
     expect(last.room.members.find((m) => m.userId === 'a')?.skin).toBeUndefined();
+    // эффект на персонаже — так же по игроку
+    expect(last.room.members.find((m) => m.userId === 'a')?.fx).toBe('holo');
+    expect(last.room.members.find((m) => m.userId === 'b')?.fx).toBeUndefined();
     room.setReady('b', true);
     expect(room.start('a')).toBeNull();
     const start = pa.got.find((m) => m.t === 'g' && (m.m as RoomMsg).t === 'match_start') as Extract<ServerMsg, { t: 'g' }>;
     const players = (start.m as Extract<RoomMsg, { t: 'match_start' }>).players;
     expect(players.find((p) => p.pid === 'b')?.skin).toBe('kotBanan');
     expect(players.find((p) => p.pid === 'a')?.skin).toBeUndefined();
+    expect(players.find((p) => p.pid === 'a')?.fx).toBe('holo');
     room.close('test');
   });
 
@@ -66,7 +70,7 @@ describe('скин гардероба', () => {
     const [a, b] = [await anon(), await anon()];
     // у b куплен Кот-банан (как после оплаты в боте), a — без покупок
     await srv.store.linkTelegram({ gameUser: b.userId, tgUser: 777, name: 'B', lang: 'ru' });
-    await srv.store.saveShopUser({ userId: 777, lang: 'ru', name: 'B', items: ['starter', 'kotBanan'], pack: null, issued: [] });
+    await srv.store.saveShopUser({ userId: 777, lang: 'ru', name: 'B', items: ['starter', 'kotBanan', 'vhs', 'aura:vhs'], pack: null, issued: [] });
     const r = await fetch(`${http}/v1/rooms`, { method: 'POST', headers: { authorization: `Bearer ${a.token}`, 'content-type': 'application/json' }, body: JSON.stringify({ name: 'A' }) });
     const { code } = (await r.json()) as { code: string };
     const la = new ServerLink({ url: ws, token: a.token, selfId: a.userId, code, name: 'A', silenceMs: 60_000 });
@@ -75,6 +79,7 @@ describe('скин гардероба', () => {
     await la.connect();
     await lb.connect();
     await until(() => la.room?.members.find((m) => m.userId === b.userId)?.skin === 'kotBanan', 3000, 'скин b в лобби у a');
+    expect(la.room!.members.find((m) => m.userId === b.userId)?.fx).toBe('vhs');
     expect(la.room!.members.find((m) => m.userId === a.userId)?.skin).toBeUndefined();
   });
 });

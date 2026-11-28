@@ -475,6 +475,8 @@ export interface ShopState {
   channel?: string;
   /** Надетый скин (null — снят или не куплен); старый сервер бота не шлёт. */
   worn?: string | null;
+  /** Эффект на персонаже (null — снят или не куплен); старый сервер бота не шлёт. */
+  aura?: string | null;
   /** «Собери свой стикерпак»: открытые стикеры, убранные игроком, свои, открытые фигурки, открытые наградами (`st:`). */
   open?: StickerId[];
   off?: StickerId[];
@@ -598,6 +600,11 @@ export function shopState(): Promise<ShopState | null> {
 /** «Надеть» купленный скин или «Снять» (null). В комнате — со следующего входа. */
 export function shopWear(item: string | null): Promise<ShopState | null> {
   return botPost<ShopState>('/shop/wear', { item });
+}
+
+/** «Надеть» купленный эффект на своего персонажа или «Снять» (null). В комнате — со следующего входа. */
+export function shopAura(item: string | null): Promise<ShopState | null> {
+  return botPost<ShopState>('/shop/aura', { item });
 }
 
 /** Забрать бесплатный пак: бот рисует пак и присылает ссылку (до ~20 с). */

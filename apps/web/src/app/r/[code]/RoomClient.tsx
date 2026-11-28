@@ -451,7 +451,7 @@ export function Lobby({
         {slots.map((m, i) =>
           m ? (
             <div key={m.userId} className={`cast-card${m.online ? '' : ' offline'}${kickAsk === m.userId ? ' ask' : ''}${m.userId === state.selfId && editing ? ' editing' : ''}`}>
-              <Actor color={m.color} waving={m.ready || m.userId === state.hostId} skin={m.skin} />
+              <Actor color={m.color} waving={m.ready || m.userId === state.hostId} skin={m.skin} fx={m.fx} />
               {m.userId === state.selfId && editing ? (
                 <NameEditor
                   initial={m.name}

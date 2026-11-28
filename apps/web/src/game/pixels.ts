@@ -9,6 +9,16 @@ let makeCanvas: () => HTMLCanvasElement = () => document.createElement('canvas')
 export function setCanvasFactory(f: () => HTMLCanvasElement): void {
   makeCanvas = f;
 }
+/** Выполнить f с другой фабрикой холстов (эффект на персонаже считается на своих «программных» холстах). */
+export function withCanvasFactory<T>(f: () => HTMLCanvasElement, fn: () => T): T {
+  const was = makeCanvas;
+  makeCanvas = f;
+  try {
+    return fn();
+  } finally {
+    makeCanvas = was;
+  }
+}
 /** Пустой холст из текущей фабрики. */
 export function newCanvas(w: number, h: number): HTMLCanvasElement {
   const c = makeCanvas();

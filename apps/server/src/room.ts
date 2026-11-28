@@ -1,5 +1,5 @@
 import { DICTS, DIRECTOR_HUMANS, slotHits, TICK_MS, fmt, earnedRewards, earnedStickers, recordRound, renamePid, seasonLeadTheme } from '@kto/game-core';
-import type { GameConfig, PlayerInfo, SkinId } from '@kto/game-core';
+import type { EffectId, GameConfig, PlayerInfo, SkinId } from '@kto/game-core';
 import { DEFAULT_WIRE_SETTINGS, HostSession } from '@kto/net';
 import type { Channel, PresenceMember, RoomMsg, ServerMsg, Transport, WireError, WireRoom, WireRoomSettings } from '@kto/net';
 import type { Logger } from './log';
@@ -34,7 +34,12 @@ export interface Member {
   left?: boolean;
   /** Скин из гардероба — по покупкам (server.ts › skinFor), не с телефона. */
   skin?: SkinId;
+  /** Эффект на персонаже — по покупкам (server.ts › skinFor), виден там же, где скин. */
+  fx?: EffectId;
 }
+
+/** Облик игрока из гардероба для PlayerInfo и состава лобби: скин и эффект, только если есть. */
+const lookOf = (m: { skin?: SkinId; fx?: EffectId } | undefined): { skin?: SkinId; fx?: EffectId } => ({ ...(m?.skin ? { skin: m.skin } : {}), ...(m?.fx ? { fx: m.fx } : {}) });
 
 /** Сколько держим место за отключившимся (как пульс в Supabase): 75 с. */
 export const HOLD_MS = 75_000;
@@ -355,19 +360,21 @@ export class Room {
   /** Зрители, чей клиент умеет занять место ИИ посреди матча (hello.seat). */
   private seatable = new Map<string, string>();
   /** Скины по покупкам (приходят после входа): игрок → скин, null — без скина. Переживает выход и место ИИ. */
-  private skins = new Map<string, SkinId | null>();
+  private skins = new Map<string, { skin?: SkinId; fx?: EffectId }>();
 
   /**
    * Скин игрока узнали по покупкам (server.ts › skinFor). В лобби его видят все; в матч он уходит только со
    * следующим стартом (идущий матч уже знает состав) — на поле его рисует лишь телефон самого игрока.
    */
-  setSkin(userId: string, skin: SkinId | null): void {
+  setSkin(userId: string, skin: SkinId | null, fx: EffectId | null = null): void {
     if (this.closed) return;
-    this.skins.set(userId, skin);
+    const look = lookOf({ ...(skin ? { skin } : {}), ...(fx ? { fx } : {}) });
+    this.skins.set(userId, look);
     const m = this.members.get(userId);
-    if (!m || (m.skin ?? null) === skin) return;
-    if (skin) m.skin = skin;
-    else delete m.skin;
+    if (!m || ((m.skin ?? null) === skin && (m.fx ?? null) === fx)) return;
+    delete m.skin;
+    delete m.fx;
+    Object.assign(m, look);
     this.broadcastRoom();
   }
 
@@ -414,8 +421,7 @@ export class Room {
       const used = new Set([...this.members.values()].map((x) => x.color));
       const color = [0, 1, 2, 3].find((c) => !used.has(c)) ?? 0;
       m = { userId, name: cleanName(name, 'Player'), color, joinedAt: now, ready: false, peer, offlineSince: 0 };
-      const skin = this.skins.get(userId);
-      if (skin) m.skin = skin;
+      Object.assign(m, this.skins.get(userId) ?? {});
       this.members.set(userId, m);
     }
     this.lastActive = now;
@@ -447,11 +453,11 @@ export class Room {
     if (!seat || !r) return false;
     const color = r.host.sim.info(seat)!.color;
     const nm = cleanName(name, 'Player');
-    const skin = this.skins.get(userId);
-    if (!r.host.takeSeat(seat, { pid: userId, name: nm, color, ...(skin ? { skin } : {}) })) return false;
+    const look = this.skins.get(userId) ?? {};
+    if (!r.host.takeSeat(seat, { pid: userId, name: nm, color, ...look })) return false;
     r.renameSeat(seat, userId);
     this.members.delete(seat);
-    this.members.set(userId, { userId, name: nm, color, joinedAt: now, ready: false, peer, offlineSince: 0, ...(skin ? { skin } : {}) });
+    this.members.set(userId, { userId, name: nm, color, joinedAt: now, ready: false, peer, offlineSince: 0, ...look });
     if (!this.members.has(this.directorId)) this.passDirector();
     this.lastActive = now;
     this.log('info', 'seat_taken', { room: this.code, ai: seat.startsWith('ai-') });
@@ -626,7 +632,7 @@ export class Room {
   start(userId: string): WireError | null {
     if (userId !== this.directorId) return 'not_director';
     if (this.status === 'playing' && this.runner?.host.phase !== 'match_end') return 'not_now';
-    const humans: PlayerInfo[] = this.onlineMembers().map((m) => ({ pid: m.userId, name: m.name, color: m.color, ...(m.skin ? { skin: m.skin } : {}) }));
+    const humans: PlayerInfo[] = this.onlineMembers().map((m) => ({ pid: m.userId, name: m.name, color: m.color, ...lookOf(m) }));
     if (humans.length < this.minHumans()) return 'not_enough_players';
     // из лобби — только когда все подключённые нажали «Готов»; «Ещё дубль» с экрана итогов — без этого
     const rematch = this.runner?.host.phase === 'match_end';
@@ -839,7 +845,7 @@ export class Room {
         if (!this.closed) this.broadcastText(JSON.stringify({ t: 'puzzle', code: puzzle } satisfies ServerMsg));
       }
       if (!film) return;
-      return film.make({ takes, players: r.players.map((p) => ({ pid: p.pid, name: p.name, color: p.color, ...(p.skin ? { skin: p.skin } : {}) })), match, lang: this.lang, puzzle }).then((done) => {
+      return film.make({ takes, players: r.players.map((p) => ({ pid: p.pid, name: p.name, color: p.color, ...(p.skin ? { skin: p.skin } : {}), ...(p.fx ? { fx: p.fx } : {}) })), match, lang: this.lang, puzzle }).then((done) => {
         // в чат Telegram — даже если все уже ушли или начали реванш: фильм этого матча готов
         const name = (pid: string) => r.players.find((p) => p.pid === pid)?.name ?? '';
         const awards = match.awards.map((a) => ({ id: a.id, names: a.pids.map(name).filter(Boolean) })).filter((a) => a.names.length);
@@ -899,7 +905,7 @@ export class Room {
       settings: this.settings,
       members: [...this.members.values()]
         .sort((a, b) => a.joinedAt - b.joinedAt)
-        .map((m) => ({ userId: m.userId, name: m.name, color: m.color, joinedAt: m.joinedAt, online: !!m.peer, ready: m.ready, ...(m.skin ? { skin: m.skin } : {}) })),
+        .map((m) => ({ userId: m.userId, name: m.name, color: m.color, joinedAt: m.joinedAt, online: !!m.peer, ready: m.ready, ...lookOf(m) })),
     };
   }
 

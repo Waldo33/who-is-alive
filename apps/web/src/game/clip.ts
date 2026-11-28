@@ -12,6 +12,8 @@ import { frameFor } from './frames';
 import { CH_H, CH_W, F, OL_H, OL_W } from './sprites';
 import { skinArt, skinFrame } from './skins/skin-art';
 import type { SkinArt } from './skins/skin-art';
+import { auraFrame, auraFx, auraStep } from './skins/aura';
+import type { EffectId } from '@kto/game-core';
 import { aim, armed, armsOf, bodyPose, drawAir, drawFloor, killsFromLog, weaponSfx } from './gore';
 import type { Holder, Kill, Px } from './gore';
 import { isThemeLoaded, themeLook, themePack } from './themes';
@@ -114,6 +116,8 @@ export interface ClipPlayer {
   color: number;
   /** Скин из гардероба: в клипе игрок уже раскрыт — его видят все. */
   skin?: string;
+  /** Эффект на персонаже — там же, где скин. */
+  fx?: string;
 }
 
 export interface ClipInput {
@@ -296,6 +300,8 @@ export class ClipPlayerScene {
   private colors = new Map<number, number>();
   /** Скины игроков (по сущности): надеваются, когда игрок «загорелся» на разборе — до этого он в толпе. */
   private skins = new Map<number, SkinArt>();
+  /** Эффект на персонаже — там же, где скин (раскрытым). */
+  private fxs = new Map<number, EffectId>();
   /** Когда (мс разбора) загорается каждый живой; герой — последним. */
   private litAt = new Map<number, number>();
   private cam = { x: 0, y: 0 };
@@ -366,6 +372,8 @@ export class ClipPlayerScene {
       this.colors.set(p.eid, p.color);
       const sk = skinArt(p.skin);
       if (sk) this.skins.set(p.eid, sk);
+      const fx = auraFx(p.fx);
+      if (fx) this.fxs.set(p.eid, fx);
     }
     const hero = inp.hero;
     this.opp = m.attacker === hero ? m.victim : m.victim === hero ? m.attacker : undefined;
@@ -747,6 +755,7 @@ export class ClipPlayerScene {
       const col = this.colors.get(e.eid);
       const lit = reveal && col !== undefined && this.lit(e.eid, local);
       const isHero = lit && e.eid === hero;
+      const fx = lit ? (this.fxs.get(e.eid) ?? null) : null;
       // на разборе тусклые все, кроме участников события и живых игроков
       const actor = e.eid === m.attacker || e.eid === m.victim;
       const dim = reveal && !lit && !(zoomed && actor);
@@ -763,7 +772,8 @@ export class ClipPlayerScene {
               for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) frame(g, oc, sk.ow, sk.oh, f, ox + dx, oy + dy, fr.flip);
               frame(g, pulse ? sk.outlines[0] : oc, sk.ow, sk.oh, f, ox, oy, fr.flip);
             } else frame(g, oc, sk.ow, sk.oh, f, ox, oy, fr.flip);
-            frame(g, sk.body, sk.fw, sk.fh, f, x - sk.ax, y + fr.yoff - sk.ay, fr.flip);
+            if (fx) auraFrame(g, sk.body, sk.fw, sk.fh, f, x - sk.ax, y + fr.yoff - sk.ay, fr.flip, fx, auraStep(now));
+            else frame(g, sk.body, sk.fw, sk.fh, f, x - sk.ax, y + fr.yoff - sk.ay, fr.flip);
             if (e.act === 'stun' && t < e.actEnd) frame(g, a.stun, 12, 5, Math.floor(t / 120) % 3, x - 6, y - sk.ay - 3);
             if (e.markUntil > t) g.drawImage(a.mark, x - 2, y - sk.ay - 9 - (Math.floor(t / 150) % 2));
             return;
@@ -780,7 +790,8 @@ export class ClipPlayerScene {
           } else if (lit) frame(g, ce.outline[1 + col!], OL_W, OL_H, fr.frame, ox, oy, fr.flip);
           else if (zoomed && actor && reveal) frame(g, ce.outline[0], OL_W, OL_H, fr.frame, ox, oy, fr.flip);
           g.globalAlpha = dim ? 0.45 : 1;
-          frame(g, ce.body, CH_W, CH_H, fr.frame, x - 6, y + fr.yoff - CH_H, fr.flip);
+          if (fx) auraFrame(g, ce.body, CH_W, CH_H, fr.frame, x - 6, y + fr.yoff - CH_H, fr.flip, fx, auraStep(now));
+          else frame(g, ce.body, CH_W, CH_H, fr.frame, x - 6, y + fr.yoff - CH_H, fr.flip);
           g.globalAlpha = 1;
           if (e.act === 'stun' && t < e.actEnd) frame(g, a.stun, 12, 5, Math.floor(t / 120) % 3, x - 6, y - CH_H - 6);
           if (e.markUntil > t) g.drawImage(a.mark, x - 2, y - CH_H - 12 - (Math.floor(t / 150) % 2));

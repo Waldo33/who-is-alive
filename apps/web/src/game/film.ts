@@ -7,6 +7,7 @@ import type { ClipPlayer } from './clip';
 import { frame, getArt, scaledCanvas, text } from './art';
 import { CH_H, CH_W, F, OL_H, OL_W } from './sprites';
 import { skinArt, skinFrame } from './skins/skin-art';
+import { auraFrame, auraFx, auraStep } from './skins/aura';
 
 /**
  * «Фильм матча» — один ролик на матч (~20–24 с) для всех игроков комнаты. Сценарий — история матча:
@@ -68,6 +69,8 @@ export interface FilmCastLine {
   award?: string;
   /** Скин из гардероба: в финале игрока рисуем в нём. */
   skin?: string;
+  /** Эффект на персонаже (виден там же, где скин). */
+  fx?: string;
 }
 
 /** Сюжет финала (story.ts) с именами и цветами вместо pid. */
@@ -202,6 +205,7 @@ export class FilmScene {
    * Сервер читает пиксели прямо оттуда — без лишнего копирования кадра (vCPU сервера медленный).
    */
   frame(ms: number): HTMLCanvasElement {
+    this.fxMs = ms;
     let i = 0;
     let start = 0;
     while (i < this.pieces.length - 1 && ms >= start + this.pieces[i].dur) start += this.pieces[i++].dur;
@@ -438,6 +442,9 @@ export class FilmScene {
     g.restore();
   }
 
+  /** Время кадра фильма — для анимации эффекта на персонаже. */
+  private fxMs = 0;
+
   /** Фигура ×k: ноги в (x, floor), контур цветом игрока (или без), кадр fr. */
   private figure(art: ReturnType<typeof getArt>, idx: number, x: number, floor: number, k: number, fr: number, color: number | null, flip = false): void {
     const g = this.g;
@@ -448,14 +455,20 @@ export class FilmScene {
     const sy = Math.round(floor / k);
     g.drawImage(art.shadow, sx - 5, sy - 2);
     // фигура игрока (с цветом) — в его скине: цвета в матче не повторяются
-    const sk = color !== null ? skinArt(this.inp.cast.find((c) => c.color === color)?.skin) : null;
+    const cast = color !== null ? this.inp.cast.find((c) => c.color === color) : undefined;
+    const sk = skinArt(cast?.skin);
+    // эффект на персонаже — у тех же, у кого виден скин (игроки с цветом)
+    const fx = auraFx(cast?.fx);
+    const step = auraStep(this.fxMs);
     if (sk) {
       const f = skinFrame(fr);
       frame(g, sk.outlines[1 + color!], sk.ow, sk.oh, f, sx - sk.oax, sy - sk.oay, flip);
-      frame(g, sk.body, sk.fw, sk.fh, f, sx - sk.ax, sy - sk.ay, flip);
+      if (fx) auraFrame(g, sk.body, sk.fw, sk.fh, f, sx - sk.ax, sy - sk.ay, flip, fx, step);
+      else frame(g, sk.body, sk.fw, sk.fh, f, sx - sk.ax, sy - sk.ay, flip);
     } else {
       if (color !== null) frame(g, ch.outline[1 + color], OL_W, OL_H, fr, sx - 7, sy - 17, flip);
-      frame(g, ch.body, CH_W, CH_H, fr, sx - 6, sy - CH_H, flip);
+      if (fx) auraFrame(g, ch.body, CH_W, CH_H, fr, sx - 6, sy - CH_H, flip, fx, step);
+      else frame(g, ch.body, CH_W, CH_H, fr, sx - 6, sy - CH_H, flip);
     }
     g.restore();
   }
@@ -949,6 +962,8 @@ export interface FilmPlayer {
   color: number;
   /** Скин из гардероба (PlayerInfo.skin): в фильме все уже раскрыты. */
   skin?: string;
+  /** Эффект на персонаже (PlayerInfo.fx) — там же, где скин. */
+  fx?: string;
 }
 
 /**
@@ -994,7 +1009,7 @@ export function filmInput(
     const heroEid = moment.attacker ?? moment.victim;
     const clipPlayers: ClipPlayer[] = s.reveal.flatMap((r) => {
       const p = info.get(r.pid);
-      return p ? [{ eid: r.eid, name: p.name, color: p.color, ...(p.skin ? { skin: p.skin } : {}) }] : [];
+      return p ? [{ eid: r.eid, name: p.name, color: p.color, ...(p.skin ? { skin: p.skin } : {}), ...(p.fx ? { fx: p.fx } : {}) }] : [];
     });
     const score = scoreOf();
     cands.push({
@@ -1035,7 +1050,7 @@ export function filmInput(
     const start = tk.rec.keyframes[0]?.time ?? 0;
     const clipPlayers: ClipPlayer[] = tk.summary.reveal.flatMap((r) => {
       const p = info.get(r.pid);
-      return p ? [{ eid: r.eid, name: p.name, color: p.color, ...(p.skin ? { skin: p.skin } : {}) }] : [];
+      return p ? [{ eid: r.eid, name: p.name, color: p.color, ...(p.skin ? { skin: p.skin } : {}), ...(p.fx ? { fx: p.fx } : {}) }] : [];
     });
     for (const ev of [...tk.rec.log].reverse()) {
       if (bloopers.length >= 2) break;
@@ -1055,7 +1070,7 @@ export function filmInput(
     .sort((a, b) => (match.scores[b.pid] ?? 0) - (match.scores[a.pid] ?? 0) || win(b.pid) - win(a.pid) || a.color - b.color)
     .map((p) => {
       const aw = match.awards.find((x) => x.pids.includes(p.pid));
-      return { name: p.name, color: p.color, points: match.scores[p.pid] ?? 0, award: aw ? base.t.awards[aw.id].title : undefined, ...(p.skin ? { skin: p.skin } : {}) };
+      return { name: p.name, color: p.color, points: match.scores[p.pid] ?? 0, award: aw ? base.t.awards[aw.id].title : undefined, ...(p.skin ? { skin: p.skin } : {}), ...(p.fx ? { fx: p.fx } : {}) };
     });
   const w = match.tooAlive ? undefined : info.get(match.winners[0] ?? '');
   const { self, ...rest } = base;
