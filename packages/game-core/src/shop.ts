@@ -40,8 +40,8 @@ export const SHOP_ITEMS: ShopItem[] = [
   { id: 'sepia', stars: 19, isNew: true, effect: true },
 ];
 
-/** Эффекты стикеров — товары гардероба категории «Эффекты» (решение владельца 28.11.2026). */
-export const EFFECTS = ['gold', 'holo', 'fire', 'vhs', 'noir', 'sepia', 'ice'] as const satisfies readonly ShopItemId[];
+/** Эффекты стикеров — товары гардероба категории «Эффекты» (решение владельца 28.11.2026); порядок витрины — от дорогих к простым. */
+export const EFFECTS = ['vhs', 'holo', 'fire', 'noir', 'gold', 'ice', 'sepia'] as const satisfies readonly ShopItemId[];
 export type EffectId = (typeof EFFECTS)[number];
 export const isEffect = (x: unknown): x is EffectId => EFFECTS.includes(x as EffectId);
 /** Отметка в учёте: на стандартный стикер `id` накинут эффект `fx`. */
