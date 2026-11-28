@@ -686,7 +686,8 @@ export async function linkTelegramOnce(): Promise<void> {
     const me = await ensureGameUser();
     const key = `${tg}:${me.userId}`;
     if (localStorage.getItem('kto:tglink') === key) return;
-    const r = await botPost<{ ok?: boolean }>('/shop/link', { token: me.token });
+    // пояс телефона — чтобы бот не писал напоминания ночью
+    const r = await botPost<{ ok?: boolean }>('/shop/link', { token: me.token, tz: new Date().getTimezoneOffset() });
     if (r?.ok) localStorage.setItem('kto:tglink', key);
   } catch {
     /* нет сети или приватный режим — свяжем в следующий раз */

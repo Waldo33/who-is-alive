@@ -59,6 +59,16 @@ export interface Store {
    * продлевает); false — её держит другой (синий и зелёный живут вместе при выкладке, база общая).
    */
   lease(name: string, owner: string, ms: number): Promise<boolean>;
+  /**
+   * Напоминания бота (nudges.ts): игроки Telegram, чья последняя победа — в [from, to) (мс). До 500.
+   * Каждый — с языком, временем последнего матча и состоянием напоминаний.
+   */
+  nudgeWinners(from: number, to: number): Promise<NudgeRow[]>;
+  /** Игроки Telegram, сыгравшие матч с `since` (мс). До 5000. */
+  nudgeActive(since: number): Promise<NudgeRow[]>;
+  /** Состояние напоминаний игрока Telegram (не писали ни разу — null). */
+  nudgeOf(tgUser: number): Promise<NudgeState | null>;
+  saveNudge(s: NudgeState): Promise<void>;
   ping(): Promise<boolean>;
   close(): Promise<void>;
 }
@@ -86,6 +96,32 @@ export interface TgLink {
   /** Имя для названия пака и язык — если пака ещё нет. */
   name: string;
   lang: 'ru' | 'en';
+}
+
+/** Напоминания бота игроку (nudges.ts). */
+export interface NudgeState {
+  tgUser: number;
+  /** Нажал «Не напоминать». */
+  off: boolean;
+  /** Telegram не даёт писать (бот не запущен или заблокирован) — молчим до /start. */
+  dead: boolean;
+  /** Часовой пояс с телефона: минуты, как у `Date.getTimezoneOffset()` (Москва — −180); нет — по языку. */
+  tz: number | null;
+  /** Про какую победу (мс) уже напомнили, что звезда гаснет. */
+  star: number | null;
+  /** Какой стикер недели уже объявили. */
+  week: string | null;
+  /** Когда писали (мс), за последнюю неделю — для потолка. */
+  sent: number[];
+}
+
+export interface NudgeRow {
+  tgUser: number;
+  lang: 'ru' | 'en';
+  lastWin: number | null;
+  /** Последний сыгранный матч (мс). */
+  playedAt: number;
+  nudge: NudgeState | null;
 }
 
 export interface ShopPayment {
@@ -239,7 +275,33 @@ const MIGRATIONS: string[] = [
      owner text not null,
      until timestamptz not null
    )`,
+  // напоминания бота (nudges.ts): «Звезда дубля гаснет», «Новый стикер недели» — кому можно писать и когда писали
+  `create table if not exists tg_nudges (
+     tg_user bigint primary key,
+     off boolean not null default false,
+     dead boolean not null default false,
+     tz smallint,
+     star bigint,
+     week text,
+     sent bigint[] not null default '{}',
+     updated_at timestamptz not null default now()
+   )`,
+  `create index if not exists tg_stats_last_win_idx on tg_stats (last_win)`,
+  `create index if not exists tg_stats_updated_idx on tg_stats (updated_at)`,
+  `create index if not exists tg_links_tg_user_idx on tg_links (tg_user)`,
 ];
+
+function nudgeFrom(x: Record<string, unknown>): NudgeState {
+  return {
+    tgUser: Number(x.tg_user ?? x.n_user),
+    off: !!x.off,
+    dead: !!x.dead,
+    tz: x.tz === null || x.tz === undefined ? null : Number(x.tz),
+    star: x.star === null || x.star === undefined ? null : Number(x.star),
+    week: typeof x.week === 'string' ? x.week : null,
+    sent: Array.isArray(x.sent) ? x.sent.map(Number) : [],
+  };
+}
 
 /** Неделя тишины — и группа считается вернувшейся (снова тревога). */
 const ERROR_QUIET = '7 days';
@@ -428,6 +490,46 @@ export class PgStore implements Store {
       : { ...NO_STATS };
   }
 
+  private async nudgeRows(where: string, args: unknown[], limit: number): Promise<NudgeRow[]> {
+    const r = await this.pool.query(
+      `select s.tg_user, extract(epoch from s.last_win) * 1000 as last_win, extract(epoch from s.updated_at) * 1000 as played,
+         (select lang from tg_links l where l.tg_user = s.tg_user order by l.updated_at desc limit 1) as lang,
+         n.tg_user as n_user, n.off, n.dead, n.tz, n.star, n.week, n.sent
+       from tg_stats s left join tg_nudges n on n.tg_user = s.tg_user
+       where ${where} limit ${limit}`,
+      args,
+    );
+    return r.rows.map((x) => ({
+      tgUser: Number(x.tg_user),
+      lang: x.lang === 'en' ? 'en' : 'ru',
+      lastWin: x.last_win === null ? null : Math.round(Number(x.last_win)),
+      playedAt: Math.round(Number(x.played)),
+      nudge: x.n_user === null ? null : nudgeFrom(x),
+    }));
+  }
+
+  nudgeWinners(from: number, to: number): Promise<NudgeRow[]> {
+    return this.nudgeRows(`s.last_win >= to_timestamp($1::double precision / 1000) and s.last_win < to_timestamp($2::double precision / 1000)`, [from, to], 500);
+  }
+
+  nudgeActive(since: number): Promise<NudgeRow[]> {
+    return this.nudgeRows(`s.updated_at >= to_timestamp($1::double precision / 1000)`, [since], 5000);
+  }
+
+  async nudgeOf(tgUser: number): Promise<NudgeState | null> {
+    const r = await this.pool.query(`select tg_user, off, dead, tz, star, week, sent from tg_nudges where tg_user = $1`, [tgUser]);
+    return r.rows[0] ? nudgeFrom(r.rows[0]) : null;
+  }
+
+  async saveNudge(s: NudgeState): Promise<void> {
+    await this.pool.query(
+      `insert into tg_nudges (tg_user, off, dead, tz, star, week, sent) values ($1, $2, $3, $4, $5, $6, $7)
+       on conflict (tg_user) do update set off = excluded.off, dead = excluded.dead, tz = excluded.tz, star = excluded.star,
+         week = excluded.week, sent = excluded.sent, updated_at = now()`,
+      [s.tgUser, s.off, s.dead, s.tz, s.star, s.week, s.sent],
+    );
+  }
+
   async lease(name: string, owner: string, ms: number): Promise<boolean> {
     // одна строка на задачу: занять свободную (или просроченную, или свою) — атомарно, одним запросом
     const r = await this.pool.query(
@@ -580,6 +682,7 @@ export class MemoryStore implements Store {
   stats = new Map<number, BadgeStats>();
 
   async bumpTgStats(tgUser: number, d: StatsDelta): Promise<void> {
+    this.played.set(tgUser, Date.now());
     const s = this.stats.get(tgUser) ?? { ...NO_STATS };
     this.stats.set(tgUser, {
       matches: s.matches + d.matches,
@@ -593,6 +696,37 @@ export class MemoryStore implements Store {
 
   async tgStats(tgUser: number): Promise<BadgeStats> {
     return { ...(this.stats.get(tgUser) ?? NO_STATS) };
+  }
+
+  /** Когда игрок Telegram сыграл последний матч (как updated_at у tg_stats). */
+  played = new Map<number, number>();
+  nudges = new Map<number, NudgeState>();
+
+  private nudgeRowsWhere(ok: (s: BadgeStats, played: number) => boolean): NudgeRow[] {
+    const lang = (tg: number) => [...this.links.values()].reverse().find((l) => l.tgUser === tg)?.lang ?? 'ru';
+    return [...this.stats].flatMap(([tg, s]) => {
+      const played = this.played.get(tg) ?? 0;
+      if (!ok(s, played)) return [];
+      const n = this.nudges.get(tg);
+      return [{ tgUser: tg, lang: lang(tg), lastWin: s.lastWin, playedAt: played, nudge: n ? { ...n, sent: [...n.sent] } : null }];
+    });
+  }
+
+  async nudgeWinners(from: number, to: number): Promise<NudgeRow[]> {
+    return this.nudgeRowsWhere((s) => s.lastWin !== null && s.lastWin >= from && s.lastWin < to);
+  }
+
+  async nudgeActive(since: number): Promise<NudgeRow[]> {
+    return this.nudgeRowsWhere((_, played) => played >= since);
+  }
+
+  async nudgeOf(tgUser: number): Promise<NudgeState | null> {
+    const n = this.nudges.get(tgUser);
+    return n ? { ...n, sent: [...n.sent] } : null;
+  }
+
+  async saveNudge(s: NudgeState): Promise<void> {
+    this.nudges.set(s.tgUser, { ...s, sent: [...s.sent] });
   }
 
   leases = new Map<string, { owner: string; until: number }>();
