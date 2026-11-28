@@ -108,13 +108,13 @@ const T = {
     clipTitle: 'Лучший момент дубля',
     solve: '🎬 На кастинг',
     openApp: 'Открыть игру',
-    filmAgain: '🎬 Реванш',
+    filmAgain: '🎬 Ещё дубль?',
     filmWatch: '▶ Смотреть фильм',
     filmPuzzle: '🔎 Найди актёра',
     filmDone: '🎬 Снято! Звезда фильма — {name}',
     filmDoneDraw: '🎬 Снято! Ничья: {names}',
     filmAward: '🏅 {title} — {names}',
-    filmRoom: 'Комната {code}. Реванш? Жми кнопку — та же комната.',
+    filmRoom: 'Комната {code}. Жми кнопку — та же комната.',
     cardGather: '🎬 Массовка · режиссёр собирает съёмку',
     cardSeats: 'В кадре: {names} · {n} из {max}',
     cardWait1: 'Ждём друзей — жми кнопку и заходи!',
@@ -157,13 +157,13 @@ const T = {
     clipTitle: 'Best moment of the take',
     solve: '🎬 Join the casting',
     openApp: 'Open the game',
-    filmAgain: '🎬 Rematch',
+    filmAgain: '🎬 Another take?',
     filmWatch: '▶ Watch the film',
     filmPuzzle: '🔎 Find the actor',
     filmDone: "🎬 That's a wrap! Star of the film: {name}",
     filmDoneDraw: "🎬 That's a wrap! Draw: {names}",
     filmAward: '🏅 {title}: {names}',
-    filmRoom: 'Room {code}. Rematch? Tap the button — same room.',
+    filmRoom: 'Room {code}. Tap the button — same room.',
     cardGather: '🎬 Be Nobody · the director is casting',
     cardSeats: 'On set: {names} · {n} of {max}',
     cardWait1: 'Waiting for friends — tap the button to join!',
@@ -271,7 +271,7 @@ interface PrepareBody {
   clip?: string;
   text?: string;
   thumb?: boolean;
-  /** kind 'clip' (фильм матча): кнопка «Реванш» — в ту же комнату (метка карточки или код). */
+  /** kind 'clip' (фильм матча): кнопка «Ещё дубль?» — в ту же комнату (метка карточки или код). */
   invite?: string;
   /** kind 'clip' (фильм матча): загадка из него — кнопкой «Найди актёра» в игру внутри Telegram. */
   puzzle?: string;
@@ -799,7 +799,7 @@ export class Bot {
 
   /**
    * Фильм матча готов: карточка приглашения превращается в видео «Снято!» со звездой, наградами и кнопкой
-   * «Реванш» (та же метка — та же комната). Каждый следующий матч этой комнаты заменяет видео на новое.
+   * «Ещё дубль?» (та же метка — та же комната). Каждый следующий матч этой комнаты заменяет видео на новое.
    * Telegram не смог взять видео — хотя бы текст с итогом и ссылкой на ролик.
    */
   async film(n: FilmNotice): Promise<BotReply> {
@@ -852,7 +852,7 @@ export class Bot {
     else if (body.kind === 'daily' && this.casting) result = await this.dailyCard(t, SQUARES.test(body.squares ?? '') ? body.squares! : '');
     else if (body.kind === 'clip' && CLIP_ID.test(body.clip ?? '')) {
       if (!this.o.clipBase) return { status: 503, body: { error: 'no_clips' } };
-      // фильм матча из комнаты — кнопка «Реванш» туда же (по метке карточки или по коду комнаты)
+      // фильм матча из комнаты — кнопка «Ещё дубль?» туда же (по метке карточки или по коду комнаты)
       const again = INVITE_TAG.test(body.invite ?? '') ? `g_${body.invite}` : /^[A-Z]{4}$/.test(body.code ?? '') ? `r_${body.code}` : '';
       const puzzle = /^[A-Z2-9]{5}$/.test(body.puzzle ?? '') ? body.puzzle! : '';
       let text = typeof body.text === 'string' ? safeCaption(body.text.slice(0, 300), this.o.site) : '';

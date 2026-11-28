@@ -1,7 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { DICTS, EARN_PER_DAY, NO_STATS, badgesOf, EARN_PER_MATCH, MY_FIGS, MY_ISSUED, MY_MARKS, MY_MAX, MY_POSE_EMOJI, RETIRED_STICKERS, SHOP_ITEMS, STICKER_LIST, TEST_ITEM, buyItem, canDrop, fmt, isMySticker, isSkin, isStickerId, myFigOpen, myIssued, offSticker, parseMySticker, pickEarned, skinOf, wearItems } from '@kto/game-core';
-import type { BadgeId, BadgeStats, MySticker, StickerId, StickerMeta } from '@kto/game-core';
+import { DICTS, EFFECTS, FX_ISSUED, EARN_PER_DAY, NO_STATS, badgesOf, EARN_PER_MATCH, MY_FIGS, MY_ISSUED, MY_MARKS, MY_MAX, MY_POSE_EMOJI, RETIRED_STICKERS, SHOP_ITEMS, STICKER_LIST, TEST_ITEM, buyItem, canDrop, fmt, fxIssued, fxMark, isEffect, isMySticker, issuedBase, stickerFx, isSkin, isStickerId, myFigOpen, myIssued, offSticker, parseMySticker, pickEarned, skinOf, wearItems } from '@kto/game-core';
+import type { BadgeId, BadgeStats, EffectId, MySticker, StickerId, StickerMeta } from '@kto/game-core';
+import type { StickerJob } from './sticker-render';
 import { RateWindow } from './limits';
 import { errFields } from './log';
 import type { Logger } from './log';
@@ -78,7 +79,7 @@ const earnable = (items: readonly string[]) => STICKER_LIST.filter((s) => !s.now
 /** Напоминание о стикерах — с 10 до 22 по Москве (не ночью). */
 const REMIND_FROM = 10;
 const REMIND_TO = 22;
-const ITEM = /^(?:starter|(?:st|in|own|made|off|wear):[A-Za-z]{1,24}|[A-Za-z]{1,24}|day:\d{8}:\d{1,2}|remind:\d{8})$/;
+const ITEM = /^(?:starter|(?:st|in|own|made|off|wear):[A-Za-z]{1,24}|[A-Za-z]{1,24}|day:\d{8}:\d{1,2}|remind:\d{8}|fx:[A-Za-z]{1,24}:[a-z]{2,8})$/;
 const PACK = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
 /**
  * Номер платежа Telegram (telegram_payment_charge_id): у звёзд — длинный «stx…» с символами base64 и прочими.
@@ -134,7 +135,7 @@ const strs = (x: unknown, max: number, re: RegExp): x is string[] => Array.isArr
 function parseUser(x: unknown): ShopUser | null {
   const u = x as Partial<ShopUser> | null;
   if (!u || !userId(u.userId) || (u.lang !== 'ru' && u.lang !== 'en') || typeof u.name !== 'string' || u.name.length > 32) return null;
-  if (!strs(u.items, 120, ITEM) || !Array.isArray(u.issued) || u.issued.length > 120 || !u.issued.every((x) => isStickerId(x) || (typeof x === 'string' && (MY_ISSUED.test(x) || Object.hasOwn(RETIRED_STICKERS, x))))) return null;
+  if (!strs(u.items, 120, ITEM) || !Array.isArray(u.issued) || u.issued.length > 120 || !u.issued.every((x) => isStickerId(x) || (typeof x === 'string' && (MY_ISSUED.test(x) || Object.hasOwn(RETIRED_STICKERS, x) || (FX_ISSUED.test(x) && isStickerId(issuedBase(x)) && isEffect(x.split('~')[1])))))) return null;
   if (u.pack !== null && !(typeof u.pack === 'string' && PACK.test(u.pack))) return null;
   // свои стикеры: старый бот их не присылает — оставляем как есть (undefined), новый — проверяем каждый
   const my = u.my === undefined ? undefined : Array.isArray(u.my) && u.my.length <= MY_MAX && u.my.every(isMySticker) && new Set(u.my.map((m) => m.slot)).size === u.my.length ? u.my.map((m) => ({ ...m, text: [...m.text] })) : null;
@@ -214,6 +215,8 @@ interface Entry {
   emoji: string[];
   lure?: boolean;
   my?: MySticker;
+  /** Стандартный стикер с эффектом: рисует сервер (файлы лежат только без эффекта). */
+  fx?: { id: StickerId; fx: EffectId };
 }
 
 /** Что боту сделать с паком игрока, чтобы он совпал с выбором. */
@@ -222,21 +225,34 @@ export function syncPlan(u: ShopUser): { add: Entry[]; drop: { key: string; emoj
   const my = u.items.includes('pack') ? (u.my ?? []) : [];
   const mine = (m: MySticker): Entry => ({ key: myIssued(m), emoji: [MY_MARKS[m.slot], MY_POSE_EMOJI[m.pose]], my: m });
   const slotOf = (x: string) => Number(MY_ISSUED.exec(x)?.[1] ?? -1);
+  // стандартный: запись в issued — id или id~эффект (эффект сменили — заменить на месте)
+  const std = (s: StickerMeta): Entry => {
+    const fx = s.lure ? null : stickerFx(s.id, u.items);
+    return { key: fxIssued(s.id, fx), emoji: s.emoji, lure: s.lure, ...(fx ? { fx: { id: s.id, fx } } : {}) };
+  };
+  const stdOf = (id: string) => u.issued.find((x) => !MY_ISSUED.test(x) && issuedBase(x) === id);
   const add: Entry[] = [
-    ...want.filter((s) => !u.issued.includes(s.id)).map((s) => ({ key: s.id, emoji: s.emoji, lure: s.lure })),
+    ...want.filter((s) => !stdOf(s.id)).map(std),
     ...my.filter((m) => !u.issued.some((x) => slotOf(x) === m.slot)).map(mine),
   ];
   // убранные игроком стандартные (возврат звёзд стикеры не забирает) и удалённые свои
   const drop = [
-    ...u.issued.filter((x) => isStickerId(x) && u.items.includes(offSticker(x as StickerId))).map((x) => ({ key: x, emoji: STICKER_LIST.find((s) => s.id === x)!.emoji[0] })),
+    ...u.issued.filter((x) => isStickerId(issuedBase(x)) && u.items.includes(offSticker(issuedBase(x) as StickerId))).map((x) => ({ key: x, emoji: STICKER_LIST.find((s) => s.id === issuedBase(x))!.emoji[0] })),
     ...u.issued.filter((x) => MY_ISSUED.test(x) && !my.some((m) => m.slot === slotOf(x))).map((x) => ({ key: x, emoji: MY_MARKS[slotOf(x)] })),
     // убранные из наборов совсем (RETIRED_STICKERS)
     ...u.issued.filter((x) => Object.hasOwn(RETIRED_STICKERS, x)).map((x) => ({ key: x, emoji: RETIRED_STICKERS[x] })),
   ];
-  const replace = my.flatMap((m) => {
-    const old = u.issued.find((x) => slotOf(x) === m.slot);
-    return old && old !== myIssued(m) ? [{ e: mine(m), old }] : [];
-  });
+  const replace = [
+    ...want.flatMap((s) => {
+      const old = stdOf(s.id);
+      const e = std(s);
+      return old && old !== e.key ? [{ e, old }] : [];
+    }),
+    ...my.flatMap((m) => {
+      const old = u.issued.find((x) => slotOf(x) === m.slot);
+      return old && old !== myIssued(m) ? [{ e: mine(m), old }] : [];
+    }),
+  ];
   // «положено в пак» для полосы прогресса: стандартные по выбору и свои
   return { add, drop, replace, total: want.length + my.length };
 }
@@ -265,7 +281,7 @@ export interface ShopDeps {
   /** Канал игры для проверки подписки (getChatMember; бот должен быть админом канала): «@имя». */
   channelId?: string;
   /** Нарисовать свой стикер (WEBM): игровой сервер — у себя, сервер бота — по туннелю (/internal/sticker). */
-  drawMy?: (look: Pick<MySticker, 'fig' | 'pose' | 'color' | 'text'>) => Promise<Buffer>;
+  drawMy?: (look: StickerJob) => Promise<Buffer>;
   /**
    * Аренда сверки по расписанию (store.ts › lease): синий и зелёный живут вместе при выкладке — сверяет один.
    * Нет — сверяет этот процесс (он один: сервер бота, разработка).
@@ -313,7 +329,7 @@ export class Shop {
   }
 
   /** Маршрут /tg/shop… с проверенным initData. */
-  async route(path: string, init: ShopInit, body: { item?: unknown; mode?: unknown; token?: unknown; id?: unknown; on?: unknown; slot?: unknown; sticker?: unknown }): Promise<ShopReply> {
+  async route(path: string, init: ShopInit, body: { item?: unknown; mode?: unknown; token?: unknown; id?: unknown; on?: unknown; slot?: unknown; sticker?: unknown; fx?: unknown }): Promise<ShopReply> {
     const id = init.user.id;
     const now = (this.d.now ?? Date.now)();
     if (!this.rate.take(String(id), now)) return { status: 429, body: { error: 'rate_limited' } };
@@ -333,6 +349,7 @@ export class Shop {
     if (path === '/shop/my') return this.saveMy(id, body.slot, body.sticker, now);
     if (path === '/shop/my/del') return this.delMy(id, body.slot);
     if (path === '/shop/remind') return this.remindMe(id, now);
+    if (path === '/shop/fx') return this.setFx(id, body.id, body.fx, now);
     return { status: 404, body: { error: 'not_found' } };
   }
 
@@ -365,6 +382,10 @@ export class Shop {
       earned: (u?.items ?? []).filter((i) => i.startsWith('st:')).map((i) => i.slice(3)),
       /** Дневной лимит стикеров за матчи исчерпан — когда снова (мс); null — можно открывать. */
       earnNext: u && earnedToday(u.items, now) >= EARN_PER_DAY && earnable(u.items).length ? nextDay(now) : null,
+      /** Эффекты на стандартных стикерах пака: id → эффект (только купленные). */
+      fx: Object.fromEntries(open.flatMap((s) => { const f = u ? stickerFx(s.id, u.items) : null; return f ? [[s.id, f]] : []; })) as Record<string, EffectId>,
+      /** Купленные эффекты — выбор у стикера и в редакторе своего. */
+      effects: EFFECTS.filter((f) => u?.items.includes(f)),
       /** Игрок нажал «Напомнить» — бот напишет, когда стикеры снова откроются. */
       remind: !!u?.items.some((i) => i.startsWith('remind:') && i.slice(7) > dayKey(now)),
       pending,
@@ -424,6 +445,23 @@ export class Shop {
     });
     if (err) return { status: 409, body: { error: err } };
     this.d.log('info', 'shop_my_saved', { fig: v.fig, pose: v.pose });
+    return { status: 200, body: await this.state(id, true) };
+  }
+
+  /** Эффект на стандартный стикер пака (купленный в гардеробе) или снять (fx: null): бот заменит стикер на месте. */
+  private async setFx(id: number, sticker: unknown, fx: unknown, now: number): Promise<ShopReply> {
+    if (!isStickerId(sticker) || !canDrop(sticker) || !(fx === null || isEffect(fx))) return { status: 400, body: { error: 'bad' } };
+    // каждая смена — новый рисунок на игровом сервере: тот же лимит, что у своих стикеров
+    if (!this.myRate.take(String(id), now)) return { status: 429, body: { error: 'rate' } };
+    this.myRate.sweep(now);
+    const err = await this.edit(id, (u) => {
+      if (!openStickers(u.items).some((s) => s.id === sticker)) return 'locked';
+      if (fx && !u.items.includes(fx)) return 'need_fx';
+      u.items = u.items.filter((i) => !i.startsWith(`fx:${sticker}:`));
+      if (fx) u.items.push(fxMark(sticker, fx));
+      return null;
+    });
+    if (err) return { status: 409, body: { error: err } };
     return { status: 200, body: await this.state(id, true) };
   }
 
@@ -548,13 +586,14 @@ export class Shop {
         const before = new Set(u.issued);
         await this.issueRun(id);
         const after = await this.d.ledger.shopUser(id);
-        const got = fresh.filter((s) => after?.issued.includes(s.id) && !before.has(s.id));
+        const has = (u2: { issued: string[] } | null, id: string) => !!u2?.issued.some((x) => issuedBase(x) === id);
+        const got = fresh.filter((s) => has(after, s.id) && !has({ issued: [...before] }, s.id));
         if (!got.length || !after) return;
         const st = await this.state(id, false);
         const t = DICTS[after.lang].shop;
         const set = got[0].set;
         const inSet = STICKER_LIST.filter((s) => s.set === set);
-        const text = fmt(t.botEarned, { sticker: got.map((s) => `«${t.stickers[s.id].join(' ')}»`).join(', '), n: inSet.filter((s) => after.issued.includes(s.id)).length, of: inSet.length });
+        const text = fmt(t.botEarned, { sticker: got.map((s) => `«${t.stickers[s.id].join(' ')}»`).join(', '), n: inSet.filter((s) => has(after, s.id)).length, of: inSet.length });
         await this.notify(id, after.lang, text, st.pack, true);
       })
       .catch((e: unknown) => this.d.log('warn', 'shop_earn', errFields(e)));
@@ -660,11 +699,11 @@ export class Shop {
     const t = DICTS[u.lang].shop;
     const test = item.id === TEST_ITEM.id;
     const link = await this.d.api<string>('createInvoiceLink', {
-      title: test ? t.test.invoiceTitle : t.invoiceTitle,
-      description: test ? t.test.invoiceText : t.invoiceText,
+      title: test ? t.test.invoiceTitle : t.items[item.id as keyof typeof t.items].title,
+      description: test ? t.test.invoiceText : t.items[item.id as keyof typeof t.items].invoice,
       payload: `${item.id}:${u.userId}`,
       currency: 'XTR',
-      prices: [{ label: test ? t.test.invoiceTitle : t.invoiceTitle, amount: item.stars }],
+      prices: [{ label: test ? t.test.invoiceTitle : t.items[item.id as keyof typeof t.items].title, amount: item.stars }],
     });
     return { status: 200, body: { link } };
   }
@@ -840,7 +879,8 @@ export class Shop {
     // стикеры набора — сразу в пак; сбой Telegram — дошлётся при заходе в гардероб; сообщение — со ссылкой на пак
     await this.issue(u.userId);
     const st = await this.state(u.userId, false);
-    await this.notify(u.userId, u.lang, DICTS[u.lang].shop.botBought, st.pack);
+    const t = DICTS[u.lang].shop;
+    await this.notify(u.userId, u.lang, isEffect(p.item.id) ? fmt(t.botFxBought, { name: t.items[p.item.id].title }) : t.botBought, st.pack);
   }
 
   /**
@@ -899,7 +939,7 @@ export class Shop {
    * опустеть — приманка остаётся. Не вышло (сбой Telegram) — стикер остаётся выданным, ошибка — в журнал.
    */
   private async dropStickers(u: ShopUser, item: string): Promise<number> {
-    const mine = STICKER_LIST.filter((s) => s.set === item && u.issued.includes(s.id));
+    const mine = STICKER_LIST.filter((s) => s.set === item && u.issued.some((x) => issuedBase(x) === s.id));
     if (!mine.length || !u.pack) return 0;
     const bare = (e: string | undefined) => (e ?? '').replace(/\uFE0F/g, '');
     let n = 0;
@@ -908,7 +948,7 @@ export class Shop {
       for (const s of mine) {
         const st = set?.stickers?.find((x) => bare(x.emoji) === bare(s.emoji[0]));
         if (st) await this.d.api('deleteStickerFromSet', { sticker: st.file_id });
-        u.issued = u.issued.filter((id) => id !== s.id);
+        u.issued = u.issued.filter((x) => issuedBase(x) !== s.id);
         n++;
       }
     } catch (e) {
@@ -985,7 +1025,9 @@ export class Shop {
     // один пак на игрока: «Массовка · Имя · @бот» — бесплатные, «за игру», купленные наборы и свои
     const name = `m${id}_by_${bot}`.slice(0, 64);
     const title = fmt(t.packTitle, { name: u.name });
-    const blob = async (e: Entry) => new Blob([new Uint8Array(e.my ? await this.drawMy(e.my) : await readFile(join(this.d.stickersDir, u.lang, `${e.key}.webm`)))], { type: 'video/webm' });
+    const file = (e: Entry) =>
+      e.my ? this.draw({ fig: e.my.fig, pose: e.my.pose, color: e.my.color, text: e.my.text, ...(e.my.fx ? { fx: e.my.fx } : {}) }) : e.fx ? this.draw({ std: e.fx.id, fx: e.fx.fx, lang: u.lang }) : readFile(join(this.d.stickersDir, u.lang, `${e.key}.webm`));
+    const blob = async (e: Entry) => new Blob([new Uint8Array(await file(e))], { type: 'video/webm' });
     const input = (e: Entry, i: number) => ({ sticker: `attach://f${i}`, format: 'video', emoji_list: e.emoji });
     let changed = false;
     // свой стикер, который сейчас положили или заменили: пришлём его в чат — так игрок сразу видит результат,
@@ -1066,9 +1108,9 @@ export class Shop {
     this.failed.delete(id);
   }
 
-  private async drawMy(m: MySticker): Promise<Buffer> {
+  private async draw(job: StickerJob): Promise<Buffer> {
     if (!this.d.drawMy) throw new Error('no_sticker_renderer');
-    return this.d.drawMy({ fig: m.fig, pose: m.pose, color: m.color, text: m.text });
+    return this.d.drawMy(job);
   }
 
   /** Свой стикер — сообщением в чат с ботом (по метке места — первому эмодзи). Не вышло (бот не начат) — не страшно. */

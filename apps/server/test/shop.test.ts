@@ -795,6 +795,53 @@ describe('гардероб', () => {
     expect((await store.shopUser(77))?.issued).toContain('my0.2');
   });
 
+  it('эффекты: купил «Голограмму» — накинул на стикер, бот рисует и заменяет его на месте; снял или вернул звёзды — обратно', async () => {
+    const set = { stickers: [...['👋', '💃', '😵', '🤨', '🎁'].map((e, i) => ({ file_id: `f${i}`, emoji: e }))] };
+    const jobs: unknown[] = [];
+    const { bot, calls, store } = makeBot({ result: (m) => (m === 'getStickerSet' ? set : undefined), drawMy: async (look) => (jobs.push(look), Buffer.from('webm')) });
+    const fx = (id: string, f: string | null) => bot.handle('POST', '/shop/fx', {}, { initData: initData(ANYA), id, fx: f });
+    await played(bot);
+    await bot.handle('POST', '/shop/claim', {}, { initData: initData(ANYA) });
+    await bot.shop.issue(77);
+    // эффект не куплен — нельзя; мусор — 400
+    expect((await fx('hi', 'holo')).body).toEqual({ error: 'need_fx' });
+    expect((await fx('hi', 'glitter')).status).toBe(400);
+    expect((await fx('lure', null)).status).toBe(400);
+    await hook(bot, payment({ invoice_payload: 'holo:77', total_amount: 39, telegram_payment_charge_id: 'ch_holo' }));
+    expect((await store.shopUser(77))?.items).toContain('holo');
+    expect(calls.some((c) => c.method === 'sendMessage' && String(c.body.text).includes('Эффект «Голограмма» твой'))).toBe(true);
+    calls.length = 0;
+    const r = await fx('hi', 'holo');
+    expect(r.status).toBe(200);
+    expect((r.body as { fx: Record<string, string>; effects: string[] }).fx).toEqual({ hi: 'holo' });
+    expect((r.body as { effects: string[] }).effects).toEqual(['holo']);
+    await bot.shop.issue(77);
+    expect(jobs.at(-1)).toEqual({ std: 'hi', fx: 'holo', lang: 'ru' });
+    expect(calls.find((c) => c.method === 'replaceStickerInSet')?.body.old_sticker).toBe('f0');
+    expect((await store.shopUser(77))?.issued).toContain('hi~holo');
+    // снял — снова файл без эффекта
+    calls.length = 0;
+    await fx('hi', null);
+    await bot.shop.issue(77);
+    expect(calls.find((c) => c.method === 'replaceStickerInSet')?.files[0]).toContain('hi.webm');
+    expect((await store.shopUser(77))?.issued).toContain('hi');
+    // свой стикер с эффектом: рисуется с ним; без покупки — нельзя
+    const my = (f?: string) => bot.handle('POST', '/shop/my', {}, { initData: initData(ANYA), sticker: { fig: 'actor', pose: 'wave', color: 0, caption: 'Эй', fx: f } });
+    expect((await my('noir')).body).toEqual({ error: 'locked' });
+    expect((await my('holo')).status).toBe(200);
+    await bot.shop.issue(77);
+    expect(jobs.at(-1)).toMatchObject({ fig: 'actor', fx: 'holo' });
+    // вернул звёзды за эффект — стикер снова без эффекта
+    await fx('dance', 'holo');
+    await bot.shop.issue(77);
+    expect((await store.shopUser(77))?.issued).toContain('dance~holo');
+    const u = (await store.shopUser(77))!;
+    await store.saveShopUser({ ...u, items: u.items.filter((i) => i !== 'holo') });
+    await bot.shop.issue(77);
+    expect((await store.shopUser(77))?.issued).toContain('dance');
+    expect((await store.shopUser(77))?.issued).not.toContain('dance~holo');
+  });
+
   it('стикер, убранный из набора («Я не плачу», 27.11), уходит и из выданного пака', async () => {
     const inPack = [{ file_id: 'F_cry', emoji: '😭' }, { file_id: 'F_banana', emoji: '🍌' }];
     const { bot, calls, store } = makeBot({ result: (m) => (m === 'getStickerSet' ? { stickers: inPack } : undefined) });

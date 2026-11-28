@@ -7,21 +7,26 @@ import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { myDef } from '../../web/src/game/skins/my-sticker';
-import { stickerFile } from '../../web/src/game/skins/stickers';
+import { withFx } from '../../web/src/game/skins/shine';
+import { STICKERS, stickerFile } from '../../web/src/game/skins/stickers';
 import { warmRender } from './film-render';
-import type { MyLook } from './sticker-render';
+import type { StickerJob } from './sticker-render';
 
 const MAX_BYTES = 256 * 1024;
 const FRAMES = 20;
 
 /** Нарисовать и закодировать: 20 кадров 512×512 → WEBM VP9 с прозрачностью, ≤ 256 КБ. */
-export async function renderMyWebm(s: MyLook, o: { fonts: string; ffmpeg?: string; tmp?: string }): Promise<Buffer> {
+export async function renderMyWebm(s: StickerJob, o: { fonts: string; ffmpeg?: string; tmp?: string }): Promise<Buffer> {
   await warmRender({ fonts: o.fonts });
   const dir = await mkdtemp(join(o.tmp ?? tmpdir(), 'my-sticker-'));
   try {
-    const def = myDef(s);
+    // свой стикер (эффект — внутри myDef) или стандартный стикер пака с эффектом
+    const std = 'std' in s ? STICKERS.find((x) => x.id === s.std) : null;
+    if ('std' in s && !std) throw new Error('bad_sticker');
+    const def = std && 'std' in s ? withFx(std, s.fx) : myDef(s as Exclude<StickerJob, { std: unknown }>);
+    const lang = 'std' in s ? s.lang : 'ru';
     for (let t = 0; t < FRAMES; t++) {
-      const c = stickerFile(def, t, 'ru') as unknown as { encode(f: 'png'): Promise<Buffer> };
+      const c = stickerFile(def, t, lang) as unknown as { encode(f: 'png'): Promise<Buffer> };
       await writeFile(join(dir, `${String(t).padStart(2, '0')}.png`), await c.encode('png'));
     }
     const file = join(dir, 'out.webm');

@@ -402,6 +402,10 @@ button.summary { color: var(--sand); cursor: pointer; }
 .stickers-holo img { width: 2400%; height: 100%; max-width: none; image-rendering: pixelated; animation: stickers-holo 2.4s steps(24) infinite; }
 @keyframes stickers-holo { to { transform: translateX(-100%); } }
 @media (prefers-reduced-motion: reduce) { .stickers-holo img { animation: none; } }
+/* выбор эффекта — одной строкой, листается вбок (эффектов может быть много, экран не должен расти) */
+.stickers-fx { flex-wrap: nowrap; overflow-x: auto; justify-content: flex-start; padding: 2px; touch-action: pan-x; scrollbar-width: none; }
+.stickers-fx::-webkit-scrollbar { display: none; }
+.stickers-fx button { flex: 0 0 auto; }
 
 /* «Значки» (/badges): список значков для эмодзи-статуса, экран без прокрутки */
 .badges .btn { gap: 10px; }

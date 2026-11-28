@@ -3,16 +3,16 @@
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { DICTS, MY_COLORS, MY_FIGS, MY_MAX, MY_POSES, STICKER_LIST, THEME_RULES, canDrop, fmt, myCaption } from '@kto/game-core';
-import type { Lang, MyFig, MyPose, MySticker, ShopItemId, StickerMeta } from '@kto/game-core';
+import type { EffectId, Lang, MyFig, MyPose, MySticker, ShopItemId, StickerMeta } from '@kto/game-core';
 import { PAL } from '@kto/assets';
 import { track } from '@/lib/analytics';
 import { detectLang } from '@/lib/lang';
-import { bootTelegram, haptic, linkTelegramOnce, openTelegram, shopClaim, shopMy, shopMyDel, shopPick, shopRemind, shopCached, shopSignedIn, shopState, tgLink } from '@/lib/telegram';
+import { bootTelegram, haptic, linkTelegramOnce, openTelegram, shopClaim, shopMy, shopMyDel, shopFx, shopPick, shopRemind, shopCached, shopSignedIn, shopState, tgLink } from '@/lib/telegram';
 import type { ShopState } from '@/lib/telegram';
 import { TopBar } from '@/ui/TopBarView';
 import { ST_SIZE, STICKERS, stickerFrame } from '@/game/skins/stickers';
-import { drawMy, myDef } from '@/game/skins/my-sticker';
-import { holoStrip } from '@/game/skins/shine';
+import { myDef } from '@/game/skins/my-sticker';
+import { holoStrip, withFx } from '@/game/skins/shine';
 import type { MyLook } from '@/game/skins/my-sticker';
 import { loadAllThemes } from '@/game/themes';
 
@@ -35,8 +35,9 @@ interface Draft {
   pose: MyPose;
   color: number;
   caption: string;
+  fx: EffectId | null;
 }
-const NEW_DRAFT: Draft = { slot: null, fig: 'actor', pose: 'wave', color: 1, caption: '' };
+const NEW_DRAFT: Draft = { slot: null, fig: 'actor', pose: 'wave', color: 1, caption: '', fx: null };
 
 const png = (c: HTMLCanvasElement) => c.toDataURL('image/png');
 const themeName = (lang: Lang, id: string) => DICTS[lang].themes[THEME_RULES.findIndex((r) => r.id === id)] ?? id;
@@ -49,8 +50,6 @@ const themeName = (lang: Lang, id: string) => DICTS[lang].themes[THEME_RULES.fin
 /** Канал игры — если сервер бота старый и не прислал ссылку. */
 const CHANNEL = 'https://t.me/benobody_app';
 
-/** Стикеры платных наборов (не стартовый пак и не «за игру») — с голограммой. */
-const PAID = new Set<string>(STICKER_LIST.filter((m) => m.set !== 'starter' && m.set !== 'play').map((m) => m.id));
 
 export default function StickersClient() {
   const router = useRouter();
@@ -73,8 +72,8 @@ export default function StickersClient() {
   }, [earnNext]);
   const [tab, setTab] = useState<Tab>('pack');
   const [pics, setPics] = useState<Record<string, string>>({});
-  // платные стикеры (из купленных наборов) переливаются голограммой — лента кадров для CSS-анимации
-  const [holo, setHolo] = useState<Record<string, string>>({});
+  // стикеры с эффектом (товар «Эффекты»): голограмма — лента кадров для CSS-анимации, нуар — картинка
+  const [fxPics, setFxPics] = useState<Record<string, string>>({});
   const [figPics, setFigPics] = useState<Record<string, string>>({});
   const [note, setNote] = useState('');
   const [sel, setSel] = useState<string | null>(null);
@@ -96,7 +95,7 @@ export default function StickersClient() {
   const hasPack = !!st?.items.includes('pack');
   const cap = myCaption(draft.caption);
   const capErr = 'error' in cap ? b.errors[cap.error] : '';
-  lookRef.current = { fig: draft.fig, pose: draft.pose, color: draft.color, text: 'error' in cap ? lookRef.current.text : cap.lines };
+  lookRef.current = { fig: draft.fig, pose: draft.pose, color: draft.color, text: 'error' in cap ? lookRef.current.text : cap.lines, ...(draft.fx ? { fx: draft.fx } : {}) };
 
   useEffect(() => {
     const l = detectLang();
@@ -116,7 +115,6 @@ export default function StickersClient() {
       // костюмы тем — для стикеров «за игру» и героев площадок
       await loadAllThemes(20000).catch(() => undefined);
       setPics(Object.fromEntries(STICKERS.map((x) => [x.id, png(stickerFrame(x, 5, l))])));
-      setHolo(Object.fromEntries(STICKERS.filter((x) => PAID.has(x.id)).map((x) => [x.id, png(holoStrip(stickerFrame(x, 5, l), 3))])));
       setFigPics(Object.fromEntries(MY_FIGS.map((f) => [f.id, png(stickerFrame(myDef({ fig: f.id, pose: 'wave', color: 0, text: [] }), 0, l))])));
       if (tgNow) {
         await bootTelegram();
@@ -219,7 +217,7 @@ export default function StickersClient() {
       last = f;
       g.setTransform(1, 0, 0, 1, 0, 0);
       g.clearRect(0, 0, c.width, c.height);
-      g.drawImage(stickerFrame({ draw: (q, tt) => drawMy(q, lookRef.current, tt) }, f, lang), 0, 0, c.width, c.height);
+      g.drawImage(stickerFrame(myDef(lookRef.current), f, lang), 0, 0, c.width, c.height);
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
@@ -262,6 +260,30 @@ export default function StickersClient() {
         })
       : null;
 
+  // картинки стикеров с эффектом — по мере того, как эффекты появляются в ответах бота
+  const fxKey = JSON.stringify(st?.fx ?? {});
+  useEffect(() => {
+    if (!ready) return;
+    const want = Object.entries(st?.fx ?? {}).map(([id, fx]) => `${id}:${fx}`).filter((k) => !fxPics[k]);
+    if (!want.length) return;
+    const add: Record<string, string> = {};
+    for (const k of want) {
+      const [id, fx] = k.split(':') as [string, EffectId];
+      const def = STICKERS.find((x) => x.id === id);
+      if (!def) continue;
+      add[k] = png(fx === 'holo' ? holoStrip(stickerFrame(def, 5, lang), 3) : stickerFrame(withFx(def, fx), 5, lang));
+    }
+    setFxPics((p) => ({ ...p, ...add }));
+  }, [ready, fxKey, lang]);
+
+  const setFx = async (id: string, fx: EffectId | null) => {
+    if (busy) return;
+    setBusy(true);
+    haptic('light');
+    if (apply(await shopFx(id, fx))) setNote(b.syncing);
+    setBusy(false);
+  };
+
   const remindMe = async () => {
     if (busy) return;
     setBusy(true);
@@ -296,7 +318,7 @@ export default function StickersClient() {
 
   const editMy = (m: MySticker | null) => {
     setSel(null);
-    setDraft(m ? { slot: m.slot, fig: m.fig, pose: m.pose, color: m.color, caption: m.text.join(' ') } : NEW_DRAFT);
+    setDraft(m ? { slot: m.slot, fig: m.fig, pose: m.pose, color: m.color, caption: m.text.join(' '), fx: m.fx ?? null } : NEW_DRAFT);
     setNote('');
     setTab('make');
   };
@@ -318,7 +340,7 @@ export default function StickersClient() {
     setBusy(true);
     setNote(b.syncing);
     track('stickers_my', { fig: draft.fig, pose: draft.pose, edit: draft.slot !== null });
-    const ok = apply(await shopMy({ fig: draft.fig, pose: draft.pose, color: draft.color, caption: draft.caption }, draft.slot ?? undefined));
+    const ok = apply(await shopMy({ fig: draft.fig, pose: draft.pose, color: draft.color, caption: draft.caption, ...(draft.fx ? { fx: draft.fx } : {}) }, draft.slot ?? undefined));
     setBusy(false);
     if (ok) {
       haptic('success');
@@ -425,10 +447,12 @@ export default function StickersClient() {
                   const cls = ['stickers-tile', !isOpen ? 'locked' : isOff ? 'off' : 'in', sel === m.id ? 'sel' : ''].join(' ');
                   return (
                     <button key={m.id} className={cls} onClick={() => void tapSticker(m)} aria-label={t.stickers[m.id].join(' ')} aria-pressed={isOpen && !isOff}>
-                      {isOpen && !isOff && holo[m.id] ? (
+                      {isOpen && st?.fx?.[m.id] === 'holo' && fxPics[`${m.id}:holo`] ? (
                         <span className="stickers-holo">
-                          <img src={holo[m.id]} alt="" />
+                          <img src={fxPics[`${m.id}:holo`]} alt="" />
                         </span>
+                      ) : isOpen && st?.fx?.[m.id] && fxPics[`${m.id}:${st.fx[m.id]}`] ? (
+                        <img src={fxPics[`${m.id}:${st.fx[m.id]}`]} alt="" />
                       ) : (
                         pics[m.id] && <img src={pics[m.id]} alt="" />
                       )}
@@ -473,6 +497,19 @@ export default function StickersClient() {
                   fmt(b.myFull, { n: MY_MAX })
                 ))}
             </p>
+            {/* эффект выбранного стикера — из купленных в гардеробе */}
+            {selMeta && open.has(selMeta.id) && !off.has(selMeta.id) && canDrop(selMeta.id) && !!st?.effects?.length && (
+              <div className="stickers-row stickers-poses stickers-fx" role="radiogroup" aria-label={b.fx}>
+                {[null, ...st.effects].map((fx) => {
+                  const on = (st.fx?.[selMeta.id] ?? null) === fx;
+                  return (
+                    <button key={fx ?? 'none'} role="radio" aria-checked={on} className={on ? 'on' : ''} aria-disabled={busy} onClick={() => !on && void setFx(selMeta.id, fx)}>
+                      {fx ? t.items[fx].title : b.fxNone}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
             {buyItem ? (
               // закрытый стикер набора из гардероба — сразу покупка этого набора
               <button className="btn small" onClick={() => toShop(buyItem)}>
@@ -542,6 +579,15 @@ export default function StickersClient() {
                 <button key={c} role="radio" aria-checked={draft.color === i} aria-label={c} className={draft.color === i ? 'on' : ''} style={{ background: PAL[c] }} onClick={() => setDraft((d) => ({ ...d, color: i }))} />
               ))}
             </div>
+            {!!st?.effects?.length && (
+              <div className="stickers-row stickers-poses stickers-fx" role="radiogroup" aria-label={b.fx}>
+                {[null, ...st.effects].map((fx) => (
+                  <button key={fx ?? 'none'} role="radio" aria-checked={draft.fx === fx} className={draft.fx === fx ? 'on' : ''} onClick={() => setDraft((d) => ({ ...d, fx }))}>
+                    {fx ? t.items[fx].title : b.fxNone}
+                  </button>
+                ))}
+              </div>
+            )}
             <input
               className="stickers-input"
               value={draft.caption}

@@ -23,9 +23,37 @@ export interface ShopItem {
   was?: number;
   /** Ярлык «НОВОЕ» на витрине и точка на ячейке в списке. */
   isNew?: boolean;
+  /** Эффект стикеров (не набор): накидывается на любой стикер пака (`fx:<стикер>:<эффект>`, у своих — поле `fx`). */
+  effect?: boolean;
 }
 
-export const SHOP_ITEMS: ShopItem[] = [{ id: 'kotBanan', stars: 49, was: 99, isNew: true }];
+export const SHOP_ITEMS: ShopItem[] = [
+  { id: 'kotBanan', stars: 49, was: 99, isNew: true },
+  // эффекты — от простых к самым эффектным (цены — решение владельца 28.11.2026, минимум 19)
+  { id: 'gold', stars: 39, isNew: true, effect: true },
+  { id: 'holo', stars: 39, isNew: true, effect: true },
+  { id: 'fire', stars: 35, isNew: true, effect: true },
+  { id: 'vhs', stars: 29, isNew: true, effect: true },
+  { id: 'noir', stars: 25, isNew: true, effect: true },
+  { id: 'sepia', stars: 19, isNew: true, effect: true },
+  { id: 'ice', stars: 19, isNew: true, effect: true },
+];
+
+/** Эффекты стикеров — товары гардероба категории «Эффекты» (решение владельца 28.11.2026). */
+export const EFFECTS = ['gold', 'holo', 'fire', 'vhs', 'noir', 'sepia', 'ice'] as const satisfies readonly ShopItemId[];
+export type EffectId = (typeof EFFECTS)[number];
+export const isEffect = (x: unknown): x is EffectId => EFFECTS.includes(x as EffectId);
+/** Отметка в учёте: на стандартный стикер `id` накинут эффект `fx`. */
+export const fxMark = (id: StickerId, fx: EffectId) => `fx:${id}:${fx}`;
+/** Эффект стандартного стикера: отмечен и куплен (вернул звёзды — стикер снова без эффекта). */
+export function stickerFx(id: StickerId, items: readonly string[]): EffectId | null {
+  return EFFECTS.find((fx) => items.includes(fxMark(id, fx)) && items.includes(fx)) ?? null;
+}
+/** Запись в `issued` стандартного стикера: `aaa` или с эффектом — `aaa~holo`. */
+export const fxIssued = (id: StickerId, fx: EffectId | null) => (fx ? `${id}~${fx}` : id);
+export const FX_ISSUED = /^([A-Za-z]{1,24})~([a-z]{2,8})$/;
+/** Какой стикер за записью `issued` (`aaa~holo` → `aaa`). */
+export const issuedBase = (x: string) => x.split('~')[0];
 
 export interface StickerMeta {
   id: StickerId;
@@ -243,6 +271,8 @@ export interface MySticker {
   text: string[];
   /** Номер правки: изменился — бот заменяет стикер в паке на месте. */
   rev: number;
+  /** Эффект (купленный в гардеробе); нет — без эффекта. */
+  fx?: EffectId;
 }
 
 /** Открыта ли фигурка игроку с такими предметами (items из учёта гардероба). */
@@ -329,9 +359,13 @@ export function parseMySticker(x: unknown, items: readonly string[]): Omit<MySti
   const color = typeof v.color === 'number' && Number.isInteger(v.color) && v.color >= 0 && v.color < MY_COLORS.length ? v.color : -1;
   if (!fig || !pose || color < 0) return { error: 'bad' };
   if (!myFigOpen(fig, items)) return { error: 'locked' };
+  // эффект — только купленный
+  const fx = v.fx === undefined || v.fx === null ? undefined : isEffect(v.fx) ? v.fx : null;
+  if (fx === null) return { error: 'bad' };
+  if (fx && !items.includes(fx)) return { error: 'locked' };
   const cap = myCaption(v.caption ?? '');
   if ('error' in cap) return cap;
-  return { fig, pose, color, text: cap.lines };
+  return { fig, pose, color, text: cap.lines, ...(fx ? { fx } : {}) };
 }
 
 /** Проверка уже сохранённого своего стикера (учёт по туннелю: всё, что пришло по сети, — снова проверяем). */
@@ -341,6 +375,7 @@ export function isMySticker(x: unknown): x is MySticker {
   if (!Number.isInteger(v.slot) || v.slot < 0 || v.slot >= MY_MAX || !Number.isInteger(v.rev) || v.rev < 0 || v.rev > 1e6) return false;
   if (!MY_FIGS.some((f) => f.id === v.fig) || !MY_POSES.includes(v.pose) || !Number.isInteger(v.color) || v.color < 0 || v.color >= MY_COLORS.length) return false;
   if (!Array.isArray(v.text) || v.text.length > MY_LINES) return false;
+  if (v.fx !== undefined && !isEffect(v.fx)) return false;
   const cap = myCaption(v.text.join(' '));
   return !('error' in cap) && cap.lines.join(' ') === v.text.join(' ');
 }
