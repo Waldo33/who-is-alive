@@ -131,9 +131,10 @@ export type EarnId =
 /** Порядок — порядок в паке. Индексы не уходят в сеть: стикер называют по id. */
 export const STICKER_LIST: StickerMeta[] = [
   { id: 'hi', set: 'starter', emoji: ['👋'], now: true },
-  { id: 'dance', set: 'starter', emoji: ['💃', '🕺'], now: true },
-  { id: 'oops', set: 'starter', emoji: ['😵', '💫'], now: true },
-  { id: 'who', set: 'starter', emoji: ['🤨', '👀'], now: true },
+  // остальные стартовые — по одному за следующие матчи (решение владельца 28.11.2026; у забравших пак раньше — все сразу, см. STARTER_DRIP)
+  { id: 'dance', set: 'starter', emoji: ['💃', '🕺'], now: false, earn: 'played' },
+  { id: 'oops', set: 'starter', emoji: ['😵', '💫'], now: false, earn: 'played' },
+  { id: 'who', set: 'starter', emoji: ['🤨', '👀'], now: false, earn: 'played' },
   { id: 'lure', set: 'starter', emoji: ['🎁', '🎬'], now: true, lure: true },
   { id: 'justBanana', set: 'kotBanan', emoji: ['🍌', '😅'], now: true },
   { id: 'splat', set: 'kotBanan', emoji: ['🫠', '💫'], now: false, earn: 'cut' },
@@ -179,6 +180,13 @@ export const TEST_ITEM = { id: 'test', stars: 1 } as const;
 export type BuyItem = ShopItem | typeof TEST_ITEM;
 /** Что можно купить: набор витрины или проверочная покупка. */
 export const buyItem = (id: unknown): BuyItem | undefined => (id === TEST_ITEM.id ? TEST_ITEM : shopItem(id));
+/**
+ * Отметка в учёте: бесплатный пак забран после 28.11.2026 — стартовые стикеры, кроме «Привет!», открываются по одному
+ * за матч (`st:<id>`). У забравших раньше её нет — у них все стартовые открыты сразу.
+ */
+export const STARTER_DRIP = 'drip';
+/** Стартовый стикер открыт: сразу (`now`), у старых паков — все, у новых — когда открыт в матче. */
+export const starterOpen = (s: Pick<StickerMeta, 'id' | 'now'>, items: readonly string[]) => s.now || !items.includes(STARTER_DRIP) || items.includes(`st:${s.id}`);
 export const isStickerId = (id: unknown): id is StickerId => STICKER_LIST.some((s) => s.id === id);
 
 /** Итоги дубля, которых хватает для `earnedEvents` (RoundSummary целиком или запись матча). */

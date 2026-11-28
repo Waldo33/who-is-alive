@@ -63,6 +63,10 @@ const SUPPORT = '-5387784292';
 const ANYA = { id: 77, first_name: 'Аня @spam', language_code: 'ru' };
 /** Сервер засчитал игроку сыгранный матч (бесплатный пак — после матча и подписки на канал). */
 const played = (bot: Bot, id = 77) => bot.shop.earn({ users: [{ tgUser: id, name: 'Аня @spam', lang: 'ru', stickers: [] }] });
+/** Стартовые стикеры бесплатного пака открываются по одному за матч: три матча — открыты все. */
+const openStarters = async (bot: Bot, id = 77) => {
+  for (let i = 0; i < 3; i++) await bot.shop.earn({ users: [{ tgUser: id, name: 'Аня @spam', lang: 'ru', stickers: ['dance', 'oops', 'who'] }] });
+};
 const hook = (bot: Bot, upd: unknown) => bot.handle('POST', '/hook', { 'x-telegram-bot-api-secret-token': bot.hookSecret }, upd);
 const payment = (over: Record<string, unknown> = {}) => ({
   message: {
@@ -79,13 +83,14 @@ describe('гардероб', () => {
     calls.length = 0;
     const r = await bot.handle('POST', '/shop/claim', {}, { initData: initData(ANYA) });
     expect(r.status).toBe(200);
-    expect(r.body).toMatchObject({ items: ['starter', 'pack'], pack: 'https://t.me/addstickers/m77_by_be_nobody_bot', issued: 5, wanted: 5 });
+    expect(r.body).toMatchObject({ items: ['starter', 'pack'], pack: 'https://t.me/addstickers/m77_by_be_nobody_bot', issued: 2, wanted: 2 });
     const create = calls.filter((c) => c.method === 'createNewStickerSet');
     expect(create).toHaveLength(1);
     // имя без @: подпись пака уходит в Telegram
     expect(create[0].body.title).toBe('Массовка · Аня spam · @be_nobody_bot');
-    expect((create[0].body.stickers as { format: string }[]).map((s) => s.format)).toEqual(['video', 'video', 'video', 'video', 'video']);
-    expect(create[0].files.map((f) => f.split(':')[1])).toEqual(['hi.webm', 'dance.webm', 'oops.webm', 'who.webm', 'lure~vhs.webm']);
+    expect((create[0].body.stickers as { format: string }[]).map((s) => s.format)).toEqual(['video', 'video']);
+    // сразу — «Привет!» и приманка, остальные стартовые — по одному за следующие матчи
+    expect(create[0].files.map((f) => f.split(':')[1])).toEqual(['hi.webm', 'lure~vhs.webm']);
     expect(calls.some((c) => c.method === 'sendMessage' && String(c.body.text).includes('стикерпак'))).toBe(true);
 
     calls.length = 0;
@@ -253,13 +258,13 @@ describe('гардероб', () => {
     await played(bot);
     calls.length = 0;
     await hook(bot, { message: { chat: { id: 77, type: 'private' }, from: ANYA, text: '/start stickers' } });
-    expect((await store.shopUser(77))?.issued).toHaveLength(5);
+    expect((await store.shopUser(77))?.issued).toHaveLength(2);
     calls.length = 0;
     await hook(bot, payment());
     // свой пак уже есть — стикеры набора сразу в него, без вопросов
     expect(calls.filter((c) => c.method === 'createNewStickerSet')).toHaveLength(0);
     expect(calls.filter((c) => c.method === 'addStickerToSet').map((c) => c.body.name)).toEqual(['m77_by_be_nobody_bot', 'm77_by_be_nobody_bot']);
-    expect((await store.shopUser(77))?.issued).toHaveLength(7);
+    expect((await store.shopUser(77))?.issued).toHaveLength(4);
     expect(calls.find((c) => c.method === 'setStickerPositionInSet')?.body).toEqual({ sticker: 'lure_id', position: 6 });
     // старая кнопка «Новый пак» из прошлого сообщения — ничего не создаёт
     calls.length = 0;
@@ -278,7 +283,7 @@ describe('гардероб', () => {
     await hook(bot, { callback_query: { id: 'cb', from: ANYA, data: 'pk:in:kotBanan' } });
     await hook(bot, { callback_query: { id: 'cb', from: ANYA, data: 'pk:own:kotBanan' } });
     await bot.handle('POST', '/shop/claim', {}, { initData: initData(ANYA) });
-    expect((await store.shopUser(77))?.issued).toEqual(['hi', 'dance', 'oops', 'who', 'lure~vhs']);
+    expect((await store.shopUser(77))?.issued).toEqual(['hi', 'lure~vhs']);
     expect(calls.flatMap((c) => c.files).some((f) => /aaa|justBanana/.test(f))).toBe(false);
   });
 
@@ -372,14 +377,14 @@ describe('гардероб', () => {
     const { bot, calls } = makeBot({ fail: (m) => (m === 'createNewStickerSet' && down ? 'Bad Request: PEER_ID_INVALID' : null) });
     await played(bot);
     const r = await bot.handle('POST', '/shop/claim', {}, { initData: initData(ANYA) });
-    expect(r.body).toMatchObject({ pack: null, issued: 0, wanted: 5, error: 'need_bot' });
+    expect(r.body).toMatchObject({ pack: null, issued: 0, wanted: 2, error: 'need_bot' });
     down = false;
     calls.length = 0;
     await bot.handle('POST', '/shop', {}, { initData: initData(ANYA) });
     await new Promise((res) => setTimeout(res, 50));
     expect(calls.filter((c) => c.method === 'createNewStickerSet')).toHaveLength(1);
     const st = await bot.handle('POST', '/shop', {}, { initData: initData(ANYA) });
-    expect(st.body).toMatchObject({ issued: 5, error: null });
+    expect(st.body).toMatchObject({ issued: 2, error: null });
   });
 
   it('оплата не записалась (учёт недоступен) — вебхук не 200, Telegram повторит', async () => {
@@ -708,7 +713,7 @@ describe('гардероб', () => {
     // подписался — пак; второй матч ничего не предлагает
     status = 'member';
     await hook(bot, { callback_query: { id: 'cb', from: ANYA, data: 'free:claim' } });
-    expect((await store.shopUser(77))?.issued).toHaveLength(5);
+    expect((await store.shopUser(77))?.issued).toHaveLength(2);
     calls.length = 0;
     await played(bot);
     expect(calls.filter((c) => c.method === 'sendMessage')).toHaveLength(0);
@@ -725,7 +730,7 @@ describe('гардероб', () => {
     const { bot, store } = makeBot({ fail: (m) => (m === 'getChatMember' ? 'Bad Request: member list is inaccessible' : null) });
     await played(bot);
     await bot.handle('POST', '/shop/claim', {}, { initData: initData(ANYA) });
-    expect((await store.shopUser(77))?.issued).toHaveLength(5);
+    expect((await store.shopUser(77))?.issued).toHaveLength(2);
   });
 
   it('стикеры «за игру» — в свой пак, когда открыты в матче (и только открытые)', () => {
@@ -740,6 +745,7 @@ describe('гардероб', () => {
     const { bot, calls, store } = makeBot({ result: (m) => (m === 'getStickerSet' ? set : undefined) });
     await played(bot);
     await bot.handle('POST', '/shop/claim', {}, { initData: initData(ANYA) });
+    await openStarters(bot);
     const pick = (id: string, on: unknown) => bot.handle('POST', '/shop/pick', {}, { initData: initData(ANYA), id, on });
     calls.length = 0;
     const r = await pick('dance', false);
@@ -871,6 +877,7 @@ describe('гардероб', () => {
     await bot.shop.issue(77);
     expect(jobs.at(-1)).toMatchObject({ fig: 'actor', fx: 'holo' });
     // вернул звёзды за эффект — стикер снова без эффекта
+    await openStarters(bot);
     await fx('dance', 'holo');
     await bot.shop.issue(77);
     expect((await store.shopUser(77))?.issued).toContain('dance~holo');
