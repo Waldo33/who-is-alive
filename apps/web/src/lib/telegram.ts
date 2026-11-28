@@ -547,7 +547,7 @@ export function shopPick(id: StickerId, on: boolean) {
 }
 
 /** Свой стикер: новый (slot нет) или правка места slot. Рисует и кладёт в пак бот. */
-export function shopMy(sticker: { fig: MyFig; pose: string; color: number; caption: string; fx?: EffectId }, slot?: number) {
+export function shopMy(sticker: { fig: MyFig; pose: string; color: number; caption: string; top?: string; fx?: EffectId }, slot?: number) {
   return botCall<ShopState>('/shop/my', { sticker, slot });
 }
 

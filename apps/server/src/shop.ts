@@ -484,7 +484,7 @@ export class Shop {
       // новое место сверх открытых — нельзя (правка уже сделанного — можно всегда)
       if (!my.some((m) => m.slot === slot) && my.length >= mySlots(u.items)) return 'full';
       const old = my.find((m) => m.slot === slot);
-      if (old && old.fig === v.fig && old.pose === v.pose && old.color === v.color && old.text.join('\n') === v.text.join('\n')) return null;
+      if (old && old.fig === v.fig && old.pose === v.pose && old.color === v.color && old.text.join('\n') === v.text.join('\n') && (old.top ?? '') === (v.top ?? '')) return null;
       // номер правки растёт и через удаление: убрал стикер и сразу сделал новый в той же ячейке, пока бот не
       // успел убрать старый из пака, — иначе новый получил бы тот же ключ (my0.1) и бот счёл бы его уже выданным
       const was = Math.max(old?.rev ?? 0, ...u.issued.filter((x) => MY_ISSUED.exec(x)?.[1] === String(slot)).map((x) => Number(x.split('.')[1]) || 0));
@@ -1126,7 +1126,7 @@ export class Shop {
     const name = `m${id}_by_${bot}`.slice(0, 64);
     const title = fmt(t.packTitle, { name: u.name });
     const file = (e: Entry) =>
-      e.my ? this.draw({ fig: e.my.fig, pose: e.my.pose, color: e.my.color, text: e.my.text, ...(e.my.fx ? { fx: e.my.fx } : {}) }) : e.std ? readFile(join(this.d.stickersDir, u.lang, `${e.key}.webm`)).catch(() => this.draw({ std: e.std!.id, fx: e.std!.fx, color: e.std!.color, lang: u.lang })) : readFile(join(this.d.stickersDir, u.lang, `${e.key}.webm`));
+      e.my ? this.draw({ fig: e.my.fig, pose: e.my.pose, color: e.my.color, text: e.my.text, ...(e.my.top ? { top: e.my.top } : {}), ...(e.my.fx ? { fx: e.my.fx } : {}) }) : e.std ? readFile(join(this.d.stickersDir, u.lang, `${e.key}.webm`)).catch(() => this.draw({ std: e.std!.id, fx: e.std!.fx, color: e.std!.color, lang: u.lang })) : readFile(join(this.d.stickersDir, u.lang, `${e.key}.webm`));
     const blob = async (e: Entry) => new Blob([new Uint8Array(await file(e))], { type: 'video/webm' });
     const input = (e: Entry, i: number) => ({ sticker: `attach://f${i}`, format: 'video', emoji_list: e.emoji });
     let changed = false;

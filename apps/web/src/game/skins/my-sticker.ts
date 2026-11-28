@@ -17,7 +17,7 @@ import { sheetsOf, themeActor } from './stickers-play';
  * (`loadAllThemes` до рисования).
  */
 
-export type MyLook = Pick<MySticker, 'fig' | 'pose' | 'color' | 'text' | 'fx'>;
+export type MyLook = Pick<MySticker, 'fig' | 'pose' | 'color' | 'text' | 'top' | 'fx'>;
 
 const MID = ST_SIZE / 2;
 /** Кадры человечка по позе на шаге t (100 мс). */
@@ -55,8 +55,9 @@ function figure(fig: MyFig, pose: MyPose, t: number): { fr: HTMLCanvasElement; k
 export function drawMy(g: Ctx, s: MyLook, t: number): void {
   const col = PAL[MY_COLORS[s.color] ?? 'white'];
   const lines = s.text.slice(0, 2);
-  // без подписи фигурка ниже и по центру; с двумя строками — выше
-  const top = lines.length === 0 ? 20 : lines.length === 1 ? 12 : 6;
+  const head = s.top ?? '';
+  // без подписи фигурка ниже и по центру; с двумя строками — выше; строка сверху сдвигает фигурку вниз
+  const top = head ? (lines.length === 2 ? 14 : 16) : lines.length === 0 ? 20 : lines.length === 1 ? 12 : 6;
   const { fr, k, dx, dy, flip } = figure(s.fig, s.pose, t);
   const w = fr.width * k;
   const x = Math.round(MID - w / 2 + dx);
@@ -80,8 +81,10 @@ export function drawMy(g: Ctx, s: MyLook, t: number): void {
   }
   // украшение позы цветом подписи
   if (s.pose === 'stun') orbit(g, MID, top + 2, t);
-  if (s.pose === 'startle' && Math.floor(t / 5) % 2 === 0) say(g, '!', 82, top - 4, col, 2);
-  if (s.pose === 'ask' && Math.floor(t / 5) % 2 === 0) say(g, '?', 82, top - 4, col, 2);
+  // «!» и «?» над головой; под верхней строкой — чуть ниже, чтобы не налезали на неё
+  const mark = head ? top + 2 : top - 4;
+  if (s.pose === 'startle' && Math.floor(t / 5) % 2 === 0) say(g, '!', 82, mark, col, 2);
+  if (s.pose === 'ask' && Math.floor(t / 5) % 2 === 0) say(g, '?', 82, mark, col, 2);
   if (s.pose === 'dance' || s.pose === 'jump') for (const [sx, sy, ph] of [[12, top + 8, 0], [84, top + 4, 1], [10, top + 44, 1], [86, top + 40, 0]]) if ((Math.floor(t / 3) + ph) % 2) star(g, sx, sy, col);
   if (s.pose === 'wave' && t % 10 < 5) {
     // «привет» — штрихи у поднятой руки
@@ -90,6 +93,7 @@ export function drawMy(g: Ctx, s: MyLook, t: number): void {
   }
   const y0 = lines.length === 2 ? 76 : 84;
   lines.forEach((ln, i) => say(g, ln, MID, y0 + i * 10, col));
+  if (head) say(g, head, MID, 2, col);
 }
 
 /** Как стикер пака (для stickerFrame / stickerFile в stickers.ts). */
