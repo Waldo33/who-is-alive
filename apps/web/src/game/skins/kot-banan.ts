@@ -1,7 +1,7 @@
 import { PAL } from '@kto/assets';
 import { BASE_MAP } from '../themes/base';
-import type { CharStyle, View } from '../themes/types';
-import { CH_H, CH_W, makeCharacterSheets } from '../sprites';
+import type { Arms, CharStyle, Face, Legs, View } from '../themes/types';
+import { CH_H, CH_W, frameSpec, makeCharacterSheets } from '../sprites';
 import type { CharSheets } from '../sprites';
 import { canvas, outlineOf } from '../pixels';
 import type { Ctx } from '../pixels';
@@ -37,6 +37,51 @@ const CAT: CharStyle = {
     }
   },
 };
+
+/**
+ * Лапки: серые, со светлыми подушечками, растут из кожуры под мордочкой. Шаблон — левая (для смотрящего)
+ * лапка спереди или спиной: столбцы от «край банана − 2» (край — крайний пиксель кожуры, он остаётся жёлтым
+ * между лапкой и мордочкой), строки от `y`; правая — зеркально. a — шёрстка, d — тень у кожуры, p — подушечки.
+ */
+const PAW: Record<string, { y: number; rows: string[] }> = {
+  down: { y: 19, rows: ['.a', 'aa', 'ad', 'pp'] },
+  // при шаге лапка уходит вперёд — видна короче
+  fwd: { y: 19, rows: ['.a', 'aa', 'pp'] },
+  up: { y: 11, rows: ['pp', 'aa', 'ad', 'ad', 'ad', 'ad', 'ad', 'ad', '.d'] },
+  // машет: лапка вбок, пониже, чем «вверх»
+  out: { y: 15, rows: ['pp', 'aa', 'ad', '.a', '.d'] },
+  // испуг: лапки врозь
+  spread: { y: 17, rows: ['p.', 'pa', '.a', '.d'] },
+};
+
+/** Лапка сбоку (вид S, нос в +x): точки [dx от середины банана, y, цвет]. */
+const SIDE_PAW: Record<'down' | 'guard' | 'jab', [number, number, string][]> = {
+  // висит под мордочкой, на кожуре
+  down: [[0, 21, 'a'], [1, 21, 'a'], [0, 22, 'a'], [1, 22, 'd'], [0, 23, 'a'], [1, 23, 'd'], [0, 24, 'p'], [1, 24, 'p']],
+  // кулак у подбородка
+  guard: [[-3, 19, 'a'], [-3, 20, 'a'], [-2, 21, 'a'], [-1, 22, 'a'], [0, 22, 'a'], [1, 22, 'a'], [2, 21, 'a'], [3, 21, 'a'], [4, 19, 'p'], [5, 19, 'p'], [4, 20, 'p'], [5, 20, 'p']],
+  // удар: лапка вперёд до упора
+  jab: [[-3, 19, 'a'], [-3, 20, 'a'], [-2, 21, 'a'], [-1, 21, 'a'], [0, 21, 'a'], [1, 21, 'a'], [2, 21, 'a'], [3, 21, 'a'], [4, 21, 'a'], [5, 21, 'a'], [6, 20, 'p'], [7, 20, 'p'], [6, 21, 'p'], [7, 21, 'p']],
+};
+const PAW_COL: Record<string, string> = { a: PAL.slate, d: PAL.steel, p: PAL.mist };
+
+/** Какие лапки у кадра: [левая, правая] спереди или спиной; у вида сбоку — одна ближняя. */
+function pawsOf(view: View, arms: Arms, legs: Legs, face: Face): [string, string] | { side: keyof typeof SIDE_PAW; dx: number } {
+  if (view === 'S') {
+    if (arms === 'guard' || arms === 'jab') return { side: arms, dx: 0 };
+    // на ходу лапка качается вперёд-назад
+    return { side: 'down', dx: legs === 'liftL' ? 1 : legs === 'liftR' ? -1 : 0 };
+  }
+  if (arms === 'up') return ['up', 'up'];
+  if (arms === 'leftUp') return ['up', 'down'];
+  if (arms === 'rightUp') return ['down', 'up'];
+  if (arms === 'waveA') return ['down', 'out'];
+  if (arms === 'waveB') return ['down', 'up'];
+  if (face === 'wide') return ['spread', 'spread'];
+  if (legs === 'liftL') return ['down', 'fwd'];
+  if (legs === 'liftR') return ['fwd', 'down'];
+  return ['down', 'down'];
+}
 
 let sheets: CharSheets | null = null;
 const cat = () => (sheets ??= makeCharacterSheets(CAT));
@@ -147,6 +192,26 @@ export function kotBananFrame(frame: number, view: View, shift = 0, headDy = 0, 
     if (view === 'U' && y > 8 && y < 20) continue;
     const r = shape(x + shift, y);
     if (r !== null && !inHole(x + shift, y) && y < BOT - 1) P(x + shift, y, PAL.umber);
+  }
+  // лапки — поверх кожуры: торчат из боков банана
+  const spec = frameSpec(frame);
+  const paws = pawsOf(view, spec.arms, spec.legs, spec.face);
+  if (Array.isArray(paws)) {
+    const L = cx - 8;
+    paws.forEach((kind, side) => {
+      const { y, rows } = PAW[kind];
+      // в танце банан сдвинут к краю кадра — лапку, что вылезла бы за кадр, прижимаем к боку
+      const outer = side ? 2 * cx - 1 - L : L;
+      const nudge = outer < 0 ? -outer : outer > W - 1 ? W - 1 - outer : 0;
+      rows.forEach((row, j) => {
+        for (let i = 0; i < row.length; i++) {
+          const col = PAW_COL[row[i]];
+          if (col) P((side ? 2 * cx - 1 - (L + i) : L + i) + nudge, y + j, col);
+        }
+      });
+    });
+  } else {
+    for (const [dx, y, k] of SIDE_PAW[paws.side]) P(cx + dx + paws.dx, y, PAW_COL[k]);
   }
   // ступни под бананом — от человечка
   for (let y = BOT + 1; y < H; y++) {

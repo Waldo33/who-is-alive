@@ -183,10 +183,10 @@ const FRAMES: FrameSpec[] = (() => {
   return out;
 })();
 
-/** Вид и сдвиг общего кадра `F.*` (скины рисуют свои кадры по тем же позам); позы тем (≥ F.COUNT) — как F.D. */
-export function frameSpec(i: number): { view: View; shift: number } {
+/** Вид, сдвиг и поза общего кадра `F.*` (скины рисуют свои кадры по тем же позам); позы тем (≥ F.COUNT) — как F.D. */
+export function frameSpec(i: number): { view: View; shift: number; arms: Arms; legs: Legs; face: Face } {
   const f = FRAMES[i] ?? FRAMES[F.D];
-  return { view: f.view, shift: f.shift ?? 0 };
+  return { view: f.view, shift: f.shift ?? 0, arms: f.arms ?? 'down', legs: f.legs ?? 'idle', face: f.face ?? 'normal' };
 }
 
 export interface CharSheets {
