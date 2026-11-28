@@ -63,14 +63,14 @@ export function iceOver(g: Ctx, t: number, b: Box): void {
   g.restore();
 }
 
-/** Иней вокруг обледеневшей фигурки — рисовать на общем холсте после неё. */
-export function iceFrost(g: Ctx, t: number, b: Box): void {
+/** Иней вокруг обледеневшей фигурки — рисовать на общем холсте после неё. ray — цвет лучей искорок. */
+export function iceFrost(g: Ctx, t: number, b: Box, ray: string = PAL.cyan): void {
   for (const [dx, dy, ph] of [
     [2, -2, 0],
     [b.w - 4, 6, 5],
     [-2, b.h - 10, 10],
   ] as const) {
-    if ((t + ph) % 10 < 6) sparkle(g, b.x + dx, b.y + dy, 2);
+    if ((t + ph) % 10 < 6) sparkle(g, b.x + dx, b.y + dy, 2, PAL.white, ray);
   }
 }
 

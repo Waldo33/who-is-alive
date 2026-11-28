@@ -337,6 +337,8 @@ export function makeIcons(): { canvas: HTMLCanvasElement; names: string[] } {
     crown: ['o..o..o.', 'oyoyoyo.', 'oyyyyyo.', 'oyyyyyo.', 'oyryryo.', 'ooooooo.', '........', '........'],
     // «поделиться»: стрелка вверх из лотка
     share: ['...oo...', '..owwo..', '.owwwwo.', 'oooww ooo'.replace(' ', ''), 'o.owwo.o', 'owoooowo', 'owwwwwwo', 'oooooooo'],
+    // домик: «В меню» в конце матча
+    home: ['...oo...', '..owwo..', '.owwwwo.', 'owwwwwwo', '.owwwwo.', '.owoowo.', '.owoowo.', '.oooooo.'],
     // кадр плёнки: клип
     film: ['oooooooo', 'owowowow', 'oooooooo', 'owwwwwwo', 'owwwwwwo', 'oooooooo', 'owowowow', 'oooooooo'],
     // «Толпа решает»: жест не назван

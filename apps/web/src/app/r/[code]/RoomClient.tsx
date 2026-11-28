@@ -211,7 +211,7 @@ export default function RoomClient({ code, bot = false }: { code: string; bot?: 
     );
   } else if (inGame) {
     screen = (
-      <GameView key={state.gameId} room={roomRef.current!} lang={lang} audio={audioRef} t={t} spectator={watching} onSettings={() => bar.current?.openSettings()} />
+      <GameView key={state.gameId} room={roomRef.current!} lang={lang} audio={audioRef} t={t} spectator={watching} onSettings={() => bar.current?.openSettings()} onExit={goHome} />
     );
   } else screen = <Lobby t={t} lang={lang} state={state} room={roomRef.current!} onGesture={unlockAudio} sfxOff={sfxOff} />;
   return (
@@ -231,6 +231,7 @@ function GameView({
   t,
   spectator,
   onSettings,
+  onExit,
 }: {
   room: Room;
   lang: Lang;
@@ -238,9 +239,12 @@ function GameView({
   t: Dict;
   spectator: boolean;
   onSettings: () => void;
+  onExit: () => void;
 }) {
   const settingsRef = useRef(onSettings);
   settingsRef.current = onSettings;
+  const exitRef = useRef(onExit);
+  exitRef.current = onExit;
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     let running: RunningGame | null = null;
@@ -275,6 +279,8 @@ function GameView({
               return c ? serverClipFile(c, 'kto-tut-zhivoy.mp4') : null;
             },
         onSettings: () => settingsRef.current(),
+        // «В меню» в конце матча — как «Выйти в меню» в шестерёнке: освобождает место в комнате
+        onExit: () => exitRef.current(),
         // «Фильм матча» монтирует игровой сервер: состояние приходит по той же связи (ServerLink.film)
         film: spectator
           ? undefined

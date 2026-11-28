@@ -4331,9 +4331,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   /** Ряд кнопок итогов от x = 9 до 171 с зазором 2: ширина по тексту, остаток — кнопке с flex. */
-  private addRow(y: number, row: RowButton[]): void {
-    const L = 9;
-    const R = 171;
+  private addRow(y: number, row: RowButton[], L = 9, R = 171): void {
     const H = 30;
     const need = (r: RowButton) => (r.label ? r.label.length * 8 + 12 : 0) + (r.icon ? (r.label ? 20 : 30) : 0);
     const fixed = row.reduce((s, r) => s + (r.flex ? 0 : need(r)), 0) + (row.length - 1) * 2;
@@ -4459,12 +4457,22 @@ export class GameScene extends Phaser.Scene {
         } }]
         : [{ id: 'share2', kind: 'secondary', icon: 'share', release: true, onTap: () => this.share() }, { ...rematch, flex: true }]);
     } else this.addRow(AY + 214, [{ id: 'share2', kind: 'secondary', icon: 'share', label: this.t.game.share, flex: true, release: true, onTap: () => this.share() }]);
-    // клип — третьей, тихой кнопкой с кадром плёнки в нижней панели. Открывается касанием: отпускание
-    // у нижнего края экрана браузер может забрать себе (Chrome на iPhone); отправка — кнопкой в окне клипа
-    if ((this.takes.length || this.init0.film?.current()) && !this.init0.spectator && !videoOff()) {
-      this.addRow(PANEL_Y + 3, [{ id: 'clip', kind: 'secondary', icon: 'film', label: this.t.clip.film, flex: true, onTap: () => this.openFilm() }]);
-      const b = this.buttons.find((x) => x.id === 'clip');
-      if (b) Object.assign(b, { x: 3, w: 174 });
+    // нижняя панель (x = 3…177): «В меню» домиком слева и клип — тихой кнопкой с кадром плёнки.
+    // Клип открывается касанием: отпускание у нижнего края экрана браузер может забрать себе (Chrome на iPhone);
+    // отправка — кнопкой в окне клипа. Без клипа «В меню» — во всю ширину с надписью.
+    if (!this.init0.spectator) {
+      const exit = this.init0.onExit;
+      const film = (this.takes.length || this.init0.film?.current()) && !videoOff();
+      const row: RowButton[] = [];
+      if (exit) {
+        row.push({ id: 'menu', kind: 'secondary', icon: 'home', label: film ? undefined : this.t.game.toMenu, flex: !film, release: true, onTap: () => {
+          this.track('menu_tap', { from: 'match_end' });
+          // выход уничтожает игру — не изнутри обработчика ввода Phaser
+          setTimeout(exit, 0);
+        } });
+      }
+      if (film) row.push({ id: 'clip', kind: 'secondary', icon: 'film', label: this.t.clip.film, flex: true, onTap: () => this.openFilm() });
+      if (row.length) this.addRow(PANEL_Y + 3, row, 3, 177);
     }
     // карточку рисуем заранее: к нажатию «Поделиться» файл уже готов, и меню откроется без задержки
     void resultCardFile({
