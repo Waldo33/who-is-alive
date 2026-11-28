@@ -8,7 +8,7 @@ import { themeLook } from '../themes';
 import type { Pose } from '../themes/types';
 import { kotBananFrame } from './kot-banan';
 import { iceFrost, withFx } from './shine';
-import { ST_SIZE, actorFrame, orbit, put, say, star } from './stickers';
+import { R, ST_SIZE, actorFrame, orbit, put, say, star } from './stickers';
 import type { StickerDef } from './stickers';
 import { sheetsOf, themeActor } from './stickers-play';
 
@@ -152,6 +152,7 @@ export function drawMy(g: Ctx, s: MyLook, t: number): void {
     g.restore();
   } else put(g, fr, x, y, k);
   // «Замри» — только искорки вокруг; лёд по силуэту — платный эффект «Лёд», в позе его нет
+  if (s.pose === 'jump') jumpDust(g, jumpAt(t).ph, x, w, ground + h, y + h);
   if (s.pose === 'freeze') iceFrost(g, t, { x, y, w, h: fr.height * k, k }, col);
   // украшение позы цветом подписи
   if (s.pose === 'stun') orbit(g, MID, top + 2, t);
@@ -167,6 +168,20 @@ export function drawMy(g: Ctx, s: MyLook, t: number): void {
   }
   lines.forEach((ln, i) => say(g, ln, MID, y0 + i * 10, col));
   if (head) say(g, head, MID, 2, col);
+}
+
+/**
+ * Едва заметные частицы прыжка (владелец: «не яркие, а слегка заметные»): приглушённый серо-синий, а не цвет
+ * подписи; пылинки у ног при толчке и приземлении, два коротких штриха под ногами в полёте. Без тени.
+ */
+function jumpDust(g: Ctx, ph: JumpPhase, x: number, w: number, floor: number, feet: number): void {
+  const c = PAL.steel;
+  if (ph === 'crouch' || ph === 'land') {
+    for (const [ox, oy] of [[-3, -2], [-6, -4], [2, -2], [5, -4]]) R(g, (ox < 0 ? x : x + w) + ox, floor + oy, 2, 2, c);
+  } else if (ph === 'air' && floor - feet > 8) {
+    const cx = x + Math.round(w / 2);
+    for (const ox of [-5, 4]) R(g, cx + ox, feet + 3, 1, 4, c);
+  }
 }
 
 /** Как стикер пака (для stickerFrame / stickerFile в stickers.ts). */
