@@ -551,6 +551,7 @@ export const en: Dict = {
     loginHint: 'Bought in the bot? Get it all here too',
     loginFail: 'Login failed. Try again',
     loginWait: 'Tap “Log in” in the bot',
+    payInTg: 'Pay in Telegram and come back',
     loggedAs: 'Logged in: {name}',
     logout: 'Log out',
     items: {
