@@ -137,6 +137,15 @@ export default function HomeClient() {
         lang={lang}
         barRef={bar}
         onShare={() => void shareGame()}
+        // на сайте — значок Telegram в углу (вместо большой кнопки «Играть в Telegram»)
+        onTelegram={
+          web
+            ? () => {
+                track('tg_tap', { what: 'play', from: 'corner' });
+                location.href = tgLink('play') ?? 'https://t.me/be_nobody_bot';
+              }
+            : undefined
+        }
         onLang={(l) => {
           setLang(l);
           document.documentElement.lang = l;
@@ -165,12 +174,6 @@ export default function HomeClient() {
         >
           {busy ? t.lobby.connecting : t.start.quickPlay}
         </button>
-        {/* кнопки игры — вместе; карточки (гардероб, стикеры, кастинг) — ниже, отдельной группой */}
-        {web && (
-          <a className="btn tg" href={tgLink('play') ?? 'https://t.me/be_nobody_bot'} onClick={() => track('tg_tap', { what: 'play' })}>
-            {t.start.playTelegram}
-          </a>
-        )}
 {daily.on && (
         <Link className="daily-tile" href="/daily" onClick={() => track('daily_tap', { from: 'home' })}>
             <span className="daily-tile-title">
