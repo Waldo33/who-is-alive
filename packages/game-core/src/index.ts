@@ -21,3 +21,4 @@ export * from './film-puzzle';
 export * from './slots';
 export * from './shop';
 export * from './badges';
+export * from './emoji-pack';

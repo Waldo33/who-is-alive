@@ -161,6 +161,12 @@ export default function BadgesClient() {
           );
         })}
       </ul>
+      {/* личный эмодзи-пак (game-core/emoji-pack.ts) — своя страница */}
+      {inTg && known && (
+        <button className="link badges-emoji" onClick={() => router.push('/emoji')}>
+          {DICTS[lang].shop.emojiPack.open} ›
+        </button>
+      )}
       {known && !inTg && (
         <div className="daily-actions">
           <p className="muted">{t.noTg}</p>

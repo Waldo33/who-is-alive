@@ -1,6 +1,7 @@
+import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { DICTS, STARTER_DRIP, mySlots, mySlotIn, packGames, starterOpen, EFFECTS, EARN_PER_DAY, NO_STATS, badgesOf, EARN_PER_MATCH, MY_FIGS, MY_ISSUED, MY_MARKS, MY_MAX, MY_POSE_EMOJI, RETIRED_STICKERS, SHOP_ITEMS, STICKER_LIST, TEST_ITEM, buyItem, shopItem, canDrop, colMark, fmt, fxMark, isEffect, isLookIssued, lookIssued, stdLook, MY_COLORS, isMySticker, issuedBase, stickerFx, isSkin, isStickerId, myFigOpen, myIssued, offSticker, parseMySticker, pickEarned, skinOf, wearItems } from '@kto/game-core';
+import { DICTS, EMOJI_PACK, emojiIssued, emojiWanted, isRewardId, openRewards, rewardMark, STARTER_DRIP, mySlots, mySlotIn, packGames, starterOpen, EFFECTS, EARN_PER_DAY, NO_STATS, badgesOf, EARN_PER_MATCH, MY_FIGS, MY_ISSUED, MY_MARKS, MY_MAX, MY_POSE_EMOJI, RETIRED_STICKERS, SHOP_ITEMS, STICKER_LIST, TEST_ITEM, buyItem, shopItem, canDrop, colMark, fmt, fxMark, isEffect, isLookIssued, lookIssued, stdLook, MY_COLORS, isMySticker, issuedBase, stickerFx, isSkin, isStickerId, myFigOpen, myIssued, offSticker, parseMySticker, pickEarned, skinOf, wearItems } from '@kto/game-core';
 import type { BadgeId, BadgeStats, EffectId, MySticker, StickerId, StickerMeta } from '@kto/game-core';
 import type { StickerJob } from './sticker-render';
 import { RateWindow } from './limits';
@@ -392,6 +393,7 @@ export class Shop {
     if (path === '/shop/my/del') return this.delMy(id, body.slot);
     if (path === '/shop/remind') return this.remindMe(id, now);
     if (path === '/shop/fx') return this.setFx(id, body.id, body.fx, body.color, now);
+    if (path === '/shop/emoji') return this.claimEmoji(init.user);
     return { status: 404, body: { error: 'not_found' } };
   }
 
@@ -439,7 +441,145 @@ export class Shop {
       free,
       /** Значки для эмодзи-статуса: заработан ли, прогресс, срок «Звезды дубля», id эмодзи в Telegram (null — набор не готов). */
       badges: await this.badges(id, u?.items ?? [], now),
+      /** Личный эмодзи-пак: забран ли, ссылка (когда набор создан), открытые награды, сколько ещё положить. */
+      emoji: await this.emojiState(id, u, kick),
     };
+  }
+
+  // ───────────── личный эмодзи-пак (game-core/emoji-pack.ts) ─────────────
+
+  private async jackpots(id: number): Promise<number> {
+    try {
+      return this.d.ledger.tgStats ? (await this.d.ledger.tgStats(id)).jackpots : 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  private async emojiState(id: number, u: ShopUser | null, kick: boolean) {
+    const items = u?.items ?? [];
+    const jp = await this.jackpots(id);
+    const want = emojiWanted(items, jp);
+    const left = want.filter((e) => !items.includes(emojiIssued(e.id))).length;
+    // недоложенное (сбой Telegram, новая награда) — дослать в фоне
+    if (kick && left && !this.queue.has(id)) void this.emojiQueued(id);
+    const made = items.some((i) => i.startsWith('ei:'));
+    return {
+      claimed: items.includes(EMOJI_PACK),
+      pack: made ? `https://t.me/addemoji/${this.emojiName(id, await this.d.username())}` : null,
+      open: openRewards(items, jp),
+      pending: left,
+    };
+  }
+
+  private emojiName(id: number, bot: string): string {
+    return `e${id}_by_${bot}`.slice(0, 64);
+  }
+
+  /** «Забрать эмодзи-пак»: отметка в учёте, набор соберёт бот в очереди игрока. */
+  private async claimEmoji(user: ShopInit['user']): Promise<ShopReply> {
+    const id = user.id;
+    const prev = this.queue.get(id) ?? Promise.resolve();
+    const run = prev.then(async () => {
+      const u = (await this.d.ledger.shopUser(id)) ?? { userId: id, lang: langOf(user.language_code), name: packName(user.first_name) || 'Актёр', items: [], pack: null, issued: [] };
+      if (u.items.includes(EMOJI_PACK)) return;
+      u.items.push(EMOJI_PACK);
+      await this.d.ledger.saveShopUser(u);
+      this.d.log('info', 'shop_emoji_claim', {});
+    });
+    const tail = run.catch(() => undefined);
+    this.queue.set(id, tail);
+    void tail.finally(() => {
+      if (this.queue.get(id) === tail) this.queue.delete(id);
+    });
+    await run;
+    void this.emojiQueued(id);
+    return { status: 200, body: await this.state(id, false) };
+  }
+
+  /** Собрать или дополнить личный эмодзи-пак — в очереди игрока. */
+  private emojiQueued(id: number): Promise<void> {
+    const prev = this.queue.get(id) ?? Promise.resolve();
+    const run = prev.then(() => this.emojiRun(id, false)).catch((e: unknown) => {
+      const msg = String(e);
+      this.failed.set(id, /PEER_ID_INVALID|user not found|USER_ID_INVALID|bot was blocked|chat not found/i.test(msg) ? 'need_bot' : 'telegram');
+      this.d.log('warn', 'shop_emoji', errFields(e));
+    });
+    this.queue.set(id, run);
+    void run.finally(() => {
+      if (this.queue.get(id) === run) this.queue.delete(id);
+    });
+    return run;
+  }
+
+  /**
+   * Положить в набор недостающее: общие и открытые награды (файлы apps/server/stickers/emoji/<id>.webm|png).
+   * Вызывается уже внутри очереди игрока. `tell` — написать игроку о новых наградах.
+   */
+  private async emojiRun(id: number, tell: boolean): Promise<void> {
+    const u = await this.d.ledger.shopUser(id);
+    if (!u?.items.includes(EMOJI_PACK)) return;
+    const want = emojiWanted(u.items, await this.jackpots(id));
+    const missing = want.filter((e) => !u.items.includes(emojiIssued(e.id)));
+    if (!missing.length) return;
+    const bot = await this.d.username();
+    const name = this.emojiName(id, bot);
+    const dir = join(this.d.stickersDir, 'emoji');
+    const video = (eid: string) => existsSync(join(dir, `${eid}.webm`));
+    const blob = async (eid: string) =>
+      new Blob([new Uint8Array(await readFile(join(dir, `${eid}.${video(eid) ? 'webm' : 'png'}`)))], { type: video(eid) ? 'video/webm' : 'image/png' });
+    const input = (e: { id: string; emoji: string }, i: number) => ({ sticker: `attach://f${i}`, format: video(e.id) ? 'video' : 'static', emoji_list: [e.emoji] });
+    // записать «положено» поверх свежей записи (игрок тем временем мог что-то купить)
+    const mark = async (ids: string[]) => {
+      const fresh = (await this.d.ledger.shopUser(id)) ?? u;
+      fresh.items = [...fresh.items, ...ids.map(emojiIssued).filter((x) => !fresh.items.includes(x))];
+      u.items = fresh.items;
+      await this.d.ledger.saveShopUser(fresh);
+    };
+    let rest = missing;
+    if (!u.items.some((i) => i.startsWith('ei:'))) {
+      const list = rest.slice(0, 50);
+      const form = new FormData();
+      form.set('user_id', String(id));
+      form.set('name', name);
+      form.set('title', `${fmt(DICTS[u.lang].shop.emojiPack.title, { name: u.name })} · @${bot}`.slice(0, 64));
+      form.set('sticker_type', 'custom_emoji');
+      form.set('stickers', JSON.stringify(list.map(input)));
+      for (const [i, e] of list.entries()) form.set(`f${i}`, await blob(e.id), `${e.id}.${video(e.id) ? 'webm' : 'png'}`);
+      try {
+        await this.call('createNewStickerSet', form);
+        await mark(list.map((e) => e.id));
+        rest = rest.slice(list.length);
+        this.d.log('info', 'shop_emoji_made', { n: list.length });
+      } catch (e) {
+        // набор уже есть (упали между созданием и записью) — дальше по одному
+        if (!/already occupied/i.test(String(e))) throw e;
+      }
+    }
+    const added: string[] = [];
+    for (const e of rest) {
+      const form = new FormData();
+      form.set('user_id', String(id));
+      form.set('name', name);
+      form.set('sticker', JSON.stringify(input(e, 0)));
+      form.set('f0', await blob(e.id), `${e.id}.${video(e.id) ? 'webm' : 'png'}`);
+      await this.call('addStickerToSet', form);
+      await mark([e.id]);
+      added.push(e.id);
+    }
+    this.failed.delete(id);
+    if (tell && added.length) {
+      const t = DICTS[u.lang].shop.emojiPack;
+      try {
+        await this.d.api('sendMessage', {
+          chat_id: id,
+          text: fmt(t.botNew, { n: added.length }),
+          reply_markup: { inline_keyboard: [[{ text: t.botOpen, url: `https://t.me/addemoji/${name}` }]] },
+        });
+      } catch (e) {
+        this.d.log('warn', 'shop_notify', { err: String(e).slice(0, 200) });
+      }
+    }
   }
 
   private async badges(id: number, items: string[], now: number) {
@@ -613,13 +753,14 @@ export class Shop {
     const list = (raw as { users?: unknown } | null)?.users;
     if (!Array.isArray(list)) return Promise.resolve({ users: 0 });
     const ok = list.slice(0, 8).filter(
-      (x): x is { tgUser: number; name: string; lang: Lang; stickers: string[] } =>
-        !!x && userId(x.tgUser) && typeof x.name === 'string' && x.name.length <= 32 && (x.lang === 'ru' || x.lang === 'en') && Array.isArray(x.stickers) && x.stickers.length <= 32 && x.stickers.every(isStickerId),
+      (x): x is { tgUser: number; name: string; lang: Lang; stickers: string[]; rewards?: string[] } =>
+        !!x && userId(x.tgUser) && typeof x.name === 'string' && x.name.length <= 32 && (x.lang === 'ru' || x.lang === 'en') && Array.isArray(x.stickers) && x.stickers.length <= 32 && x.stickers.every(isStickerId) &&
+        (x.rewards === undefined || (Array.isArray(x.rewards) && x.rewards.length <= 32 && x.rewards.every(isRewardId))),
     );
     return Promise.all(ok.map((x) => this.earnOne(x))).then(() => ({ users: ok.length }));
   }
 
-  private earnOne(x: { tgUser: number; name: string; lang: Lang; stickers: string[] }): Promise<void> {
+  private earnOne(x: { tgUser: number; name: string; lang: Lang; stickers: string[]; rewards?: string[] }): Promise<void> {
     const id = x.tgUser;
     // в очередь игрока: запись предметов не перетрётся выдачей, которая идёт прямо сейчас
     const prev = this.queue.get(id) ?? Promise.resolve();
@@ -643,12 +784,16 @@ export class Shop {
         const counted = u.items.includes(STARTER_DRIP) && slotsBefore < MY_MAX;
         if (counted) u.items = [...u.items.filter((i) => !i.startsWith('games:')), `games:${packGames(u.items) + 1}`];
         const slotUp = mySlots(u.items) > slotsBefore;
-        if (!fresh.length && !first && !counted) return;
+        // награды личного эмодзи-пака: без лимитов, каждая — один раз (отметка em:<id>)
+        const rewards = (x.rewards ?? []).filter((r) => isRewardId(r) && !u.items.includes(rewardMark(r)));
+        u.items.push(...rewards.filter(isRewardId).map(rewardMark));
+        if (!fresh.length && !first && !counted && !rewards.length) return;
         u.items.push(...fresh.map((s) => `st:${s.id}`));
         if (fresh.length) u.items = [...u.items.filter((i) => !i.startsWith('day:')), `day:${today}:${usedToday + fresh.length}`];
         await this.d.ledger.saveShopUser(u);
         if (first && !u.items.includes('starter')) await this.offerFree(u);
         if (slotUp && u.pack) await this.notify(id, u.lang, fmt(DICTS[u.lang].shop.botSlot, { n: mySlots(u.items), of: MY_MAX }), null, false, true);
+        if (rewards.length && u.items.includes(EMOJI_PACK)) await this.emojiRun(id, true).catch((e: unknown) => this.d.log('warn', 'shop_emoji', errFields(e)));
         if (!fresh.length) return;
         this.d.log('info', 'shop_earned', { n: fresh.length });
         const before = new Set(u.issued);

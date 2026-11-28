@@ -755,7 +755,7 @@ export class GameServer {
    * Стикеры за матч: кому из игроков что открылось (room.ts › earnedStickers) — тем, кто связан с Telegram
    * (/tg/shop/link), бот положит их в пак. Бот на другом сервере (туннель) или в этом же процессе.
    */
-  private stickersToBot(room: Room, earned: { pid: string; stickers: string[] }[]): void {
+  private stickersToBot(room: Room, earned: { pid: string; stickers: string[]; rewards?: string[] }[]): void {
     const base = this.o.botInternal;
     const bot = this.o.bot;
     if (!base && !bot) return;
@@ -766,7 +766,7 @@ export class GameServer {
         for (const e of earned) if (!links.some((l) => l.gameUser === e.pid)) void this.store.savePendingEarn(e.pid, e.stickers).catch(() => undefined);
         const users = links.flatMap((l) => {
           const e = earned.find((x) => x.pid === l.gameUser);
-          return e ? [{ tgUser: l.tgUser, name: l.name, lang: l.lang, stickers: e.stickers }] : [];
+          return e ? [{ tgUser: l.tgUser, name: l.name, lang: l.lang, stickers: e.stickers, ...(e.rewards?.length ? { rewards: e.rewards } : {}) }] : [];
         });
         if (!users.length) return;
         if (!base) return void (await bot!.shop.earn({ users }));
