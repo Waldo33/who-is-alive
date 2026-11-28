@@ -38,6 +38,8 @@ export default function HomeClient() {
   const [daily, setDaily] = useState({ on: false, n: 0, done: false });
   // бесплатный стикерпак с актёром — плашкой после первого матча, пока не забран (за тем же флагом)
   const [stickers, setStickers] = useState<'off' | 'offer' | 'busy' | 'sub' | 'match'>('off');
+  // «Мой стикерпак» — только после первой игры (решение владельца 28.11.2026): до неё на главной его нет
+  const [played, setPlayed] = useState(false);
   useEffect(() => {
     const n = dailyNumber(localDateKey(new Date()));
     let done = false;
@@ -48,7 +50,9 @@ export default function HomeClient() {
     }
     setDaily({ on: featureOn('casting'), n, done });
     try {
-      if (localStorage.getItem('kto:played') === '1' && !localStorage.getItem('kto:stickers')) setStickers('offer');
+      const p = localStorage.getItem('kto:played') === '1';
+      setPlayed(p || !!localStorage.getItem('kto:stickers'));
+      if (p && !localStorage.getItem('kto:stickers')) setStickers('offer');
     } catch {
       /* приватный режим */
     }
@@ -193,7 +197,7 @@ export default function HomeClient() {
           </Link>
         )}
         {/* свой стикерпак — и в Telegram, и на сайте (там: открыть в Telegram или войти через Telegram) */}
-        {stickers === 'off' && (
+        {stickers === 'off' && played && (
           <Link className="daily-tile" href="/stickers" onClick={() => track('stickers_tap', { from: 'home_tile' })}>
             <span className="daily-tile-title">{t.shop.build.title}</span>
             <span className="daily-tile-sub">{t.shop.build.homeSub}</span>
