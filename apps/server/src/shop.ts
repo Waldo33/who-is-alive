@@ -36,7 +36,7 @@ import type { ShopPayment, ShopUser, Store, TgLink } from './store';
  */
 
 export type ShopLedger = Pick<Store, 'shopUser' | 'saveShopUser' | 'saveShopPayment' | 'refundShopPayment'> &
-  Partial<Pick<Store, 'shopUsersWith' | 'tgStats'>> & {
+  Partial<Pick<Store, 'shopUsersWith' | 'tgStats' | 'shopPacks' | 'packOwn' | 'savePackOwn'>> & {
   /**
    * Связать игрока игрового сервера (по его токену — проверяет игровой сервер) с пользователем Telegram. false — токен
    * чужой; `{ played }` — игрок сыграл матчи до входа (сайт): что открылось там (бот засчитает как матч).
@@ -54,6 +54,9 @@ export function localLedger(store: Store, verify?: VerifyToken, onLink?: (gameUs
     shopUser: (id) => store.shopUser(id),
     saveShopUser: (u) => store.saveShopUser(u),
     shopUsersWith: (item) => store.shopUsersWith(item),
+    shopPacks: (after, limit) => store.shopPacks(after, limit),
+    packOwn: (id) => store.packOwn(id),
+    savePackOwn: (id, ids) => store.savePackOwn(id, ids),
     tgStats: (id) => store.tgStats(id),
     saveShopPayment: (p) => store.saveShopPayment(p),
     refundShopPayment: (c) => store.refundShopPayment(c),
@@ -203,6 +206,34 @@ export function wantedStickers(items: string[]): StickerMeta[] {
 /** Первое эмодзи без «варианта отображения» (U+FE0F): Telegram может вернуть его и так, и так. */
 const em = (s: string | undefined) => (s ?? '').replace(/\uFE0F/g, '');
 
+/** Стикер пака из getStickerSet. */
+interface SetSticker {
+  file_id: string;
+  file_unique_id?: string;
+  emoji?: string;
+}
+
+/** Первое эмодзи, с которым бот кладёт в пак стикер этой записи `issued`. */
+function issuedEmoji(x: string): string | undefined {
+  if (MY_ISSUED.test(x)) return MY_MARKS[Number(MY_ISSUED.exec(x)?.[1] ?? -1)];
+  if (Object.hasOwn(RETIRED_STICKERS, x)) return RETIRED_STICKERS[x];
+  return STICKER_LIST.find((s) => s.id === issuedBase(x))?.emoji[0];
+}
+
+/**
+ * Какие стикеры пака положил бот (по составу «Моего стикерпака» в игре), остальные игрок добавил сам в Telegram.
+ * `own` — записанные file_unique_id; null — не записаны (пак собран до уборки), тогда свои узнаём по первому эмодзи
+ * выданного. Сомнение — в пользу игрока: стикер без file_unique_id и любое совпадение по эмодзи считаем своим.
+ */
+export function ownStickers(issued: readonly string[], list: readonly SetSticker[], own: readonly string[] | null): SetSticker[] {
+  if (own) {
+    const ids = new Set(own);
+    return list.filter((s) => !s.file_unique_id || ids.has(s.file_unique_id));
+  }
+  const want = new Set(issued.map(issuedEmoji).filter((e): e is string => !!e).map(em));
+  return list.filter((s) => !s.file_unique_id || want.has(em(s.emoji)));
+}
+
 /** Имя игрока в названии пака: без @, ссылок и невидимых символов. */
 export function packName(raw: unknown): string {
   return typeof raw === 'string'
@@ -296,6 +327,8 @@ export interface ShopDeps {
    * Нет — сверяет этот процесс (он один: сервер бота, разработка).
    */
   lease?: (name: string, ms: number) => Promise<boolean>;
+  /** Пауза между паками при уборке чужих стикеров (лимиты Telegram), мс. По умолчанию 1,5 с. */
+  cleanPace?: number;
   /** Подмена ожидания (тесты). */
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
@@ -1102,8 +1135,13 @@ export class Shop {
     let fresh: Entry | null = null;
 
     // пак уже есть: список его стикеров (file_id по первому эмодзи) — убрать, заменить и проверить приманку
-    const set = u.pack ? await this.d.api<{ stickers?: { file_id: string; emoji?: string }[] }>('getStickerSet', { name: u.pack }) : null;
-    const byEmoji = new Map((set?.stickers ?? []).map((x) => [em(x.emoji), x.file_id]));
+    const set = u.pack ? await this.d.api<{ stickers?: SetSticker[] }>('getStickerSet', { name: u.pack }) : null;
+    // только стикеры бота: чужой стикер игрока с тем же эмодзи не удалим и не заменим по ошибке
+    const known = (await this.d.ledger.packOwn?.(id)) ?? null;
+    const before = new Set((set?.stickers ?? []).map((x) => x.file_unique_id));
+    const mineBefore = ownStickers(u.issued, set?.stickers ?? [], known);
+    const byEmoji = new Map(mineBefore.map((x) => [em(x.emoji), x.file_id]));
+    let created = false;
     // игрок удалил «Собери свой пак!» руками в Telegram — вернём её (добавится ниже и встанет последней)
     const lure = STICKER_LIST.find((x) => x.lure);
     if (Array.isArray(set?.stickers) && lure && !byEmoji.has(em(lure.emoji[0])) && u.issued.some((x) => issuedBase(x) === lure.id)) {
@@ -1154,6 +1192,7 @@ export class Shop {
         for (const [i, e] of list.entries()) form.set(`f${i}`, await blob(e), `${e.key}.webm`);
         try {
           await this.call('createNewStickerSet', form);
+          created = true;
           u.issued.push(...list.map((e) => e.key));
           fresh = list.filter((e) => !!e.my).pop() ?? fresh;
         } catch (e) {
@@ -1178,8 +1217,125 @@ export class Shop {
     }
     // приманка «Собери свой пак» — снова в конец пака
     if (changed && u.pack) await this.lureLast(u.pack);
+    if ((changed || created) && u.pack) await this.rememberOwn(id, u.pack, before, mineBefore);
     if (fresh && u.pack) await this.sendMine(id, u.pack, fresh);
     this.failed.delete(id);
+  }
+
+  /**
+   * Записать, какие стикеры пака — бота: прежние свои, что остались, и все, что появились за выдачу (их положил бот).
+   * Не вышло — не страшно: уборка тогда узнает свои по эмодзи.
+   */
+  private async rememberOwn(id: number, pack: string, before: Set<string | undefined>, mine: SetSticker[]): Promise<void> {
+    if (!this.d.ledger.savePackOwn) return;
+    try {
+      const set = await this.d.api<{ stickers?: SetSticker[] }>('getStickerSet', { name: pack });
+      const kept = new Set(mine.map((s) => s.file_unique_id));
+      const ids = (set?.stickers ?? []).map((s) => s.file_unique_id).filter((x): x is string => !!x && (kept.has(x) || !before.has(x)));
+      await this.d.ledger.savePackOwn(id, ids);
+    } catch (e) {
+      this.d.log('warn', 'pack_own', { err: String(e).slice(0, 200) });
+    }
+  }
+
+  /**
+   * Убрать из пака игрока стикеры, которые он добавил сам в Telegram (их нет в «Моём стикерпаке» игры). Игроку не
+   * пишем. Идёт в очереди игрока — не мешает выдаче. Ответ — сколько удалено.
+   */
+  cleanPack(id: number): Promise<number> {
+    const prev = this.queue.get(id) ?? Promise.resolve();
+    const run = prev.then(() => this.cleanRun(id));
+    const tail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.queue.set(id, tail);
+    void tail.finally(() => {
+      if (this.queue.get(id) === tail) this.queue.delete(id);
+    });
+    return run;
+  }
+
+  private async cleanRun(id: number): Promise<number> {
+    const u = await this.d.ledger.shopUser(id);
+    if (!u?.pack || !this.d.ledger.packOwn) return 0;
+    let set: { stickers?: SetSticker[] } | null;
+    try {
+      set = await this.d.api<{ stickers?: SetSticker[] }>('getStickerSet', { name: u.pack });
+    } catch (e) {
+      // игрок удалил пак целиком — убирать нечего
+      if (/STICKERSET_INVALID|not found/i.test(String(e))) return 0;
+      throw e;
+    }
+    const list = set?.stickers ?? [];
+    const known = await this.d.ledger.packOwn(id);
+    const mine = ownStickers(u.issued, list, known);
+    // старый пак: свои узнали по эмодзи — запомним их, дальше сверка по file_unique_id
+    if (!known && this.d.ledger.savePackOwn) await this.d.ledger.savePackOwn(id, mine.map((s) => s.file_unique_id).filter((x): x is string => !!x));
+    const foreign = list.filter((s) => !mine.includes(s));
+    // своих не узнали ни одного — что-то не так (пак пуст по учёту): не трогаем
+    if (!foreign.length || !mine.length) return 0;
+    for (const s of foreign) await this.call('deleteStickerFromSet', jsonForm({ sticker: s.file_id }));
+    this.d.log('info', 'pack_clean', { removed: foreign.length });
+    return foreign.length;
+  }
+
+  /** Обойти все личные паки (по одному, с паузой — лимиты Telegram). Ответ — сколько чужих стикеров удалено. */
+  async cleanPacks(): Promise<number> {
+    if (!this.d.ledger.shopPacks) return 0;
+    const pace = this.d.cleanPace ?? 1500;
+    let removed = 0;
+    let checked = 0;
+    for (let after = 0; ; ) {
+      const ids = await this.d.ledger.shopPacks(after, 500);
+      if (!ids.length) break;
+      for (const id of ids) {
+        if (checked++) await this.sleep(pace);
+        try {
+          removed += await this.cleanPack(id);
+        } catch (e) {
+          this.d.log('warn', 'pack_clean', errFields(e));
+        }
+      }
+      after = ids[ids.length - 1];
+    }
+    this.d.log(removed ? 'warn' : 'info', 'pack_clean_all', { checked, removed });
+    return removed;
+  }
+
+  /**
+   * Уборка паков раз в сутки, после 4:00 по Москве (ночью тихо). Проверяем раз в час; кто убирает сегодня — решает
+   * аренда на сутки: синий и зелёный при выкладке и перезапуски не убирают дважды. Ответ — остановить.
+   */
+  cleanDaily(): () => void {
+    let done = '';
+    let running = false;
+    const tick = async () => {
+      const now = (this.d.now ?? Date.now)();
+      const day = dayKey(now);
+      if (running || done === day || new Date(now + MSK).getUTCHours() < 4) return;
+      running = true;
+      try {
+        if (this.d.lease && !(await this.d.lease(`pack_clean:${day}`, 2 * DAY))) {
+          done = day;
+          return;
+        }
+        done = day;
+        await this.cleanPacks();
+      } catch (e) {
+        this.d.log('warn', 'pack_clean_all', errFields(e));
+      } finally {
+        running = false;
+      }
+    };
+    const first = setTimeout(() => void tick(), 5 * 60_000);
+    const every = setInterval(() => void tick(), 3600_000);
+    first.unref?.();
+    every.unref?.();
+    return () => {
+      clearTimeout(first);
+      clearInterval(every);
+    };
   }
 
   private async draw(job: StickerJob): Promise<Buffer> {
