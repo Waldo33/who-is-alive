@@ -1,0 +1,122 @@
+[
+ {
+  "id": "camera",
+  "emoji": "📹"
+ },
+ {
+  "id": "rec",
+  "emoji": "🔴"
+ },
+ {
+  "id": "actor",
+  "emoji": "🧍"
+ },
+ {
+  "id": "stunned",
+  "emoji": "😵"
+ },
+ {
+  "id": "popcorn",
+  "emoji": "🍿"
+ },
+ {
+  "id": "ticket",
+  "emoji": "🎟️"
+ },
+ {
+  "id": "fire",
+  "emoji": "🔥"
+ },
+ {
+  "id": "sparkles",
+  "emoji": "✨"
+ },
+ {
+  "id": "bolt",
+  "emoji": "⚡"
+ },
+ {
+  "id": "eyes",
+  "emoji": "👀"
+ },
+ {
+  "id": "scissors",
+  "emoji": "✂️"
+ },
+ {
+  "id": "pause",
+  "emoji": "⏸️"
+ },
+ {
+  "id": "crown",
+  "emoji": "👑"
+ },
+ {
+  "id": "medal",
+  "emoji": "🥇"
+ },
+ {
+  "id": "chair",
+  "emoji": "🪑"
+ },
+ {
+  "id": "mic",
+  "emoji": "🎤"
+ },
+ {
+  "id": "vhs",
+  "emoji": "📼"
+ },
+ {
+  "id": "peel",
+  "emoji": "🍌"
+ },
+ {
+  "id": "phone",
+  "emoji": "📱"
+ },
+ {
+  "id": "gift",
+  "emoji": "🎁"
+ },
+ {
+  "id": "popper",
+  "emoji": "🎉"
+ },
+ {
+  "id": "heart",
+  "emoji": "❤️"
+ },
+ {
+  "id": "rocket",
+  "emoji": "🚀"
+ },
+ {
+  "id": "clock",
+  "emoji": "⏰"
+ },
+ {
+  "id": "new",
+  "emoji": "🆕"
+ },
+ {
+  "id": "arrow",
+  "emoji": "👉"
+ },
+ {
+  "id": "check",
+  "emoji": "✅"
+ },
+ {
+  "id": "cross",
+  "emoji": "❌"
+ },
+ {
+  "id": "question",
+  "emoji": "❓"
+ },
+ {
+  "id": "bang",
+  "emoji": "❗"
+ }
+]

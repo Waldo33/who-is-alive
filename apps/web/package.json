@@ -21,7 +21,8 @@
     "clip-video": "node scripts/clip-video.mjs",
     "sound-check": "node scripts/sound-check.mjs",
     "stickers": "node scripts/stickers.mjs",
-    "badges": "node scripts/badges.mjs"
+    "badges": "node scripts/badges.mjs",
+    "post-emoji": "node scripts/post-emoji.mjs"
   },
   "dependencies": {
     "@fontsource/press-start-2p": "5.3.0",
