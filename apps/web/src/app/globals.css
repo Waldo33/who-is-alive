@@ -426,3 +426,7 @@ button.summary { color: var(--sand); cursor: pointer; }
 .badges-list li.have .badges-text b { color: var(--yellow); }
 .badges-text span { font-size: 8px; line-height: 1.5; color: var(--mist); }
 @media (max-height: 600px) { .badges-list { gap: 4px; } .badges-list li { padding: 3px 8px; } .badges-icon { height: 42px; } }
+
+/* тестовый контур (NEXT_PUBLIC_STAGE=1): плашка поверх всего, нажатия проходят сквозь неё */
+.stage-badge { position: fixed; top: calc(var(--sat) + 2px); left: 50%; transform: translateX(-50%); z-index: 1000;
+  pointer-events: none; background: var(--magenta); color: var(--sand); font-size: 8px; padding: 3px 6px; letter-spacing: 1px; opacity: .85; }

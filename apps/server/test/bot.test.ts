@@ -33,6 +33,18 @@ function makeBot() {
 }
 
 describe('Telegram-бот', () => {
+  it('тестовая среда Telegram: методы идут по /bot<токен>/test/<метод>, прод — без test', async () => {
+    const urls: string[] = [];
+    const fetchImpl = (async (url: string) => {
+      urls.push(url);
+      return new Response(JSON.stringify({ ok: true, result: { username: 'stage_bot' } }));
+    }) as unknown as typeof fetch;
+    const o = { token: TOKEN, apiBase: 'https://api.example', site: 'https://site.example', store: new MemoryStore(), log: silentLogger, fetchImpl };
+    await new Bot({ ...o, testEnv: true }).api('getMe');
+    await new Bot(o).api('getMe');
+    expect(urls).toEqual([`https://api.telegram.org/bot${TOKEN}/test/getMe`, `https://api.telegram.org/bot${TOKEN}/getMe`]);
+  });
+
   it('подпись initData: своя проходит, чужая и старая — нет', () => {
     const { bot } = makeBot();
     const good = initData({ id: 7, first_name: 'Аня' }, { chat_instance: '-100' });

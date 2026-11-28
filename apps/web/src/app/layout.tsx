@@ -3,7 +3,8 @@ import '@fontsource/press-start-2p/400.css';
 import './globals.css';
 import PwaRegister from './PwaRegister';
 import TelegramBoot from '@/ui/TelegramBoot';
-import { SITE_URL } from '@/lib/env';
+import { DICTS } from '@kto/game-core';
+import { SITE_URL, STAGE } from '@/lib/env';
 import { shareMetadata } from '@/lib/meta';
 
 // превью по умолчанию — для любых адресов без своих метаданных (в том числе «страница не найдена»)
@@ -27,6 +28,8 @@ export const metadata: Metadata = {
     apple: [{ url: '/icons/apple-touch-icon.png', sizes: '192x192' }],
   },
   formatDetection: { telephone: false },
+  // тестовый контур — не в поиск
+  ...(STAGE ? { robots: { index: false, follow: false } } : {}),
 };
 
 export const viewport: Viewport = {
@@ -43,6 +46,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="ru">
       <body>
         {children}
+        {STAGE && <div className="stage-badge" aria-hidden>{`${DICTS.ru.meta.stage} · ${DICTS.en.meta.stage}`}</div>}
         <PwaRegister />
         <TelegramBoot />
       </body>
