@@ -165,6 +165,11 @@ button.btn { border: 0; cursor: pointer; border-radius: 0; }
 .inv-qr img, .inv-qr span { width: 96px; height: 96px; display: block; image-rendering: pixelated; }
 .inv-code { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; min-width: 0; }
 .inv-code .muted { font-size: 8px; }
+/* награда за компанию под «Позвать» — янтарём, как бонус */
+/* «Позвать» и бонус одной строкой, чтобы карточка не выросла и лобби влезало на iPhone SE */
+.inv-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.inv-row .btn { flex: none; }
+.inv-code .perk { font-size: 8px; line-height: 1.4; color: var(--amber); min-width: 0; }
 .inv .room-code { font-size: 24px; }
 .btn.alt { background: var(--night); color: var(--sand); box-shadow: inset 0 0 0 2px var(--amber), 0 4px 0 var(--ink); }
 .btn.alt:active { box-shadow: inset 0 0 0 2px var(--amber), 0 1px 0 var(--ink); }
@@ -208,6 +213,8 @@ button.summary { color: var(--sand); cursor: pointer; }
   padding: 10px 16px calc(12px + var(--sab, env(safe-area-inset-bottom))); background: var(--ink); box-shadow: 0 -2px 0 #262b44; }
 .lobby-dock .btn { width: 100%; max-width: 360px; }
 .lobby-dock .muted { margin: 0 0 -4px; font-size: 8px; }
+/* награда за компанию под «Позвать» — янтарём, чтобы читалась как бонус, а не как подсказка */
+.lobby-dock .perk { color: var(--amber); text-align: center; max-width: 360px; line-height: 1.4; }
 /* нижний лист настроек комнаты — как лист шестерёнки */
 .lobby-sheet { position: fixed; inset: 0; z-index: 20; display: flex; align-items: flex-end; justify-content: center; background: rgba(24, 20, 37, 0.72); }
 .lobby-sheet-box { width: 100%; max-width: 440px; max-height: 88dvh; overflow: auto; display: flex; flex-direction: column; gap: 12px; align-items: stretch;

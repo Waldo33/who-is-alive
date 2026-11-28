@@ -343,6 +343,7 @@ export const en: Dict = {
     aiSlot: 'AI actor',
     /** The director is alone in a lobby with AI actors: can start without waiting for friends. */
     soloHint: 'Alone? Tap «Action!» — AI actors fill the seats',
+    invitePerk: 'First match together — a sticker pack each',
     aiName: 'AI {name}',
     sec: '{n} s',
     connecting: 'Connecting…',

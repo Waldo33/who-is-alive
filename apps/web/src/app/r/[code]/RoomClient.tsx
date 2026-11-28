@@ -433,9 +433,12 @@ export function Lobby({
           <span className="muted">{t.lobby.codeLabel}</span>
           <span className="room-code">{state.code}</span>
           {!inviteFirst && (
-            <button className="btn small alt" onClick={invite}>
-              {t.lobby.inviteShort}
-            </button>
+            <div className="inv-row">
+              <button className="btn small alt" onClick={invite}>
+                {t.lobby.inviteShort}
+              </button>
+              <span className="perk">{t.lobby.invitePerk}</span>
+            </div>
           )}
         </div>
       </section>
@@ -519,9 +522,12 @@ export function Lobby({
       <div className="lobby-dock">
         {isHost ? (
           inviteFirst ? (
-            <button className="btn" onClick={invite}>
-              {t.lobby.invite}
-            </button>
+            <>
+              <button className="btn" onClick={invite}>
+                {t.lobby.invite}
+              </button>
+              <p className="muted perk">{t.lobby.invitePerk}</p>
+            </>
           ) : (
             <>
             <button className="btn" disabled={!canStart} onClick={() => {
