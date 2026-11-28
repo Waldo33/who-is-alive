@@ -14,7 +14,7 @@ import type { ShopDeps, ShopLedger, VerifyToken } from './shop';
 import type { Store } from './store';
 
 /**
- * Telegram-бот «Массовки» на своём сервере (раньше — Supabase Edge Function `tg-bot`).
+ * Telegram-бот «Массовки» на своём сервере.
  *
  * Маршруты (https://api.<домен>/tg/...):
  *   GET  /info    — юзернейм бота, имя прямой ссылки Mini App, включён ли инлайн-режим (для клиента);
@@ -315,7 +315,7 @@ export class Bot {
     this.app = o.app ?? 'play';
     this.casting = (o.features ?? []).includes('casting');
     this.f = o.fetchImpl ?? fetch;
-    // секрет вебхука выводится из ключа бота — хранить отдельно не нужно (так же было в Supabase)
+    // секрет вебхука выводится из ключа бота — хранить отдельно не нужно
     this.supportChat = o.supportChat ?? SUPPORT_CHAT;
     this.hookSecret = createHash('sha256').update('kto-hook:' + o.token).digest('hex').slice(0, 48);
     this.badges = new BadgeSet({

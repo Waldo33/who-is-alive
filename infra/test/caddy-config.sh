@@ -12,7 +12,6 @@ cat > "$t/etc/hosts.env" <<HOSTS
 HOST=api.benobody.app
 ALT_HOST=129-101-104-99.sslip.io
 SITE_HOST=benobody.app
-SITE_REDIRECT=https://who-is-alive.vercel.app
 BOT_UPSTREAM=http://127.0.0.1:9090
 HOSTS
 export MASSOVKA_ETC="$t/etc" CADDY_DIR="$t/caddy" WEB_ROOT="$t/web" CADDY_LOCK="$t/lock" CADDY_DRY=1

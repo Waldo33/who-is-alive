@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Конфиг Caddy из /etc/massovka/hosts.env: игровой сервер на HOST (и запасном ALT_HOST),
-# сайт на SITE_HOST — если сайт уже выложен на сервер, Caddy проксирует на него, иначе ведёт
-# на старый адрес SITE_REDIRECT. Вызывают setup.sh и web.sh.
+# сайт на SITE_HOST — если сайт уже выложен на сервер, Caddy проксирует на него (до выкладки сайта
+# блока нет). Вызывают setup.sh и web.sh.
 #
 # Синий/зелёный (выкладка без обрыва, docs/infra-plan.md › этап 1): у игры и сайта по два экземпляра,
 # активный — в /etc/massovka/active-color (игра: blue :8081, green :8082) и web-active (сайт: :3010, :3011).
@@ -233,13 +233,6 @@ fi)
 
 www.$SITE_HOST {
 	redir https://$SITE_HOST{uri} 301
-}
-CADDY
-  elif [ -n "${SITE_REDIRECT:-}" ]; then
-    cat >> "$f" <<CADDY
-
-$SITE_HOST, www.$SITE_HOST {
-	redir $SITE_REDIRECT{uri} 302
 }
 CADDY
   fi

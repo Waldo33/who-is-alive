@@ -16,7 +16,7 @@ void (async () => {
   const moment = findBestMoment({ ...rec, kills: sum.kills }, self)!;
   await loadTheme(s.theme);
   const cp = sum.reveal.map((r) => ({ eid: r.eid, name: players.find((p) => p.pid === r.pid)!.name, color: players.find((p) => p.pid === r.pid)!.color }));
-  const scene = new ClipPlayerScene({ rec, moment, arena: s.arena, players: cp, t: DICTS.ru, font: 'monospace', site: location.host || 'who-is-alive.vercel.app' });
+  const scene = new ClipPlayerScene({ rec, moment, arena: s.arena, players: cp, t: DICTS.ru, font: 'monospace', site: location.host || 'benobody.app' });
   const audio = getAudio();
   audio.unlock();
   scene.sound = audio.clipSound();

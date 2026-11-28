@@ -155,5 +155,5 @@ export type WireFilm = Extract<ServerMsg, { t: 'film' }>;
 /** Ответ сервера про клип выбывшего. */
 export type WireClip = Extract<ServerMsg, { t: 'clip' }>;
 
-/** Буквы кода комнаты (как в Supabase: без похожих I, L, O). */
+/** Буквы кода комнаты: без похожих I, L, O. */
 export const ROOM_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ';

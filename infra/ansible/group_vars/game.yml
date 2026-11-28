@@ -12,7 +12,6 @@ app_ws_hosts: "api.benobody.app,{{ app_alt_host }}"
 app_region: eu
 app_site_host: benobody.app
 app_site_url: https://benobody.app
-app_site_redirect: https://who-is-alive.vercel.app
 # переезд комнат при выкладке — на тот адрес, что сейчас работает снаружи (до DNS — sslip.io); считает inventory.py
 app_peer_host: "{{ peer_host | default('api.benobody.app') }}"
 # бот изнутри: туннель на сервер бота; бот в самом игровом сервере (bot_home=eu, infra/game/bot-home) — пусто:
