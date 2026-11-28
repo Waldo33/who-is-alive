@@ -224,6 +224,8 @@ describe('сетевая игра', () => {
     const rig = makeRig([50, 120], 0, 6);
     // скин — в составе (PlayerInfo), как его кладёт сервер; на поле его рисует только телефон самого игрока
     (players[1] as PlayerInfo).skin = 'kotBanan';
+    // эффект на персонаже — так же только по игроку
+    (players[1] as PlayerInfo).fx = 'holo';
     try {
       const rng = new Rng(6);
       for (let i = 0; i < 20 * 150 && rig.host.phase !== 'results'; i++) {
@@ -231,12 +233,14 @@ describe('сетевая игра', () => {
         botFingers(rig, rng);
       }
       expect(rig.host.phase === 'reveal' || rig.host.phase === 'results').toBe(true);
-      for (const { msg } of rig.roomLog) if (msg.t !== 'players') expect(JSON.stringify(msg)).not.toMatch(/kotBanan|"skin"/);
-      for (const { msg } of rig.privLog) expect(JSON.stringify(msg)).not.toMatch(/kotBanan|"skin"/);
+      for (const { msg } of rig.roomLog) if (msg.t !== 'players') expect(JSON.stringify(msg)).not.toMatch(/kotBanan|"skin"|holo|"fx"/);
+      for (const { msg } of rig.privLog) expect(JSON.stringify(msg)).not.toMatch(/kotBanan|"skin"|holo|"fx"/);
       // гости знают скин игрока g1, но не его сущность — до итогов дубля
       for (const g of rig.guests) expect(g.info('g1')?.skin).toBe('kotBanan');
+      for (const g of rig.guests) expect(g.info('g1')?.fx).toBe('holo');
     } finally {
       delete (players[1] as PlayerInfo).skin;
+      delete (players[1] as PlayerInfo).fx;
     }
   });
 

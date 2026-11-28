@@ -5,7 +5,7 @@ import type { Lang, ShopItemId, StickerId } from '@kto/game-core';
 import { text } from '../art';
 import { canvas, dither, outlineOf } from '../pixels';
 import type { Ctx } from '../pixels';
-import { F } from '../sprites';
+import { F, frameSpec } from '../sprites';
 import type { View } from '../themes/types';
 import { KB_W, kotBananFrame, tearArcs, wailFace } from './kot-banan';
 import { fxOver, holoOver, holoSparks } from './shine';
@@ -90,6 +90,8 @@ export interface CardState {
   item: ShopItemId;
   /** Выданные стикеры (ярко), остальные — под замком. */
   issued: Set<string>;
+  /** Надет Кот-банан: эффект на витрине — на нём (эффект надевается и на своего персонажа). */
+  cat?: boolean;
 }
 
 /** Нарисовать кадр карточки на `ms` от начала. `g` уже в масштабе (setTransform(k…)). */
@@ -131,7 +133,7 @@ export function drawCard(g: Ctx, ms: number, st: CardState): void {
     R(CARD_W - tw - 12, SY + 6, tw + 6, 12, PAL.magenta);
     text(g, t.isNew, CARD_W - 9 - tw / 2, SY + 8, PAL.white, FONT, { outline: null });
   }
-  if (isEffect(st.item)) return fxCard(g, k, st.item, t, R, SY + SH);
+  if (isEffect(st.item)) return fxCard(g, k, st.item, t, R, SY + SH, !!st.cat);
   // Кот-банан ×4
   const { p, k: pk } = poseAt(ms);
   const hs = 4;
@@ -177,20 +179,21 @@ export function drawCard(g: Ctx, ms: number, st: CardState): void {
   text(g, t.giftHow, 90, 236, PAL.mist, FONT);
 }
 
-/** Актёр в эффекте: кадр `frame`, эффект на шаге `k` (тот же, что в стикере: пиксель спрайта — 1). */
-function fxActor(fx: EffectId, frame: number, k: number): HTMLCanvasElement {
-  const a = actorFrame(frame);
+/** Актёр (или Кот-банан) в эффекте: кадр `frame`, эффект на шаге `k` (тот же, что в стикере: пиксель спрайта — 1). */
+function fxActor(fx: EffectId, frame: number, k: number, cat = false): HTMLCanvasElement {
+  const a = cat ? kotBananFrame(frame, frameSpec(frame).view, frameSpec(frame).shift) : actorFrame(frame);
   const o = canvas(a.width, a.height);
   o.g.drawImage(a, 0, 0);
   fxOver(o.g, fx, k, { x: 0, y: 0, w: a.width, h: a.height, k: 1 });
   return o.c;
 }
 
-/** Карточка эффекта: актёр ×4 в эффекте машет и танцует, под ним — ещё три позы в эффекте. */
-function fxCard(g: Ctx, k: number, fx: EffectId, t: (typeof DICTS)['ru']['shop'], R: (x: number, y: number, w: number, h: number, c: string) => void, top: number): void {
-  const seq = [F.D, F.D, F.WAVE, F.WAVE + 1, F.WAVE + 2, F.WAVE + 1, F.D, F.DANCE, F.DANCE + 1, F.DANCE + 2, F.DANCE + 3];
+/** Карточка эффекта: свой персонаж (актёр или надетый Кот-банан) ×4 в эффекте машет и танцует, под ним — ещё три позы. */
+function fxCard(g: Ctx, k: number, fx: EffectId, t: (typeof DICTS)['ru']['shop'], R: (x: number, y: number, w: number, h: number, c: string) => void, top: number, cat: boolean): void {
+  // у кота руки спрятаны в банане — он не машет, а танцует
+  const seq = cat ? [F.D, F.D, F.DANCE, F.DANCE + 1, F.DANCE + 2, F.DANCE + 3] : [F.D, F.D, F.WAVE, F.WAVE + 1, F.WAVE + 2, F.WAVE + 1, F.D, F.DANCE, F.DANCE + 1, F.DANCE + 2, F.DANCE + 3];
   const fr = seq[Math.floor(k / 3) % seq.length];
-  const h = fxActor(fx, fr, k);
+  const h = fxActor(fx, fr, k, cat);
   const hs = 4;
   const x0 = Math.round(CARD_W / 2 - (h.width * hs) / 2);
   const y0 = top - 10 - h.height * hs;
@@ -200,9 +203,9 @@ function fxCard(g: Ctx, k: number, fx: EffectId, t: (typeof DICTS)['ru']['shop']
   text(g, t.items[fx].tagline, 90, 172, PAL.white, FONT);
   text(g, t.fxGift, 90, 187, PAL.yellow, FONT);
   // ещё три позы в эффекте маленькими, ×2 — эффект накидывается на любой стикер
-  const poses = [F.WAVE + 1, F.STARTLE, F.JUMP];
+  const poses = [cat ? F.DANCE + 1 : F.WAVE + 1, F.STARTLE, F.JUMP];
   poses.forEach((f, i) => {
-    const c = fxActor(fx, f, k + i * 3);
+    const c = fxActor(fx, f, k + i * 3, cat);
     const cx = 36 + i * 54;
     g.drawImage(c, cx - c.width, 236 - c.height * 2, c.width * 2, c.height * 2);
   });

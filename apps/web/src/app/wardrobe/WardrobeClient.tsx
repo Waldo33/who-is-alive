@@ -7,17 +7,20 @@ import type { Lang, ShopItemId } from '@kto/game-core';
 import { track } from '@/lib/analytics';
 import { TG_APP } from '@/lib/env';
 import { detectLang } from '@/lib/lang';
-import { bootTelegram, haptic, inTelegram, linkTelegramOnce, openTelegram, prefetchInvoice, shopBuy, shopCached, shopSignedIn, shopState, shopWear, tgLink } from '@/lib/telegram';
+import { bootTelegram, haptic, inTelegram, linkTelegramOnce, openTelegram, prefetchInvoice, shopBuy, shopCached, shopSignedIn, shopState, shopWear, shopAura, tgLink } from '@/lib/telegram';
 import { currentWebLogin, prepareWebLogin, resumeWebLogin, startWebLogin, webLogout } from '@/lib/tg-login';
 import type { TgLogin } from '@/lib/tg-login';
 import type { ShopState } from '@/lib/telegram';
 import { TopBar } from '@/ui/TopBarView';
 import { CARD_H, CARD_W, buyLabel, drawCard, itemIcon, starsIcon } from '@/game/skins/wardrobe';
 
-/** Скины гардероба; эффекты для стикеров — на странице стикерпака (вкладка «Эффекты», решение владельца 28.11.2026). */
+/** Скины гардероба. */
 const SKINS = SHOP_ITEMS.filter((x) => !x.effect);
-/** Ячеек в списке наборов: пока набор один — остальные под знаком вопроса. */
-const SLOTS = 4;
+/**
+ * Эффекты: те же, что на стикерах (вкладка «Эффекты» стикерпака), — в гардеробе их надевают на своего персонажа
+ * (решение владельца 28.11.2026, активен один). В ленте — после скинов.
+ */
+const FXS = SHOP_ITEMS.filter((x) => x.effect);
 // оплата прошла, набор ещё не записан: помним на телефоне, ждём до PAID_KEEP_MS, после PAID_LATE_MS — подсказка про поддержку
 const PAID_KEY = 'kto:paid';
 const PAID_LATE_MS = 5 * 60_000;
@@ -75,8 +78,10 @@ export default function WardrobeClient() {
   // не показываем снова кнопку «Купить», ждём и опрашиваем — и после перезагрузки страницы тоже
   const [paidAt, setPaidAt] = useState(0);
   const waiting = !owned && paidAt > 0;
-  const stRef = useRef({ lang, owned, item: ITEM });
-  stRef.current = { lang, owned, item: ITEM };
+  // эффект на витрине — на том, кто ты в игре: в надетом Кот-банане или обычным актёром
+  const cat = st?.worn === 'kotBanan';
+  const stRef = useRef({ lang, owned, item: ITEM, cat });
+  stRef.current = { lang, owned, item: ITEM, cat };
 
   useEffect(() => {
     const l = detectLang();
@@ -84,7 +89,7 @@ export default function WardrobeClient() {
     document.documentElement.lang = l;
     document.title = `${DICTS[l].shop.title} · ${DICTS[l].meta.title}`;
     setStar(starsIcon().toDataURL());
-    setIcons(Object.fromEntries(SKINS.map((x) => [x.id, itemIcon(x.id).toDataURL()])));
+    setIcons(Object.fromEntries([...SKINS, ...FXS].map((x) => [x.id, itemIcon(x.id).toDataURL()])));
     // со страницы стикерпака: /wardrobe?item=kotBanan — сразу нужный набор
     const want = new URLSearchParams(location.search).get('item');
     // старые ссылки на эффект — во вкладку «Эффекты» стикерпака
@@ -181,9 +186,9 @@ export default function WardrobeClient() {
       const f = Math.floor((now - t0) / 100);
       if (f === last) return;
       last = f;
-      const { lang: l, owned: o, item } = stRef.current;
+      const { lang: l, owned: o, item, cat } = stRef.current;
       g.setTransform(scale, 0, 0, scale, 0, 0);
-      drawCard(g, now - t0, { lang: l, item, issued: new Set(o ? STICKER_LIST.filter((s) => s.set === item && s.now).map((s) => s.id) : []) });
+      drawCard(g, now - t0, { lang: l, item, cat, issued: new Set(o ? STICKER_LIST.filter((s) => s.set === item && s.now).map((s) => s.id) : []) });
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
@@ -267,18 +272,19 @@ export default function WardrobeClient() {
     setBusy(null);
   };
 
-  // «Надеть» / «Снять»: переключать скины (сейчас один); в комнате — со следующего входа
-  const worn = st?.worn === undefined ? owned : st.worn === ITEM;
+  // «Надеть» / «Снять»: скин (сейчас один) или эффект на персонажа (активен один); в комнате — со следующего входа
+  const fxItem = isEffect(ITEM);
+  const worn = fxItem ? st?.aura === ITEM : st?.worn === undefined ? owned : st.worn === ITEM;
   const wear = async () => {
     if (busy || !tgOn) return;
     setBusy('wear');
     const on = !worn;
-    track('shop_wear', { item: ITEM, on });
-    const s = await shopWear(on ? ITEM : null);
+    track(fxItem ? 'shop_aura' : 'shop_wear', { item: ITEM, on });
+    const s = await (fxItem ? shopAura : shopWear)(on ? ITEM : null);
     if (s) {
       setSt(s);
       haptic('light');
-      setNote(on ? t.worn : t.unworn);
+      setNote(fxItem ? (on ? t.auraOn : t.auraOff) : on ? t.worn : t.unworn);
     } else setNote(t.failed);
     setBusy(null);
   };
@@ -288,21 +294,16 @@ export default function WardrobeClient() {
 
   const bot = TG_APP ? `https://t.me/${TG_APP.split('/')[0]}` : 'https://t.me/be_nobody_bot';
   const was = shopItem(ITEM)?.was;
-  const list = [...SKINS].sort((a, b) => Number(!!st?.items.includes(b.id)) - Number(!!st?.items.includes(a.id)) || Number(!!b.isNew) - Number(!!a.isNew));
+  const byOwned = (a: (typeof SHOP_ITEMS)[number], b: (typeof SHOP_ITEMS)[number]) => Number(!!st?.items.includes(b.id)) - Number(!!st?.items.includes(a.id));
+  // скины, потом эффекты; купленные — первыми
+  const list = [...[...SKINS].sort((a, b) => byOwned(a, b) || Number(!!b.isNew) - Number(!!a.isNew)), ...[...FXS].sort(byOwned)];
   return (
     <main className="daily wardrobe">
       <TopBar lang={lang} onBack={() => router.push('/')} />
       <h1 className="daily-title">{t.title}</h1>
-      {/* наборы лентой (листается вбок): купленные первыми, потом новые; пустые ячейки — под вопросом */}
+      {/* наборы лентой (листается вбок): скины, потом эффекты на персонажа; купленные первыми */}
       <div className="wardrobe-sets" role="tablist">
-        {Array.from({ length: Math.max(SLOTS, SKINS.length) }, (_, i) => {
-          const x = list[i];
-          if (!x)
-            return (
-              <button key={i} className="wardrobe-set locked" onClick={() => flash(t.soon)} aria-label={t.soon}>
-                ?
-              </button>
-            );
+        {list.map((x) => {
           const mine = !!st?.items.includes(x.id);
           return (
             <button key={x.id} role="tab" aria-selected={x.id === ITEM} className={x.id === ITEM ? 'wardrobe-set on' : 'wardrobe-set'} onClick={() => setItem(x.id)} aria-label={t.items[x.id].name}>
@@ -333,8 +334,8 @@ export default function WardrobeClient() {
         ) : owned ? (
           <>
             <p className="wardrobe-owned">{t.owned}</p>
-            {/* эффект не надевается — он на стикерах: выбор на странице стикерпака */}
-            {tgOn && !isEffect(ITEM) && (
+            {/* скин и эффект надеваются на своего персонажа (эффект — ещё и на стикеры, в стикерпаке) */}
+            {tgOn && (
               <button className={worn ? 'btn small alt' : 'btn small'} onClick={() => void wear()} aria-disabled={!!busy} aria-pressed={worn}>
                 {worn ? t.unwear : t.wear}
               </button>

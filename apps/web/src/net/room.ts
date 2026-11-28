@@ -37,6 +37,8 @@ export interface Member {
   ready: boolean;
   /** Скин из гардероба (подставляет сервер по покупкам) — в лобби его видят все. */
   skin?: string;
+  /** Эффект на персонаже (по покупкам, как скин) — в лобби его видят все. */
+  fx?: string;
 }
 
 export interface RoomState {

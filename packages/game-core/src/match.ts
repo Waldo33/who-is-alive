@@ -41,6 +41,8 @@ export interface PlayerInfo {
    * Матч его не читает.
    */
   skin?: string;
+  /** Эффект на персонаже (`EFFECTS`, `shop.ts › auraOf`): по покупкам, как скин, и виден там же, где скин. Матч его не читает. */
+  fx?: string;
 }
 
 export type Phase = 'countdown' | 'play' | 'accuse' | 'reveal' | 'results' | 'match_end';

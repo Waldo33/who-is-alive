@@ -15,7 +15,7 @@ import type { AddressInfo } from 'node:net';
 import { WebSocketServer } from 'ws';
 import type { WebSocket } from 'ws';
 import { ClientMsg, DEFAULT_WIRE_SETTINGS, ROOM_CODE_ALPHABET, RoomSettingsSchema, WIRE_MAX_BYTES, WIRE_VERSION } from '@kto/net';
-import { skinOf } from '@kto/game-core';
+import { auraOf, skinOf } from '@kto/game-core';
 import type { ServerMsg, WireError } from '@kto/net';
 import { Auth } from './auth';
 import { Counter, MsgBudget, RateWindow } from './limits';
@@ -816,7 +816,7 @@ export class GameServer {
       .then(async (links) => {
         const tg = links[0];
         const u = tg ? await this.store.shopUser(tg.tgUser) : null;
-        room.setSkin(userId, (u && skinOf(u.items)) ?? null);
+        room.setSkin(userId, (u && skinOf(u.items)) ?? null, (u && auraOf(u.items)) ?? null);
       })
       .catch((e) => this.log('warn', 'skin_lookup', { room: room.code, err: String(e) }));
   }

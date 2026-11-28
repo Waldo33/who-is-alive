@@ -292,6 +292,8 @@ export function mountSandbox(root: HTMLElement, opts: ShellOptions): () => void 
         lang,
         // ?dev&skin=kotBanan — свой скин гардероба (&skinai — и у первого ИИ: на поле его видно быть не должно)
         ...(dev && new URLSearchParams(location.search).get('skin') ? { skin: new URLSearchParams(location.search).get('skin')!, skinAi: new URLSearchParams(location.search).has('skinai') } : {}),
+        // ?dev&fx=holo — свой эффект на персонаже (с &skinai — и у первого ИИ)
+        ...(dev && new URLSearchParams(location.search).get('fx') ? { fx: new URLSearchParams(location.search).get('fx')!, skinAi: new URLSearchParams(location.search).has('skinai') } : {}),
       });
       if (dev) (window as unknown as { __kto: RunningGame }).__kto = running;
     }
