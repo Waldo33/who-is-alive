@@ -1,4 +1,5 @@
 import {
+  BASE_PER_DAY,
   FRIEND_MATCHES,
   FRIEND_MAX,
   MILESTONES,
@@ -127,6 +128,9 @@ export async function premiereView(store: PremiereStore, tgUser: number, now: nu
     week: phase === 'after' ? [] : weekTasks(week).map(task),
     streak,
     playedToday: s.streakDay === day,
+    // матчей с контрамаркой сегодня (до BASE_PER_DAY) — строка «Сыграй матч» в списке дня
+    matchesToday: phase === 'on' && s.day === day ? s.dayBase : 0,
+    basePerDay: BASE_PER_DAY,
     streakRewards: STREAK_REWARDS,
     friends: s.friends,
     friendsMax: FRIEND_MAX,

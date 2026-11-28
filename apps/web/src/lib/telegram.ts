@@ -572,6 +572,9 @@ export interface PremiereView {
   week: PremiereTaskView[];
   streak: number;
   playedToday: boolean;
+  /** Старый сервер не шлёт. */
+  matchesToday?: number;
+  basePerDay?: number;
   streakRewards: { days: number; n: number }[];
   friends: number;
   friendsMax: number;

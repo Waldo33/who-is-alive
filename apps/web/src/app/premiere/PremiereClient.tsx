@@ -78,6 +78,7 @@ export default function PremiereClient() {
   const [signed, setSigned] = useState(true);
   const [failed, setFailed] = useState(false);
   const [tab, setTab] = useState<Tab>('day');
+  const [help, setHelp] = useState(false);
 
   const load = async () => {
     setFailed(false);
@@ -131,22 +132,28 @@ export default function PremiereClient() {
   const need = Math.max(0, view.entry - view.tickets);
   const top = MILESTONES[MILESTONES.length - 1].at;
 
-  const row = (x: PremiereTaskView) => (
+  const row = (x: PremiereTaskView, text?: string) => (
     <li key={x.id} className={x.done ? 'done' : ''}>
-      <span className="pr-task">{x.id === 'friend' ? t.friendRow : x.id === 'share' ? t.shareRow : tp(lang, t.tasks[x.id as keyof typeof t.tasks], x.goal)}</span>
-      <span className="pr-prog">{x.done ? t.done : x.goal > 1 ? `${x.progress}/${x.goal}` : ''}</span>
+      <span className="pr-task">{text ?? tp(lang, t.tasks[x.id as keyof typeof t.tasks], x.goal)}</span>
+      <span className="pr-prog">{x.done ? '' : x.goal > 1 ? `${x.progress}/${x.goal}` : ''}</span>
       <span className="pr-rew" style={x.reward ? undefined : { visibility: 'hidden' }}>
         +{x.reward}
         <i className="pr-ticket mini" aria-hidden />
       </span>
     </li>
   );
+  const base = view.basePerDay ?? 3;
+  const played = Math.min(view.matchesToday ?? 0, base);
+  const nextStreak = view.streakRewards.find((r) => r.days > view.streak) ?? view.streakRewards[view.streakRewards.length - 1];
 
   return (
     <main className="daily premiere">
       <TopBar lang={lang} onBack={() => router.push('/')} />
       <h1 className="daily-title">{t.title}</h1>
-      <p className="pr-prize">{view.phase === 'before' ? t.before : t.prize}</p>
+      <p className="pr-prize">
+        <b>{t.prize}</b>
+        <span>{view.phase === 'before' ? t.before : t.prizeSub}</span>
+      </p>
       <section className="pr-head" style={{ visibility: ready ? 'visible' : 'hidden' }}>
         <div className="pr-count">
           <i className="pr-ticket" aria-hidden />
@@ -158,18 +165,15 @@ export default function PremiereClient() {
         ) : !signed ? (
           <p className="pr-status">{t.noTg}</p>
         ) : view.entered ? (
-          <p className="pr-status in">{t.entered}</p>
+          <p className="pr-status pr-pill in">{t.entered}</p>
         ) : need > 0 ? (
-          <p className="pr-status">{tp(lang, t.needMore, need)}</p>
+          <p className="pr-status pr-pill">{tp(lang, t.needMore, need)}</p>
         ) : (
-          <div className="pr-status pr-need">
-            <span>{t.needSub}</span>
-            {view.channel && (
-              <button className="btn small" onClick={subscribe}>
-                {t.subscribe}
-              </button>
-            )}
-          </div>
+          view.channel && (
+            <button className="btn small" onClick={subscribe}>
+              {t.needSub}
+            </button>
+          )
         )}
         <div className="pr-road" aria-label={t.road}>
           <div className="pr-bar">
@@ -191,35 +195,30 @@ export default function PremiereClient() {
             {t.tabs[k]}
           </button>
         ))}
+        {/* памятка: пояснения не на экране, а по «?» — экран читается списком «сделай → получи» */}
+        <button className="pr-q" aria-label={t.help} onClick={() => setHelp(true)}>
+          ?
+        </button>
       </div>
       <section className="pr-body">
         {tab === 'day' && (
-          <>
-            <p className="pr-note">{t.base}</p>
-            <ul className="pr-list">{view.day.map(row)}</ul>
-            {view.double && <p className="pr-note hot">{t.double}</p>}
-            <p className="pr-note">
-              {signed && <b>{tp(lang, t.streak, view.streak)}</b>}
-              {signed && view.phase === 'on' && ` · ${view.playedToday ? t.playedToday : t.notToday}`}
-              {signed && <br />}
-              {t.streakHint}
-            </p>
-          </>
+          <ul className="pr-list">
+            {row({ id: 'match', goal: base, reward: 1, progress: played, done: played >= base }, t.match)}
+            {view.day.map((x) => row(x))}
+            {signed &&
+              row(
+                { id: 'streak', goal: nextStreak.days, reward: nextStreak.n, progress: Math.min(view.streak, nextStreak.days), done: view.streak >= nextStreak.days },
+                tp(lang, t.streakRow, view.streak),
+              )}
+          </ul>
         )}
-        {tab === 'week' && (
-          <>
-            <ul className="pr-list">{view.week.map(row)}</ul>
-            <p className="pr-note">{t.weekHint}</p>
-          </>
-        )}
+        {tab === 'week' && <ul className="pr-list">{view.week.map((x) => row(x))}</ul>}
         {tab === 'friends' && (
           <>
             <ul className="pr-list">
-              {row({ id: 'friend', goal: view.friendsMax, reward: FRIEND_REWARD, progress: view.friends, done: view.friends >= view.friendsMax })}
-              {row({ id: 'share', goal: view.sharedMax, reward: 0, progress: view.shared, done: view.shared >= view.sharedMax })}
+              {row({ id: 'friend', goal: view.friendsMax, reward: FRIEND_REWARD, progress: view.friends, done: view.friends >= view.friendsMax }, t.friendRow)}
+              {row({ id: 'share', goal: view.sharedMax, reward: 0, progress: view.shared, done: view.shared >= view.sharedMax }, t.shareRow)}
             </ul>
-            <p className="pr-note">{fmt(t.friendHow, { m: view.friendMatches, r: FRIEND_REWARD })}</p>
-            <p className="pr-note">{t.shareHow}</p>
             {signed && view.phase !== 'after' && (
               <button className="btn small" onClick={invite}>
                 {t.invite}
@@ -227,6 +226,7 @@ export default function PremiereClient() {
             )}
           </>
         )}
+        {view.double && tab === 'day' && <p className="pr-note hot">{t.double}</p>}
       </section>
       <div className="daily-actions">
         {!signed && tgLink('premiere') && (
@@ -240,8 +240,22 @@ export default function PremiereClient() {
           </button>
         )}
         {signed && !v && <p className="muted">{failed ? t.fail : t.loading}</p>}
-        <p className="pr-rules">{t.rules}</p>
       </div>
+      {help && (
+        <div className="pr-sheet" role="dialog" aria-label={t.help} onClick={() => setHelp(false)}>
+          <div className="pr-sheet-card" onClick={(e) => e.stopPropagation()}>
+            <h2>{t.help}</h2>
+            <ul>
+              {t.helpText.map((x) => (
+                <li key={x}>{x}</li>
+              ))}
+            </ul>
+            <button className="btn small" onClick={() => setHelp(false)}>
+              {t.close}
+            </button>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
