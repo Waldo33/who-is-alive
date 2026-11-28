@@ -202,7 +202,7 @@ interface Update {
     reply_to_message?: { text?: string; from?: { id: number; is_bot?: boolean } };
     successful_payment?: { currency: string; total_amount: number; invoice_payload: string; telegram_payment_charge_id: string };
   };
-  callback_query?: { id: string; from: { id: number; first_name?: string; username?: string; language_code?: string }; data?: string; message?: { message_id: number; chat: { id: number } } };
+  callback_query?: { id: string; from: { id: number; first_name?: string; username?: string; language_code?: string }; data?: string; message?: { message_id: number; chat: { id: number }; text?: string } };
   pre_checkout_query?: { id: string; from: { id: number }; currency: string; total_amount: number; invoice_payload: string };
   inline_query?: { id: string; query: string; from: { language_code?: string } };
   /** Карточку выбрали и отправили в чат (нужна «обратная связь» инлайн-режима в BotFather: /setinlinefeedback). */
@@ -360,20 +360,47 @@ export class Bot {
     // (shop-refund.yml: номер покупателя вставить в поле who)
     const refundBtn = { text: '↩️ Возврат: shop-refund', url: REFUND_URL };
     const profileBtn = { text: '👤 Профиль покупателя', url: user ? `https://t.me/${from.username}` : `tg://user?id=${from.id}` };
-    const send = (rows: { text: string; url: string }[][]) => this.api('sendMessage', { chat_id: this.supportChat, text: card, disable_web_page_preview: true, reply_markup: { inline_keyboard: rows } });
+    // «Закрыть обращение»: ответил игроку — нажал, кнопки уходят, в сообщении — кто закрыл
+    const closeBtn = { text: '✅ Закрыть обращение', callback_data: 'sup:close' };
+    const send = (rows: ({ text: string; url: string } | typeof closeBtn)[][]) =>
+      this.api('sendMessage', { chat_id: this.supportChat, text: card, disable_web_page_preview: true, reply_markup: { inline_keyboard: rows } });
     try {
       try {
-        await send([[profileBtn], [refundBtn]]);
+        await send([[profileBtn], [refundBtn], [closeBtn]]);
       } catch (e) {
         // ссылку по id Telegram не пускает, если игрок закрыл её настройками приватности, — тогда без профиля
         if (user) throw e;
-        await send([[refundBtn]]);
+        await send([[refundBtn], [closeBtn]]);
       }
     } catch (e) {
       // бот не в чате поддержки — игроку всё равно ответим; тревога — по журналу
       this.o.log('error', 'tg_support', errFields(e));
     }
     if (command) await this.shop.support(from.id, from.language_code, true);
+  }
+
+  /**
+   * «Закрыть обращение» в чате поддержки: кнопки убираем, в сообщение — кто закрыл (метка #u<id> остаётся последней:
+   * по ней и после закрытия ответ уйдёт игроку); пересылка сообщений игрока в поддержку заканчивается.
+   */
+  private async onSupportClose(q: NonNullable<Update['callback_query']>): Promise<void> {
+    const m = q.message;
+    if (!m || String(m.chat.id) !== this.supportChat || !m.text) {
+      await this.api('answerCallbackQuery', { callback_query_id: q.id });
+      return;
+    }
+    const lines = m.text.split('\n');
+    const tag = lines.at(-1) ?? '';
+    const who = cleanName(safeCaption(q.from.first_name ?? '', ''), '—');
+    const text = [...lines.slice(0, -1), `✅ Закрыто · ${who}`, tag].join('\n');
+    const player = /^#u(\d{1,16})$/.exec(tag)?.[1];
+    if (player) this.supportUntil.delete(Number(player));
+    try {
+      await this.api('editMessageText', { chat_id: m.chat.id, message_id: m.message_id, text, disable_web_page_preview: true });
+    } catch (e) {
+      this.o.log('warn', 'tg_support_close', errFields(e));
+    }
+    await this.api('answerCallbackQuery', { callback_query_id: q.id, text: 'Закрыто' });
   }
 
   /** Ответ в чате поддержки на пересылку бота — игроку, чей #u<id> в пересылке. */
@@ -467,6 +494,7 @@ export class Bot {
         try {
           if (u?.pre_checkout_query) await this.shop.preCheckout(u.pre_checkout_query);
           else if (u?.callback_query?.data?.startsWith('login:')) await this.onLoginConfirm(u.callback_query);
+          else if (u?.callback_query?.data === 'sup:close') await this.onSupportClose(u.callback_query);
           else if (u?.callback_query) await this.shop.onCallback(u.callback_query);
           // бесплатный стикерпак по внешней ссылке t.me/<бот>?start=stickers (только в личке: пак — этого игрока)
           else if (u?.message?.text === '/start stickers' && u.message.chat.type === 'private' && u.message.from) await this.shop.claimInChat(u.message.from);
