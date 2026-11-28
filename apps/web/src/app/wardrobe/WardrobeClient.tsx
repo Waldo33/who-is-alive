@@ -15,6 +15,8 @@ import type { ShopState } from '@/lib/telegram';
 import { TopBar } from '@/ui/TopBarView';
 import { CARD_H, CARD_W, buyLabel, drawCard, itemIcon, starsIcon } from '@/game/skins/wardrobe';
 
+/** Скины гардероба; эффекты для стикеров — на странице стикерпака (вкладка «Эффекты», решение владельца 28.11.2026). */
+const SKINS = SHOP_ITEMS.filter((x) => !x.effect);
 /** Ячеек в списке наборов: пока набор один — остальные под знаком вопроса. */
 const SLOTS = 4;
 // оплата прошла, набор ещё не записан: помним на телефоне, ждём до PAID_KEEP_MS, после PAID_LATE_MS — подсказка про поддержку
@@ -40,7 +42,7 @@ function paidSince(item: string): number {
 /** «Гардероб» (/wardrobe, за флагом shop): витрина Кот-банана, покупка за звёзды, стикеры набора — в личный пак игрока. */
 export default function WardrobeClient() {
   const router = useRouter();
-  const [ITEM, setItem] = useState<ShopItemId>(SHOP_ITEMS[0].id);
+  const [ITEM, setItem] = useState<ShopItemId>(SKINS[0].id);
   const [icons, setIcons] = useState<Record<string, string>>({});
   const [lang, setLang] = useState<Lang>('ru');
   const t = DICTS[lang].shop;
@@ -86,10 +88,12 @@ export default function WardrobeClient() {
     document.documentElement.lang = l;
     document.title = `${DICTS[l].shop.title} · ${DICTS[l].meta.title}`;
     setStar(starsIcon().toDataURL());
-    setIcons(Object.fromEntries(SHOP_ITEMS.map((x) => [x.id, itemIcon(x.id).toDataURL()])));
+    setIcons(Object.fromEntries(SKINS.map((x) => [x.id, itemIcon(x.id).toDataURL()])));
     // со страницы стикерпака: /wardrobe?item=kotBanan — сразу нужный набор
     const want = new URLSearchParams(location.search).get('item');
-    const pick = SHOP_ITEMS.find((x) => x.id === want);
+    // старые ссылки на эффект — во вкладку «Эффекты» стикерпака
+    if (isEffect(want)) return router.replace(`/stickers?fx=${want}`);
+    const pick = SKINS.find((x) => x.id === want);
     if (pick) setItem(pick.id);
     track('shop_view', pick ? { item: pick.id } : {});
     const inTgNow = inTelegram();
@@ -318,14 +322,14 @@ export default function WardrobeClient() {
 
   const bot = TG_APP ? `https://t.me/${TG_APP.split('/')[0]}` : 'https://t.me/be_nobody_bot';
   const was = shopItem(ITEM)?.was;
-  const list = [...SHOP_ITEMS].sort((a, b) => Number(!!st?.items.includes(b.id)) - Number(!!st?.items.includes(a.id)) || Number(!!b.isNew) - Number(!!a.isNew));
+  const list = [...SKINS].sort((a, b) => Number(!!st?.items.includes(b.id)) - Number(!!st?.items.includes(a.id)) || Number(!!b.isNew) - Number(!!a.isNew));
   return (
     <main className="daily wardrobe">
       <TopBar lang={lang} onBack={() => router.push('/')} />
       <h1 className="daily-title">{t.title}</h1>
       {/* наборы лентой (листается вбок): купленные первыми, потом новые; пустые ячейки — под вопросом */}
       <div className="wardrobe-sets" role="tablist">
-        {Array.from({ length: Math.max(SLOTS, SHOP_ITEMS.length) }, (_, i) => {
+        {Array.from({ length: Math.max(SLOTS, SKINS.length) }, (_, i) => {
           const x = list[i];
           if (!x)
             return (
@@ -418,6 +422,10 @@ export default function WardrobeClient() {
             {t.build.open}
           </button>
         )}
+        {/* эффекты для стикеров — во вкладке стикерпака */}
+        <button className="link" onClick={() => router.push('/stickers?fx=holo')}>
+          {t.fxCategory}
+        </button>
         {/* браузер: вход через Telegram — купленное в боте (скин, стикерпак) и здесь */}
         {!inTg &&
           (login ? (
