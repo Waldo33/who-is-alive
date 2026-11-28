@@ -349,6 +349,23 @@ export function Lobby({
   const online = state.members.filter((m) => m.online);
   // с ИИ-актёрами свободные места займут они — начать можно и одному
   const enough = online.length >= room.minHumans();
+  // никого, кроме себя: «Позвать» мигает, а первые два захода в лобби — подсказка про награду за компанию
+  const alone = online.length <= 1;
+  const [tip, setTip] = useState(false);
+  useEffect(() => {
+    if (!alone) return setTip(false);
+    let shown = 0;
+    try {
+      shown = Number(localStorage.getItem('kto:invite-tip')) || 0;
+      if (shown >= 2) return;
+      localStorage.setItem('kto:invite-tip', String(shown + 1));
+    } catch {
+      return;
+    }
+    setTip(true);
+    const id = setTimeout(() => setTip(false), 8000);
+    return () => clearTimeout(id);
+  }, [alone]);
   // «Мотор!» — только когда все подключённые игроки нажали «Готов» (режиссёр — не в счёт); сервер проверяет так же
   const allReady = online.every((m) => m.userId === state.hostId || m.ready);
   const canStart = isHost && enough && allReady;
@@ -433,14 +450,16 @@ export function Lobby({
           <span className="muted">{t.lobby.codeLabel}</span>
           <span className="room-code">{state.code}</span>
           {!inviteFirst && (
-            <div className="inv-row">
-              <button className="btn small alt" onClick={invite}>
-                {t.lobby.inviteShort}
-              </button>
-              <span className="perk">{t.lobby.invitePerk}</span>
-            </div>
+            <button className={`btn small alt${alone ? ' glow' : ''}`} onClick={() => { setTip(false); void invite(); }}>
+              {t.lobby.inviteShort}
+            </button>
           )}
         </div>
+        {tip && !inviteFirst && (
+          <button className="inv-tip" onClick={() => setTip(false)}>
+            {t.lobby.inviteTip}
+          </button>
+        )}
       </section>
 
       {/* игроки — сетка 2×2: человечек цвета игрока, имя, плашка; готовый машет */}
@@ -526,7 +545,7 @@ export function Lobby({
               <button className="btn" onClick={invite}>
                 {t.lobby.invite}
               </button>
-              <p className="muted perk">{t.lobby.invitePerk}</p>
+              <p className="perk">{t.lobby.invitePerk}</p>
             </>
           ) : (
             <>
