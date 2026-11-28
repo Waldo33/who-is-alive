@@ -635,6 +635,10 @@ export const en: Dict = {
       party: ["Let's go!"],
       kupala: ['Midsummer'],
       casino: ['All in!'],
+      // memes (skins/gestures.ts): «Busted» has no caption, the shot fills the sticker
+      busted: [],
+      sleep: ['OK, off', 'to bed'],
+      lastTime: ['One last', 'time'],
     },
     /** «Build your sticker pack» (/stickers): which stickers are in the pack, plus your own. */
     build: {
@@ -705,7 +709,19 @@ export const en: Dict = {
         full: 'All open slots are taken',
         bad: 'Something went wrong, try again',
       },
-      poses: { wave: 'Hi', dance: 'Dance', stun: 'Stunned', startle: 'Startled', jump: 'Jump', freeze: 'Freeze', ask: 'Question' },
+      poses: {
+        wave: 'Hi', dance: 'Dance', stun: 'Stunned', startle: 'Startled', jump: 'Jump', freeze: 'Freeze', ask: 'Question',
+        snap: 'Cut!', facepalm: 'Facepalm', wait: 'Waiting',
+        sob: 'Sobbing', hide: 'Not here', plead: 'Pretty please',
+        chefKiss: 'Perfect', onFire: 'On fire!', orderUp: 'Order up!',
+        shiver: 'Shivering', leave: "I'm out", flop: 'Done',
+        liftoff: 'Liftoff!', float: 'Zero-G', ping: 'Come in?',
+        call: 'On a call', coffee: 'Coffee', typing: 'Typing', frame25: 'Frame 25',
+        shades: 'Shades', cocktail: 'Cocktail', friday: 'Friday!', mask: 'Mask',
+        toast: 'Cheers!', gift: 'For you!', karaoke: 'Karaoke',
+        shh: 'Shh!', fireJump: 'Fire jump', daisy: 'Loves me?',
+        lever: 'Come on!', allIn: 'All in!', payday: 'Jackpot',
+      },
       figs: { actor: 'Actor', kotBanan: 'Catnana' },
       /** What unlocks stickers and figures. */
       earn: {

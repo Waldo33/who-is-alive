@@ -6,6 +6,7 @@ import { canvas, ellipse, grid, px } from '../pixels';
 import type { Ctx } from '../pixels';
 import { themeLook } from '../themes';
 import { ST_FRAMES, R, actorFrame, cap, put, say, star } from './stickers';
+import { drawMeme } from './gestures';
 import type { Art } from './stickers';
 
 /**
@@ -313,6 +314,22 @@ function chips(g: Ctx, x: number, y: number, n: number, c: string): void {
 // ───────────── стикеры ─────────────
 
 export const PLAY_ART: Art[] = [
+  // мемы (сцены — gestures.ts): «Вычислил» без подписи, у двух других подпись в две строки
+  { id: 'busted', draw: (g, t) => drawMeme(g, 'busted', t) },
+  {
+    id: 'sleep',
+    draw(g, t, lang) {
+      drawMeme(g, 'sleep', t);
+      cap(g, 'sleep', lang, 76);
+    },
+  },
+  {
+    id: 'lastTime',
+    draw(g, t, lang) {
+      drawMeme(g, 'lastTime', t);
+      cap(g, 'lastTime', lang, 76);
+    },
+  },
   {
     // ножницы монтажёра режут кадр с актёром, нижняя половина падает
     id: 'cut',

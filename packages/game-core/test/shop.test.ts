@@ -26,8 +26,8 @@ describe('стикеры за матч', () => {
     ];
     expect([...earnedEvents('a', rounds, { winners: ['a'] })].sort()).toEqual(['played', 'survive', 'unsuspected', 'win']);
     expect([...earnedEvents('b', rounds, { winners: ['a'] })].sort()).toEqual(['accuse', 'clairvoyant', 'cut', 'lose', 'paranoid', 'played']);
-    expect(earnedStickers('a', rounds, { winners: ['a'] }).sort()).toEqual(['action', 'dance', 'extra', 'freeze', 'happyTears', 'oops', 'still', 'who']);
-    expect(earnedStickers('b', rounds, { winners: ['a'] }).sort()).toEqual(['action', 'allGood', 'cut', 'dance', 'meow', 'offscreen', 'oops', 'retake', 'splat', 'who']);
+    expect(earnedStickers('a', rounds, { winners: ['a'] }).sort()).toEqual(['action', 'dance', 'extra', 'freeze', 'happyTears', 'oops', 'sleep', 'still', 'who']);
+    expect(earnedStickers('b', rounds, { winners: ['a'] }).sort()).toEqual(['action', 'allGood', 'busted', 'cut', 'dance', 'meow', 'offscreen', 'oops', 'retake', 'sleep', 'splat', 'who']);
   });
 
   it('«за игру»: три звезды, «777» в казино, герой площадки за сыгранный на ней дубль', () => {
@@ -36,7 +36,7 @@ describe('стикеры за матч', () => {
     const chefs = THEME_RULES.findIndex((t) => t.id === 'chefs');
     const rounds = [round({ starWinner: 'a', theme: chefs }), round({ points: { a: { ...line, slot: 3 }, b: line }, theme: casino })];
     const a = earnedStickers('a', rounds, { winners: [] });
-    for (const id of ['star', 'jackpot', 'chef', 'casino']) expect(a).toContain(id);
+    for (const id of ['star', 'jackpot', 'chef', 'casino', 'lastTime']) expect(a).toContain(id);
     expect(a).not.toContain('penguin');
     const b = earnedStickers('b', rounds, { winners: [] });
     expect(b).not.toContain('star');
