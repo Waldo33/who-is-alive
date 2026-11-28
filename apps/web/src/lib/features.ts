@@ -8,10 +8,13 @@
  * Сейчас за флагом:
  * - `casting` — «Кастинг дня» (/daily): карточка на главной, ссылки `startapp=daily`, страница /daily.
  *   Бот прячет кастинг своим флагом — переменная `FEATURES=casting` сервера бота (apps/server/src/bot.ts).
+ * - `premiere` — «Новогодняя премьера» до старта сезона (17.12): счётчик контрамарок на главной и экран
+ *   «Съёмочный план» (/premiere). В сезон (17–30.12) они видны всем без флага. В Telegram флаг включает
+ *   ссылка `startapp=premiere`.
  * - `orchestra` — «Оркестр из телефонов» в лобби (план звука, вариант Б): у режиссёра в шестерёнке
  *   лобби строка «Оркестр»; гостям флаг не нужен — играют, раз режиссёр включил. Ждёт плейтеста.
  */
-export type Feature = 'casting' | 'orchestra';
+export type Feature = 'casting' | 'orchestra' | 'premiere';
 
 const KEY = 'kto:ff';
 const BUILD = new Set((process.env.NEXT_PUBLIC_FEATURES ?? '').split(',').map((s) => s.trim()).filter(Boolean));

@@ -13,7 +13,7 @@ import type { TopBar as Bar } from '@/ui/topbar';
 import { playerName } from '@/lib/name';
 import { track } from '@/lib/analytics';
 import { featureOn } from '@/lib/features';
-import { bootTelegram, inTelegram, openTelegram, shopClaim, telegramStartTarget, tgLink } from '@/lib/telegram';
+import { bootTelegram, inTelegram, openTelegram, premiereCached, premiereOn, premiereRef, premiereState, shopClaim, shopSignedIn, telegramStartTarget, tgLink } from '@/lib/telegram';
 import { TG_APP } from '@/lib/env';
 import { Garland, Snow, useNewYear } from '@/ui/Festive';
 import { shareContent, withLang } from '@/lib/share';
@@ -40,6 +40,13 @@ export default function HomeClient() {
   const [stickers, setStickers] = useState<'off' | 'offer' | 'busy' | 'sub' | 'match'>('off');
   // «Мой стикерпак» — только после первой игры (решение владельца 28.11.2026): до неё на главной его нет
   const [played, setPlayed] = useState(false);
+  // «Новогодняя премьера»: счётчик контрамарок в углу (null — не сезон); запрос заодно привязывает друга по ссылке
+  const [tickets, setTickets] = useState<number | null>(null);
+  useEffect(() => {
+    if (!premiereOn()) return;
+    setTickets(premiereCached()?.tickets ?? 0);
+    if (shopSignedIn()) void premiereState().then((v) => v && setTickets(v.tickets));
+  }, []);
   useEffect(() => {
     const n = dailyNumber(localDateKey(new Date()));
     let done = false;
@@ -68,6 +75,7 @@ export default function HomeClient() {
     document.documentElement.lang = l;
     document.title = DICTS[l].meta.title;
     // открыли из Telegram по ссылке-приглашению (?startapp=r_КОД / daily) — сразу туда, без обучения
+    premiereRef(); // кто позвал (хвост _f<id> ссылки) — запомнить до перехода в комнату
     const tgTarget = telegramStartTarget();
     if (tgTarget) {
       location.replace(tgTarget);
@@ -157,6 +165,13 @@ export default function HomeClient() {
         }}
       />
       {ny && <Garland />}
+      {tickets !== null && (
+        <Link className="pr-chip" href="/premiere" onClick={() => track('premiere_tap', { from: 'home' })} aria-label={t.premiere.title}>
+          <i className="pr-ticket" aria-hidden />
+          <b>{tickets}</b>
+          <span>{t.premiere.chip}</span>
+        </Link>
+      )}
       <div className="crowd" aria-hidden>
         {CROWD.map((i) => (
           <i key={i} className={i === 7 ? 'me' : undefined} style={{ animationDelay: `${(i * 137) % 900}ms` }} />

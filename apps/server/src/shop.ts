@@ -955,10 +955,6 @@ export class Shop {
   }
 
   /**
-   * Подписан ли игрок на канал игры. Проверить нельзя (бот не админ канала, сбой Telegram) — считаем, что да:
-   * пак бесплатный, из-за настройки канала игроку отказывать не стоит.
-   */
-  /**
    * «Новогодняя премьера»: экран «Съёмочный план». `ref` — id Telegram друга из ссылки `startapp=ref_<id>`:
    * привязываем, только если игрок новичок (premiere.ts › bindPremiereRef).
    */
@@ -967,9 +963,14 @@ export class Shop {
     if (!l.premiere || !l.premiereUpdate || !l.tgStats) return { status: 503, body: { error: 'no_store' } };
     const store = { premiere: l.premiere, premiereUpdate: l.premiereUpdate, tgStats: l.tgStats };
     if (typeof ref === 'number' || (typeof ref === 'string' && /^\d{1,15}$/.test(ref))) await bindPremiereRef(store, id, Number(ref), now);
-    return { status: 200, body: await premiereView(store, id, now, await this.subscribed(id)) };
+    // me — для ссылки «Позвать друга» (startapp=ref_<me>), channel — кнопка «Подписаться»
+    return { status: 200, body: { ...(await premiereView(store, id, now, await this.subscribed(id))), me: id, channel: this.d.channel } };
   }
 
+  /**
+   * Подписан ли игрок на канал игры. Проверить нельзя (бот не админ канала, сбой Telegram) — считаем, что да:
+   * пак бесплатный, из-за настройки канала игроку отказывать не стоит.
+   */
   private async subscribed(id: number): Promise<boolean> {
     if (!this.d.channelId) return true;
     try {

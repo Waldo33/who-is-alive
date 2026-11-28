@@ -102,7 +102,8 @@ export async function premiereView(store: PremiereStore, tgUser: number, now: nu
   const raw = (await store.premiere(tgUser)) ?? newPremiere();
   const phase = premierePhase(now);
   const s = phase === 'on' ? rollPremiere(raw, now) : raw;
-  const day = premiereDay(now);
+  // до старта — план первого дня и недели: видно, за что будут контрамарки
+  const day = phase === 'before' ? PREMIERE.start : premiereDay(now);
   const week = Math.max(0, premiereWeek(now));
   const task = (t: { id: string; goal: number; reward: number; scope: 'day' | 'week' }) => ({
     id: t.id,
@@ -122,8 +123,8 @@ export async function premiereView(store: PremiereStore, tgUser: number, now: nu
     subscribed,
     entered: s.tickets >= PREMIERE_ENTRY && subscribed,
     double: day >= PREMIERE.double,
-    day: phase === 'on' ? dayTasks(day).map(task) : [],
-    week: phase === 'on' ? weekTasks(week).map(task) : [],
+    day: phase === 'after' ? [] : dayTasks(day).map(task),
+    week: phase === 'after' ? [] : weekTasks(week).map(task),
     streak,
     playedToday: s.streakDay === day,
     streakRewards: STREAK_REWARDS,

@@ -57,6 +57,7 @@ describe('премьера на сервере', () => {
     expect(v.streak).toBe(1);
     const before = await premiereView(store, 3, at('2026-12-01'), false);
     expect(before.phase).toBe('before');
-    expect(before.day).toEqual([]);
+    expect(before.day.map((t) => t.id)).toEqual(dayTasks('2026-12-17').map((t) => t.id));
+    expect(before.day.every((t) => t.progress === 0 && !t.done)).toBe(true);
   });
 });
