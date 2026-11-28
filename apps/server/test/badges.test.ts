@@ -16,7 +16,7 @@ interface Call {
   files: string[];
 }
 
-function fakeApi(o: { set?: { emoji: string; custom_emoji_id: string }[] | null; fail?: string } = {}) {
+function fakeApi(o: { set?: { emoji: string; custom_emoji_id: string; file_id?: string; is_video?: boolean }[] | null; fail?: string } = {}) {
   const calls: Call[] = [];
   let set = o.set === undefined ? null : o.set;
   let n = 0;
@@ -39,6 +39,10 @@ function fakeApi(o: { set?: { emoji: string; custom_emoji_id: string }[] | null;
     const add = (stk: { emoji_list: string[] }) => (set ??= []).push({ emoji: stk.emoji_list[0]! + '️', custom_emoji_id: `ce${++n}` });
     if (method === 'createNewStickerSet') for (const s of b.stickers as { emoji_list: string[] }[]) add(s);
     if (method === 'addStickerToSet') add(b.sticker as { emoji_list: string[] });
+    if (method === 'replaceStickerInSet' && set) {
+      const i = set.findIndex((x) => x.file_id === b.old_sticker);
+      set[i] = { emoji: (b.sticker as { emoji_list: string[] }).emoji_list[0]!, custom_emoji_id: `ce${++n}`, is_video: (b.sticker as { format: string }).format === 'video' };
+    }
     return true as R;
   };
   return { api, calls };
@@ -80,6 +84,22 @@ describe('значки: набор эмодзи у бота', () => {
     await b.kick();
     // всё на месте — Telegram больше не дёргаем (кроме повторной сверки не чаще раза в 10 минут)
     expect(calls.slice(before).some((c) => c.method !== 'getStickerSet')).toBe(false);
+  });
+
+  it('значок стал анимированным — картинку в наборе бот меняет на видео, id эмодзи берёт новый', async () => {
+    const have = BADGE_IDS.map((id, i) => ({ emoji: badgeEmoji(id), custom_emoji_id: `old${i}`, file_id: `file${i}`, is_video: ANIMATED_BADGES.includes(id) && id !== 'star' }));
+    const { api, calls } = fakeApi({ set: have });
+    const b = new BadgeSet(deps(api));
+    await b.kick();
+    const rep = calls.filter((c) => c.method === 'replaceStickerInSet');
+    expect(rep).toHaveLength(1);
+    expect(rep[0]!.body).toMatchObject({ old_sticker: `file${BADGE_IDS.indexOf('star')}`, sticker: { format: 'video' } });
+    expect(rep[0]!.files[0]).toContain('star.webm');
+    expect(b.ids().star).not.toBe(`old${BADGE_IDS.indexOf('star')}`);
+    // заменили — больше не трогаем
+    const n = calls.length;
+    b.ids();
+    expect(calls.slice(n).some((c) => c.method === 'replaceStickerInSet')).toBe(false);
   });
 
   it('сбой Telegram — без падения, повтор не чаще раза в 10 минут', async () => {
