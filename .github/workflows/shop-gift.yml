@@ -1,0 +1,84 @@
+# Подарок игроку от админа (apps/server/src/shop.ts › gift): вещь из гардероба бесплатно — так же, как после
+# оплаты (скин надет, стикеры набора сразу в пак, игроку — сообщение «🎁 Подарок от «Массовки»»), только без звёзд.
+# Запуск: Actions → shop-gift → Run workflow → Telegram id игрока (его присылает бот в чат поддержки, метка #u<id>)
+# и вещь из списка. В учёте — «покупка» на 0 звёзд (charge gift:…): забрать подарок — кнопкой shop-refund.
+# Список вещей — из каталога SHOP_ITEMS (packages/game-core/src/shop.ts); новый товар — добавь строку и сюда,
+# иначе упадёт тест apps/server/test/shop.test.ts («список кнопки shop-gift»).
+name: shop-gift
+
+on:
+  workflow_dispatch:
+    inputs:
+      who:
+        description: 'Telegram id игрока (только цифры)'
+        required: true
+        type: string
+      item:
+        description: 'Что подарить'
+        required: true
+        type: choice
+        options:
+          - 'kotBanan — Кот-банан (костюм и 7 стикеров)'
+          - 'vhs — эффект VHS'
+          - 'holo — эффект Голограмма'
+          - 'fire — эффект Огонь'
+          - 'noir — эффект Нуар'
+          - 'gold — эффект Золото'
+          - 'ice — эффект Лёд'
+          - 'sepia — эффект Сепия'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: shop-gift
+  cancel-in-progress: false
+
+jobs:
+  gift:
+    runs-on: ubuntu-latest
+    # секреты прода — только в окружении production, а оно пускает только ветку main (docs/security.md)
+    environment: production
+    timeout-minutes: 5
+    env:
+      TWC_TOKEN: ${{ secrets.TWC_TOKEN }}
+      SSH_OPTS: -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=20 -o LogLevel=ERROR
+      FIND_ONLY: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Проверить ввод
+        env:
+          WHO: ${{ inputs.who }}
+          ITEM: ${{ inputs.item }}
+        run: |
+          # только цифры и имя вещи — ничего лишнего в команду на сервере
+          echo "$WHO" | grep -Eq '^[0-9]{1,16}$' || { echo "::error::нужен Telegram id игрока — только цифры"; exit 1; }
+          id="${ITEM%% *}"
+          echo "$id" | grep -Eq '^[A-Za-z]{1,24}$' || { echo "::error::непонятная вещь"; exit 1; }
+          echo "GIFT_ITEM=$id" >> "$GITHUB_ENV"
+      - run: python3 -m venv /tmp/py && /tmp/py/bin/pip install -q cryptography
+      - name: Где живёт бот (infra/game/bot-home)
+        run: |
+          h=$(tr -d ' \n' < infra/game/bot-home)
+          # бот и учёт в одном процессе игры (eu) — туда; иначе — сервер бота в Нидерландах
+          if [ "$h" = eu ]; then echo "BOT_SERVER=massovka-eu" >> "$GITHUB_ENV"; else echo "BOT_SERVER=massovka-infra" >> "$GITHUB_ENV"; fi
+      - id: infra
+        env: { SERVER_NAME: '${{ env.BOT_SERVER }}' }
+        run: /tmp/py/bin/python infra/game/provision.py
+      - name: Подарить
+        env:
+          IP: ${{ steps.infra.outputs.ip }}
+          WHO: ${{ inputs.who }}
+        run: |
+          # бот — в процессе игрового сервера, вход /internal — только изнутри машины
+          ssh $SSH_OPTS root@$IP "WHO='$WHO' ITEM='$GIFT_ITEM' bash -s" <<'SH' | tee /tmp/out.txt
+          printf '%s' "{\"userId\":$WHO,\"item\":\"$ITEM\"}" | curl -sS -m 60 -X POST -H 'Content-Type: application/json' --data-binary @- -w '\nHTTP %{http_code}\n' http://127.0.0.1:8080/internal/tg/gift
+          SH
+          body=$(head -1 /tmp/out.txt)
+          if grep -q '^HTTP 409' /tmp/out.txt; then
+            echo "У игрока $WHO уже есть «$GIFT_ITEM» — ничего не выдано: $body" >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::у игрока уже есть эта вещь"; exit 1
+          fi
+          grep -q '^HTTP 200' /tmp/out.txt || { echo "::error::подарок не прошёл: $body"; exit 1; }
+          { echo "🎁 Подарено: «$GIFT_ITEM» игроку $WHO"; echo; echo "Ответ сервера: \`$body\`"
+            echo; echo '`known: false` — игрок ещё не заходил в гардероб: вещь ждёт его там. Забрать подарок — кнопка shop-refund.'; } >> "$GITHUB_STEP_SUMMARY"

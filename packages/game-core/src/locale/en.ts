@@ -700,6 +700,8 @@ export const en: Dict = {
     },
     invoiceTitle: 'Catnana',
     invoiceText: 'A Be Nobody set: the Catnana costume and 7 Telegram stickers.',
+    botGift: '🎁 A gift from Be Nobody: {name} is yours! Its stickers are already in your pack, the rest unlock in matches.',
+    botFxGift: '🎁 A gift from Be Nobody: the {name} effect! Put it on any sticker: My sticker pack → tap a sticker → pick the effect.',
     botFxBought: '✨ The {name} effect is yours! Put it on any sticker: My sticker pack → tap a sticker → pick the effect.',
     botBought: '🍌 Catnana is yours! Its stickers are already in your pack: 2 now, 5 more unlock in matches.',
     botFree: '🎬 Your sticker pack is ready: 4 stickers with your actor.',

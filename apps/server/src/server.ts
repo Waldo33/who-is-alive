@@ -561,6 +561,12 @@ export class GameServer {
       const r = await this.o.bot.shop.refund(((await readJson(req, 4096)) as { charge?: unknown } | null)?.charge);
       return this.reply(res, r.status, r.body);
     }
+    // подарок от админа (руками, по SSH, кнопка shop-gift): вещь из магазина без звёзд
+    if (p === '/internal/tg/gift' && req.method === 'POST') {
+      if (!this.o.bot) return this.reply(res, 503, { error: 'no_bot' });
+      const r = await this.o.bot.shop.gift(await readJson(req, 4096));
+      return this.reply(res, r.status, r.body);
+    }
     // группы ошибок от сервера бота (Нидерланды, без своей базы) — по туннелю
     if (p === '/internal/errors' && req.method === 'POST') {
       if (!this.o.errors) return this.reply(res, 503, { error: 'no_tracker' });
