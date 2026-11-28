@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { DICTS, EFFECTS, EARN_PER_DAY, NO_STATS, badgesOf, EARN_PER_MATCH, MY_FIGS, MY_ISSUED, MY_MARKS, MY_MAX, MY_POSE_EMOJI, RETIRED_STICKERS, SHOP_ITEMS, STICKER_LIST, TEST_ITEM, buyItem, canDrop, colMark, fmt, fxMark, isEffect, isLookIssued, lookIssued, stdLook, MY_COLORS, isMySticker, issuedBase, stickerFx, isSkin, isStickerId, myFigOpen, myIssued, offSticker, parseMySticker, pickEarned, skinOf, wearItems } from '@kto/game-core';
+import { DICTS, STARTER_DRIP, starterOpen, EFFECTS, EARN_PER_DAY, NO_STATS, badgesOf, EARN_PER_MATCH, MY_FIGS, MY_ISSUED, MY_MARKS, MY_MAX, MY_POSE_EMOJI, RETIRED_STICKERS, SHOP_ITEMS, STICKER_LIST, TEST_ITEM, buyItem, canDrop, colMark, fmt, fxMark, isEffect, isLookIssued, lookIssued, stdLook, MY_COLORS, isMySticker, issuedBase, stickerFx, isSkin, isStickerId, myFigOpen, myIssued, offSticker, parseMySticker, pickEarned, skinOf, wearItems } from '@kto/game-core';
 import type { BadgeId, BadgeStats, EffectId, MySticker, StickerId, StickerMeta } from '@kto/game-core';
 import type { StickerJob } from './sticker-render';
 import { RateWindow } from './limits';
@@ -79,7 +79,8 @@ const nextDay = (ms: number): number => (Math.floor((ms + MSK) / DAY) + 1) * DAY
 /** Сколько стикеров за матчи игрок уже получил сегодня (отметка `day:<сутки>:<n>`). */
 const earnedToday = (items: readonly string[], now: number): number => Number(items.find((i) => i.startsWith(`day:${dayKey(now)}:`))?.split(':')[2]) || 0;
 /** Стикеры, которые игрок ещё может открыть за матчи (набор есть, стикера нет). */
-const earnable = (items: readonly string[]) => STICKER_LIST.filter((s) => !s.now && !!s.earn && (s.set === 'starter' || s.set === 'play' || items.includes(s.set)) && !items.includes(`st:${s.id}`));
+const earnable = (items: readonly string[]) =>
+  STICKER_LIST.filter((s) => !s.now && !!s.earn && (s.set === 'starter' ? items.includes('starter') && items.includes(STARTER_DRIP) : s.set === 'play' || items.includes(s.set)) && !items.includes(`st:${s.id}`));
 /** Напоминание о стикерах — с 10 до 22 по Москве (не ночью). */
 const REMIND_FROM = 10;
 const REMIND_TO = 22;
@@ -186,7 +187,7 @@ export function openStickers(items: string[]): StickerMeta[] {
     s.lure
       ? true
       : s.set === 'starter'
-        ? has.has('starter')
+        ? has.has('starter') && starterOpen(s, items)
         : s.set === 'play'
           ? has.has('starter') && has.has(`st:${s.id}`)
           : has.has(s.set) && (s.now || has.has(`st:${s.id}`)),
@@ -587,10 +588,11 @@ export class Shop {
         const now = (this.d.now ?? Date.now)();
         const today = dayKey(now);
         const usedToday = earnedToday(u.items, now);
-        const fresh = pickEarned(
-          earnable(u.items).filter((s) => x.stickers.includes(s.id)),
-          Math.max(0, Math.min(EARN_PER_MATCH, EARN_PER_DAY - usedToday)),
-        );
+        // стартовые бесплатного пака — первыми и по одному за матч, остальное — по редкости
+        const cap = Math.max(0, Math.min(EARN_PER_MATCH, EARN_PER_DAY - usedToday));
+        const pool = earnable(u.items).filter((s) => x.stickers.includes(s.id));
+        const starter = pool.filter((s) => s.set === 'starter').slice(0, 1);
+        const fresh = [...starter, ...pickEarned(pool.filter((s) => s.set !== 'starter'), cap)].slice(0, cap);
         // первый сыгранный матч открывает бесплатный пак: бот предлагает его забрать
         const first = !u.items.includes('played');
         if (first) u.items.push('played');
@@ -644,7 +646,7 @@ export class Shop {
       const miss = !u?.items.includes('played') ? 'need_match' : !(await this.subscribed(from.id)) ? 'need_sub' : null;
       if (miss) return { ...(await this.state(from.id, false)), error: miss, channel: this.d.channel };
     }
-    return this.grant(from, ['starter', 'pack'], (l) => DICTS[l].shop.botFree);
+    return this.grant(from, ['starter', 'pack', STARTER_DRIP], (l) => DICTS[l].shop.botFree);
   }
 
   /** Бесплатный пак по ссылке /start stickers: нет матча — «Играть», нет подписки — «Подписаться» и «Я подписался». */

@@ -678,6 +678,7 @@ export const en: Dict = {
         theme: 'play a «{theme}» take',
         buy: 'the «{item}» set in the wardrobe',
         starter: 'the free pack',
+        next: 'your next match',
       },
     },
     botBuild: '🎨 Build your pack',

@@ -22,7 +22,7 @@ import { buyLabel, itemIcon, starsIcon } from '@/game/skins/wardrobe';
 
 /** Без Telegram (просто сайт): видно, каким бывает пак, — бесплатные стикеры и приманка; собрать можно только в Telegram. */
 const PREVIEW: Pick<ShopState, 'open' | 'off' | 'my' | 'figs' | 'earned' | 'pending' | 'pack' | 'items'> = {
-  open: STICKER_LIST.filter((s) => s.set === 'starter').map((s) => s.id),
+  open: STICKER_LIST.filter((s) => s.set === 'starter' && s.now).map((s) => s.id),
   off: [],
   my: [],
   figs: ['actor'],
@@ -266,7 +266,7 @@ export default function StickersClient() {
 
   /** За что откроется стикер. */
   const howTo = (m: StickerMeta): string => {
-    if (m.set === 'starter') return b.earn.starter;
+    if (m.set === 'starter') return m.now || !hasPack ? b.earn.starter : b.earn.next;
     if (m.set !== 'play' && !st?.items.includes(m.set)) return fmt(b.earn.buy, { item: t.items[m.set].name });
     if (m.earn === 'theme' && m.theme) return fmt(b.earn.theme, { theme: themeName(lang, m.theme) });
     return m.earn ? b.earn[m.earn] : b.earn.starter;
