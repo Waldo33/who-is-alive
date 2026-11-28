@@ -72,7 +72,7 @@ const payment = (over: Record<string, unknown> = {}) => ({
   message: {
     chat: { id: 77, type: 'private' },
     from: ANYA,
-    successful_payment: { currency: 'XTR', total_amount: 49, invoice_payload: 'kotBanan:77', telegram_payment_charge_id: 'ch_1', ...over },
+    successful_payment: { currency: 'XTR', total_amount: 79, invoice_payload: 'kotBanan:77', telegram_payment_charge_id: 'ch_1', ...over },
   },
 });
 
@@ -103,13 +103,13 @@ describe('гардероб', () => {
     const buy = await bot.handle('POST', '/shop/buy', {}, { initData: initData(ANYA), item: 'kotBanan' });
     expect(buy).toEqual({ status: 200, body: { link: 'https://t.me/$invoice' } });
     const inv = calls.find((c) => c.method === 'createInvoiceLink')!.body;
-    expect(inv).toMatchObject({ currency: 'XTR', payload: 'kotBanan:77', prices: [{ amount: 49 }] });
+    expect(inv).toMatchObject({ currency: 'XTR', payload: 'kotBanan:77', prices: [{ amount: 79 }] });
     expect(inv.provider_token).toBeUndefined();
     expect((await bot.handle('POST', '/shop/buy', {}, { initData: initData(ANYA), item: 'nope' })).status).toBe(400);
 
     const pre = async (q: Record<string, unknown>) => {
       calls.length = 0;
-      await hook(bot, { pre_checkout_query: { id: 'q', from: { id: 77 }, currency: 'XTR', total_amount: 49, invoice_payload: 'kotBanan:77', ...q } });
+      await hook(bot, { pre_checkout_query: { id: 'q', from: { id: 77 }, currency: 'XTR', total_amount: 79, invoice_payload: 'kotBanan:77', ...q } });
       return calls.find((c) => c.method === 'answerPreCheckoutQuery')!.body.ok;
     };
     expect(await pre({})).toBe(true);
@@ -180,7 +180,7 @@ describe('гардероб', () => {
   it('уведомление об оплате потерялось — гардероб сверяется с Telegram и выдаёт набор; возвращённое не выдаёт', async () => {
     let txs: unknown[] = [];
     const { bot, calls, store } = makeBot({ result: (m) => (m === 'getStarTransactions' ? { transactions: txs } : undefined) });
-    const pay = (id: string, user = 77) => ({ id, amount: 49, date: 1, source: { type: 'user', user: { id: user }, invoice_payload: `kotBanan:${user}` } });
+    const pay = (id: string, user = 77) => ({ id, amount: 79, date: 1, source: { type: 'user', user: { id: user }, invoice_payload: `kotBanan:${user}` } });
     // чужая оплата и оплата с возвратом (встречная транзакция с тем же id) — не наши
     txs = [pay('ch_other', 78), pay('ch_back'), { id: 'ch_back', amount: 49, date: 2, receiver: { type: 'user', user: { id: 77 } } }];
     const st0 = await bot.handle('POST', '/shop', {}, { initData: initData(ANYA) });
@@ -201,12 +201,12 @@ describe('гардероб', () => {
     expect((st.body as { items: string[] }).items).toContain('kotBanan');
     expect(second.calls.some((c) => c.method === 'sendMessage' && String(c.body.text).includes('Кот-банан'))).toBe(true);
     // теперь платёж в учёте — возврат по нему пройдёт
-    expect(await store.saveShopPayment({ charge: LOST, userId: 77, item: 'kotBanan', stars: 49, refunded: false })).toBe(false);
+    expect(await store.saveShopPayment({ charge: LOST, userId: 77, item: 'kotBanan', stars: 79, refunded: false })).toBe(false);
   });
 
   it('сверка по расписанию выдаёт оплату, хотя игрок не заходил в гардероб; повторная сверка ничего не дублирует', async () => {
     const LOST = `stx${'Qw7+/='.repeat(20)}y`;
-    const txs = [{ id: LOST, amount: 49, date: 1, source: { type: 'user', user: { id: 77, first_name: 'Аня', language_code: 'ru' }, invoice_payload: 'kotBanan:77' } }];
+    const txs = [{ id: LOST, amount: 79, date: 1, source: { type: 'user', user: { id: 77, first_name: 'Аня', language_code: 'ru' }, invoice_payload: 'kotBanan:77' } }];
     const { bot, calls, store } = makeBot({ result: (m) => (m === 'getStarTransactions' ? { transactions: txs } : undefined) });
     expect(await bot.shop.reconcileAll()).toBe(1);
     const u = await store.shopUser(77);
@@ -852,7 +852,7 @@ describe('гардероб', () => {
     expect((await fx('hi', 'holo')).body).toEqual({ error: 'need_fx' });
     expect((await fx('hi', 'glitter')).status).toBe(400);
     expect((await fx('lure', null)).status).toBe(400);
-    await hook(bot, payment({ invoice_payload: 'holo:77', total_amount: 39, telegram_payment_charge_id: 'ch_holo' }));
+    await hook(bot, payment({ invoice_payload: 'holo:77', total_amount: 59, telegram_payment_charge_id: 'ch_holo' }));
     expect((await store.shopUser(77))?.items).toContain('holo');
     expect(calls.some((c) => c.method === 'sendMessage' && String(c.body.text).includes('Эффект «Голограмма» твой'))).toBe(true);
     calls.length = 0;
@@ -912,7 +912,7 @@ describe('гардероб', () => {
     expect((await store.shopUser(77))?.issued).toContain('hi~c3');
     expect(calls.find((c) => c.method === 'replaceStickerInSet')?.body.old_sticker).toBe('f0');
     // эффект без поля цвета — цвет остаётся
-    await hook(bot, payment({ invoice_payload: 'fire:77', total_amount: 35, telegram_payment_charge_id: 'ch_fire' }));
+    await hook(bot, payment({ invoice_payload: 'fire:77', total_amount: 49, telegram_payment_charge_id: 'ch_fire' }));
     await look('hi', 'fire');
     await bot.shop.issue(77);
     expect(jobs.at(-1)).toEqual({ std: 'hi', fx: 'fire', color: 3, lang: 'ru' });
